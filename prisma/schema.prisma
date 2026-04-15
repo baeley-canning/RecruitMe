@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id          String   @id @default(cuid())
+  title       String
+  company     String?
+  location    String?
+  rawJd       String
+  parsedRole  String?  // JSON string: parsed AI output
+  salaryMin   Int?     // NZD yearly minimum (optional)
+  salaryMax   Int?     // NZD yearly maximum (optional)
+  status      String   @default("active") // active | closed | on-hold
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidates  Candidate[]
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Candidate {
+  id           String   @id @default(cuid())
+  jobId        String
+  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  name         String
+  headline     String?
+  location     String?
+  linkedinUrl  String?
+  profileText  String?  // Raw pasted/captured profile text
+  matchScore       Int?     // 0–100
+  matchReason      String?  // AI explanation JSON: { summary, strengths, gaps }
+  acceptanceScore  Int?     // 0–100 likelihood candidate would accept this offer
+  acceptanceReason String?  // AI JSON: { likelihood, headline, signals, summary }
+  notes            String?  // Recruiter notes
+  status       String   @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
+  statusHistory    String?  // JSON: [{status, changedAt}]
+  contactedAt      DateTime? // When status first moved to "contacted"
+  source       String   @default("manual") // manual | serpapi | extension
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
