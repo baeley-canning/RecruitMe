@@ -7,8 +7,9 @@ import {
   searchPDLProfiles,
   type SearchResult,
 } from "@/lib/search";
-import { scoreCandidateFull } from "@/lib/ai";
+import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { deriveUpdateData } from "@/lib/score-utils";
 import { expandLocationKeywords, locationMatches } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
@@ -216,34 +217,16 @@ export async function POST(
       console.log(`[search] [scored ${scored}, saved ${saved.length}/${maxResults}] "${name}" — ${textToScore.length}ch`);
 
       // ── Score first, save only if it passes ──────────────────────────────────
-      // This prevents persisting candidates the user never asked for and avoids
-      // burning Claude tokens after maxResults passing candidates are found.
-      let scoreData: Record<string, unknown> = {};
+      // Overall score is deterministic — AI provides evidence, fns compute number.
+      const scoreData: Record<string, unknown> = {};
       let matchScore: number | null = null;
 
       try {
-        const { match, acceptance } = await scoreCandidateFull(textToScore, parsedRole, salary);
-        matchScore = match.score;
-        scoreData.matchScore  = match.score;
-        scoreData.matchReason = JSON.stringify({
-          summary:    match.summary,
-          reasoning:  match.reasoning,
-          dimensions: match.dimensions,
-          strengths:  match.strengths,
-          gaps:       match.gaps,
-        });
-        if (acceptance) {
-          scoreData.acceptanceScore  = acceptance.score;
-          scoreData.acceptanceReason = JSON.stringify({
-            likelihood: acceptance.likelihood,
-            headline:   acceptance.headline,
-            signals:    acceptance.signals,
-            summary:    acceptance.summary,
-          });
-        }
+        const breakdown = await scoreCandidateStructured(textToScore, parsedRole, salary);
+        matchScore = breakdown.overall;
+        Object.assign(scoreData, deriveUpdateData(breakdown));
       } catch (err) {
         console.error(`[search] score failed for "${name}":`, err);
-        // If scoring fails and a minScore filter is active, skip — don't persist junk
         if (minScore > 0) { skippedScore++; continue; }
       }
 

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RecruitMe Capture</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .wrap {
+        width: 360px;
+        padding: 16px;
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 18px;
+      }
+      p {
+        margin: 0;
+        color: #475569;
+        line-height: 1.4;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 12px;
+        margin-top: 12px;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: #334155;
+        margin-bottom: 6px;
+      }
+      input,
+      select,
+      button {
+        width: 100%;
+        box-sizing: border-box;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+      input,
+      select {
+        border: 1px solid #cbd5e1;
+        padding: 10px 12px;
+        background: #fff;
+      }
+      button {
+        border: 0;
+        padding: 11px 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #0f766e;
+        color: #fff;
+      }
+      button.secondary {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .stack > * + * {
+        margin-top: 10px;
+      }
+      .status {
+        font-size: 12px;
+        color: #475569;
+        min-height: 18px;
+      }
+      .status.error {
+        color: #b91c1c;
+      }
+      .status.ok {
+        color: #047857;
+      }
+      .tiny {
+        font-size: 11px;
+        color: #64748b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>RecruitMe</h1>
+      <p>Auto-capture LinkedIn profiles into your active RecruitMe search.</p>
+
+      <div class="card stack">
+        <div>
+          <label for="serverBase">RecruitMe server</label>
+          <input id="serverBase" type="text" placeholder="http://localhost:3000" />
+        </div>
+        <div>
+          <label for="authUser">RecruitMe username</label>
+          <input id="authUser" type="text" placeholder="Only needed if RecruitMe prompts for login" />
+        </div>
+        <div>
+          <label for="authPass">RecruitMe password</label>
+          <input id="authPass" type="password" placeholder="Only needed if RecruitMe prompts for login" />
+        </div>
+        <button id="saveServer" class="secondary">Save connection</button>
+        <div id="serverStatus" class="status"></div>
+      </div>
+
+      <div class="card stack">
+        <p id="pageStatus" class="tiny">Checking current tab…</p>
+        <button id="capturePending" class="primary">Capture pending fetch</button>
+        <div id="pendingStatus" class="status"></div>
+      </div>
+
+      <div class="card stack">
+        <div>
+          <label for="jobSelect">Import current profile to job</label>
+          <select id="jobSelect"></select>
+        </div>
+        <button id="importProfile" class="secondary">Import current LinkedIn profile</button>
+        <div id="importStatus" class="status"></div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(request: NextRequest) {
+  if (request.method === "OPTIONS") {
+    return NextResponse.next();
+  }
+
   const user = process.env.ADMIN_USER;
   const pass = process.env.ADMIN_PASS;
 

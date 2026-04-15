@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "RecruitMe LinkedIn Capture",
+  "description": "Capture full LinkedIn profiles into RecruitMe from Opera and other Chromium browsers.",
+  "version": "1.0.0",
+  "permissions": ["storage", "tabs", "activeTab"],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://10.255.255.254:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "RecruitMe LinkedIn Capture",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.linkedin.com/in/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+

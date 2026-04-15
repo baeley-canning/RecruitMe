@@ -8,7 +8,7 @@ interface ScoreBadgeProps {
 
 export function ScoreBadge({ score, size = "md", className }: ScoreBadgeProps) {
   const sizeClasses = {
-    sm: "text-xs px-2 py-0.5 font-semibold rounded-md",
+    sm: "text-xs px-2 py-0.5 font-medium leading-none rounded",
     md: "text-sm px-2.5 py-1 font-semibold rounded-lg",
     lg: "text-base px-3 py-1.5 font-bold rounded-lg",
   };

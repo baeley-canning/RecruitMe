@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { extractTextFromPdf } from "@/lib/pdf";
-import { cleanCvText } from "@/lib/ai";
 
 export async function POST(req: Request) {
   const contentType = req.headers.get("content-type") ?? "";
@@ -25,42 +24,25 @@ export async function POST(req: Request) {
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // TXT files — still run through Claude to clean formatting
   if (name.endsWith(".txt")) {
-    const raw = buffer.toString("utf-8");
-    try {
-      const text = await cleanCvText(raw);
-      return NextResponse.json({ text });
-    } catch {
-      return NextResponse.json({ text: raw });
-    }
+    return NextResponse.json({ text: buffer.toString("utf-8") });
   }
 
-  // PDF — extract then clean
-  let raw: string;
+  // PDF — extract text and return raw. The JD parser handles structure extraction.
   try {
-    raw = await extractTextFromPdf(buffer);
-    if (!raw.trim()) {
+    const text = await extractTextFromPdf(buffer);
+    if (!text.trim()) {
       return NextResponse.json(
         { error: "Could not extract text from PDF. Make sure it is a text-based PDF, not a scan." },
         { status: 422 }
       );
     }
+    return NextResponse.json({ text });
   } catch (err) {
     console.error("PDF extraction error:", err);
     return NextResponse.json(
-      { error: "Could not read this PDF. Try saving it as a different PDF (e.g. print to PDF from your browser), or paste the text directly." },
+      { error: "Could not read this PDF. Try saving as a different PDF, or paste the text directly." },
       { status: 500 }
     );
-  }
-
-  // Claude cleans and restructures the raw extracted text
-  try {
-    const text = await cleanCvText(raw);
-    return NextResponse.json({ text });
-  } catch (err) {
-    console.error("CV clean error:", err);
-    // Fall back to raw text — better than failing entirely
-    return NextResponse.json({ text: raw });
   }
 }

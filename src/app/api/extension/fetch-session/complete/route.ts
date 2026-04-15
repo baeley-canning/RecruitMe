@@ -1,0 +1,82 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import {
+  getPendingExtensionCaptureSession,
+  normaliseLinkedInUrl,
+  saveCapturedProfileToCandidate,
+  updatePendingExtensionCaptureSession,
+} from "@/lib/linkedin-capture";
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+const BodySchema = z.object({
+  sessionId: z.string().min(1),
+  linkedinUrl: z.string().url().max(500),
+  profileText: z.string().min(100).max(100_000),
+});
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS });
+}
+
+export async function POST(req: Request) {
+  const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: CORS });
+  }
+
+  const { sessionId, linkedinUrl, profileText } = parsed.data;
+  const session = await getPendingExtensionCaptureSession();
+
+  if (!session || session.sessionId !== sessionId) {
+    return NextResponse.json({ error: "No pending capture session" }, { status: 404, headers: CORS });
+  }
+
+  if (normaliseLinkedInUrl(session.linkedinUrl) !== normaliseLinkedInUrl(linkedinUrl)) {
+    await updatePendingExtensionCaptureSession({
+      sessionId,
+      status: "error",
+      message: "Captured profile URL did not match the pending candidate",
+      error: "linkedin_url_mismatch",
+    });
+    return NextResponse.json({ error: "LinkedIn URL mismatch" }, { status: 409, headers: CORS });
+  }
+
+  await updatePendingExtensionCaptureSession({
+    sessionId,
+    status: "processing",
+    message: "Profile received — scoring with AI",
+  });
+
+  try {
+    const candidate = await saveCapturedProfileToCandidate({
+      jobId: session.jobId,
+      candidateId: session.candidateId,
+      linkedinUrl,
+      profileText,
+    });
+
+    await updatePendingExtensionCaptureSession({
+      sessionId,
+      status: "completed",
+      message: "Profile captured and scored",
+      completedAt: new Date().toISOString(),
+      candidate,
+    });
+
+    return NextResponse.json(candidate, { headers: CORS });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save captured profile";
+    await updatePendingExtensionCaptureSession({
+      sessionId,
+      status: "error",
+      message,
+      error: message,
+    });
+    return NextResponse.json({ error: message }, { status: 500, headers: CORS });
+  }
+}

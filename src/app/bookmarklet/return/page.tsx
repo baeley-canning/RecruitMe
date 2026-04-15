@@ -21,6 +21,7 @@ export default function BookmarkletReturn() {
     } catch {
       // malformed or empty window.name
     }
+
     if (!sent) setStatus("error");
 
     const t = setTimeout(() => {

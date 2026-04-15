@@ -47,6 +47,7 @@ interface Candidate {
   matchReason: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
+  scoreBreakdown: string | null;
   notes: string | null;
   status: string;
   statusHistory: string | null;
@@ -128,8 +129,11 @@ export default function JobDetailPage({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
 
-  // Ref used to clean up BroadcastChannel when fetch-profile tab closes/completes
+  // Legacy bookmarklet ref kept temporarily while the extension flow ships.
   const fetchChannelRef = useRef<BroadcastChannel | null>(null);
+  // Refs used to track the current Opera extension capture session.
+  const fetchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fetchSessionIdRef = useRef<string | null>(null);
 
   const fetchJob = useCallback(async () => {
     const res = await fetch(`/api/jobs/${id}`);
@@ -145,6 +149,19 @@ export default function JobDetailPage({
   useEffect(() => {
     fetchJob();
   }, [fetchJob]);
+
+  useEffect(() => {
+    return () => {
+      if (fetchPollRef.current) clearInterval(fetchPollRef.current);
+      if (fetchSessionIdRef.current) {
+        const sessionId = fetchSessionIdRef.current;
+        fetchSessionIdRef.current = null;
+        void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(sessionId)}`, {
+          method: "DELETE",
+        }).catch(() => {});
+      }
+    };
+  }, []);
 
   const handleSaveSalary = async () => {
     if (!job) return;
@@ -295,7 +312,7 @@ export default function JobDetailPage({
     });
 
     let done = false;
-    let checkInterval: ReturnType<typeof setInterval> | undefined;
+    const poll = { id: undefined as ReturnType<typeof setInterval> | undefined };
 
     // BroadcastChannel is same-origin only — perfect for localhost:3000 ↔ localhost:3000.
     // The bookmarklet navigates the tab to /bookmarklet/return which broadcasts here.
@@ -305,7 +322,7 @@ export default function JobDetailPage({
     const finish = async (profileText: string, linkedinUrl: string) => {
       if (done) return;
       done = true;
-      clearInterval(checkInterval);
+      clearInterval(poll.id);
       ch.close();
       fetchChannelRef.current = null;
 
@@ -341,9 +358,9 @@ export default function JobDetailPage({
     };
 
     // Detect tab closed by user before the bookmark was clicked
-    checkInterval = setInterval(() => {
+    poll.id = setInterval(() => {
       if (tab.closed) {
-        clearInterval(checkInterval);
+        clearInterval(poll.id);
         if (!done) {
           done = true;
           ch.close();
@@ -354,6 +371,184 @@ export default function JobDetailPage({
         }
       }
     }, 800);
+  };
+
+  // Extension-based capture path for Opera/Chromium browsers.
+  const handleFetchProfileExtension = (candidateId: string) => {
+    const candidate = job?.candidates.find((c) => c.id === candidateId);
+    if (!candidate?.linkedinUrl) return;
+    const linkedinUrl = candidate.linkedinUrl;
+
+    setFetchingProfileId(candidateId);
+    setFetchProfileStatus({ name: candidate.name, state: "waiting", message: "Opening LinkedIn profile…" });
+
+    if (fetchPollRef.current) {
+      clearInterval(fetchPollRef.current);
+      fetchPollRef.current = null;
+    }
+    if (fetchSessionIdRef.current) {
+      const staleSessionId = fetchSessionIdRef.current;
+      fetchSessionIdRef.current = null;
+      void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(staleSessionId)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    }
+
+    const tab = window.open("about:blank", "rm-fetch");
+    if (!tab) {
+      setFetchingProfileId(null);
+      setFetchProfileStatus({
+        name: candidate.name,
+        state: "error",
+        message: "Tab blocked — allow popups for this site and try again",
+      });
+      clearFetchStatus(6000);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const start = await fetch("/api/extension/fetch-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: id, candidateId }),
+        });
+        const session = (await start.json()) as { sessionId?: string; error?: string };
+
+        if (!start.ok || !session.sessionId) {
+          try { tab.close(); } catch { /* ignore */ }
+          setFetchingProfileId(null);
+          setFetchProfileStatus({
+            name: candidate.name,
+            state: "error",
+            message: session.error ?? "Could not start Opera extension capture",
+          });
+          clearFetchStatus(6000);
+          return;
+        }
+
+        fetchSessionIdRef.current = session.sessionId;
+        tab.location.href = linkedinUrl;
+
+        setFetchProfileStatus({
+          name: candidate.name,
+          state: "waiting",
+          message: "LinkedIn opened — Opera extension should capture the profile automatically",
+        });
+
+        let done = false;
+        let inFlight = false;
+        const startedAt = Date.now();
+        // Allow up to 90 s for the extension to capture (scroll + AI scoring can take 20-30 s).
+        const FETCH_TIMEOUT_MS = 90_000;
+
+        const finish = (state: "done" | "error", message: string, updated?: Candidate) => {
+          if (done) return;
+          done = true;
+
+          if (fetchPollRef.current) {
+            clearInterval(fetchPollRef.current);
+            fetchPollRef.current = null;
+          }
+
+          const sessionId = fetchSessionIdRef.current;
+          fetchSessionIdRef.current = null;
+          if (sessionId) {
+            void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(sessionId)}`, {
+              method: "DELETE",
+            }).catch(() => {});
+          }
+
+          if (updated) {
+            setJob((prev) =>
+              prev ? { ...prev, candidates: prev.candidates.map((c) => c.id === candidateId ? updated : c) } : prev
+            );
+          }
+
+          setFetchProfileStatus({ name: candidate.name, state, message });
+          setFetchingProfileId(null);
+          clearFetchStatus(state === "done" ? 4000 : 6000);
+        };
+
+        const pollOnce = async () => {
+          if (done || inFlight || !fetchSessionIdRef.current) return;
+
+          // Hard timeout — give up after FETCH_TIMEOUT_MS regardless of tab state.
+          if (Date.now() - startedAt > FETCH_TIMEOUT_MS) {
+            finish("error", "Capture timed out — the Opera extension did not respond in time");
+            return;
+          }
+
+          inFlight = true;
+          try {
+            const res = await fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(fetchSessionIdRef.current)}`);
+            if (!res.ok) {
+              // 404 means the session was cleared externally (e.g. server restart).
+              // Only give up if the tab is also gone; otherwise keep waiting.
+              if (tab.closed) {
+                finish("error", "Capture did not complete — try Fetch Profile again");
+              }
+              return;
+            }
+
+            const data = (await res.json()) as {
+              status: "pending" | "processing" | "completed" | "error";
+              message?: string;
+              candidate?: Candidate;
+              error?: string;
+            };
+
+            if (data.status === "processing") {
+              setFetchProfileStatus({
+                name: candidate.name,
+                state: "fetching",
+                message: data.message ?? "Profile received — scoring with AI…",
+              });
+              return;
+            }
+
+            if (data.status === "completed" && data.candidate) {
+              finish("done", data.message ?? "Profile captured and scored", data.candidate);
+              return;
+            }
+
+            if (data.status === "error") {
+              finish("error", data.error ?? data.message ?? "Opera extension capture failed");
+              return;
+            }
+
+            // status === "pending": extension is still capturing.
+            // If the tab was closed, update the hint but do NOT delete the session —
+            // captureProfile() runs asynchronously and may still complete.
+            if (tab.closed) {
+              setFetchProfileStatus({
+                name: candidate.name,
+                state: "waiting",
+                message: "LinkedIn tab closed — waiting for extension to finish…",
+              });
+            }
+          } catch {
+            /* network error — keep polling */
+          } finally {
+            inFlight = false;
+          }
+        };
+
+        fetchPollRef.current = setInterval(() => {
+          void pollOnce();
+        }, 1000);
+        void pollOnce();
+      } catch {
+        try { tab.close(); } catch { /* ignore */ }
+        setFetchingProfileId(null);
+        setFetchProfileStatus({
+          name: candidate.name,
+          state: "error",
+          message: "Could not start Opera extension capture",
+        });
+        clearFetchStatus(6000);
+      }
+    })();
   };
 
   const handleStatusChange = async (candidateId: string, status: string) => {
@@ -522,9 +717,9 @@ export default function JobDetailPage({
       setAddForm({ linkedinUrl: "", profileText: "" });
       setPdfFileName("");
       await fetchJob();
-      // URL-only: open the profile popup so the bookmarklet can capture it
+      // URL-only: open LinkedIn so the Opera extension can capture it
       if (url && !text && created.id) {
-        handleFetchProfile(created.id);
+        handleFetchProfileExtension(created.id);
       }
     } finally {
       setAdding(false);
@@ -1367,7 +1562,7 @@ export default function JobDetailPage({
                     jobId={id}
                     onStatusChange={handleStatusChange}
                     onScore={handleScore}
-                    onFetchProfile={handleFetchProfile}
+                    onFetchProfile={handleFetchProfileExtension}
                     onNotesChange={handleNotesChange}
                     onDelete={handleDelete}
                     scoring={scoringId === candidate.id}
@@ -1408,12 +1603,12 @@ export default function JobDetailPage({
               {fetchProfileStatus.state === "waiting" && (
                 <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                   <p className="text-xs font-medium text-amber-800">
-                    Click your <strong>Add to RecruitMe</strong> bookmark in the LinkedIn tab, then come back here.
+                    The Opera RecruitMe extension should capture this profile automatically once LinkedIn finishes loading.
                   </p>
                   <p className="text-xs text-amber-600 mt-1">
-                    No bookmark?{" "}
+                    No extension?{" "}
                     <a href="/bookmarklet" target="_blank" className="underline">
-                      Set one up
+                      Set it up
                     </a>
                   </p>
                 </div>

@@ -1,5 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import {
+  buildScoreBreakdown,
+  CATEGORY_WEIGHTS_V2,
+  type ScoreBreakdown,
+  type MustHaveStatus,
+  type NiceToHaveStatus,
+  type CategoryScore,
+} from "./scoring";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude, OpenAI, and Ollama so all AI functions stay clean.
@@ -521,6 +529,174 @@ Return ONLY the cleaned CV text. No commentary, no preamble.`,
   );
   // If Claude returns something extremely short it probably failed — fall back to raw
   return text.trim().length > 100 ? text.trim() : rawText;
+}
+
+// ── Structured scoring v2 ─────────────────────────────────────────────────────
+// The AI populates 7 category scores, per-requirement coverage, and reasons.
+// The overall score, evidence_coverage_score, and confidence are computed
+// deterministically from those outputs — the AI never produces a final score.
+
+export type { ScoreBreakdown } from "./scoring";
+
+export async function scoreCandidateStructured(
+  profileText: string,
+  parsedRole: ParsedRole,
+  salary?: { min: number; max: number } | null
+): Promise<ScoreBreakdown> {
+  const clamp = (v: unknown, fallback = 50) =>
+    typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : fallback;
+
+  const mustHaves   = (parsedRole.must_haves?.length   ? parsedRole.must_haves   : parsedRole.skills_required).slice(0, 12);
+  const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
+  const knockouts   = parsedRole.knockout_criteria ?? [];
+
+  const salaryLine    = salary?.min || salary?.max
+    ? `Budget: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD` : "";
+  const seniorityLine = parsedRole.seniority_band ? `Seniority: ${parsedRole.seniority_band}` : "";
+  const knockoutLine  = knockouts.length ? `Knockout criteria (instant fail if clearly absent): ${knockouts.join("; ")}` : "";
+  const mustHavesList = mustHaves.map((m, i) => `${i + 1}. ${m}`).join("\n");
+  const niceList      = niceToHaves.map((n, i) => `${i + 1}. ${n}`).join("\n");
+
+  const profileSlice = profileText.slice(0, 2500);
+
+  const text = await chat(
+    `You are a senior recruitment consultant scoring a candidate against a specific role. Return ONLY compact JSON — no markdown, no newlines inside string values.
+
+Role: ${parsedRole.title} | ${parsedRole.location}${salaryLine ? ` | ${salaryLine}` : ""}${seniorityLine ? ` | ${seniorityLine}` : ""}
+
+Must-haves (numbered — include ALL in must_have_coverage):
+${mustHavesList}
+
+Nice-to-haves (numbered — include ALL in nice_to_have_coverage):
+${niceList || "(none listed)"}
+${knockoutLine}
+
+Candidate profile:
+${profileSlice}
+
+Return EXACTLY this JSON structure:
+{
+  "categories": {
+    "skill_fit":         {"score":0,"evidence":"one sentence grounding the score in actual profile text"},
+    "location_fit":      {"score":0,"evidence":"one sentence"},
+    "seniority_fit":     {"score":0,"evidence":"one sentence"},
+    "title_fit":         {"score":0,"evidence":"one sentence"},
+    "industry_fit":      {"score":0,"evidence":"one sentence"},
+    "nice_to_have_fit":  {"score":0,"evidence":"one sentence about how many nice-to-haves are present"},
+    "keyword_alignment": {"score":0,"evidence":"one sentence about vocabulary and terminology match"}
+  },
+  "must_have_coverage": [
+    {"requirement":"exact text from must-haves list","status":"confirmed|likely|missing|negative|unknown","evidence":"direct quote or paraphrase from profile, or Not mentioned"}
+  ],
+  "nice_to_have_coverage": [
+    {"requirement":"exact text from nice-to-haves list","status":"confirmed|likely|absent","evidence":"direct quote or paraphrase, or Not mentioned"}
+  ],
+  "reasons_for": ["specific positive signal from the profile","..."],
+  "reasons_against": ["specific concern or gap from the profile","..."],
+  "missing_evidence": ["specific fact that would change the score if known","..."],
+  "recruiter_summary": "1-2 sentences a recruiter would say to a client. Specific, no jargon, no superlatives."
+}
+
+Category score rules:
+- skill_fit: 80+ = most must-have skills confirmed; 60-79 = several confirmed; 40-59 = adjacent; 0-39 = mismatch
+- location_fit: 100 = same city/region; 80 = commutable; 50 = same country; 0 = overseas
+- seniority_fit: 100 = exact match; 70 = one level off; 40 = two levels off; 0 = completely wrong level
+- title_fit: do recent titles align with how people in this role describe themselves on LinkedIn?
+- industry_fit: relevant sector/domain experience matching the role's context?
+- nice_to_have_fit: 80+ = most nice-to-haves present; 50 = some; 20 = few; if none listed, score 50
+- keyword_alignment: 80+ = vocabulary strongly matches role language; 40-79 = partial; 0-39 = different domain
+
+must_have_coverage rules:
+- "confirmed" = clearly and explicitly stated in the profile
+- "likely" = strongly implied by adjacent evidence (e.g. a company or framework implies a skill)
+- "missing" = not mentioned — could have it but unverifiable
+- "negative" = profile actively contradicts this requirement (e.g. no work rights, wrong country)
+- "unknown" = insufficient data to make any assessment
+- Include EXACTLY one entry per must-have. Do not skip or merge any.${knockouts.length ? `
+- If any knockout criterion is failed, status must be "negative".` : ""}
+
+nice_to_have_coverage rules:
+- "confirmed" = explicitly present; "likely" = implied; "absent" = not present or not mentioned
+- Include EXACTLY one entry per nice-to-have. If no nice-to-haves were listed, return empty array.
+
+reasons_for: 2–4 specific, evidenced positive signals. Not generic praise. Reference actual job titles, companies, skills from the profile.
+reasons_against: 2–4 specific concerns. Not speculation — only what the profile actually shows or fails to show.
+missing_evidence: 2–4 specific facts that are NOT in the profile and would materially change the score (e.g. "Years in role not stated", "No mention of team leadership despite Senior title").
+
+Short snippet rule: score what IS confirmed. Do not penalise for skills not mentioned. Only penalise hard for active contradictions.`,
+    0.1,
+    3000
+  );
+
+  type RawCat = { score?: number; evidence?: string };
+  type RawAI = {
+    categories?: {
+      skill_fit?:         RawCat;
+      location_fit?:      RawCat;
+      seniority_fit?:     RawCat;
+      title_fit?:         RawCat;
+      industry_fit?:      RawCat;
+      nice_to_have_fit?:  RawCat;
+      keyword_alignment?: RawCat;
+    };
+    must_have_coverage?:   Array<{ requirement?: string; status?: string; evidence?: string }>;
+    nice_to_have_coverage?: Array<{ requirement?: string; status?: string; evidence?: string }>;
+    reasons_for?:     string[];
+    reasons_against?: string[];
+    missing_evidence?: string[];
+    recruiter_summary?: string;
+  };
+
+  const raw = parseJson<RawAI>(text);
+
+  const parseCategory = (key: keyof NonNullable<RawAI["categories"]>, weight: number): CategoryScore => ({
+    score:    clamp(raw.categories?.[key]?.score),
+    weight,
+    evidence: typeof raw.categories?.[key]?.evidence === "string" ? raw.categories[key]!.evidence : "",
+  });
+
+  const validMH  = new Set(["confirmed", "likely", "missing", "negative", "unknown"]);
+  const validNTH = new Set(["confirmed", "likely", "absent"]);
+
+  const mustHaveCoverage: MustHaveStatus[] = (raw.must_have_coverage ?? [])
+    .filter((c) => typeof c?.requirement === "string" && typeof c?.status === "string")
+    .map((c) => ({
+      requirement: c.requirement!,
+      status:      validMH.has(c.status!) ? (c.status as MustHaveStatus["status"]) : "unknown",
+      evidence:    typeof c.evidence === "string" ? c.evidence : "Not mentioned",
+    }));
+
+  const niceToHaveCoverage: NiceToHaveStatus[] = (raw.nice_to_have_coverage ?? [])
+    .filter((c) => typeof c?.requirement === "string" && typeof c?.status === "string")
+    .map((c) => ({
+      requirement: c.requirement!,
+      status:      validNTH.has(c.status!) ? (c.status as NiceToHaveStatus["status"]) : "absent",
+      evidence:    typeof c.evidence === "string" ? c.evidence : "Not mentioned",
+    }));
+
+  const stringArray = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+
+  const categories: ScoreBreakdown["categories"] = {
+    skill_fit:         parseCategory("skill_fit",         CATEGORY_WEIGHTS_V2.skill_fit),
+    location_fit:      parseCategory("location_fit",      CATEGORY_WEIGHTS_V2.location_fit),
+    seniority_fit:     parseCategory("seniority_fit",     CATEGORY_WEIGHTS_V2.seniority_fit),
+    title_fit:         parseCategory("title_fit",         CATEGORY_WEIGHTS_V2.title_fit),
+    industry_fit:      parseCategory("industry_fit",      CATEGORY_WEIGHTS_V2.industry_fit),
+    nice_to_have_fit:  parseCategory("nice_to_have_fit",  CATEGORY_WEIGHTS_V2.nice_to_have_fit),
+    keyword_alignment: parseCategory("keyword_alignment", CATEGORY_WEIGHTS_V2.keyword_alignment),
+  };
+
+  return buildScoreBreakdown({
+    categories,
+    must_have_coverage:    mustHaveCoverage,
+    nice_to_have_coverage: niceToHaveCoverage,
+    reasons_for:           stringArray(raw.reasons_for),
+    reasons_against:       stringArray(raw.reasons_against),
+    missing_evidence:      stringArray(raw.missing_evidence),
+    recruiter_summary:     typeof raw.recruiter_summary === "string" ? raw.recruiter_summary : "",
+    profileCharCount:      profileText.length,
+  });
 }
 
 export async function extractCandidateInfo(

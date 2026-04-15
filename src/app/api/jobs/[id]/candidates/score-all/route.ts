@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { scoreCandidateFull } from "@/lib/ai";
+import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { deriveUpdateData } from "@/lib/score-utils";
 
-const CONCURRENCY = 3; // parallel calls without hammering the API
+const CONCURRENCY = 3;
 
 export async function POST(
   _req: Request,
@@ -32,34 +33,17 @@ export async function POST(
 
   let scored = 0;
 
-  // Process in chunks to stay within rate limits
   for (let i = 0; i < candidates.length; i += CONCURRENCY) {
     const chunk = candidates.slice(i, i + CONCURRENCY);
     await Promise.all(
       chunk.map(async (candidate) => {
         if (!candidate.profileText) return;
         try {
-          const { match, acceptance } = await scoreCandidateFull(candidate.profileText, parsedRole, salary);
-          const updateData: Record<string, unknown> = {
-            matchScore:  match.score,
-            matchReason: JSON.stringify({
-              summary:    match.summary,
-              reasoning:  match.reasoning,
-              dimensions: match.dimensions,
-              strengths:  match.strengths,
-              gaps:       match.gaps,
-            }),
-          };
-          if (acceptance) {
-            updateData.acceptanceScore  = acceptance.score;
-            updateData.acceptanceReason = JSON.stringify({
-              likelihood: acceptance.likelihood,
-              headline:   acceptance.headline,
-              signals:    acceptance.signals,
-              summary:    acceptance.summary,
-            });
-          }
-          await prisma.candidate.update({ where: { id: candidate.id }, data: updateData });
+          const breakdown = await scoreCandidateStructured(candidate.profileText, parsedRole, salary);
+          await prisma.candidate.update({
+            where: { id: candidate.id },
+            data:  deriveUpdateData(breakdown),
+          });
           scored++;
         } catch (err) {
           console.error(`Score failed for candidate ${candidate.id}:`, err);

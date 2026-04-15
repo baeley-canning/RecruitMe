@@ -43,6 +43,7 @@ model Candidate {
   matchReason      String?  // AI explanation JSON: { summary, strengths, gaps }
   acceptanceScore  Int?     // 0–100 likelihood candidate would accept this offer
   acceptanceReason String?  // AI JSON: { likelihood, headline, signals, summary }
+  scoreBreakdown   String?  // Structured scoring JSON: ScoreBreakdown type
   notes            String?  // Recruiter notes
   status       String   @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
   statusHistory    String?  // JSON: [{status, changedAt}]

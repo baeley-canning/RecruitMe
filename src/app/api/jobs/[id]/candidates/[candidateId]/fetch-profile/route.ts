@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { scoreCandidateFull, extractCandidateInfo, cleanCvText } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance, extractCandidateInfo, cleanCvText } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
+import { deriveUpdateData } from "@/lib/score-utils";
 
 // ---------------------------------------------------------------------------
 // Server-side LinkedIn scraper
@@ -156,7 +157,7 @@ export async function POST(
         return NextResponse.json(
           {
             error:
-              "This profile is private — it requires LinkedIn login to view. Install the bookmarklet (LinkedIn → setup page) to capture it while you're logged in.",
+              "This profile is private — it requires LinkedIn login to view. Install the Opera extension from LinkedIn setup to capture it while you're logged in.",
             private: true,
           },
           { status: 422 }
@@ -195,16 +196,15 @@ export async function POST(
   const scoreData: Record<string, unknown> = {};
   if (parsedRole) {
     try {
-      const { match, acceptance } = await scoreCandidateFull(profileText, parsedRole, salary);
-      scoreData.matchScore = match.score;
-      scoreData.matchReason = JSON.stringify({
-        summary: match.summary,
-        reasoning: match.reasoning,
-        dimensions: match.dimensions,
-        strengths: match.strengths,
-        gaps: match.gaps,
-      });
-      if (acceptance) {
+      const breakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
+      Object.assign(scoreData, deriveUpdateData(breakdown));
+    } catch {
+      /* keep existing scores */
+    }
+
+    if (profileText.length >= 250) {
+      try {
+        const acceptance = await predictAcceptance(profileText, parsedRole, salary);
         scoreData.acceptanceScore = acceptance.score;
         scoreData.acceptanceReason = JSON.stringify({
           likelihood: acceptance.likelihood,
@@ -212,9 +212,9 @@ export async function POST(
           signals: acceptance.signals,
           summary: acceptance.summary,
         });
+      } catch {
+        /* keep existing acceptance score */
       }
-    } catch {
-      /* keep existing scores */
     }
   }
 
