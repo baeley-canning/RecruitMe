@@ -198,77 +198,90 @@ export async function POST(
     let skippedScore = 0;
     let fromPool = 0;
 
-    // Score candidates in order, save only those that pass minScore, stop at maxResults.
-    const toScore = allNew.slice(0, maxResults * 8);
+    // Pre-filter obvious rejects before touching the AI.
+    const toScore = allNew
+      .filter((r) => {
+        if (!looksLikePersonName(r.name)) return false;
+        const loc = r.location || "";
+        if (loc && !locationMatches(loc, locationKeywords)) return false;
+        return true;
+      })
+      .slice(0, maxResults * 8);
 
-    for (let i = 0; i < toScore.length && saved.length < maxResults; i++) {
-      const r = toScore[i];
-      const name     = r.name;
-      const headline = r.headline;
-      const loc      = r.location || "";
+    // Score in parallel batches of 5 — ~5× faster than sequential.
+    const BATCH = 5;
+    for (let i = 0; i < toScore.length && saved.length < maxResults; i += BATCH) {
+      const batch = toScore.slice(i, i + BATCH);
 
-      if (!looksLikePersonName(name)) {
-        console.log(`[search] skip — bad name: "${name}"`);
-        continue;
-      }
+      type ScoredItem = {
+        r: SearchResult;
+        normUrl: string;
+        poolEntry: ReturnType<typeof poolMap.get>;
+        profileText: string | null;
+        isFromPool: boolean;
+        scoreData: Record<string, unknown>;
+        matchScore: number | null;
+      };
 
-      if (loc && !locationMatches(loc, locationKeywords)) {
-        console.log(`[search] skip — location mismatch: "${loc}"`);
-        continue;
-      }
+      const results = await Promise.all(
+        batch.map(async (r): Promise<ScoredItem> => {
+          const normUrl   = normaliseLinkedInUrl(r.linkedinUrl);
+          const poolEntry = poolMap.get(normUrl);
+          const profileText = poolEntry?.profileText ?? r.fullText ?? r.snippet ?? null;
+          const textToScore = profileText ?? `${r.name}. ${r.headline}`.trim();
+          const isFromPool  = !!poolEntry;
 
-      // Prefer talent-pool profile text over snippet when available.
-      const normUrl   = normaliseLinkedInUrl(r.linkedinUrl);
-      const poolEntry = poolMap.get(normUrl);
-      const profileText = poolEntry?.profileText ?? r.fullText ?? r.snippet ?? null;
-      const textToScore = profileText ?? `${name}. ${headline}`.trim();
-      const isFromPool  = !!poolEntry;
-
-      scored++;
-      console.log(
-        `[search] [scored ${scored}, saved ${saved.length}/${maxResults}] "${name}" — ${textToScore.length}ch${isFromPool ? " (pool)" : ""}`
+          scored++;
+          const scoreData: Record<string, unknown> = {};
+          let matchScore: number | null = null;
+          try {
+            const breakdown = await scoreCandidateStructured(textToScore, parsedRole, salary);
+            matchScore = breakdown.overall;
+            Object.assign(scoreData, deriveUpdateData(breakdown));
+          } catch (err) {
+            console.error(`[search] score failed for "${r.name}":`, err);
+          }
+          return { r, normUrl, poolEntry, profileText, isFromPool, scoreData, matchScore };
+        })
       );
 
-      // Score first, save only if it passes.
-      const scoreData: Record<string, unknown> = {};
-      let matchScore: number | null = null;
+      console.log(`[search] batch ${Math.floor(i / BATCH) + 1}: scored ${results.length}, running total ${scored}`);
 
-      try {
-        const breakdown = await scoreCandidateStructured(textToScore, parsedRole, salary);
-        matchScore = breakdown.overall;
-        Object.assign(scoreData, deriveUpdateData(breakdown));
-      } catch (err) {
-        console.error(`[search] score failed for "${name}":`, err);
-        if (minScore > 0) { skippedScore++; continue; }
-      }
+      for (const item of results) {
+        if (saved.length >= maxResults) break;
+        const { r, normUrl, poolEntry, profileText, isFromPool, scoreData, matchScore } = item;
 
-      if (minScore > 0 && matchScore !== null && matchScore < minScore) {
-        console.log(`[search] skip — score ${matchScore} < threshold ${minScore}`);
-        skippedScore++;
-        continue;
-      }
+        if (minScore > 0 && matchScore !== null && matchScore < minScore) {
+          skippedScore++;
+          continue;
+        }
+        // Also skip if scoring failed and minScore filter is active
+        if (minScore > 0 && matchScore === null) { skippedScore++; continue; }
 
-      try {
-        const candidate = await prisma.candidate.create({
-          data: {
-            jobId: id,
-            name: poolEntry?.name ?? name,
-            headline: poolEntry?.headline ?? headline ?? null,
-            location: poolEntry?.location ?? loc ?? location ?? null,
-            linkedinUrl: normUrl,
-            profileText: profileText || null,
-            source: isFromPool ? "talent_pool" : r.source,
-            status: "new",
-            ...(isFromPool && poolEntry?.profileCapturedAt
-              ? { profileCapturedAt: poolEntry.profileCapturedAt }
-              : {}),
-            ...scoreData,
-          },
-        });
-        saved.push(candidate as SavedCandidate);
-        if (isFromPool) fromPool++;
-      } catch (err) {
-        console.error("[search] candidate save failed:", err);
+        try {
+          const loc = r.location || "";
+          const candidate = await prisma.candidate.create({
+            data: {
+              jobId: id,
+              name: poolEntry?.name ?? r.name,
+              headline: poolEntry?.headline ?? r.headline ?? null,
+              location: poolEntry?.location ?? loc ?? location ?? null,
+              linkedinUrl: normUrl,
+              profileText: profileText || null,
+              source: isFromPool ? "talent_pool" : r.source,
+              status: "new",
+              ...(isFromPool && poolEntry?.profileCapturedAt
+                ? { profileCapturedAt: poolEntry.profileCapturedAt }
+                : {}),
+              ...scoreData,
+            },
+          });
+          saved.push(candidate as SavedCandidate);
+          if (isFromPool) fromPool++;
+          console.log(`[search] saved "${r.name}" score=${matchScore} (${saved.length}/${maxResults})`);
+        } catch (err) {
+          console.error("[search] candidate save failed:", err);
+        }
       }
     }
 

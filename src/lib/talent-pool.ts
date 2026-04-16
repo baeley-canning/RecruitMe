@@ -16,7 +16,13 @@
  */
 
 import { prisma } from "./db";
-import { normaliseLinkedInUrl } from "./linkedin-capture";
+
+// Local copy to avoid circular import with linkedin-capture.ts.
+function normaliseLinkedInUrl(raw: string): string {
+  const match = raw.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  const slug = match ? match[1] : raw.replace(/[?#].*$/, "").replace(/\/$/, "");
+  return `https://www.linkedin.com/in/${slug}`;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
