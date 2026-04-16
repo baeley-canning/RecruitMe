@@ -7,6 +7,7 @@ import {
   type ParsedRole,
 } from "./ai";
 import { safeParseJson } from "./utils";
+import { isProfileUnchanged } from "./talent-pool";
 
 // Legacy single-session key (kept for reference only; new code uses the queue key).
 export const LINKEDIN_EXTENSION_SESSION_KEY = "LINKEDIN_EXTENSION_PENDING_CAPTURE_V1";
@@ -149,27 +150,34 @@ async function buildCapturedCandidateData(args: {
   currentName: string;
   currentHeadline: string | null;
   currentLocation: string | null;
+  currentProfileText: string | null;
   profileText: string;
   linkedinUrl: string;
 }) {
-  const { jobId, currentName, currentHeadline, currentLocation, profileText, linkedinUrl } = args;
+  const { jobId, currentName, currentHeadline, currentLocation, currentProfileText, profileText, linkedinUrl } = args;
 
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) {
     throw new Error("Job not found");
   }
 
+  // If the new profile is very similar to the stored one, skip the expensive
+  // extractCandidateInfo and predictAcceptance calls (saves ~2/3 of AI spend).
+  const profileUnchanged = !!currentProfileText && isProfileUnchanged(currentProfileText, profileText);
+
   let name = currentName;
   let headline = currentHeadline;
   let location = currentLocation;
 
-  try {
-    const info = await extractCandidateInfo(profileText);
-    if (info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
-    if (info.headline && info.headline.length > 2) headline = info.headline;
-    if (info.location && info.location.length > 2) location = info.location;
-  } catch {
-    // Keep existing identity fields on parse failures.
+  if (!profileUnchanged) {
+    try {
+      const info = await extractCandidateInfo(profileText);
+      if (info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
+      if (info.headline && info.headline.length > 2) headline = info.headline;
+      if (info.location && info.location.length > 2) location = info.location;
+    } catch {
+      // Keep existing identity fields on parse failures.
+    }
   }
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
@@ -180,6 +188,7 @@ async function buildCapturedCandidateData(args: {
 
   const scoreData: Record<string, unknown> = {};
   if (parsedRole) {
+    // Always re-score — role requirements may have changed even if profile hasn't.
     try {
       const breakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
       Object.assign(scoreData, deriveUpdateData(breakdown));
@@ -187,7 +196,7 @@ async function buildCapturedCandidateData(args: {
       // Keep candidate unscored if the model call fails.
     }
 
-    if (profileText.length >= 250) {
+    if (!profileUnchanged && profileText.length >= 250) {
       try {
         Object.assign(scoreData, buildAcceptanceData(await predictAcceptance(profileText, parsedRole, salary)));
       } catch {
@@ -202,6 +211,7 @@ async function buildCapturedCandidateData(args: {
     location,
     linkedinUrl: normaliseLinkedInUrl(linkedinUrl),
     profileText,
+    profileCapturedAt: new Date(),
     ...scoreData,
   };
 }
@@ -224,6 +234,7 @@ export async function saveCapturedProfileToCandidate(args: {
     currentName: candidate.name,
     currentHeadline: candidate.headline,
     currentLocation: candidate.location,
+    currentProfileText: candidate.profileText,
     profileText: profileText.trim(),
     linkedinUrl,
   });
@@ -261,6 +272,7 @@ export async function importCapturedLinkedInProfile(args: {
     currentName: existing?.name ?? "Unknown",
     currentHeadline: existing?.headline ?? null,
     currentLocation: existing?.location ?? null,
+    currentProfileText: existing?.profileText ?? null,
     profileText: profileText.trim(),
     linkedinUrl: cleanUrl,
   });

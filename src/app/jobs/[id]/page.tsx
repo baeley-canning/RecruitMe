@@ -82,8 +82,11 @@ export default function JobDetailPage({
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState("");
   const [searching, setSearching] = useState(false);
-  const [searchResult, setSearchResult] = useState<{ count: number; message?: string } | null>(null);
+  const [searchResult, setSearchResult] = useState<{ count: number; message?: string; fromPool?: number } | null>(null);
   const [searchError, setSearchError] = useState("");
+  const [searchingPool, setSearchingPool] = useState(false);
+  const [poolResult, setPoolResult] = useState<{ count: number; message?: string } | null>(null);
+  const [poolError, setPoolError] = useState("");
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
   const [sources, setSources] = useState<{ serpapi: boolean; bing: boolean; pdl: boolean } | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
@@ -263,7 +266,7 @@ export default function JobDetailPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ maxResults, minScore, radiusKm }),
       });
-      const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string };
+      const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string; fromPool?: number };
       if (!res.ok || data.error) {
         if (data.error === "SERPAPI_KEY_MISSING") {
           setHasSerpApi(false);
@@ -271,13 +274,37 @@ export default function JobDetailPage({
           setSearchError(data.error ?? "Search failed");
         }
       } else {
-        setSearchResult({ count: data.count ?? 0, message: data.message });
+        setSearchResult({ count: data.count ?? 0, message: data.message, fromPool: data.fromPool });
         await fetchJob();
       }
     } catch {
       setSearchError("Search failed. Check your connection.");
     } finally {
       setSearching(false);
+    }
+  };
+
+  const handleSearchPool = async () => {
+    setSearchingPool(true);
+    setPoolError("");
+    setPoolResult(null);
+    try {
+      const res = await fetch(`/api/jobs/${id}/candidates/talent-pool`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ minScore, maxResults, radiusKm }),
+      });
+      const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string };
+      if (!res.ok || data.error) {
+        setPoolError(data.error ?? "Talent pool search failed");
+      } else {
+        setPoolResult({ count: data.count ?? 0, message: data.message });
+        await fetchJob();
+      }
+    } catch {
+      setPoolError("Talent pool search failed. Check your connection.");
+    } finally {
+      setSearchingPool(false);
     }
   };
 
@@ -1242,7 +1269,9 @@ export default function JobDetailPage({
                         <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" />
                           {searchResult.count > 0
-                            ? `Found and imported ${searchResult.count} candidates — scroll down to see them`
+                            ? searchResult.fromPool && searchResult.fromPool > 0
+                              ? `Found ${searchResult.count} candidates — ${searchResult.fromPool} from talent pool, ${searchResult.count - searchResult.fromPool} from LinkedIn`
+                              : `Found and imported ${searchResult.count} candidates — scroll down to see them`
                             : (searchResult.message ?? "No new candidates found. Try re-analysing with a broader job description.")
                           }
                         </p>
@@ -1253,18 +1282,45 @@ export default function JobDetailPage({
                           {searchError}
                         </p>
                       )}
+                      {poolResult && (
+                        <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          {poolResult.count > 0
+                            ? `Added ${poolResult.count} candidate${poolResult.count !== 1 ? "s" : ""} from talent pool — scroll down to see them`
+                            : (poolResult.message ?? "No talent pool candidates matched this role.")
+                          }
+                        </p>
+                      )}
+                      {poolError && (
+                        <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" />
+                          {poolError}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <Button
-                    onClick={handleSearch}
-                    loading={searching}
-                    disabled={searching || job.status === "closed"}
-                    size="lg"
-                    className="flex-shrink-0"
-                  >
-                    <Search className="w-4 h-4" />
-                    {searching ? "Searching..." : searchResult ? "Search Again" : "Search LinkedIn Now"}
-                  </Button>
+                  <div className="flex flex-col gap-2 flex-shrink-0">
+                    <Button
+                      onClick={handleSearch}
+                      loading={searching}
+                      disabled={searching || searchingPool || job.status === "closed"}
+                      size="lg"
+                    >
+                      <Search className="w-4 h-4" />
+                      {searching ? "Searching..." : searchResult ? "Search Again" : "Search LinkedIn Now"}
+                    </Button>
+                    <Button
+                      onClick={handleSearchPool}
+                      loading={searchingPool}
+                      disabled={searching || searchingPool || job.status === "closed"}
+                      size="sm"
+                      variant="outline"
+                      className="text-slate-600"
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      {searchingPool ? "Searching pool..." : "Search Talent Pool"}
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Search controls */}

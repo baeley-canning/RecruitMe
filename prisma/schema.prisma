@@ -48,7 +48,8 @@ model Candidate {
   status       String   @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
   statusHistory    String?  // JSON: [{status, changedAt}]
   contactedAt      DateTime? // When status first moved to "contacted"
-  source       String   @default("manual") // manual | serpapi | extension
+  source       String   @default("manual") // manual | serpapi | extension | talent_pool
+  profileCapturedAt DateTime? // When the full profile text was last fetched/captured
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

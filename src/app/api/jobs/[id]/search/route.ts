@@ -13,6 +13,8 @@ import { deriveUpdateData } from "@/lib/score-utils";
 import { expandLocationKeywords, locationMatches } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
+import { buildTalentPoolMap } from "@/lib/talent-pool";
+import { normaliseLinkedInUrl } from "@/lib/linkedin-capture";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
@@ -183,16 +185,21 @@ export async function POST(
       });
     }
 
-    // Score candidates in order, save only those that pass minScore, stop at maxResults.
-    // This means we never persist candidates the user didn't ask for and never burn
-    // Claude tokens past the point where we have enough passing candidates.
-    // We score at most maxResults * 8 raw candidates before giving up.
-    const toScore = allNew.slice(0, maxResults * 8);
+    // ── Phase 2b: Talent pool lookup ─────────────────────────────────────────
+    // For any new result whose LinkedIn URL already has a full profile in our
+    // DB (from a different job), reuse that profile instead of fetching again.
+    // We still score them fresh against this job's requirements.
+    const poolMap = await buildTalentPoolMap(allNew.map((r) => r.linkedinUrl));
+    console.log(`[search] talent pool: ${poolMap.size} of ${allNew.length} have existing full profiles`);
 
     type SavedCandidate = NonNullable<Awaited<ReturnType<typeof prisma.candidate.findFirst>>>;
     const saved: SavedCandidate[] = [];
     let scored = 0;
     let skippedScore = 0;
+    let fromPool = 0;
+
+    // Score candidates in order, save only those that pass minScore, stop at maxResults.
+    const toScore = allNew.slice(0, maxResults * 8);
 
     for (let i = 0; i < toScore.length && saved.length < maxResults; i++) {
       const r = toScore[i];
@@ -210,14 +217,19 @@ export async function POST(
         continue;
       }
 
-      const profileText = r.fullText ?? r.snippet ?? null;
+      // Prefer talent-pool profile text over snippet when available.
+      const normUrl   = normaliseLinkedInUrl(r.linkedinUrl);
+      const poolEntry = poolMap.get(normUrl);
+      const profileText = poolEntry?.profileText ?? r.fullText ?? r.snippet ?? null;
       const textToScore = profileText ?? `${name}. ${headline}`.trim();
+      const isFromPool  = !!poolEntry;
 
       scored++;
-      console.log(`[search] [scored ${scored}, saved ${saved.length}/${maxResults}] "${name}" — ${textToScore.length}ch`);
+      console.log(
+        `[search] [scored ${scored}, saved ${saved.length}/${maxResults}] "${name}" — ${textToScore.length}ch${isFromPool ? " (pool)" : ""}`
+      );
 
-      // ── Score first, save only if it passes ──────────────────────────────────
-      // Overall score is deterministic — AI provides evidence, fns compute number.
+      // Score first, save only if it passes.
       const scoreData: Record<string, unknown> = {};
       let matchScore: number | null = null;
 
@@ -230,7 +242,6 @@ export async function POST(
         if (minScore > 0) { skippedScore++; continue; }
       }
 
-      // Apply minScore filter before touching the DB
       if (minScore > 0 && matchScore !== null && matchScore < minScore) {
         console.log(`[search] skip — score ${matchScore} < threshold ${minScore}`);
         skippedScore++;
@@ -241,23 +252,27 @@ export async function POST(
         const candidate = await prisma.candidate.create({
           data: {
             jobId: id,
-            name,
-            headline: headline || null,
-            location: loc || location || null,
-            linkedinUrl: r.linkedinUrl,
+            name: poolEntry?.name ?? name,
+            headline: poolEntry?.headline ?? headline ?? null,
+            location: poolEntry?.location ?? loc ?? location ?? null,
+            linkedinUrl: normUrl,
             profileText: profileText || null,
-            source: r.source,
+            source: isFromPool ? "talent_pool" : r.source,
             status: "new",
+            ...(isFromPool && poolEntry?.profileCapturedAt
+              ? { profileCapturedAt: poolEntry.profileCapturedAt }
+              : {}),
             ...scoreData,
           },
         });
         saved.push(candidate as SavedCandidate);
+        if (isFromPool) fromPool++;
       } catch (err) {
         console.error("[search] candidate save failed:", err);
       }
     }
 
-    console.log(`[search] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore} below ${minScore}%`);
+    console.log(`[search] done — scored ${scored}, saved ${saved.length} (${fromPool} from pool), skipped ${skippedScore} below ${minScore}%`);
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
@@ -268,7 +283,13 @@ export async function POST(
       return NextResponse.json({ count: 0, candidates: [], message: reason });
     }
 
-    return NextResponse.json({ count: sorted.length, candidates: sorted });
+    const poolNote = fromPool > 0 ? ` (${fromPool} from talent pool, ${saved.length - fromPool} from LinkedIn)` : "";
+    return NextResponse.json({
+      count: sorted.length,
+      candidates: sorted,
+      fromPool,
+      message: sorted.length > 0 ? `Found ${sorted.length} candidates${poolNote}` : undefined,
+    });
   } catch (err) {
     console.error("Search error:", err);
     return NextResponse.json(

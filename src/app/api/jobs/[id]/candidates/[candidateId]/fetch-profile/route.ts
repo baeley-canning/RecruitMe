@@ -225,6 +225,7 @@ export async function POST(
       headline,
       location,
       profileText,
+      profileCapturedAt: new Date(),
       ...(body.success && body.data.linkedinUrl
         ? { linkedinUrl: body.data.linkedinUrl.split("?")[0] }
         : {}),
