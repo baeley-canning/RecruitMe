@@ -100,10 +100,9 @@ export default function JobDetailPage({
   const [scoringId, setScoringId] = useState<string | null>(null);
   // Per-candidate fetch status (keyed by candidateId).
   const [fetchStatuses, setFetchStatuses] = useState<Record<string, {
-    state: "queued" | "waiting" | "fetching" | "done" | "error";
+    state: "waiting" | "fetching" | "done" | "error";
     message: string;
   }>>({});
-  const [fetchQueueLength, setFetchQueueLength] = useState(0);
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
@@ -132,24 +131,18 @@ export default function JobDetailPage({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
 
-  // Fetch queue and 2-concurrent-session management.
+  // Per-candidate fetch tracking.
   interface FetchEntry {
     sessionId: string;
     candidateId: string;
     tab: Window;
     startedAt: number;
     done: boolean;
-    slotIdx: 0 | 1;
     pollInterval: ReturnType<typeof setInterval> | null;
   }
   const jobRef = useRef<Job | null>(null);
-  const fetchQueueRef = useRef<string[]>([]);
   const activeFetchesRef = useRef<Map<string, FetchEntry>>(new Map());
-  const tabsRef = useRef<[Window | null, Window | null]>([null, null]);
-  const fetchTimestampsRef = useRef<number[]>([]);
   // Stable fn-refs so setInterval callbacks always call the latest version.
-  const processSlotRef = useRef<(slotIdx: 0 | 1) => void>(() => {});
-  const startFetchWithTabRef = useRef<(candidateId: string, tab: Window, slotIdx: 0 | 1) => Promise<void>>(async () => {});
   const pollCandidateFetchRef = useRef<(candidateId: string) => Promise<void>>(async () => {});
   const finishFetchRef = useRef<(candidateId: string, state: "done" | "error", message: string) => void>(() => {});
 
@@ -168,7 +161,7 @@ export default function JobDetailPage({
     fetchJob();
   }, [fetchJob]);
 
-  // Keep jobRef in sync so queue functions can read the latest job without stale closures.
+  // Keep jobRef in sync so poll callbacks can read the latest job without stale closures.
   useEffect(() => { jobRef.current = job; }, [job]);
 
   useEffect(() => {
@@ -318,10 +311,6 @@ export default function JobDetailPage({
     }
   };
 
-  const MAX_CONCURRENT = 2;
-  const MAX_PER_WINDOW = 10;
-  const WINDOW_MS = 2 * 60 * 1000;
-
   const clearCandidateStatus = (candidateId: string, delay: number, expectedState?: string) =>
     setTimeout(() => {
       setFetchStatuses((prev) => {
@@ -333,17 +322,8 @@ export default function JobDetailPage({
     }, delay);
 
   // ---------------------------------------------------------------------------
-  // Queue-processing functions — call each other via refs to avoid stale closures.
+  // Fetch helpers — fn-refs so setInterval callbacks always call latest version.
   // ---------------------------------------------------------------------------
-
-  const processSlot = (slotIdx: 0 | 1) => {
-    if (fetchQueueRef.current.length === 0) return;
-    const tab = tabsRef.current[slotIdx];
-    if (!tab || tab.closed) return; // Tab gone — items stay "queued" until user retries
-    const candidateId = fetchQueueRef.current.shift()!;
-    setFetchQueueLength(fetchQueueRef.current.length);
-    void startFetchWithTabRef.current(candidateId, tab, slotIdx);
-  };
 
   const finishFetch = (candidateId: string, state: "done" | "error", message: string) => {
     const entry = activeFetchesRef.current.get(candidateId);
@@ -356,7 +336,6 @@ export default function JobDetailPage({
     }).catch(() => {});
     setFetchStatuses((prev) => ({ ...prev, [candidateId]: { state, message } }));
     clearCandidateStatus(candidateId, state === "done" ? 4000 : 6000, state);
-    processSlotRef.current(entry.slotIdx);
   };
 
   const pollCandidateFetch = async (candidateId: string) => {
@@ -402,7 +381,6 @@ export default function JobDetailPage({
         finishFetchRef.current(candidateId, "error", data.error ?? data.message ?? "Capture failed");
         return;
       }
-      // "pending" — still capturing; if tab closed show hint but keep polling
       if (entry.tab.closed) {
         setFetchStatuses((prev) => ({
           ...prev,
@@ -412,114 +390,17 @@ export default function JobDetailPage({
     } catch { /* network error — keep polling */ }
   };
 
-  const startFetchWithTab = async (candidateId: string, tab: Window, slotIdx: 0 | 1) => {
-    const candidate = jobRef.current?.candidates.find((c) => c.id === candidateId);
-    if (!candidate?.linkedinUrl) return;
-
-    // Rate-limit: max MAX_PER_WINDOW starts in any WINDOW_MS sliding window.
-    const now = Date.now();
-    fetchTimestampsRef.current = fetchTimestampsRef.current.filter((t) => now - t < WINDOW_MS);
-    if (fetchTimestampsRef.current.length >= MAX_PER_WINDOW) {
-      const oldestInWindow = Math.min(...fetchTimestampsRef.current);
-      const waitMs = WINDOW_MS - (now - oldestInWindow) + 500;
-      fetchQueueRef.current.unshift(candidateId);
-      setFetchQueueLength(fetchQueueRef.current.length);
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: { state: "queued", message: `Rate limit — retrying in ${Math.ceil(waitMs / 1000)}s` },
-      }));
-      setTimeout(() => processSlotRef.current(slotIdx), waitMs);
-      return;
-    }
-    fetchTimestampsRef.current.push(now);
-
-    setFetchStatuses((prev) => ({
-      ...prev,
-      [candidateId]: { state: "waiting", message: "Opening LinkedIn profile…" },
-    }));
-
-    try {
-      const start = await fetch("/api/extension/fetch-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: id, candidateId }),
-      });
-      const session = (await start.json()) as { sessionId?: string; error?: string };
-
-      if (!start.ok || !session.sessionId) {
-        try { tab.close(); } catch { /* ignore */ }
-        setFetchStatuses((prev) => ({
-          ...prev,
-          [candidateId]: { state: "error", message: session.error ?? "Could not start capture" },
-        }));
-        clearCandidateStatus(candidateId, 6000, "error");
-        processSlotRef.current(slotIdx);
-        return;
-      }
-
-      if (!tab.closed) tab.location.href = candidate.linkedinUrl;
-
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: { state: "waiting", message: "LinkedIn opened — extension capturing automatically…" },
-      }));
-
-      const entry: FetchEntry = {
-        sessionId: session.sessionId,
-        candidateId,
-        tab,
-        startedAt: Date.now(),
-        done: false,
-        slotIdx,
-        pollInterval: null,
-      };
-      activeFetchesRef.current.set(candidateId, entry);
-
-      const pollInterval = setInterval(() => {
-        void pollCandidateFetchRef.current(candidateId);
-      }, 1000);
-      entry.pollInterval = pollInterval;
-    } catch {
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: { state: "error", message: "Network error starting capture" },
-      }));
-      clearCandidateStatus(candidateId, 6000, "error");
-      processSlotRef.current(slotIdx);
-    }
-  };
-
-  // Keep fn-refs current every render so setInterval callbacks call the latest version.
-  processSlotRef.current = processSlot;
-  startFetchWithTabRef.current = startFetchWithTab;
+  // Keep fn-refs current every render.
   pollCandidateFetchRef.current = pollCandidateFetch;
   finishFetchRef.current = finishFetch;
 
-  // ---------------------------------------------------------------------------
-  // Public handlers — must NOT be async (window.open blocked after an await).
-  // ---------------------------------------------------------------------------
-
-  // Add a single candidate to the queue, or start immediately if a slot is free.
-  const handleQueueFetchProfile = (candidateId: string) => {
-    if (!job?.candidates.find((c) => c.id === candidateId)?.linkedinUrl) return;
+  // Must NOT be async — window.open is blocked after an await.
+  const handleFetchProfile = (candidateId: string) => {
+    const candidate = job?.candidates.find((c) => c.id === candidateId);
+    if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
-    if (fetchQueueRef.current.includes(candidateId)) return;
 
-    const slotIdx = (tabsRef.current as (Window | null)[]).findIndex(
-      (t) => !t || t.closed
-    ) as 0 | 1 | -1;
-
-    if (slotIdx === -1 || activeFetchesRef.current.size >= MAX_CONCURRENT) {
-      fetchQueueRef.current.push(candidateId);
-      setFetchQueueLength(fetchQueueRef.current.length);
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: { state: "queued", message: "Queued — waiting for a fetch slot…" },
-      }));
-      return;
-    }
-
-    const tab = window.open("about:blank", `rm-fetch-${slotIdx}`);
+    const tab = window.open("about:blank", "rm-fetch");
     if (!tab) {
       setFetchStatuses((prev) => ({
         ...prev,
@@ -528,11 +409,59 @@ export default function JobDetailPage({
       clearCandidateStatus(candidateId, 6000, "error");
       return;
     }
-    tabsRef.current[slotIdx] = tab;
-    void startFetchWithTabRef.current(candidateId, tab, slotIdx);
-  };
 
-  // Queue all candidates that have a LinkedIn URL but no full profile yet.
+    setFetchStatuses((prev) => ({
+      ...prev,
+      [candidateId]: { state: "waiting", message: "Opening LinkedIn profile…" },
+    }));
+
+    void (async () => {
+      try {
+        const start = await fetch("/api/extension/fetch-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: id, candidateId }),
+        });
+        const session = (await start.json()) as { sessionId?: string; error?: string };
+
+        if (!start.ok || !session.sessionId) {
+          try { tab.close(); } catch { /* ignore */ }
+          setFetchStatuses((prev) => ({
+            ...prev,
+            [candidateId]: { state: "error", message: session.error ?? "Could not start capture" },
+          }));
+          clearCandidateStatus(candidateId, 6000, "error");
+          return;
+        }
+
+        if (!tab.closed) tab.location.href = candidate.linkedinUrl!;
+
+        setFetchStatuses((prev) => ({
+          ...prev,
+          [candidateId]: { state: "waiting", message: "LinkedIn opened — extension capturing automatically…" },
+        }));
+
+        const entry: FetchEntry = {
+          sessionId: session.sessionId,
+          candidateId,
+          tab,
+          startedAt: Date.now(),
+          done: false,
+          pollInterval: null,
+        };
+        activeFetchesRef.current.set(candidateId, entry);
+        entry.pollInterval = setInterval(() => {
+          void pollCandidateFetchRef.current(candidateId);
+        }, 1000);
+      } catch {
+        setFetchStatuses((prev) => ({
+          ...prev,
+          [candidateId]: { state: "error", message: "Network error starting capture" },
+        }));
+        clearCandidateStatus(candidateId, 6000, "error");
+      }
+    })();
+  };
 
   const handleStatusChange = async (candidateId: string, status: string) => {
     await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
@@ -702,7 +631,7 @@ export default function JobDetailPage({
       await fetchJob();
       // URL-only: open LinkedIn so the Opera extension can capture it
       if (url && !text && created.id) {
-        handleQueueFetchProfile(created.id);
+        handleFetchProfile(created.id);
       }
     } finally {
       setAdding(false);
@@ -1574,17 +1503,11 @@ export default function JobDetailPage({
                     jobId={id}
                     onStatusChange={handleStatusChange}
                     onScore={handleScore}
-                    onFetchProfile={handleQueueFetchProfile}
+                    onFetchProfile={handleFetchProfile}
                     onNotesChange={handleNotesChange}
                     onDelete={handleDelete}
                     scoring={scoringId === candidate.id}
-                    fetchingProfile={
-                      fetchStatuses[candidate.id]?.state === "queued"
-                        ? "queued"
-                        : fetchStatuses[candidate.id] !== undefined
-                        ? true
-                        : false
-                    }
+                    fetchingProfile={fetchStatuses[candidate.id] !== undefined}
                   />
                 </div>
               </div>
@@ -1609,8 +1532,6 @@ export default function JobDetailPage({
           </div>
           <div className="space-y-2">
             {Object.entries(fetchStatuses)
-              .filter(([, s]) => s.state !== "queued")
-              .slice(0, MAX_CONCURRENT)
               .map(([candidateId, status]) => {
                 const cand = job?.candidates.find((c) => c.id === candidateId);
                 return (
@@ -1631,11 +1552,6 @@ export default function JobDetailPage({
                   </div>
                 );
               })}
-            {fetchQueueLength > 0 && (
-              <p className="text-xs text-amber-600 font-medium pt-1 border-t border-slate-100">
-                {fetchQueueLength} {fetchQueueLength === 1 ? "profile" : "profiles"} queued
-              </p>
-            )}
           </div>
         </div>
       )}
