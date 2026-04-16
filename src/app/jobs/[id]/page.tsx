@@ -533,39 +533,6 @@ export default function JobDetailPage({
   };
 
   // Queue all candidates that have a LinkedIn URL but no full profile yet.
-  const handleFetchAllProfiles = () => {
-    if (!job) return;
-    const toFetch = job.candidates.filter(
-      (c) =>
-        c.linkedinUrl &&
-        (!c.profileText || c.profileText.length < 500) &&
-        !activeFetchesRef.current.has(c.id) &&
-        !fetchQueueRef.current.includes(c.id) &&
-        !fetchStatuses[c.id]
-    );
-    if (toFetch.length === 0) return;
-
-    for (const candidate of toFetch) {
-      const slotIdx = (tabsRef.current as (Window | null)[]).findIndex(
-        (t) => !t || t.closed
-      ) as 0 | 1 | -1;
-
-      if (slotIdx !== -1 && activeFetchesRef.current.size < MAX_CONCURRENT) {
-        const tab = window.open("about:blank", `rm-fetch-${slotIdx}`);
-        if (tab) {
-          tabsRef.current[slotIdx] = tab;
-          void startFetchWithTabRef.current(candidate.id, tab, slotIdx);
-          continue;
-        }
-      }
-      fetchQueueRef.current.push(candidate.id);
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidate.id]: { state: "queued", message: "Queued…" },
-      }));
-    }
-    setFetchQueueLength(fetchQueueRef.current.length);
-  };
 
   const handleStatusChange = async (candidateId: string, status: string) => {
     await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
@@ -1536,19 +1503,6 @@ export default function JobDetailPage({
                   >
                     <Download className="w-3.5 h-3.5" />
                     Export CSV
-                  </Button>
-                )}
-                {job.candidates.some(
-                  (c) => c.linkedinUrl && (!c.profileText || c.profileText.length < 500)
-                ) && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleFetchAllProfiles}
-                    title={`Fetch LinkedIn profiles for all candidates (max ${MAX_CONCURRENT} at once, ${MAX_PER_WINDOW} per 2 min)`}
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Fetch all profiles
                   </Button>
                 )}
                 <Button size="sm" variant="outline" onClick={() => setShowAddCandidate(true)}>
