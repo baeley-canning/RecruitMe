@@ -8,7 +8,12 @@ import {
 } from "./ai";
 import { safeParseJson } from "./utils";
 
+// Legacy single-session key (kept for reference only; new code uses the queue key).
 export const LINKEDIN_EXTENSION_SESSION_KEY = "LINKEDIN_EXTENSION_PENDING_CAPTURE_V1";
+// Multi-session queue — stores ExtensionCaptureSession[] as JSON.
+export const LINKEDIN_EXTENSION_QUEUE_KEY = "LINKEDIN_EXTENSION_QUEUE_V1";
+
+const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 export type ExtensionCaptureStatus = "pending" | "processing" | "completed" | "error";
 
@@ -31,11 +36,101 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// ---------------------------------------------------------------------------
+// Multi-session queue helpers
+// ---------------------------------------------------------------------------
+
+async function readSessionQueue(): Promise<ExtensionCaptureSession[]> {
+  const row = await prisma.setting.findUnique({ where: { key: LINKEDIN_EXTENSION_QUEUE_KEY } });
+  if (!row?.value) return [];
+  try {
+    const data = JSON.parse(row.value) as unknown;
+    if (!Array.isArray(data)) return [];
+    return data as ExtensionCaptureSession[];
+  } catch {
+    return [];
+  }
+}
+
+async function writeSessionQueue(sessions: ExtensionCaptureSession[]): Promise<void> {
+  const now = Date.now();
+  const active = sessions.filter(
+    (s) => now - new Date(s.updatedAt || s.createdAt).getTime() <= SESSION_TTL_MS
+  );
+
+  if (active.length === 0) {
+    await prisma.setting.delete({ where: { key: LINKEDIN_EXTENSION_QUEUE_KEY } }).catch(() => {});
+    return;
+  }
+
+  await prisma.setting.upsert({
+    where: { key: LINKEDIN_EXTENSION_QUEUE_KEY },
+    update: { value: JSON.stringify(active) },
+    create: { key: LINKEDIN_EXTENSION_QUEUE_KEY, value: JSON.stringify(active) },
+  });
+}
+
+/** Returns all non-expired sessions currently in the queue. */
+export async function getSessionQueue(): Promise<ExtensionCaptureSession[]> {
+  const sessions = await readSessionQueue();
+  const now = Date.now();
+  const active = sessions.filter(
+    (s) => now - new Date(s.updatedAt || s.createdAt).getTime() <= SESSION_TTL_MS
+  );
+  if (active.length !== sessions.length) {
+    await writeSessionQueue(active);
+  }
+  return active;
+}
+
+/** Add (or replace an existing session for the same candidateId) in the queue. */
+export async function addSessionToQueue(session: ExtensionCaptureSession): Promise<void> {
+  const queue = await getSessionQueue();
+  const filtered = queue.filter((s) => s.candidateId !== session.candidateId);
+  await writeSessionQueue([...filtered, session]);
+}
+
+/** Find the first session matching a predicate. */
+export async function findSessionInQueue(
+  predicate: (s: ExtensionCaptureSession) => boolean
+): Promise<ExtensionCaptureSession | null> {
+  const queue = await getSessionQueue();
+  return queue.find(predicate) ?? null;
+}
+
+/** Update a session in the queue by sessionId. Returns the updated session or null if not found. */
+export async function updateSessionInQueue(
+  patch: Partial<ExtensionCaptureSession> & Pick<ExtensionCaptureSession, "sessionId">
+): Promise<ExtensionCaptureSession | null> {
+  const queue = await getSessionQueue();
+  const idx = queue.findIndex((s) => s.sessionId === patch.sessionId);
+  if (idx === -1) return null;
+
+  const updated: ExtensionCaptureSession = { ...queue[idx], ...patch, updatedAt: nowIso() };
+  queue[idx] = updated;
+  await writeSessionQueue(queue);
+  return updated;
+}
+
+/** Remove a session from the queue by sessionId. */
+export async function removeSessionFromQueue(sessionId: string): Promise<void> {
+  const queue = await getSessionQueue();
+  await writeSessionQueue(queue.filter((s) => s.sessionId !== sessionId));
+}
+
+// ---------------------------------------------------------------------------
+// URL helpers
+// ---------------------------------------------------------------------------
+
 export function normaliseLinkedInUrl(raw: string): string {
   const match = raw.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
   const slug = match ? match[1] : raw.replace(/[?#].*$/, "").replace(/\/$/, "");
   return `https://www.linkedin.com/in/${slug}`;
 }
+
+// ---------------------------------------------------------------------------
+// AI scoring helpers
+// ---------------------------------------------------------------------------
 
 function buildAcceptanceData(acceptance: Awaited<ReturnType<typeof predictAcceptance>>) {
   return {
@@ -190,6 +285,10 @@ export async function importCapturedLinkedInProfile(args: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Legacy single-session helpers (kept for backward compatibility during migration)
+// ---------------------------------------------------------------------------
+
 export async function getPendingExtensionCaptureSession(): Promise<ExtensionCaptureSession | null> {
   const row = await prisma.setting.findUnique({
     where: { key: LINKEDIN_EXTENSION_SESSION_KEY },
@@ -201,7 +300,7 @@ export async function getPendingExtensionCaptureSession(): Promise<ExtensionCapt
     if (!session?.sessionId || !session?.candidateId || !session?.linkedinUrl) return null;
 
     const ageMs = Date.now() - new Date(session.updatedAt || session.createdAt).getTime();
-    if (ageMs > 15 * 60 * 1000) {
+    if (ageMs > SESSION_TTL_MS) {
       await clearPendingExtensionCaptureSession();
       return null;
     }
@@ -238,4 +337,3 @@ export async function updatePendingExtensionCaptureSession(
 export async function clearPendingExtensionCaptureSession() {
   await prisma.setting.delete({ where: { key: LINKEDIN_EXTENSION_SESSION_KEY } }).catch(() => {});
 }
-

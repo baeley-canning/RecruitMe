@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  getPendingExtensionCaptureSession,
+  findSessionInQueue,
   normaliseLinkedInUrl,
   saveCapturedProfileToCandidate,
-  updatePendingExtensionCaptureSession,
+  updateSessionInQueue,
 } from "@/lib/linkedin-capture";
 
 const CORS = {
@@ -30,14 +30,14 @@ export async function POST(req: Request) {
   }
 
   const { sessionId, linkedinUrl, profileText } = parsed.data;
-  const session = await getPendingExtensionCaptureSession();
+  const session = await findSessionInQueue((s) => s.sessionId === sessionId);
 
-  if (!session || session.sessionId !== sessionId) {
-    return NextResponse.json({ error: "No pending capture session" }, { status: 404, headers: CORS });
+  if (!session) {
+    return NextResponse.json({ error: "No matching capture session" }, { status: 404, headers: CORS });
   }
 
   if (normaliseLinkedInUrl(session.linkedinUrl) !== normaliseLinkedInUrl(linkedinUrl)) {
-    await updatePendingExtensionCaptureSession({
+    await updateSessionInQueue({
       sessionId,
       status: "error",
       message: "Captured profile URL did not match the pending candidate",
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "LinkedIn URL mismatch" }, { status: 409, headers: CORS });
   }
 
-  await updatePendingExtensionCaptureSession({
+  await updateSessionInQueue({
     sessionId,
     status: "processing",
     message: "Profile received — scoring with AI",
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
       profileText,
     });
 
-    await updatePendingExtensionCaptureSession({
+    await updateSessionInQueue({
       sessionId,
       status: "completed",
       message: "Profile captured and scored",
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
     return NextResponse.json(candidate, { headers: CORS });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to save captured profile";
-    await updatePendingExtensionCaptureSession({
+    await updateSessionInQueue({
       sessionId,
       status: "error",
       message,

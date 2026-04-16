@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  getPendingExtensionCaptureSession,
+  findSessionInQueue,
   normaliseLinkedInUrl,
 } from "@/lib/linkedin-capture";
 
@@ -22,14 +22,18 @@ export async function GET(req: Request) {
     return NextResponse.json({ pending: false }, { status: 400, headers: CORS });
   }
 
-  const session = await getPendingExtensionCaptureSession();
-  if (!session || normaliseLinkedInUrl(session.linkedinUrl) !== normaliseLinkedInUrl(linkedinUrl)) {
+  const normUrl = normaliseLinkedInUrl(linkedinUrl);
+  const session = await findSessionInQueue(
+    (s) => s.status === "pending" && normaliseLinkedInUrl(s.linkedinUrl) === normUrl
+  );
+
+  if (!session) {
     return NextResponse.json({ pending: false, status: "idle" }, { headers: CORS });
   }
 
   return NextResponse.json(
     {
-      pending: session.status === "pending",
+      pending: true,
       status: session.status,
       sessionId: session.sessionId,
       candidateName: session.candidateName,

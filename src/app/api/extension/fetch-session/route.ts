@@ -3,10 +3,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
-  clearPendingExtensionCaptureSession,
-  getPendingExtensionCaptureSession,
+  addSessionToQueue,
+  findSessionInQueue,
+  getSessionQueue,
   normaliseLinkedInUrl,
-  setPendingExtensionCaptureSession,
+  removeSessionFromQueue,
   type ExtensionCaptureSession,
 } from "@/lib/linkedin-capture";
 
@@ -49,12 +50,12 @@ export async function POST(req: Request) {
     candidateName: candidate.name,
     linkedinUrl: normaliseLinkedInUrl(candidate.linkedinUrl),
     status: "pending",
-    message: "Waiting for Opera extension to capture the profile",
+    message: "Waiting for browser extension to capture the profile",
     createdAt: now,
     updatedAt: now,
   };
 
-  await setPendingExtensionCaptureSession(session);
+  await addSessionToQueue(session);
 
   return NextResponse.json(session, { headers: CORS });
 }
@@ -62,26 +63,38 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
-  const session = await getPendingExtensionCaptureSession();
 
-  // When polling with a specific sessionId, 404 signals the session has expired/cleared.
-  if (sessionId && (!session || session.sessionId !== sessionId)) {
-    return NextResponse.json({ session: null }, { status: 404, headers: CORS });
+  if (sessionId) {
+    // Polling by sessionId: 404 signals the session has expired or been cleared.
+    const session = await findSessionInQueue((s) => s.sessionId === sessionId);
+    if (!session) {
+      return NextResponse.json({ session: null }, { status: 404, headers: CORS });
+    }
+    return NextResponse.json(session, { headers: CORS });
   }
 
-  // No sessionId = popup browsing; return 200 with null when there is no session.
-  return NextResponse.json(session ?? null, { headers: CORS });
+  // No sessionId = popup / status query; return all sessions (or null if empty).
+  const queue = await getSessionQueue();
+  return NextResponse.json(queue.length > 0 ? queue : null, { headers: CORS });
 }
 
 export async function DELETE(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
-  const session = await getPendingExtensionCaptureSession();
 
-  if (!session || (sessionId && session.sessionId !== sessionId)) {
-    return NextResponse.json({ cleared: false }, { headers: CORS });
+  if (sessionId) {
+    const session = await findSessionInQueue((s) => s.sessionId === sessionId);
+    if (!session) {
+      return NextResponse.json({ cleared: false }, { headers: CORS });
+    }
+    await removeSessionFromQueue(sessionId);
+    return NextResponse.json({ cleared: true }, { headers: CORS });
   }
 
-  await clearPendingExtensionCaptureSession();
+  // No sessionId = clear entire queue.
+  const queue = await getSessionQueue();
+  for (const s of queue) {
+    await removeSessionFromQueue(s.sessionId);
+  }
   return NextResponse.json({ cleared: true }, { headers: CORS });
 }

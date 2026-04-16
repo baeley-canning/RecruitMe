@@ -100,11 +100,25 @@ async function refreshPendingStatus() {
     pageStatus.textContent = "Could not read current tab";
   }
 
-  // 2. Fetch the current session (any URL, always 200)
+  // 2. Fetch current sessions (GET returns null or an array when the multi-session queue is active).
   let session = null;
   try {
     const response = await sendMessage({ type: "get-session" });
-    session = response.session;
+    const sessionData = response.session;
+    // Normalise: could be a single object (legacy) or an array (queue).
+    const sessions = Array.isArray(sessionData)
+      ? sessionData
+      : sessionData
+      ? [sessionData]
+      : [];
+
+    // Prefer the session matching the current tab URL; fall back to first pending one.
+    const tabSlugNow = normaliseLinkedInSlug(currentTabUrl);
+    session =
+      sessions.find((s) => normaliseLinkedInSlug(s.linkedinUrl) === tabSlugNow) ||
+      sessions.find((s) => s.status === "pending") ||
+      sessions[0] ||
+      null;
   } catch (error) {
     capturePendingButton.disabled = true;
     setStatus(pendingStatus, error.message, "error");

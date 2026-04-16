@@ -79,7 +79,7 @@ interface CandidateCardProps {
   onNotesChange: (id: string, notes: string) => void;
   onDelete: (id: string) => void;
   scoring?: boolean;
-  fetchingProfile?: boolean;
+  fetchingProfile?: boolean | "queued";
 }
 
 interface OutreachMessage {
@@ -863,13 +863,19 @@ export function CandidateCard({
               size="sm"
               variant="ghost"
               onClick={() => onFetchProfile(candidate.id)}
-              loading={fetchingProfile}
-              disabled={fetchingProfile}
-              className="text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+              loading={fetchingProfile === true}
+              disabled={!!fetchingProfile}
+              className={
+                fetchingProfile === "queued"
+                  ? "text-amber-600 hover:bg-amber-50"
+                  : "text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+              }
               title="Fetch full LinkedIn profile and rescore"
             >
               {!fetchingProfile && <RefreshCw className="w-3.5 h-3.5" />}
-              {fetchingProfile ? "Fetching…" : "Fetch profile"}
+              {fetchingProfile === true && "Fetching…"}
+              {fetchingProfile === "queued" && "Queued"}
+              {!fetchingProfile && "Fetch profile"}
             </Button>
           )}
           {candidate.profileText && (
