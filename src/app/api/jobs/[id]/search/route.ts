@@ -198,44 +198,27 @@ export async function POST(
     let skippedScore = 0;
     let fromPool = 0;
 
-    // Minimum characters of profile text before we bother calling the AI scorer.
-    // SerpAPI snippets are typically 120–200 chars and give noisy, unreliable scores.
-    // Candidates below this threshold are saved immediately with no score — the user
-    // can fetch their full LinkedIn profiles to get a proper AI score.
-    const MIN_SCORE_TEXT = 300;
+    // Pre-filter name/location without touching AI, then cap at maxResults * 8.
+    const toScore = allNew
+      .filter((r) => {
+        if (!looksLikePersonName(r.name)) return false;
+        const loc = r.location || "";
+        if (loc && !locationMatches(loc, locationKeywords)) return false;
+        return true;
+      })
+      .slice(0, maxResults * 8);
 
-    // Separate rich-text candidates (PDL full profiles, talent pool) from snippets.
-    const richCandidates: SearchResult[] = [];
-    const snippetCandidates: SearchResult[] = [];
+    console.log(`[search] ${toScore.length} candidates to score`);
 
-    for (const r of allNew) {
-      const loc = r.location || "";
-      if (!looksLikePersonName(r.name)) continue;
-      if (loc && !locationMatches(loc, locationKeywords)) continue;
-
-      const normUrl   = normaliseLinkedInUrl(r.linkedinUrl);
-      const poolEntry = poolMap.get(normUrl);
-      const text = poolEntry?.profileText ?? r.fullText ?? r.snippet ?? "";
-      if (text.length >= MIN_SCORE_TEXT) {
-        richCandidates.push(r);
-      } else {
-        snippetCandidates.push(r);
-      }
-    }
-
-    console.log(`[search] ${richCandidates.length} rich profiles to score, ${snippetCandidates.length} snippets to save unscored`);
-
-    // ── Score rich candidates in parallel batches ─────────────────────────────
-    const BATCH = 5;
-    const toScore = richCandidates.slice(0, maxResults * 8);
-
+    // Score every candidate with AI — same as original, but 10 at a time in parallel.
+    const BATCH = 10;
     for (let i = 0; i < toScore.length && saved.length < maxResults; i += BATCH) {
       const batch = toScore.slice(i, i + BATCH);
 
       const results = await Promise.all(
         batch.map(async (r) => {
-          const normUrl   = normaliseLinkedInUrl(r.linkedinUrl);
-          const poolEntry = poolMap.get(normUrl);
+          const normUrl     = normaliseLinkedInUrl(r.linkedinUrl);
+          const poolEntry   = poolMap.get(normUrl);
           const profileText = poolEntry?.profileText ?? r.fullText ?? r.snippet ?? null;
           const textToScore = profileText ?? `${r.name}. ${r.headline}`.trim();
           const isFromPool  = !!poolEntry;
@@ -253,6 +236,8 @@ export async function POST(
           return { r, normUrl, poolEntry, profileText, isFromPool, scoreData, matchScore };
         })
       );
+
+      console.log(`[search] batch done — running total scored=${scored}, saved=${saved.length}`);
 
       for (const item of results) {
         if (saved.length >= maxResults) break;
@@ -286,33 +271,6 @@ export async function POST(
         } catch (err) {
           console.error("[search] candidate save failed:", err);
         }
-      }
-    }
-
-    // ── Save snippet candidates without scoring ───────────────────────────────
-    // These have too little text for reliable AI scoring. They appear unscored
-    // in the candidate list; use Fetch Profile to get a real score.
-    const snippetSlots = Math.max(0, maxResults - saved.length);
-    const snippetsToSave = snippetCandidates.slice(0, snippetSlots);
-    for (const r of snippetsToSave) {
-      const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
-      const loc = r.location || "";
-      try {
-        const candidate = await prisma.candidate.create({
-          data: {
-            jobId: id,
-            name: r.name,
-            headline: r.headline || null,
-            location: loc || location || null,
-            linkedinUrl: normUrl,
-            profileText: r.snippet || null,
-            source: r.source,
-            status: "new",
-          },
-        });
-        saved.push(candidate as SavedCandidate);
-      } catch (err) {
-        console.error("[search] snippet save failed:", err);
       }
     }
 
