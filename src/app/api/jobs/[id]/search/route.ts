@@ -198,40 +198,49 @@ export async function POST(
     let skippedScore = 0;
     let fromPool = 0;
 
-    // Pre-filter obvious rejects before touching the AI.
-    const toScore = allNew
-      .filter((r) => {
-        if (!looksLikePersonName(r.name)) return false;
-        const loc = r.location || "";
-        if (loc && !locationMatches(loc, locationKeywords)) return false;
-        return true;
-      })
-      .slice(0, maxResults * 8);
+    // Minimum characters of profile text before we bother calling the AI scorer.
+    // SerpAPI snippets are typically 120–200 chars and give noisy, unreliable scores.
+    // Candidates below this threshold are saved immediately with no score — the user
+    // can fetch their full LinkedIn profiles to get a proper AI score.
+    const MIN_SCORE_TEXT = 300;
 
-    // Score in parallel batches of 5 — ~5× faster than sequential.
+    // Separate rich-text candidates (PDL full profiles, talent pool) from snippets.
+    const richCandidates: SearchResult[] = [];
+    const snippetCandidates: SearchResult[] = [];
+
+    for (const r of allNew) {
+      const loc = r.location || "";
+      if (!looksLikePersonName(r.name)) continue;
+      if (loc && !locationMatches(loc, locationKeywords)) continue;
+
+      const normUrl   = normaliseLinkedInUrl(r.linkedinUrl);
+      const poolEntry = poolMap.get(normUrl);
+      const text = poolEntry?.profileText ?? r.fullText ?? r.snippet ?? "";
+      if (text.length >= MIN_SCORE_TEXT) {
+        richCandidates.push(r);
+      } else {
+        snippetCandidates.push(r);
+      }
+    }
+
+    console.log(`[search] ${richCandidates.length} rich profiles to score, ${snippetCandidates.length} snippets to save unscored`);
+
+    // ── Score rich candidates in parallel batches ─────────────────────────────
     const BATCH = 5;
+    const toScore = richCandidates.slice(0, maxResults * 8);
+
     for (let i = 0; i < toScore.length && saved.length < maxResults; i += BATCH) {
       const batch = toScore.slice(i, i + BATCH);
 
-      type ScoredItem = {
-        r: SearchResult;
-        normUrl: string;
-        poolEntry: ReturnType<typeof poolMap.get>;
-        profileText: string | null;
-        isFromPool: boolean;
-        scoreData: Record<string, unknown>;
-        matchScore: number | null;
-      };
-
       const results = await Promise.all(
-        batch.map(async (r): Promise<ScoredItem> => {
+        batch.map(async (r) => {
           const normUrl   = normaliseLinkedInUrl(r.linkedinUrl);
           const poolEntry = poolMap.get(normUrl);
           const profileText = poolEntry?.profileText ?? r.fullText ?? r.snippet ?? null;
           const textToScore = profileText ?? `${r.name}. ${r.headline}`.trim();
           const isFromPool  = !!poolEntry;
-
           scored++;
+
           const scoreData: Record<string, unknown> = {};
           let matchScore: number | null = null;
           try {
@@ -245,21 +254,17 @@ export async function POST(
         })
       );
 
-      console.log(`[search] batch ${Math.floor(i / BATCH) + 1}: scored ${results.length}, running total ${scored}`);
-
       for (const item of results) {
         if (saved.length >= maxResults) break;
         const { r, normUrl, poolEntry, profileText, isFromPool, scoreData, matchScore } = item;
+        const loc = r.location || "";
 
-        if (minScore > 0 && matchScore !== null && matchScore < minScore) {
+        if (minScore > 0 && (matchScore === null || matchScore < minScore)) {
           skippedScore++;
           continue;
         }
-        // Also skip if scoring failed and minScore filter is active
-        if (minScore > 0 && matchScore === null) { skippedScore++; continue; }
 
         try {
-          const loc = r.location || "";
           const candidate = await prisma.candidate.create({
             data: {
               jobId: id,
@@ -278,10 +283,36 @@ export async function POST(
           });
           saved.push(candidate as SavedCandidate);
           if (isFromPool) fromPool++;
-          console.log(`[search] saved "${r.name}" score=${matchScore} (${saved.length}/${maxResults})`);
         } catch (err) {
           console.error("[search] candidate save failed:", err);
         }
+      }
+    }
+
+    // ── Save snippet candidates without scoring ───────────────────────────────
+    // These have too little text for reliable AI scoring. They appear unscored
+    // in the candidate list; use Fetch Profile to get a real score.
+    const snippetSlots = Math.max(0, maxResults - saved.length);
+    const snippetsToSave = snippetCandidates.slice(0, snippetSlots);
+    for (const r of snippetsToSave) {
+      const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+      const loc = r.location || "";
+      try {
+        const candidate = await prisma.candidate.create({
+          data: {
+            jobId: id,
+            name: r.name,
+            headline: r.headline || null,
+            location: loc || location || null,
+            linkedinUrl: normUrl,
+            profileText: r.snippet || null,
+            source: r.source,
+            status: "new",
+          },
+        });
+        saved.push(candidate as SavedCandidate);
+      } catch (err) {
+        console.error("[search] snippet save failed:", err);
       }
     }
 
