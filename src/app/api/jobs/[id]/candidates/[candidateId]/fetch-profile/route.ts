@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { scoreCandidateStructured, predictAcceptance, extractCandidateInfo, cleanCvText } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
-import { deriveUpdateData } from "@/lib/score-utils";
+import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 
 // ---------------------------------------------------------------------------
 // Server-side LinkedIn scraper
@@ -106,7 +106,7 @@ async function scrapeLinkedIn(url: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Body schema — profileText is optional (provided by bookmarklet postMessage)
+// Body schema — profileText is optional (provided by the extension/manual import)
 // When absent the route scrapes LinkedIn server-side.
 // ---------------------------------------------------------------------------
 const BodySchema = z.object({
@@ -134,7 +134,7 @@ export async function POST(
   let profileText: string;
 
   if (body.success && body.data.profileText) {
-    // Text already provided (bookmarklet / Tampermonkey postMessage fallback)
+    // Text already provided by the extension or a manual client-side import.
     profileText = body.data.profileText;
   } else {
     // ── Primary path: server-side scrape ──
@@ -196,7 +196,14 @@ export async function POST(
   const scoreData: Record<string, unknown> = {};
   if (parsedRole) {
     try {
-      const breakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
+      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
+      const breakdown = applyLocationFitOverride(
+        rawBreakdown,
+        location,
+        parsedRole.location,
+        parsedRole.location_rules,
+        job.isRemote,
+      );
       Object.assign(scoreData, deriveUpdateData(breakdown));
     } catch {
       /* keep existing scores */

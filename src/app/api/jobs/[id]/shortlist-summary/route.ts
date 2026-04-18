@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { chat } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
+import type { ScoreBreakdown } from "@/lib/scoring";
 
 export interface CandidateSummaryInput {
   id: string;
@@ -11,6 +12,7 @@ export interface CandidateSummaryInput {
   location: string | null;
   matchScore: number | null;
   matchReason: string | null;
+  scoreBreakdown: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
   notes: string | null;
@@ -54,18 +56,23 @@ export async function POST(
     const notes    = c.notes?.trim() ? `Recruiter notes: ${c.notes.trim()}` : "";
     const profile  = c.profileText ? c.profileText.slice(0, 600) : "";
 
-    // matchReason is stored as JSON — extract human-readable fields
+    const breakdown = safeParseJson<ScoreBreakdown | null>(c.scoreBreakdown, null);
+    const legacyMatch = safeParseJson<{ summary?: string; reasoning?: string; strengths?: string[]; gaps?: string[] } | null>(c.matchReason, null);
+
     let reasonText = "";
-    if (c.matchReason) {
-      try {
-        const mr = JSON.parse(c.matchReason) as { summary?: string; reasoning?: string; strengths?: string[]; gaps?: string[] };
-        const parts: string[] = [];
-        if (mr.summary)    parts.push(mr.summary);
-        if (mr.reasoning)  parts.push(mr.reasoning);
-        if (mr.strengths?.length) parts.push(`Strengths: ${mr.strengths.join(", ")}`);
-        if (mr.gaps?.length)      parts.push(`Gaps: ${mr.gaps.join(", ")}`);
-        reasonText = parts.join(" ").trim();
-      } catch { reasonText = ""; }
+    if (breakdown) {
+      const parts: string[] = [];
+      if (breakdown.recruiter_summary) parts.push(breakdown.recruiter_summary);
+      if (breakdown.reasons_for?.length) parts.push(`Strengths: ${breakdown.reasons_for.join(", ")}`);
+      if (breakdown.reasons_against?.length) parts.push(`Gaps: ${breakdown.reasons_against.join(", ")}`);
+      reasonText = parts.join(" ").trim();
+    } else if (legacyMatch) {
+      const parts: string[] = [];
+      if (legacyMatch.summary) parts.push(legacyMatch.summary);
+      if (legacyMatch.reasoning) parts.push(legacyMatch.reasoning);
+      if (legacyMatch.strengths?.length) parts.push(`Strengths: ${legacyMatch.strengths.join(", ")}`);
+      if (legacyMatch.gaps?.length) parts.push(`Gaps: ${legacyMatch.gaps.join(", ")}`);
+      reasonText = parts.join(" ").trim();
     }
 
     // acceptanceReason is also JSON

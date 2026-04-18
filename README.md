@@ -178,7 +178,7 @@ npm run build
 7. Promote the draft into a workspace candidate.
 8. Open `/deliverables?searchId=<your-search-id>` and create a shortlist pack.
 9. Confirm the generated pack opens at `/deliverables/[shortlistId]`.
-10. If you are sourcing on LinkedIn, load the browser companion from `browser-companion/searchdesk-linkedin-bridge`, run the search through `Open LinkedIn bridge`, and send visible results back into the shortlist lab.
+10. If you are sourcing on LinkedIn, load the Opera/Chromium browser companion from `browser-companion/recruitme-opera-linkedin-capture`, then use RecruitMe's `Fetch profile` flow or the extension popup to capture visible profiles back into the app.
 
 ## Current boundaries
 

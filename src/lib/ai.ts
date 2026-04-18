@@ -8,6 +8,12 @@ import {
   type NiceToHaveStatus,
   type CategoryScore,
 } from "./scoring";
+import {
+  ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS,
+  buildProfileExcerpt,
+  OUTREACH_PROFILE_EXCERPT_MAX_CHARS,
+  SCORE_PROFILE_EXCERPT_MAX_CHARS,
+} from "./profile-excerpt";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude, OpenAI, and Ollama so all AI functions stay clean.
@@ -133,6 +139,39 @@ function parseJson<T>(text: string): T {
   throw new Error("Failed to parse JSON from AI response");
 }
 
+function normalizeCoverageKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function findCoverageMatch<T extends { requirement: string }>(
+  expectedRequirement: string,
+  items: T[],
+  usedIndexes: Set<number>
+): T | null {
+  const expectedKey = normalizeCoverageKey(expectedRequirement);
+  let looseIndex = -1;
+
+  for (let index = 0; index < items.length; index += 1) {
+    if (usedIndexes.has(index)) continue;
+    const candidateKey = normalizeCoverageKey(items[index].requirement);
+    if (!candidateKey) continue;
+    if (candidateKey === expectedKey) {
+      usedIndexes.add(index);
+      return items[index];
+    }
+    if (looseIndex === -1 && (candidateKey.includes(expectedKey) || expectedKey.includes(candidateKey))) {
+      looseIndex = index;
+    }
+  }
+
+  if (looseIndex !== -1) {
+    usedIndexes.add(looseIndex);
+    return items[looseIndex];
+  }
+
+  return null;
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ParsedRole {
@@ -155,24 +194,6 @@ export interface ParsedRole {
   // Legacy — kept populated for backward compat with older scored candidates
   skills_required: string[];
   skills_preferred: string[];
-}
-
-export interface ScoreDimensions {
-  skills: number;
-  experience: number;
-  industry: number;
-  location: number;
-  seniority: number;
-}
-
-export interface CandidateScore {
-  score: number;
-  summary: string;
-  reasoning: string;
-  dimensions: ScoreDimensions;
-  strengths: string[];
-  gaps: string[];
-  recommended: boolean;
 }
 
 export interface AcceptanceSignal {
@@ -259,68 +280,12 @@ Rules:
   };
 }
 
-export async function scoreCandidate(
-  profileText: string,
-  parsedRole: ParsedRole,
-  salary?: { min: number; max: number } | null
-): Promise<CandidateScore> {
-  const salaryLine = salary?.min || salary?.max
-    ? `Salary budget: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD/year`
-    : "";
-
-  const roleContext = `Title: ${parsedRole.title}
-Location: ${parsedRole.location}
-Experience: ${parsedRole.experience}
-${salaryLine}
-Required skills: ${parsedRole.skills_required.join(", ")}
-Preferred skills: ${parsedRole.skills_preferred.join(", ")}
-Key responsibilities: ${parsedRole.responsibilities.slice(0, 5).join("; ")}`.trim();
-
-  const text = await chat(`You are a recruitment assistant scoring a candidate against a job.
-
-Job Requirements:
-${roleContext}
-
-Candidate Profile:
-${profileText.slice(0, 3000)}
-
-Return ONLY valid JSON. No markdown, no explanation, no newlines inside string values.
-{"score":78,"summary":"One sentence verdict.","reasoning":"Two sentences max. Reference specific skills and titles from the profile.","dimensions":{"skills":85,"experience":70,"industry":75,"location":100,"seniority":60},"strengths":["strength"],"gaps":["gap"],"recommended":true}
-
-Scoring rules:
-- 80-100: strong match on most required skills and experience level
-- 60-79: good match — relevant role/industry, some required skills confirmed
-- 40-59: partial match — adjacent skills or wrong seniority
-- 0-39: poor match
-
-IMPORTANT: If the profile is a short snippet, score based on what IS confirmed — do not heavily penalise for skills not mentioned. A frontend developer with React in the right location should score 65-80 even if Python/Docker aren't mentioned, because these are learnable adjacent skills. Only penalise hard if the profile actively contradicts a requirement. Never invent facts.`);
-
-  const parsed = parseJson<Partial<CandidateScore>>(text);
-  const clamp  = (v: unknown) => typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : 0;
-  const rawDim = parsed.dimensions as Partial<ScoreDimensions> | undefined;
-
-  return {
-    score:     clamp(parsed.score),
-    summary:   parsed.summary ?? "",
-    reasoning: parsed.reasoning ?? "",
-    dimensions: {
-      skills:     clamp(rawDim?.skills),
-      experience: clamp(rawDim?.experience),
-      industry:   clamp(rawDim?.industry),
-      location:   clamp(rawDim?.location),
-      seniority:  clamp(rawDim?.seniority),
-    },
-    strengths:   parsed.strengths ?? [],
-    gaps:        parsed.gaps ?? [],
-    recommended: parsed.recommended ?? false,
-  };
-}
-
 export async function predictAcceptance(
   profileText: string,
   parsedRole: ParsedRole,
   salary?: { min: number; max: number } | null
 ): Promise<AcceptancePrediction> {
+  const profileSlice = buildProfileExcerpt(profileText, ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS);
   const salaryLine = salary?.min || salary?.max
     ? `Salary offered: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD/year`
     : "";
@@ -334,7 +299,7 @@ Experience required: ${parsedRole.experience}
 ${salaryLine}
 
 Candidate profile:
-${profileText.slice(0, 3000)}
+${profileSlice}
 
 Assess using only evidence in the profile. Consider: tenure in current role, career momentum, job mobility history, salary uplift, title step up/lateral/down, location friction, company instability signals, bio language.
 
@@ -364,113 +329,12 @@ Score: 70-100 high, 40-69 medium, 0-39 low. Max 5 signals. Only include signals 
   };
 }
 
-// ── Combined score — one call instead of two ─────────────────────────────────
-// Use this instead of calling scoreCandidate + predictAcceptance separately.
-// When profileText is short (snippet only), acceptance is skipped — there's
-// simply not enough data to predict it meaningfully.
-
-const ACCEPTANCE_MIN_CHARS = 250; // below this, don't waste tokens on acceptance
-
-export interface CombinedScore {
-  match:      CandidateScore;
-  acceptance: AcceptancePrediction | null;
-}
-
-export async function scoreCandidateFull(
-  profileText: string,
-  parsedRole: ParsedRole,
-  salary?: { min: number; max: number } | null
-): Promise<CombinedScore> {
-  const clamp = (v: unknown, fallback = 0) =>
-    typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : fallback;
-
-  const hasEnoughForAcceptance = profileText.length >= ACCEPTANCE_MIN_CHARS;
-  const salaryLine = salary?.min || salary?.max
-    ? `Budget: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD`
-    : "";
-
-  const acceptanceSection = hasEnoughForAcceptance ? `
-  "a_score": 0-100,
-  "a_likelihood": "high|medium|low",
-  "a_headline": "one-line mobility signal",
-  "a_signals": [{"label":"...","positive":true}]` : "";
-
-  const acceptanceInstructions = hasEnoughForAcceptance ? `
-Acceptance (a_*): 70+ high, 40-69 medium, 0-39 low. Use tenure, seniority step, location friction. Max 4 signals. Evidence only.` : "";
-
-  // Build a rich role context using the new fields where available, falling back to legacy fields
-  const mustHaves   = parsedRole.must_haves?.length   ? parsedRole.must_haves   : parsedRole.skills_required;
-  const niceToHaves = parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred;
-  const knockouts   = parsedRole.knockout_criteria ?? [];
-  const seniorityLine = parsedRole.seniority_band ? `Seniority: ${parsedRole.seniority_band}` : "";
-  const knockoutLine  = knockouts.length ? `Knockout criteria (instant fail if missing): ${knockouts.join("; ")}` : "";
-
-  const text = await chat(
-    `Score this candidate. Return ONLY compact JSON — no markdown, no newlines inside strings.
-
-Role: ${parsedRole.title} | ${parsedRole.location}${salaryLine ? ` | ${salaryLine}` : ""}${seniorityLine ? ` | ${seniorityLine}` : ""}
-Must-haves: ${mustHaves.slice(0, 10).join(", ")}
-Nice-to-haves: ${niceToHaves.slice(0, 6).join(", ")}${knockoutLine ? `\n${knockoutLine}` : ""}
-
-Candidate:
-${profileText.slice(0, 2000)}
-
-JSON format:
-{"score":0-100,"summary":"one sentence","reasoning":"two sentences max","dimensions":{"skills":0,"experience":0,"industry":0,"location":0,"seniority":0},"strengths":["..."],"gaps":["..."],"recommended":true${acceptanceSection}}
-
-Scoring: 80+ strong match, 60-79 good, 40-59 partial, 0-39 poor.
-If knockout criteria are present and the candidate clearly fails one, cap score at 20 and state the knockout in gaps.
-Short snippet? Score what IS confirmed — don't penalise for skills not mentioned.${acceptanceInstructions}`,
-    0.1
-  );
-
-  // Parse JSON — the combined object may contain optional acceptance fields
-  const raw = parseJson<Record<string, unknown>>(text);
-
-  const rawDim = raw.dimensions as Partial<ScoreDimensions> | undefined;
-  const match: CandidateScore = {
-    score:     clamp(raw.score),
-    summary:   typeof raw.summary === "string"   ? raw.summary   : "",
-    reasoning: typeof raw.reasoning === "string" ? raw.reasoning : "",
-    dimensions: {
-      skills:     clamp(rawDim?.skills),
-      experience: clamp(rawDim?.experience),
-      industry:   clamp(rawDim?.industry),
-      location:   clamp(rawDim?.location),
-      seniority:  clamp(rawDim?.seniority),
-    },
-    strengths:   Array.isArray(raw.strengths) ? raw.strengths.filter((s): s is string => typeof s === "string") : [],
-    gaps:        Array.isArray(raw.gaps)      ? raw.gaps.filter((s): s is string => typeof s === "string")      : [],
-    recommended: raw.recommended === true,
-  };
-
-  let acceptance: AcceptancePrediction | null = null;
-  if (hasEnoughForAcceptance && raw.a_score !== undefined) {
-    const rawLikelihood = raw.a_likelihood;
-    const likelihood: "high" | "medium" | "low" =
-      rawLikelihood === "high" || rawLikelihood === "medium" || rawLikelihood === "low"
-        ? rawLikelihood : "medium";
-    acceptance = {
-      score:     clamp(raw.a_score, 50),
-      likelihood,
-      headline:  typeof raw.a_headline === "string" ? raw.a_headline : "",
-      signals:   Array.isArray(raw.a_signals)
-        ? raw.a_signals
-            .filter((s): s is AcceptanceSignal => typeof s === "object" && s !== null && typeof (s as AcceptanceSignal).label === "string")
-            .slice(0, 4)
-        : [],
-      summary: "",
-    };
-  }
-
-  return { match, acceptance };
-}
-
 export async function generateOutreachMessage(
   profileText: string,
   parsedRole: ParsedRole,
   candidateName: string
 ): Promise<OutreachMessage> {
+  const profileSlice = buildProfileExcerpt(profileText, OUTREACH_PROFILE_EXCERPT_MAX_CHARS);
   const text = await chat(`You are a recruitment consultant writing a personalized outreach message to a passive candidate.
 
 Role being offered:
@@ -480,7 +344,7 @@ Location: ${parsedRole.location}
 
 Candidate: ${candidateName}
 Profile:
-${profileText.slice(0, 2500)}
+${profileSlice}
 
 Write two personalised outreach messages. Reference their ACTUAL job titles, companies, and specific skills — never be generic.
 
@@ -557,7 +421,7 @@ export async function scoreCandidateStructured(
   const mustHavesList = mustHaves.map((m, i) => `${i + 1}. ${m}`).join("\n");
   const niceList      = niceToHaves.map((n, i) => `${i + 1}. ${n}`).join("\n");
 
-  const profileSlice = profileText.slice(0, 2500);
+  const profileSlice = buildProfileExcerpt(profileText, SCORE_PROFILE_EXCERPT_MAX_CHARS);
 
   const text = await chat(
     `You are a senior recruitment consultant scoring a candidate against a specific role. Return ONLY compact JSON — no markdown, no newlines inside string values.
@@ -658,7 +522,7 @@ Short snippet rule: score what IS confirmed. Do not penalise for skills not ment
   const validMH  = new Set(["confirmed", "likely", "missing", "negative", "unknown"]);
   const validNTH = new Set(["confirmed", "likely", "absent"]);
 
-  const mustHaveCoverage: MustHaveStatus[] = (raw.must_have_coverage ?? [])
+  const rawMustHaveCoverage: MustHaveStatus[] = (raw.must_have_coverage ?? [])
     .filter((c) => typeof c?.requirement === "string" && typeof c?.status === "string")
     .map((c) => ({
       requirement: c.requirement!,
@@ -666,13 +530,47 @@ Short snippet rule: score what IS confirmed. Do not penalise for skills not ment
       evidence:    typeof c.evidence === "string" ? c.evidence : "Not mentioned",
     }));
 
-  const niceToHaveCoverage: NiceToHaveStatus[] = (raw.nice_to_have_coverage ?? [])
+  const rawNiceToHaveCoverage: NiceToHaveStatus[] = (raw.nice_to_have_coverage ?? [])
     .filter((c) => typeof c?.requirement === "string" && typeof c?.status === "string")
     .map((c) => ({
       requirement: c.requirement!,
       status:      validNTH.has(c.status!) ? (c.status as NiceToHaveStatus["status"]) : "absent",
       evidence:    typeof c.evidence === "string" ? c.evidence : "Not mentioned",
     }));
+
+  const usedMustHaveIndexes = new Set<number>();
+  const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
+    const match = findCoverageMatch(requirement, rawMustHaveCoverage, usedMustHaveIndexes);
+    if (match) {
+      return {
+        requirement,
+        status: match.status,
+        evidence: match.evidence,
+      };
+    }
+    return {
+      requirement,
+      status: "unknown",
+      evidence: "No coverage returned by model for this must-have.",
+    };
+  });
+
+  const usedNiceToHaveIndexes = new Set<number>();
+  const niceToHaveCoverage: NiceToHaveStatus[] = niceToHaves.map((requirement) => {
+    const match = findCoverageMatch(requirement, rawNiceToHaveCoverage, usedNiceToHaveIndexes);
+    if (match) {
+      return {
+        requirement,
+        status: match.status,
+        evidence: match.evidence,
+      };
+    }
+    return {
+      requirement,
+      status: "absent",
+      evidence: "No coverage returned by model for this nice-to-have.",
+    };
+  });
 
   const stringArray = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];

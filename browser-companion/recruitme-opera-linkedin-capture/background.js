@@ -133,6 +133,24 @@ async function completePendingCapture(tabId, pending, preferredBase = "") {
   );
 }
 
+async function completePendingCaptureWithRetry(tabId, pending, preferredBase = "") {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await completePendingCapture(tabId, pending, preferredBase);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (!/navigated during capture/i.test(lastError.message)) {
+        throw lastError;
+      }
+      await sleep(1400);
+    }
+  }
+
+  throw lastError || new Error("LinkedIn capture failed");
+}
+
 async function maybeAutoCapture(tabId, linkedinUrl) {
   const lockKey = `${tabId}:${linkedinUrl}`;
   if (activeAutoCaptures.has(lockKey)) return;
@@ -143,7 +161,7 @@ async function maybeAutoCapture(tabId, linkedinUrl) {
   activeAutoCaptures.add(lockKey);
   try {
     await sleep(600);
-    await completePendingCapture(tabId, pending.data, pending.base);
+    await completePendingCaptureWithRetry(tabId, pending.data, pending.base);
   } catch (error) {
     console.warn("RecruitMe auto-capture failed:", error);
   } finally {
@@ -239,7 +257,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!pending.data?.pending || !pending.data?.sessionId) {
         throw new Error("No pending RecruitMe fetch matches this LinkedIn profile");
       }
-      await completePendingCapture(tab.id, pending.data, pending.base);
+      await completePendingCaptureWithRetry(tab.id, pending.data, pending.base);
       return pending.data.candidateName || "Profile";
     })()
       .then((candidateName) => sendResponse({ ok: true, candidateName }))

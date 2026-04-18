@@ -1,0 +1,43 @@
+{
+  "candidateLocation": "Napier, Hawke's Bay, New Zealand",
+  "targetLocation": "Wellington",
+  "locationRules": "Wellington office, 3 days in office",
+  "profileCharCount": 2100,
+  "categories": {
+    "skill_fit": { "score": 70, "weight": 0.24, "evidence": "Some stack overlap but not complete." },
+    "location_fit": { "score": 65, "weight": 0.14, "evidence": "Initial model score before deterministic override." },
+    "seniority_fit": { "score": 45, "weight": 0.14, "evidence": "Looks more mid-level than senior." },
+    "title_fit": { "score": 60, "weight": 0.1, "evidence": "Titles are adjacent but not exact." },
+    "industry_fit": { "score": 55, "weight": 0.08, "evidence": "Some relevant domain crossover." },
+    "nice_to_have_fit": { "score": 20, "weight": 0.05, "evidence": "Preferred tooling is mostly absent." },
+    "keyword_alignment": { "score": 58, "weight": 0.05, "evidence": "Partial vocabulary overlap." }
+  },
+  "must_have_coverage": [
+    { "requirement": "React", "status": "confirmed", "evidence": "React appears in skills and project history." },
+    { "requirement": "Ruby on Rails", "status": "missing", "evidence": "Not mentioned." },
+    { "requirement": "Team leadership", "status": "missing", "evidence": "No leadership evidence in the profile." },
+    { "requirement": "Able to work in Wellington", "status": "negative", "evidence": "Candidate is not local to Wellington." }
+  ],
+  "nice_to_have_coverage": [
+    { "requirement": "Azure", "status": "absent", "evidence": "Not mentioned." }
+  ],
+  "reasons_for": [
+    "React is clearly evidenced."
+  ],
+  "reasons_against": [
+    "Rails is missing from the profile.",
+    "Leadership evidence is weak."
+  ],
+  "missing_evidence": [
+    "Commute or relocation intent is not stated."
+  ],
+  "recruiter_summary": "Some relevant frontend overlap, but this is not a strong office-based Wellington match.",
+  "expected": {
+    "overall": 34,
+    "locationFit": 20,
+    "mustHavePct": 25,
+    "confidenceScore": 39,
+    "confidenceLevel": "low",
+    "summaryIncludes": "Based in Napier"
+  }
+}

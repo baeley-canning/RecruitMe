@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, FileText, X, ChevronRight, Loader2, DollarSign } from "lucide-react";
+import { Upload, FileText, X, ChevronRight, Loader2, DollarSign, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +23,7 @@ export default function NewJobPage() {
   const [title, setTitle] = useState("");
   const [company, setCompany] = useState("");
   const [location, setLocation] = useState("");
+  const [isRemote, setIsRemote] = useState(false);
   const [salaryEnabled, setSalaryEnabled] = useState(false);
   const [salaryMin, setSalaryMin] = useState(80000);
   const [salaryMax, setSalaryMax] = useState(120000);
@@ -79,6 +80,7 @@ export default function NewJobPage() {
           title: title.trim(),
           company: company.trim(),
           location: location.trim(),
+          isRemote,
           rawJd: jdText.trim(),
           salaryMin: salaryEnabled ? salaryMin : null,
           salaryMax: salaryEnabled ? salaryMax : null,
@@ -145,6 +147,41 @@ export default function NewJobPage() {
               className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
+        </div>
+
+        {/* Remote toggle */}
+        <div className={cn(
+          "rounded-lg border transition-colors",
+          isRemote ? "border-violet-200 bg-violet-50" : "border-slate-200 bg-slate-50"
+        )}>
+          <button
+            type="button"
+            onClick={() => setIsRemote((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3"
+          >
+            <div className="flex items-center gap-2.5">
+              <Wifi className={cn("w-4 h-4", isRemote ? "text-violet-600" : "text-slate-400")} />
+              <div className="text-left">
+                <p className={cn("text-sm font-medium", isRemote ? "text-violet-800" : "text-slate-600")}>
+                  Remote Role
+                </p>
+                <p className="text-xs text-slate-400">
+                  {isRemote
+                    ? "Location penalty disabled — out-of-area candidates scored fairly"
+                    : "Enable if candidates can work from anywhere"}
+                </p>
+              </div>
+            </div>
+            <div className={cn(
+              "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
+              isRemote ? "bg-violet-500" : "bg-slate-300"
+            )}>
+              <div className={cn(
+                "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform",
+                isRemote ? "translate-x-5" : "translate-x-0.5"
+              )} />
+            </div>
+          </button>
         </div>
 
         {/* Salary range toggle */}

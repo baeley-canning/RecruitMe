@@ -190,16 +190,16 @@ export function Sidebar({ jobs }: SidebarProps) {
             Dashboard
           </Link>
           <Link
-            href="/bookmarklet"
+            href="/linkedin-setup"
             className={cn(
               "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
-              pathname === "/bookmarklet"
+              pathname === "/linkedin-setup" || pathname === "/bookmarklet"
                 ? "bg-slate-800 text-white"
                 : "text-slate-400 hover:text-white hover:bg-slate-800"
             )}
           >
             <Bookmark className="w-4 h-4" />
-            LinkedIn
+            LinkedIn Setup
           </Link>
         </nav>
 

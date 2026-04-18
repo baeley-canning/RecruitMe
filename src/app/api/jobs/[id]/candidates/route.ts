@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { scoreCandidateFull, extractCandidateInfo } from "@/lib/ai";
+import { extractCandidateInfo, predictAcceptance, scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 
 export async function GET(
   _req: Request,
@@ -74,18 +75,19 @@ export async function POST(
       : null;
 
     try {
-      const { match, acceptance } = await scoreCandidateFull(body.profileText, parsedRole, salary);
+      const rawBreakdown = await scoreCandidateStructured(body.profileText, parsedRole, salary);
+      const breakdown = applyLocationFitOverride(
+        rawBreakdown,
+        location || null,
+        parsedRole.location,
+        parsedRole.location_rules,
+        job.isRemote,
+      );
       const updateData: Record<string, unknown> = {
-        matchScore:  match.score,
-        matchReason: JSON.stringify({
-          summary:    match.summary,
-          reasoning:  match.reasoning,
-          dimensions: match.dimensions,
-          strengths:  match.strengths,
-          gaps:       match.gaps,
-        }),
+        ...deriveUpdateData(breakdown),
       };
-      if (acceptance) {
+      if (body.profileText.length >= 250) {
+        const acceptance = await predictAcceptance(body.profileText, parsedRole, salary);
         updateData.acceptanceScore  = acceptance.score;
         updateData.acceptanceReason = JSON.stringify({
           likelihood: acceptance.likelihood,

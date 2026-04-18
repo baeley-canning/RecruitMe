@@ -21,6 +21,7 @@ import {
 import { ScoreBadge } from "@/components/score-badge";
 import { cn, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
+import type { ScoreBreakdown } from "@/lib/scoring";
 
 interface AcceptanceSignal {
   label: string;
@@ -48,6 +49,7 @@ interface Candidate {
   linkedinUrl: string | null;
   matchScore: number | null;
   matchReason: string | null;
+  scoreBreakdown: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
   notes: string | null;
@@ -91,6 +93,7 @@ function CandidateBrief({
   onRemove: (id: string) => void;
 }) {
   const match = safeParseJson<MatchData | null>(candidate.matchReason, null);
+  const breakdown = safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null);
   const acceptance = safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null);
 
   return (
@@ -143,20 +146,20 @@ function CandidateBrief({
         </div>
 
         {/* AI summary */}
-        {match?.summary && (
+        {(breakdown?.recruiter_summary || match?.summary) && (
           <blockquote className="text-sm text-slate-600 italic border-l-2 border-blue-200 pl-3 mb-4 leading-relaxed">
-            {match.summary}
+            {breakdown?.recruiter_summary ?? match?.summary}
           </blockquote>
         )}
 
         {/* Strengths & gaps */}
-        {(match?.strengths?.length || match?.gaps?.length) && (
+        {((breakdown?.reasons_for?.length || breakdown?.reasons_against?.length) || match?.strengths?.length || match?.gaps?.length) && (
           <div className="grid grid-cols-2 gap-4 mb-4">
-            {match?.strengths && match.strengths.length > 0 && (
+            {((breakdown?.reasons_for?.length ?? 0) > 0 || (match?.strengths?.length ?? 0) > 0) && (
               <div>
                 <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Strengths</p>
                 <ul className="space-y-1">
-                  {match.strengths.map((s, i) => (
+                  {(breakdown?.reasons_for ?? match?.strengths ?? []).map((s, i) => (
                     <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
                       {s}
@@ -165,11 +168,11 @@ function CandidateBrief({
                 </ul>
               </div>
             )}
-            {match?.gaps && match.gaps.length > 0 && (
+            {((breakdown?.reasons_against?.length ?? 0) > 0 || (match?.gaps?.length ?? 0) > 0) && (
               <div>
                 <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-2">Gaps</p>
                 <ul className="space-y-1">
-                  {match.gaps.map((g, i) => (
+                  {(breakdown?.reasons_against ?? match?.gaps ?? []).map((g, i) => (
                     <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
                       <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
                       {g}

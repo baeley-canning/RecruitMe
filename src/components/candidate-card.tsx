@@ -18,6 +18,7 @@ import {
   Copy,
   Check,
   RefreshCw,
+  FileText,
 } from "lucide-react";
 
 function LinkedInIcon({ className }: { className?: string }) {
@@ -29,11 +30,21 @@ function LinkedInIcon({ className }: { className?: string }) {
 }
 import { ScoreBadge } from "./score-badge";
 import { ScoreRadar } from "./score-radar";
-import type { ScoreDimensions } from "./score-radar";
+import type { RadarDimensions } from "./score-radar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn, statusLabel, statusBadge, safeParseJson, timeAgo } from "@/lib/utils";
-import type { ScoreBreakdown, MustHaveCoverageStatus, NiceToHaveCoverageStatus } from "@/lib/scoring";
+import {
+  CATEGORY_WEIGHTS_V2,
+  MUST_HAVE_WEIGHT_V2,
+  type ScoreBreakdown,
+  type MustHaveCoverageStatus,
+  type NiceToHaveCoverageStatus,
+} from "@/lib/scoring";
+import {
+  buildProfileExcerpt,
+  SCORE_PROFILE_EXCERPT_MAX_CHARS,
+} from "@/lib/profile-excerpt";
 
 interface AcceptanceSignal {
   label: string;
@@ -54,6 +65,7 @@ interface Candidate {
   location: string | null;
   linkedinUrl: string | null;
   profileText: string | null;
+  profileCapturedAt?: string | null;
   matchScore: number | null;
   matchReason: string | null;
   acceptanceScore: number | null;
@@ -85,6 +97,121 @@ interface CandidateCardProps {
 interface OutreachMessage {
   linkedin: string;
   email: string;
+}
+
+type LegacyRadarDimensions = Partial<RadarDimensions & { experience: number }>;
+
+function candidateSourceLabel(candidate: Candidate) {
+  if (candidate.source === "extension") return "LinkedIn extension";
+  if (candidate.source === "talent_pool") return "Talent pool";
+  if (candidate.source === "bookmarklet") return "LinkedIn import";
+  if (candidate.source === "pdl") return "People Data Labs";
+  if (candidate.source === "serpapi") {
+    return candidate.profileText && candidate.profileText.length >= 500 ? "LinkedIn profile text" : "SerpAPI snippet";
+  }
+  return candidate.source ? candidate.source.replace(/_/g, " ") : "Manual";
+}
+
+function profileSourceSummary(candidate: Candidate) {
+  if (candidate.source === "extension") {
+    return "Captured from the RecruitMe LinkedIn extension.";
+  }
+  if (candidate.source === "pdl") {
+    return "Imported from People Data Labs and stored as structured profile text.";
+  }
+  if (!candidate.profileText) {
+    return "No LinkedIn profile text has been stored yet.";
+  }
+  if (candidate.source === "serpapi" && candidate.profileText.length < 500) {
+    return "This is still only the search snippet, not the full LinkedIn capture.";
+  }
+  return `Stored from ${candidateSourceLabel(candidate).toLowerCase()}.`;
+}
+
+function getRadarDimensions(
+  breakdown: ScoreBreakdown | null,
+  legacyDimensions: LegacyRadarDimensions | undefined
+): RadarDimensions | null {
+  if (breakdown) {
+    return {
+      skills: breakdown.categories.skill_fit.score,
+      title: breakdown.categories.title_fit.score,
+      industry: breakdown.categories.industry_fit.score,
+      location: breakdown.categories.location_fit.score,
+      seniority: breakdown.categories.seniority_fit.score,
+    };
+  }
+
+  if (!legacyDimensions) return null;
+
+  return {
+    skills: legacyDimensions.skills ?? 0,
+    title: legacyDimensions.title ?? legacyDimensions.experience ?? 0,
+    industry: legacyDimensions.industry ?? 0,
+    location: legacyDimensions.location ?? 0,
+    seniority: legacyDimensions.seniority ?? 0,
+  };
+}
+
+function locationFitBadge(score: number | null | undefined) {
+  if (score == null) {
+    return {
+      pill: "bg-slate-100 text-slate-500 border-slate-200",
+      icon: "text-slate-400",
+      label: "Location unknown",
+    };
+  }
+
+  if (score >= 75) {
+    return {
+      pill: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      icon: "text-emerald-600",
+      label: "Location fit",
+    };
+  }
+
+  if (score >= 45) {
+    return {
+      pill: "bg-blue-50 text-blue-700 border-blue-200",
+      icon: "text-blue-600",
+      label: "Location maybe",
+    };
+  }
+
+  return {
+    pill: "bg-red-50 text-red-700 border-red-200",
+    icon: "text-red-600",
+    label: "Location mismatch",
+  };
+}
+
+function LocationFitPill({
+  location,
+  score,
+  compact = false,
+}: {
+  location: string | null;
+  score: number | null | undefined;
+  compact?: boolean;
+}) {
+  if (!location) return null;
+
+  const cfg = locationFitBadge(score);
+
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border font-medium",
+        compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs",
+        cfg.pill
+      )}
+      title={score != null ? `${cfg.label}: ${score}%` : cfg.label}
+    >
+      <MapPin className={cn(compact ? "w-3 h-3" : "w-3.5 h-3.5", cfg.icon)} />
+      <span className="truncate max-w-[220px]">{location}</span>
+      {score != null && <span className="tabular-nums opacity-80">{score}%</span>}
+    </div>
+  );
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -345,6 +472,347 @@ function NiceToHaveCoverageChips({ coverage }: { coverage: NonNullable<ScoreBrea
   );
 }
 
+function ScoringDebugPanel({
+  candidate,
+  breakdown,
+}: {
+  candidate: Candidate;
+  breakdown: ScoreBreakdown;
+}) {
+  const excerpt = candidate.profileText
+    ? buildProfileExcerpt(candidate.profileText, SCORE_PROFILE_EXCERPT_MAX_CHARS)
+    : "";
+
+  const contributions = [
+    {
+      label: "Skill fit",
+      score: breakdown.categories.skill_fit.score,
+      weight: CATEGORY_WEIGHTS_V2.skill_fit,
+    },
+    {
+      label: "Location fit",
+      score: breakdown.categories.location_fit.score,
+      weight: CATEGORY_WEIGHTS_V2.location_fit,
+    },
+    {
+      label: "Seniority fit",
+      score: breakdown.categories.seniority_fit.score,
+      weight: CATEGORY_WEIGHTS_V2.seniority_fit,
+    },
+    {
+      label: "Title fit",
+      score: breakdown.categories.title_fit.score,
+      weight: CATEGORY_WEIGHTS_V2.title_fit,
+    },
+    {
+      label: "Industry fit",
+      score: breakdown.categories.industry_fit.score,
+      weight: CATEGORY_WEIGHTS_V2.industry_fit,
+    },
+    {
+      label: "Nice-to-have fit",
+      score: breakdown.categories.nice_to_have_fit.score,
+      weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit,
+    },
+    {
+      label: "Keyword alignment",
+      score: breakdown.categories.keyword_alignment.score,
+      weight: CATEGORY_WEIGHTS_V2.keyword_alignment,
+    },
+    {
+      label: "Must-have coverage",
+      score: breakdown.must_have_pct,
+      weight: MUST_HAVE_WEIGHT_V2,
+    },
+  ];
+
+  const contributionValue = (score: number, weight: number) =>
+    Math.round(score * weight * 10) / 10;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Scoring Debug</p>
+          <p className="text-[11px] text-slate-400 mt-1">
+            Exact scorer excerpt, weighted contributions, and must-have evidence.
+          </p>
+        </div>
+        {excerpt && <CopyButton text={excerpt} />}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Overall</p>
+          <p className="text-lg font-semibold text-slate-900">{breakdown.overall}%</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Confidence</p>
+          <p className="text-lg font-semibold text-slate-900">{breakdown.confidence.score}%</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Must-have coverage</p>
+          <p className="text-lg font-semibold text-slate-900">{breakdown.must_have_pct}%</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Evidence coverage</p>
+          <p className="text-lg font-semibold text-slate-900">{breakdown.evidence_coverage_score}%</p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Weighted Formula</p>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {contributions.map((row) => (
+            <div key={row.label} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+              <div className="min-w-0">
+                <p className="font-medium text-slate-700">{row.label}</p>
+                <p className="text-slate-400">Weight {(row.weight * 100).toFixed(0)}%</p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="font-medium text-slate-700">{row.score}%</p>
+                <p className="text-slate-400">+{contributionValue(row.score, row.weight)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Must-have Evidence</p>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {breakdown.must_have_coverage.map((item, index) => (
+            <div key={`${item.requirement}-${index}`} className="px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-medium text-slate-700">{item.requirement}</p>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                    MH_CONFIG[item.status].bg,
+                    MH_CONFIG[item.status].text
+                  )}
+                >
+                  <span className="text-[10px]">{MH_CONFIG[item.status].icon}</span>
+                  {item.status}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">{item.evidence}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {excerpt && (
+        <div>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Exact Scorer Excerpt</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                This is the section-aware text currently sent to the match scorer.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap font-mono">
+              {excerpt}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProfileDrawer({
+  candidate,
+  onClose,
+}: {
+  candidate: Candidate;
+  onClose: () => void;
+}) {
+  const breakdown = safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null);
+  const matchReason = safeParseJson<{ summary?: string; reasoning?: string } | null>(candidate.matchReason, null);
+  const acceptanceData = safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null);
+  const displaySummary = breakdown?.recruiter_summary ?? matchReason?.summary ?? null;
+  const captureLabel = candidateSourceLabel(candidate);
+  const capturedAt = candidate.profileCapturedAt ? new Date(candidate.profileCapturedAt) : null;
+  const locationFitScore = breakdown?.categories.location_fit.score ?? null;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/30 backdrop-blur-[2px] z-40"
+        onClick={onClose}
+      />
+      {/* Drawer */}
+      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl z-50 flex flex-col">
+        {/* Header */}
+        <div className="flex items-start gap-4 px-6 py-5 border-b border-slate-100 flex-shrink-0">
+          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 text-white font-bold text-lg">
+            {candidate.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="font-bold text-slate-900 text-base leading-tight">{candidate.name}</h2>
+              {candidate.linkedinUrl && (
+                <a
+                  href={candidate.linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-slate-400 hover:text-[#0A66C2] transition-colors"
+                  title="Open LinkedIn profile"
+                >
+                  <LinkedInIcon className="w-4 h-4" />
+                </a>
+              )}
+            </div>
+            {candidate.headline && (
+              <p className="text-sm text-slate-500 mt-0.5">{candidate.headline}</p>
+            )}
+            {candidate.location && (
+              <div className="mt-1.5">
+                <LocationFitPill location={candidate.location} score={locationFitScore} />
+              </div>
+            )}
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <Badge className={candidate.source === "extension" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}>
+                {captureLabel}
+              </Badge>
+              {capturedAt && (
+                <span className="text-[11px] text-slate-400">
+                  Captured {capturedAt.toLocaleString()}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <ScoreBadge score={candidate.matchScore} size="sm" />
+              {candidate.acceptanceScore != null && (
+                <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
+              )}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-700 transition-colors flex-shrink-0 mt-0.5"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+          {/* AI summary */}
+          {displaySummary && (
+            <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">AI Assessment</p>
+              <p className="text-sm text-slate-700 leading-relaxed italic">&ldquo;{displaySummary}&rdquo;</p>
+            </div>
+          )}
+
+          {/* Score breakdown */}
+          {breakdown && (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Score breakdown</p>
+              <div className="space-y-2">
+                {(Object.entries(breakdown.categories) as [string, { score: number; evidence: string }][]).map(([key, cat]) => (
+                  <div key={key}>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-xs font-medium text-slate-600 capitalize">{key.replace(/_/g, " ").replace(" fit", "")}</span>
+                      <span className="text-xs text-slate-500 tabular-nums">{cat.score}%</span>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-full",
+                          cat.score >= 80 ? "bg-emerald-500" :
+                          cat.score >= 60 ? "bg-blue-500" :
+                          cat.score >= 40 ? "bg-amber-500" : "bg-red-400"
+                        )}
+                        style={{ width: `${cat.score}%` }}
+                      />
+                    </div>
+                    {cat.evidence && (
+                      <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{cat.evidence}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Reasons for / against */}
+          {breakdown?.version === 2 && (breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
+            <div className="grid grid-cols-2 gap-4">
+              {breakdown.reasons_for?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Reasons for</p>
+                  <ul className="space-y-1">
+                    {breakdown.reasons_for.map((r, i) => (
+                      <li key={i} className="text-xs text-slate-600 flex items-start gap-1.5">
+                        <span className="text-emerald-500 flex-shrink-0 mt-0.5">✓</span>{r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {breakdown.reasons_against?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-2">Reasons against</p>
+                  <ul className="space-y-1">
+                    {breakdown.reasons_against.map((r, i) => (
+                      <li key={i} className="text-xs text-slate-600 flex items-start gap-1.5">
+                        <span className="text-red-400 flex-shrink-0 mt-0.5">✗</span>{r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {breakdown && <ScoringDebugPanel candidate={candidate} breakdown={breakdown} />}
+
+          {/* Notes */}
+          {candidate.notes && (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Notes</p>
+              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{candidate.notes}</p>
+            </div>
+          )}
+
+          {/* Full profile text */}
+          {candidate.profileText ? (
+            <div>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">LinkedIn Capture</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{profileSourceSummary(candidate)}</p>
+                </div>
+                <CopyButton text={candidate.profileText} />
+              </div>
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl max-h-[50vh] overflow-y-auto">
+                <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+                  {candidate.profileText}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center">
+              <p className="text-sm text-slate-400">No profile text captured yet.</p>
+              <p className="text-xs text-slate-400 mt-1">Use &ldquo;Fetch profile&rdquo; to pull the full LinkedIn profile.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function CandidateCard({
   candidate,
   jobId,
@@ -357,6 +825,7 @@ export function CandidateCard({
   fetchingProfile = false,
 }: CandidateCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   const [showRadar, setShowRadar] = useState(false);
   const [radarPos, setRadarPos] = useState({ top: 0, right: 0 });
@@ -394,13 +863,17 @@ export function CandidateCard({
   const matchReason = safeParseJson<{
     summary?: string;
     reasoning?: string;
-    dimensions?: ScoreDimensions;
+    dimensions?: LegacyRadarDimensions;
     strengths?: string[];
     gaps?: string[];
   } | null>(candidate.matchReason, null);
 
   const breakdown = safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null);
   const acceptanceData = safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null);
+  const captureLabel = candidateSourceLabel(candidate);
+  const hasExtensionCapture = candidate.source === "extension" && !!candidate.profileText;
+  const locationFitScore = breakdown?.categories.location_fit.score ?? null;
+  const radarDimensions = getRadarDimensions(breakdown, matchReason?.dimensions);
 
   // Use breakdown's recruiter_summary as the primary display summary when available
   const displaySummary = breakdown?.recruiter_summary ?? matchReason?.summary ?? null;
@@ -415,18 +888,28 @@ export function CandidateCard({
       {/* Header row */}
       <div className="flex items-start gap-3 p-4">
         {/* Avatar */}
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 text-white font-semibold text-sm">
+        <button
+          type="button"
+          onClick={() => setShowProfile(true)}
+          className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 text-white font-semibold text-sm hover:shadow-md transition-shadow"
+          title="View stored LinkedIn data"
+        >
           {candidate.name.charAt(0).toUpperCase()}
-        </div>
+        </button>
 
         {/* Main info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-slate-900 text-sm leading-snug">
+                <button
+                  type="button"
+                  onClick={() => setShowProfile(true)}
+                  className="font-semibold text-slate-900 text-sm leading-snug hover:text-blue-700 transition-colors text-left"
+                  title="View stored LinkedIn data"
+                >
                   {candidate.name}
-                </span>
+                </button>
                 {candidate.linkedinUrl && (
                   <a
                     href={candidate.linkedinUrl}
@@ -445,11 +928,31 @@ export function CandidateCard({
                 </p>
               )}
               {candidate.location && (
-                <div className="flex items-center gap-1 mt-0.5">
-                  <MapPin className="w-3 h-3 text-slate-400" />
-                  <span className="text-xs text-slate-400">{candidate.location}</span>
+                <div className="mt-1">
+                  <LocationFitPill location={candidate.location} score={locationFitScore} compact />
                 </div>
               )}
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowProfile(true)}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors",
+                    hasExtensionCapture
+                      ? "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                      : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                  )}
+                  title="Open stored LinkedIn capture"
+                >
+                  <FileText className="w-3 h-3" />
+                  {captureLabel}
+                </button>
+                {candidate.profileText && (
+                  <span className="text-[11px] text-slate-400">
+                    {candidate.profileText.length.toLocaleString()} chars saved
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
@@ -470,13 +973,13 @@ export function CandidateCard({
                 >
                   <ScoreBadge score={candidate.matchScore} size="sm" />
                 </div>
-                {showRadar && matchReason?.dimensions && (
+                {showRadar && radarDimensions && (
                   <div
                     style={{ position: "fixed", top: radarPos.top, right: radarPos.right, zIndex: 9999 }}
                     onMouseEnter={() => setShowRadar(true)}
                     onMouseLeave={() => setShowRadar(false)}
                   >
-                    <ScoreRadar dimensions={matchReason.dimensions} />
+                    <ScoreRadar dimensions={radarDimensions} />
                   </div>
                 )}
                 <Badge className={statusBadge(candidate.status)}>
@@ -857,8 +1360,19 @@ export function CandidateCard({
 
         {/* Right side */}
         <div className="flex items-center gap-1">
-          {/* Fetch full profile — shown when only a snippet is stored or no score yet */}
-          {candidate.linkedinUrl && (!candidate.profileText || candidate.profileText.length < 500) && (
+          {(candidate.profileText || candidate.source === "extension") && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowProfile(true)}
+              className="text-slate-500 hover:text-blue-700 hover:bg-blue-50"
+              title="View stored LinkedIn capture"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              View
+            </Button>
+          )}
+          {candidate.linkedinUrl && (
             <Button
               size="sm"
               variant="ghost"
@@ -866,7 +1380,7 @@ export function CandidateCard({
               loading={fetchingProfile}
               disabled={fetchingProfile}
               className="text-slate-500 hover:text-blue-600 hover:bg-blue-50"
-              title="Fetch full LinkedIn profile and rescore"
+              title={candidate.profileText ? "Re-fetch LinkedIn profile" : "Fetch full LinkedIn profile and score"}
             >
               {!fetchingProfile && <RefreshCw className="w-3.5 h-3.5" />}
               {fetchingProfile ? "Fetching…" : "Fetch profile"}
@@ -1014,6 +1528,13 @@ export function CandidateCard({
             </div>
           </div>
         </div>
+      )}
+
+      {showProfile && (
+        <ProfileDrawer
+          candidate={candidate}
+          onClose={() => setShowProfile(false)}
+        />
       )}
     </div>
   );

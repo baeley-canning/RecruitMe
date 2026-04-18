@@ -1,5 +1,5 @@
 import { prisma } from "./db";
-import { deriveUpdateData } from "./score-utils";
+import { applyLocationFitOverride, deriveUpdateData } from "./score-utils";
 import {
   extractCandidateInfo,
   predictAcceptance,
@@ -8,6 +8,9 @@ import {
 } from "./ai";
 import { safeParseJson } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
+import { normaliseLinkedInUrl } from "./linkedin";
+
+export { normaliseLinkedInUrl } from "./linkedin";
 
 // Legacy single-session key (kept for reference only; new code uses the queue key).
 export const LINKEDIN_EXTENSION_SESSION_KEY = "LINKEDIN_EXTENSION_PENDING_CAPTURE_V1";
@@ -35,6 +38,82 @@ export interface ExtensionCaptureSession {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+const CAPTURE_STOP_LINE_PATTERNS = [
+  /^more profiles for you$/i,
+  /^people you may know$/i,
+  /^pages for you$/i,
+  /^explore premium profiles$/i,
+  /^linkedin corporation/i,
+  /^recommendation transparency$/i,
+  /^select language$/i,
+  /^manage your account and privacy$/i,
+  /^visit our help center\.$/i,
+];
+
+const CAPTURE_NOISE_LINE_PATTERNS = [
+  /^message$/i,
+  /^follow$/i,
+  /^connect$/i,
+  /^contact info$/i,
+  /^save in sales navigator$/i,
+  /^activity$/i,
+  /^open to$/i,
+  /^more$/i,
+  /^show all$/i,
+  /^show all \d+ .+$/i,
+  /^show all\s+[→>]$/i,
+  /^see all$/i,
+  /^see all \d+ .+$/i,
+  /^…\s*more$/i,
+  /^\.{3}\s*more$/i,
+  /^[·•]?\s*\d+(st|nd|rd|th)$/i,
+  /^connections?$/i,
+  /^followers$/i,
+  /^\d+\+?\s+connections?$/i,
+  /^\d+\+?\s+followers$/i,
+  /^\d+\s+endorsements?$/i,
+  /^.* has no recent posts$/i,
+  /^recent posts .* displayed here\.$/i,
+  /^from .* industry$/i,
+];
+
+function normalizeCaptureLine(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+export function sanitizeCapturedLinkedInText(profileText: string): string {
+  const lines = profileText
+    .replace(/\u00a0/g, " ")
+    .split(/\r?\n+/)
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .filter(Boolean);
+
+  const cleaned: string[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (CAPTURE_STOP_LINE_PATTERNS.some((pattern) => pattern.test(line))) break;
+    if (CAPTURE_NOISE_LINE_PATTERNS.some((pattern) => pattern.test(line))) continue;
+    if (/^\d+$/.test(line) && /^(connections?|followers)$/i.test(lines[i + 1] || "")) {
+      i += 1;
+      continue;
+    }
+    if (/^about accessibility talent solutions/i.test(line)) break;
+
+    const key = normalizeCaptureLine(line);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(line);
+  }
+
+  return cleaned.join("\n").trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -120,16 +199,6 @@ export async function removeSessionFromQueue(sessionId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// URL helpers
-// ---------------------------------------------------------------------------
-
-export function normaliseLinkedInUrl(raw: string): string {
-  const match = raw.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
-  const slug = match ? match[1] : raw.replace(/[?#].*$/, "").replace(/\/$/, "");
-  return `https://www.linkedin.com/in/${slug}`;
-}
-
-// ---------------------------------------------------------------------------
 // AI scoring helpers
 // ---------------------------------------------------------------------------
 
@@ -155,6 +224,10 @@ async function buildCapturedCandidateData(args: {
   linkedinUrl: string;
 }) {
   const { jobId, currentName, currentHeadline, currentLocation, currentProfileText, profileText, linkedinUrl } = args;
+  const cleanedProfileText = sanitizeCapturedLinkedInText(profileText);
+  if (cleanedProfileText.length < 200) {
+    throw new Error("Captured LinkedIn profile did not contain enough usable profile text");
+  }
 
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) {
@@ -163,7 +236,9 @@ async function buildCapturedCandidateData(args: {
 
   // If the new profile is very similar to the stored one, skip the expensive
   // extractCandidateInfo and predictAcceptance calls (saves ~2/3 of AI spend).
-  const profileUnchanged = !!currentProfileText && isProfileUnchanged(currentProfileText, profileText);
+  const profileUnchanged =
+    !!currentProfileText &&
+    isProfileUnchanged(sanitizeCapturedLinkedInText(currentProfileText), cleanedProfileText);
 
   let name = currentName;
   let headline = currentHeadline;
@@ -171,7 +246,7 @@ async function buildCapturedCandidateData(args: {
 
   if (!profileUnchanged) {
     try {
-      const info = await extractCandidateInfo(profileText);
+      const info = await extractCandidateInfo(cleanedProfileText);
       if (info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
       if (info.headline && info.headline.length > 2) headline = info.headline;
       if (info.location && info.location.length > 2) location = info.location;
@@ -190,15 +265,22 @@ async function buildCapturedCandidateData(args: {
   if (parsedRole) {
     // Always re-score — role requirements may have changed even if profile hasn't.
     try {
-      const breakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
+      const rawBreakdown = await scoreCandidateStructured(cleanedProfileText, parsedRole, salary);
+      const breakdown = applyLocationFitOverride(
+        rawBreakdown,
+        location,
+        parsedRole.location,
+        parsedRole.location_rules,
+        job.isRemote,
+      );
       Object.assign(scoreData, deriveUpdateData(breakdown));
     } catch {
       // Keep candidate unscored if the model call fails.
     }
 
-    if (!profileUnchanged && profileText.length >= 250) {
+    if (!profileUnchanged && cleanedProfileText.length >= 250) {
       try {
-        Object.assign(scoreData, buildAcceptanceData(await predictAcceptance(profileText, parsedRole, salary)));
+        Object.assign(scoreData, buildAcceptanceData(await predictAcceptance(cleanedProfileText, parsedRole, salary)));
       } catch {
         // Acceptance is optional; leave existing fields untouched on failure.
       }
@@ -210,7 +292,7 @@ async function buildCapturedCandidateData(args: {
     headline,
     location,
     linkedinUrl: normaliseLinkedInUrl(linkedinUrl),
-    profileText,
+    profileText: cleanedProfileText,
     profileCapturedAt: new Date(),
     ...scoreData,
   };
@@ -241,7 +323,10 @@ export async function saveCapturedProfileToCandidate(args: {
 
   return prisma.candidate.update({
     where: { id: candidateId },
-    data,
+    data: {
+      ...data,
+      source: "extension",
+    },
   });
 }
 

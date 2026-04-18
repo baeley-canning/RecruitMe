@@ -1,16 +1,16 @@
 "use client";
 
-export interface ScoreDimensions {
+export interface RadarDimensions {
   skills: number;
-  experience: number;
+  title: number;
   industry: number;
   location: number;
   seniority: number;
 }
 
-const AXES: { key: keyof ScoreDimensions; label: string }[] = [
+const AXES: { key: keyof RadarDimensions; label: string }[] = [
   { key: "skills",     label: "Skills"      },
-  { key: "experience", label: "Experience"  },
+  { key: "title",      label: "Title"       },
   { key: "industry",   label: "Industry"    },
   { key: "location",   label: "Location"    },
   { key: "seniority",  label: "Seniority"   },
@@ -30,7 +30,7 @@ function toPoints(pts: { x: number; y: number }[]) {
   return pts.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
 }
 
-export function ScoreRadar({ dimensions }: { dimensions: ScoreDimensions }) {
+export function ScoreRadar({ dimensions }: { dimensions: RadarDimensions }) {
   const n = AXES.length;
   const outerPts = AXES.map((_, i) => polar(CX, CY, R, i, n));
   const scorePts = AXES.map((axis, i) => {

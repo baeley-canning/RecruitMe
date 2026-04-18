@@ -1,0 +1,41 @@
+{
+  "candidateLocation": "Shanghai, China",
+  "targetLocation": "Wellington",
+  "locationRules": "Wellington office, 3 days in office",
+  "profileCharCount": 3200,
+  "categories": {
+    "skill_fit": { "score": 82, "weight": 0.24, "evidence": "Strong backend and frontend skill overlap." },
+    "location_fit": { "score": 70, "weight": 0.14, "evidence": "Initial model score before deterministic override." },
+    "seniority_fit": { "score": 68, "weight": 0.14, "evidence": "Mid-level delivery evidence with some leadership." },
+    "title_fit": { "score": 75, "weight": 0.1, "evidence": "Recent titles are adjacent to the role." },
+    "industry_fit": { "score": 65, "weight": 0.08, "evidence": "Relevant product engineering experience." },
+    "nice_to_have_fit": { "score": 40, "weight": 0.05, "evidence": "Only a few preferred tools are shown." },
+    "keyword_alignment": { "score": 70, "weight": 0.05, "evidence": "Technical vocabulary mostly aligns." }
+  },
+  "must_have_coverage": [
+    { "requirement": "React", "status": "confirmed", "evidence": "React used in current role." },
+    { "requirement": "Ruby on Rails", "status": "unknown", "evidence": "Insufficient evidence in the profile." },
+    { "requirement": "NZ market exposure", "status": "missing", "evidence": "Not mentioned." }
+  ],
+  "nice_to_have_coverage": [
+    { "requirement": "Docker", "status": "confirmed", "evidence": "Docker listed in skills." }
+  ],
+  "reasons_for": [
+    "Strong React and full-stack delivery background."
+  ],
+  "reasons_against": [
+    "No explicit NZ market experience is shown."
+  ],
+  "missing_evidence": [
+    "Rails depth is unclear from the profile."
+  ],
+  "recruiter_summary": "Technically relevant candidate, but location is the major risk.",
+  "expected": {
+    "overall": 32,
+    "locationFit": 0,
+    "mustHavePct": 33,
+    "confidenceScore": 52,
+    "confidenceLevel": "medium",
+    "summaryIncludes": "Based in Shanghai, China"
+  }
+}

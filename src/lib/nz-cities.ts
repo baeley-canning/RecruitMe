@@ -121,6 +121,22 @@ export function getCityCoords(locationStr: string): { lat: number; lng: number; 
   return null;
 }
 
+/** Get the closest known NZ city to an arbitrary point. */
+export function getNearestCity(lat: number, lng: number): NZCity | null {
+  let nearest: NZCity | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (const city of NZ_CITIES) {
+    const distance = distanceKm(lat, lng, city.lat, city.lng);
+    if (distance < nearestDistance) {
+      nearest = city;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest;
+}
+
 /** Get all city keywords within radiusKm of a point */
 export function getCityKeywordsWithinRadius(lat: number, lng: number, radiusKm: number): string[] {
   return NZ_CITIES.filter(

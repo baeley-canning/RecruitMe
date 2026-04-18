@@ -78,11 +78,11 @@ describe("computeMustHavePct", () => {
     expect(computeMustHavePct(coverage)).toBe(0);
   });
 
-  it("returns 20 when all unknown", () => {
+  it("returns 0 when all unknown", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "Leadership", status: "unknown", evidence: "Insufficient data" },
     ];
-    expect(computeMustHavePct(coverage)).toBe(20);
+    expect(computeMustHavePct(coverage)).toBe(0);
   });
 
   it("averages mixed statuses correctly (confirmed=100, missing=0 → 50)", () => {
@@ -224,9 +224,9 @@ describe("classifyDataQuality", () => {
 
 describe("computeOverallScore", () => {
   it("computes weighted sum correctly", () => {
-    // 80*0.25 + 100*0.15 + 80*0.15 + 70*0.10 + 90*0.08 + 60*0.07 + 75*0.05 + 100*0.15
-    // = 20 + 15 + 12 + 7 + 7.2 + 4.2 + 3.75 + 15 = 84.15 → 84
-    expect(computeOverallScore(baseCategories, 100)).toBe(84);
+    // 80*0.24 + 100*0.14 + 80*0.14 + 70*0.10 + 90*0.08 + 60*0.05 + 75*0.05 + 100*0.20
+    // = 19.2 + 14 + 11.2 + 7 + 7.2 + 3 + 3.75 + 20 = 85.35 → 85
+    expect(computeOverallScore(baseCategories, 100)).toBe(85);
   });
 
   it("clamps to 100 when all inputs exceed 100", () => {
@@ -249,8 +249,8 @@ describe("computeOverallScore", () => {
     ) as ScoreBreakdown["categories"];
     const withAllMust    = computeOverallScore(highCats, 100);
     const withZeroMust   = computeOverallScore(highCats, 0);
-    // must_have_pct contributes 0.15 weight: 100*0.15=15 vs 0*0.15=0 → delta=15
-    expect(withAllMust - withZeroMust).toBe(15);
+    // must_have_pct contributes 0.20 weight: 100*0.20=20 vs 0*0.20=0 → delta=20
+    expect(withAllMust - withZeroMust).toBe(20);
   });
 });
 
@@ -284,9 +284,9 @@ describe("computeConfidence", () => {
       { requirement: "C", status: "unknown", evidence: "N/A" },
       { requirement: "D", status: "confirmed", evidence: "Found" },
     ];
-    // 3/4 unknown (75%) → -20 from full_profile base of 80 → 60
+    // 3/4 unknown (75%) → -20 from full_profile base of 70 → 50
     const conf = computeConfidence(3000, manyUnknown);
-    expect(conf.score).toBeLessThanOrEqual(60);
+    expect(conf.score).toBeLessThanOrEqual(50);
     expect(conf.reasons.some((r) => r.includes("verified"))).toBe(true);
   });
 

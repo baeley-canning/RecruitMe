@@ -103,6 +103,8 @@ export default async function JobsPage() {
             const hired           = candidates.filter((c) => c.status === "hired").length;
             const hasBeenParsed   = Boolean(job.parsedRole);
             const isClosed        = job.status === "closed";
+            const daysSinceUpdate = Math.floor((Date.now() - new Date(job.updatedAt).getTime()) / 86_400_000);
+            const isStale         = !isClosed && daysSinceUpdate >= 14 && total > 0;
 
             // Average match score of scored candidates
             const scored = candidates.filter((c) => c.matchScore != null);
@@ -143,6 +145,11 @@ export default async function JobsPage() {
                     {!hasBeenParsed && (
                       <span className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
                         Needs parsing
+                      </span>
+                    )}
+                    {isStale && (
+                      <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full font-medium" title={`No activity for ${daysSinceUpdate} days`}>
+                        Dormant
                       </span>
                     )}
                   </div>

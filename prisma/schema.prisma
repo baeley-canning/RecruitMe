@@ -16,6 +16,7 @@ model Job {
   parsedRole  String?  // JSON string: parsed AI output
   salaryMin   Int?     // NZD yearly minimum (optional)
   salaryMax   Int?     // NZD yearly maximum (optional)
+  isRemote    Boolean  @default(false)
   status      String   @default("active") // active | closed | on-hold
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -48,7 +49,7 @@ model Candidate {
   status       String   @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
   statusHistory    String?  // JSON: [{status, changedAt}]
   contactedAt      DateTime? // When status first moved to "contacted"
-  source       String   @default("manual") // manual | serpapi | extension | talent_pool
+  source       String   @default("manual") // manual | serpapi | pdl | extension | talent_pool
   profileCapturedAt DateTime? // When the full profile text was last fetched/captured
 
   createdAt    DateTime @default(now())

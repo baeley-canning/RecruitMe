@@ -16,6 +16,10 @@
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
+
+# typescript build cache
+tsconfig.tsbuildinfo
 
 # runtime files
 *.log

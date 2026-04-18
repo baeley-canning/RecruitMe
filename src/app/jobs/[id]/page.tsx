@@ -145,6 +145,7 @@ export default function JobDetailPage({
   // Stable fn-refs so setInterval callbacks always call the latest version.
   const pollCandidateFetchRef = useRef<(candidateId: string) => Promise<void>>(async () => {});
   const finishFetchRef = useRef<(candidateId: string, state: "done" | "error", message: string) => void>(() => {});
+  const mapAutoOpenedRef = useRef(false);
 
   const fetchJob = useCallback(async () => {
     const res = await fetch(`/api/jobs/${id}`);
@@ -230,6 +231,16 @@ export default function JobDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldParse, job]);
 
+  // Auto-open the map the first time a job location with known coords loads.
+  useEffect(() => {
+    if (!job || mapAutoOpenedRef.current) return;
+    const pr = safeParseJson<ParsedRole | null>(job.parsedRole, null);
+    if (pr?.location && getCityCoords(pr.location)) {
+      setShowMap(true);
+      mapAutoOpenedRef.current = true;
+    }
+  }, [job]);
+
   const handleParse = async () => {
     if (!job) return;
     setParsing(true);
@@ -257,15 +268,16 @@ export default function JobDetailPage({
       const res = await fetch(`/api/jobs/${id}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxResults, minScore, radiusKm }),
+        body: JSON.stringify({
+          maxResults,
+          minScore,
+          radiusKm,
+          ...(customCenter ? { centerLat: customCenter.lat, centerLng: customCenter.lng } : {}),
+        }),
       });
       const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string; fromPool?: number };
       if (!res.ok || data.error) {
-        if (data.error === "SERPAPI_KEY_MISSING") {
-          setHasSerpApi(false);
-        } else {
-          setSearchError(data.error ?? "Search failed");
-        }
+        setSearchError(data.error ?? "Search failed");
       } else {
         setSearchResult({ count: data.count ?? 0, message: data.message, fromPool: data.fromPool });
         await fetchJob();
@@ -285,7 +297,12 @@ export default function JobDetailPage({
       const res = await fetch(`/api/jobs/${id}/candidates/talent-pool`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minScore, maxResults, radiusKm }),
+        body: JSON.stringify({
+          minScore,
+          maxResults,
+          radiusKm,
+          ...(customCenter ? { centerLat: customCenter.lat, centerLng: customCenter.lng } : {}),
+        }),
       });
       const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string };
       if (!res.ok || data.error) {
@@ -674,6 +691,8 @@ export default function JobDetailPage({
   }
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
+  const jobCoords = parsedRole?.location ? getCityCoords(parsedRole.location) : null;
+  const requiresLocationLock = !!jobCoords && !locationLocked;
 
   const filteredCandidates = job.candidates
     .filter((c) => (filter === "all" ? true : c.status === filter))
@@ -1195,12 +1214,13 @@ export default function JobDetailPage({
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-col gap-2 flex-shrink-0">
+                  <div className="flex flex-col gap-2 flex-shrink-0 items-end">
                     <Button
                       onClick={handleSearch}
                       loading={searching}
-                      disabled={searching || searchingPool || job.status === "closed"}
+                      disabled={searching || searchingPool || job.status === "closed" || requiresLocationLock}
                       size="lg"
+                      title={requiresLocationLock ? "Lock your search area on the map below before searching" : undefined}
                     >
                       <Search className="w-4 h-4" />
                       {searching ? "Searching..." : searchResult ? "Search Again" : "Search LinkedIn Now"}
@@ -1208,21 +1228,28 @@ export default function JobDetailPage({
                     <Button
                       onClick={handleSearchPool}
                       loading={searchingPool}
-                      disabled={searching || searchingPool || job.status === "closed"}
+                      disabled={searching || searchingPool || job.status === "closed" || requiresLocationLock}
                       size="sm"
                       variant="outline"
                       className="text-slate-600"
+                      title={requiresLocationLock ? "Lock your search area on the map below before searching" : undefined}
                     >
                       <Users className="w-3.5 h-3.5" />
                       {searchingPool ? "Searching pool..." : "Search Talent Pool"}
                     </Button>
+                    {requiresLocationLock && (
+                      <p className="text-xs text-amber-600 flex items-center gap-1">
+                        <Lock className="w-3 h-3" />
+                        Lock the search area below first
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 {/* Search controls */}
                 {(() => {
-                  const coords = parsedRole.location ? getCityCoords(parsedRole.location) : null;
-                  const nearbyNames = coords ? getCityNamesWithinRadius(coords.lat, coords.lng, radiusKm) : [];
+                  const center = customCenter ?? (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
+                  const nearbyNames = center ? getCityNamesWithinRadius(center.lat, center.lng, radiusKm) : [];
                   const cityName = nearbyNames[0] ?? parsedRole.location ?? "Unknown";
                   return (
                     <div className="space-y-3 pt-1 border-t border-slate-100">
@@ -1253,19 +1280,10 @@ export default function JobDetailPage({
                             ))}
                           </select>
                         </div>
-                        {coords && !locationLocked && (
-                          <button
-                            onClick={() => setShowMap((v) => !v)}
-                            className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 font-medium"
-                          >
-                            <MapPin className="w-3 h-3" />
-                            {showMap ? "Hide map" : "Set search area"}
-                          </button>
-                        )}
                       </div>
 
                       {/* Locked location banner */}
-                      {locationLocked && coords && (
+                      {locationLocked && jobCoords && (
                         <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
                           <div className="flex items-center gap-2.5">
                             <Lock className="w-4 h-4 text-emerald-600 flex-shrink-0" />
@@ -1291,13 +1309,13 @@ export default function JobDetailPage({
                         </div>
                       )}
 
-                      {/* Radius map */}
-                      {showMap && !locationLocked && coords && (
+                      {/* Radius map — always visible until location is locked */}
+                      {!locationLocked && jobCoords && (
                         <div className="space-y-2">
                           <div className="overflow-hidden rounded-xl border border-slate-200">
                             <LocationRadiusMap
-                              lat={customCenter?.lat ?? coords.lat}
-                              lng={customCenter?.lng ?? coords.lng}
+                              lat={customCenter?.lat ?? jobCoords.lat}
+                              lng={customCenter?.lng ?? jobCoords.lng}
                               radiusKm={radiusKm}
                               onCenterChange={(lat, lng) => setCustomCenter({ lat, lng })}
                             />
@@ -1416,8 +1434,8 @@ export default function JobDetailPage({
                     variant="outline"
                     onClick={handleRescoreAll}
                     loading={rescoringAll}
-                    disabled={rescoringAll}
-                    title="Re-score all candidates with current job requirements"
+                    disabled={rescoringAll || requiresLocationLock}
+                    title={requiresLocationLock ? "Lock search area on the map above before re-scoring" : "Re-score all candidates with current job requirements"}
                   >
                     {!rescoringAll && <Sparkles className="w-3.5 h-3.5" />}
                     {rescoringAll ? "Scoring…" : "Re-score all"}

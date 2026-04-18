@@ -106,16 +106,18 @@ export interface ScoreBreakdown {
 // ─── Category weights — v2 (must sum to 1.0) ───────────────────────────────────
 
 export const CATEGORY_WEIGHTS_V2 = {
-  skill_fit:         0.25,
-  location_fit:      0.15,
-  seniority_fit:     0.15,
+  skill_fit:         0.24,
+  location_fit:      0.14,
+  seniority_fit:     0.14,
   title_fit:         0.10,
   industry_fit:      0.08,
-  nice_to_have_fit:  0.07,
+  nice_to_have_fit:  0.05,
   keyword_alignment: 0.05,
-  // must_have_pct contributes 0.15
+  // must_have_pct contributes 0.20
 } as const;
-// Check: 0.25+0.15+0.15+0.10+0.08+0.07+0.05 = 0.85; plus must_have_pct*0.15 = 1.00 ✓
+// Check: 0.24+0.14+0.14+0.10+0.08+0.05+0.05 = 0.80; plus must_have_pct*0.20 = 1.00 ✓
+
+export const MUST_HAVE_WEIGHT_V2 = 0.20;
 
 // ─── Point tables ───────────────────────────────────────────────────────────────
 
@@ -124,7 +126,7 @@ const MUST_HAVE_POINTS: Record<MustHaveCoverageStatus, number> = {
   likely:    65,
   missing:   0,
   negative:  0,
-  unknown:   20,
+  unknown:   0,
 };
 
 const NICE_TO_HAVE_POINTS: Record<NiceToHaveCoverageStatus, number> = {
@@ -188,9 +190,9 @@ export function classifyDataQuality(charCount: number): DataQuality {
 /**
  * Compute overall score from all 7 category scores + must-have coverage %.
  * v2 weight formula:
- *   skill_fit*0.25 + location_fit*0.15 + seniority_fit*0.15 + title_fit*0.10
- *   + industry_fit*0.08 + nice_to_have_fit*0.07 + keyword_alignment*0.05
- *   + must_have_pct*0.15
+ *   skill_fit*0.24 + location_fit*0.14 + seniority_fit*0.14 + title_fit*0.10
+ *   + industry_fit*0.08 + nice_to_have_fit*0.05 + keyword_alignment*0.05
+ *   + must_have_pct*0.20
  */
 export function computeOverallScore(
   categories: ScoreBreakdown["categories"],
@@ -204,7 +206,7 @@ export function computeOverallScore(
     categories.industry_fit.score      * CATEGORY_WEIGHTS_V2.industry_fit +
     categories.nice_to_have_fit.score  * CATEGORY_WEIGHTS_V2.nice_to_have_fit +
     categories.keyword_alignment.score * CATEGORY_WEIGHTS_V2.keyword_alignment +
-    mustHavePct                        * 0.15;
+    mustHavePct                        * MUST_HAVE_WEIGHT_V2;
 
   return Math.min(100, Math.max(0, Math.round(weighted)));
 }
@@ -226,10 +228,10 @@ export function computeConfidence(
   // Base confidence from data quality
   let score: number;
   if (quality === "full_profile") {
-    score = 80;
+    score = 70;
     reasons.push("Full profile text available");
   } else if (quality === "snippet") {
-    score = 50;
+    score = 45;
     reasons.push("Only a short snippet — some signals may be undetectable");
   } else {
     score = 20;
@@ -255,7 +257,7 @@ export function computeConfidence(
     }
 
     if (missingCount > 0) {
-      score -= missingCount * 5;
+      score -= missingCount * 8;
       reasons.push(
         `${missingCount} must-have(s) not mentioned — may be present but unverifiable`
       );

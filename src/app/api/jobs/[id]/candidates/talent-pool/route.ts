@@ -14,16 +14,18 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
-import { deriveUpdateData } from "@/lib/score-utils";
+import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { safeParseJson } from "@/lib/utils";
-import { normaliseLinkedInUrl } from "@/lib/linkedin-capture";
+import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { locationMatches, expandLocationKeywords } from "@/lib/location";
-import { getCityCoords, getCityKeywordsWithinRadius } from "@/lib/nz-cities";
+import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 
 const BodySchema = z.object({
   minScore:  z.number().int().min(0).max(100).default(0),
   maxResults: z.number().int().min(1).max(200).default(50),
   radiusKm:  z.number().min(1).max(200).default(25),
+  centerLat: z.number().min(-90).max(90).optional(),
+  centerLng: z.number().min(-180).max(180).optional(),
 });
 
 export async function POST(
@@ -36,7 +38,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { minScore, maxResults, radiusKm } = parsed.data;
+  const { minScore, maxResults, radiusKm, centerLat, centerLng } = parsed.data;
 
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
@@ -54,9 +56,14 @@ export async function POST(
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
 
-  const baseKeywords   = expandLocationKeywords(location);
-  const coords         = getCityCoords(location);
-  const radiusKeywords = coords ? getCityKeywordsWithinRadius(coords.lat, coords.lng, radiusKm) : [];
+  const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
+  const targetLocation = customCenterCity?.name ?? location;
+  const baseKeywords   = customCenterCity?.keywords ?? expandLocationKeywords(location);
+  const jobCoords      = getCityCoords(location);
+  const searchCenter   = centerLat != null && centerLng != null
+    ? { lat: centerLat, lng: centerLng }
+    : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
+  const radiusKeywords = searchCenter ? getCityKeywordsWithinRadius(searchCenter.lat, searchCenter.lng, radiusKm) : [];
   const locationKeywords = [...new Set([...baseKeywords, ...radiusKeywords])];
 
   // 1. Collect the LinkedIn URLs already in this job so we skip duplicates.
@@ -134,7 +141,14 @@ export async function POST(
     let matchScore: number | null = null;
 
     try {
-      const breakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
+      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
+      const breakdown = applyLocationFitOverride(
+        rawBreakdown,
+        row.location,
+        targetLocation,
+        parsedRole.location_rules,
+        job.isRemote,
+      );
       matchScore = breakdown.overall;
       Object.assign(scoreData, deriveUpdateData(breakdown));
     } catch (err) {
@@ -154,7 +168,7 @@ export async function POST(
           jobId,
           name: row.name,
           headline: row.headline,
-          location: row.location ?? location ?? null,
+          location: row.location || null,
           linkedinUrl: normUrl,
           profileText,
           source: "talent_pool",

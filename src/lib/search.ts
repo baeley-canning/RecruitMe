@@ -1,11 +1,14 @@
+import { normaliseLinkedInUrl } from "./linkedin";
+import { NZ_CITIES } from "./nz-cities";
+
 export interface SearchResult {
   name: string;
   headline: string;
   location: string;
   linkedinUrl: string;
   snippet: string;
-  fullText?: string; // full profile text for sources that return it (PDL, Apify)
-  source: "serpapi" | "bing" | "pdl" | "apify";
+  fullText?: string; // full profile text for sources that return it (PDL)
+  source: "serpapi" | "bing" | "pdl";
 }
 
 // ─── Name / org filtering ────────────────────────────────────────────────────
@@ -27,6 +30,60 @@ const TITLE_STARTERS = [
   "coo", "cfo", "senior", "junior", "lead ", "principal", "associate",
   "recruiting", "talent", "hr ", "human resources", "technical",
 ];
+
+const LOCATION_SEPARATOR_RE = /\s+[|·•]\s+|\s+[-–—]\s+|\n+/g;
+const LOCATION_COUNTRY_RE =
+  /\b(new zealand|aotearoa|australia|united kingdom|uk|england|scotland|wales|ireland|china|hong kong|singapore|india|philippines|malaysia|indonesia|thailand|vietnam|japan|korea|canada|united states|usa|mexico|brazil|argentina|south africa|germany|france|spain|italy|netherlands|poland|portugal|romania|uae|dubai)\b/i;
+
+function cleanSearchText(value: string): string {
+  return value.replace(/\u00a0/g, " ").replace(/[ \t]{2,}/g, " ").trim();
+}
+
+function looksLikeLocationFragment(fragment: string): boolean {
+  const lower = fragment.toLowerCase();
+  if (!lower || lower.length < 2 || lower.length > 80) return false;
+  if (
+    /\b(contact info|connections|followers|message|follow|connect|linkedin|skills|experience|education|recommendations|company|full-time|part-time|present)\b/i.test(
+      fragment
+    )
+  ) {
+    return false;
+  }
+
+  if (LOCATION_COUNTRY_RE.test(fragment)) return true;
+  if (NZ_CITIES.some((city) => city.keywords.some((kw) => lower.includes(kw)))) return true;
+  return /^[a-z .'-]+,\s*[a-z .'-]+(?:,\s*[a-z .'-]+)?$/i.test(fragment);
+}
+
+export function inferLocationFromSearchText(...values: string[]): string {
+  for (const value of values) {
+    const cleaned = cleanSearchText(value);
+    if (!cleaned) continue;
+
+    const fragments = cleaned
+      .split(LOCATION_SEPARATOR_RE)
+      .map((fragment) => cleanSearchText(fragment))
+      .filter(Boolean);
+
+    for (const fragment of fragments) {
+      // Always sub-split on ". " — handles "Title at Co. City, Country" patterns.
+      // Single-part fragments (no period) pass through unchanged.
+      const parts = fragment.split(/\.\s+/).map(cleanSearchText).filter(Boolean);
+      for (const part of parts) {
+        if (looksLikeLocationFragment(part)) return part;
+      }
+    }
+
+    const commaPhrase = cleaned.match(
+      /([A-Za-z .'-]+,\s*[A-Za-z .'-]+(?:,\s*(?:New Zealand|Australia|United Kingdom|England|China|India|Singapore|Canada|United States|USA))?)/i
+    )?.[1];
+    if (commaPhrase && looksLikeLocationFragment(commaPhrase)) {
+      return cleanSearchText(commaPhrase);
+    }
+  }
+
+  return "";
+}
 
 /** Returns false if the name looks like an organisation or a job title */
 function looksLikePersonName(name: string): boolean {
@@ -52,13 +109,14 @@ function parseLinkedInResults(
     const rawTitle = item.title ?? "";
     const namePart = rawTitle.split(" - ")[0]?.split(" | ")[0]?.trim() ?? "";
     const headlinePart = rawTitle.split(" - ")[1]?.split(" | ")[0]?.trim() ?? "";
+    const locationPart = inferLocationFromSearchText(rawTitle, item.snippet ?? "");
 
     if (!looksLikePersonName(namePart)) continue;
 
     results.push({
       name: namePart,
       headline: headlinePart,
-      location: "",
+      location: locationPart,
       linkedinUrl: link,
       snippet: item.snippet ?? "",
       source,
@@ -227,64 +285,6 @@ function pdlPersonToText(p: PDLPerson): string {
   return lines.join("\n").trim();
 }
 
-/** Normalise a LinkedIn URL to https://www.linkedin.com/in/slug — handles nz./au./uk. subdomains */
-function normaliseLinkedInUrl(raw: string): string {
-  const match = raw.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
-  const slug = match ? match[1] : raw.replace(/\/$/, "");
-  return `https://www.linkedin.com/in/${slug}`;
-}
-
-// ─── PDL per-profile enrich (kept for reference, not used in search flow) ────────
-// The search flow uses searchPDLProfiles (bulk) only. This function is retained
-// in case a future feature needs to enrich a single manually-added profile.
-
-let pdlEnrichQuotaExhausted = false;
-
-export async function enrichWithPDL(linkedinUrl: string): Promise<string | null> {
-  const apiKey = process.env.PDL_API_KEY;
-  if (!apiKey) return null;
-  if (pdlEnrichQuotaExhausted) return null;
-
-  // PDL expects the bare path form: linkedin.com/in/username (no https/www/country subdomain)
-  const slugMatch = linkedinUrl.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
-  if (!slugMatch) return null;
-  const profileParam = `linkedin.com/in/${slugMatch[1]}`;
-
-  try {
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      profile: profileParam,
-      pretty: "false",
-    });
-
-    const res = await fetch(
-      `https://api.peopledatalabs.com/v5/person/enrich?${params}`,
-      { signal: AbortSignal.timeout(12_000) }
-    );
-
-    if (!res.ok) {
-      if (res.status === 402) {
-        pdlEnrichQuotaExhausted = true;
-        console.warn(`[pdl] enrich quota exhausted — skipping all further enrichment calls this session`);
-      }
-      return null;
-    }
-    console.log(`[pdl] enrich ${profileParam} → 200 (found)`);
-
-    const data = await res.json() as {
-      status: number;
-      likelihood?: number;
-      data?: PDLPerson;
-    };
-
-    if (!data.data?.full_name) return null;
-
-    return pdlPersonToText(data.data);
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Search People Data Labs for candidates matching a role title + location.
  * Uses the SQL query format — simpler and more predictable than Elasticsearch.
@@ -358,14 +358,3 @@ export async function searchPDLProfiles(
 
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
-
-export function buildLinkedInSearchUrl(query: string): string {
-  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}`;
-}
-
-export function buildGoogleSearchUrl(query: string, location: string): string {
-  const q = location
-    ? `site:linkedin.com/in ${query} ${location}`
-    : `site:linkedin.com/in ${query}`;
-  return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
-}
