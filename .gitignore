@@ -18,6 +18,10 @@
 *.db-wal
 *.db-journal
 
+# electron build output
+dist/
+build-resources/
+
 # typescript build cache
 tsconfig.tsbuildinfo
 

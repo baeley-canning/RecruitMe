@@ -1,0 +1,167 @@
+const { app, BrowserWindow, shell, dialog } = require("electron");
+const { spawn } = require("child_process");
+const path = require("path");
+const net = require("net");
+const fs = require("fs");
+
+const isDev = !app.isPackaged;
+const DEV_PORT = 3000;
+
+let mainWindow = null;
+let serverProcess = null;
+let activePort = DEV_PORT;
+
+// ── Port helpers ──────────────────────────────────────────────────────────────
+
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+    srv.on("error", reject);
+  });
+}
+
+function waitForPort(port, maxMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + maxMs;
+    const attempt = () => {
+      const sock = net.connect(port, "127.0.0.1");
+      sock.once("connect", () => { sock.destroy(); resolve(); });
+      sock.once("error", () => {
+        if (Date.now() > deadline) return reject(new Error("Server did not start in time"));
+        setTimeout(attempt, 500);
+      });
+    };
+    attempt();
+  });
+}
+
+// ── Database setup ────────────────────────────────────────────────────────────
+
+function ensureDatabase() {
+  const userDataPath = app.getPath("userData");
+  const dbPath = path.join(userDataPath, "recruitme.db");
+
+  if (!fs.existsSync(dbPath)) {
+    // Copy the bundled seed database on first run
+    const seedDb = isDev
+      ? path.join(__dirname, "..", "prisma", "seed.db")
+      : path.join(app.getAppPath(), "prisma", "seed.db");
+
+    if (fs.existsSync(seedDb)) {
+      fs.mkdirSync(userDataPath, { recursive: true });
+      fs.copyFileSync(seedDb, dbPath);
+      console.log("[db] Copied seed database to", dbPath);
+    } else {
+      console.warn("[db] No seed.db found — database will be created empty");
+    }
+  }
+
+  return dbPath;
+}
+
+// ── Next.js server ────────────────────────────────────────────────────────────
+
+function startProductionServer(port, dbPath) {
+  const appRoot = app.getAppPath();
+  const standalone = path.join(appRoot, ".next", "standalone");
+  const serverJs = path.join(standalone, "server.js");
+
+  if (!fs.existsSync(serverJs)) {
+    throw new Error(`Bundled server not found at: ${serverJs}\nRun 'npm run electron:build' first.`);
+  }
+
+  const env = {
+    ...process.env,
+    PORT: String(port),
+    NODE_ENV: "production",
+    DATABASE_URL: `file:${dbPath}`,
+    NEXTAUTH_URL: `http://localhost:${port}`,
+    // Fixed secret for the desktop build — safe because server only binds to localhost
+    NEXTAUTH_SECRET: "recruitme-desktop-2024-x04NrrFE401nkGNG4bSttqYYDM8brzx",
+  };
+
+  serverProcess = spawn(process.execPath, [serverJs], {
+    cwd: standalone,
+    env,
+    stdio: "pipe",
+  });
+
+  serverProcess.stdout.on("data", (d) => console.log("[next]", d.toString().trim()));
+  serverProcess.stderr.on("data", (d) => console.error("[next]", d.toString().trim()));
+  serverProcess.on("exit", (code) => {
+    console.log("[next] server exited with code", code);
+    serverProcess = null;
+  });
+}
+
+// ── Window ────────────────────────────────────────────────────────────────────
+
+function createWindow(port) {
+  if (mainWindow) { mainWindow.focus(); return; }
+
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 1024,
+    minHeight: 640,
+    title: "RecruitMe",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  mainWindow.loadURL(`http://localhost:${port}`);
+  mainWindow.once("ready-to-show", () => mainWindow.show());
+
+  // External links (LinkedIn, etc.) open in the user's browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith(`http://localhost:${port}`)) return { action: "allow" };
+    shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  mainWindow.on("closed", () => { mainWindow = null; });
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+app.whenReady().then(async () => {
+  try {
+    if (isDev) {
+      // Dev: Next.js dev server is already running
+      activePort = DEV_PORT;
+    } else {
+      activePort = await getFreePort();
+      const dbPath = ensureDatabase();
+      startProductionServer(activePort, dbPath);
+      await waitForPort(activePort);
+    }
+    createWindow(activePort);
+  } catch (err) {
+    dialog.showErrorBox("RecruitMe — Startup Error", String(err));
+    app.quit();
+  }
+});
+
+app.on("activate", () => {
+  // macOS: re-open window when clicking dock icon
+  createWindow(activePort);
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    if (serverProcess) { serverProcess.kill(); serverProcess = null; }
+    app.quit();
+  }
+});
+
+app.on("before-quit", () => {
+  if (serverProcess) { serverProcess.kill(); serverProcess = null; }
+});

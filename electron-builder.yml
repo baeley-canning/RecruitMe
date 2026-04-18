@@ -1,0 +1,54 @@
+appId: com.recruitme.app
+productName: RecruitMe
+
+directories:
+  output: dist
+  buildResources: build-resources
+
+# Files included in the packaged app
+files:
+  - electron/**/*
+  - .next/standalone/**/*
+  - "!.next/standalone/node_modules/.cache/**/*"
+  - prisma/seed.db
+
+# Copy static assets and public into the right places inside standalone
+extraFiles:
+  - from: .next/static
+    to: .next/standalone/.next/static
+  - from: public
+    to: .next/standalone/public
+  - from: prisma/seed.db
+    to: prisma/seed.db
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.business
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  publisherName: RecruitMe
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+dmg:
+  title: RecruitMe ${version}
+  contents:
+    - x: 410
+      y: 150
+      type: link
+      path: /Applications
+    - x: 130
+      y: 150
+      type: file
