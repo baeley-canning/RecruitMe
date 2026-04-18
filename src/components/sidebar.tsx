@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
+import { useSession, signOut } from "next-auth/react";
 
 interface Job {
   id: string;
@@ -144,7 +145,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 export function Sidebar({ jobs }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { data: session } = useSession();
   const [showSettings, setShowSettings] = useState(false);
+  const username = session?.user?.name ?? "";
+  const isOwner = (session?.user as { role?: string })?.role === "owner";
 
   const handleDelete = async (e: React.MouseEvent, jobId: string) => {
     e.preventDefault();
@@ -282,21 +286,56 @@ export function Sidebar({ jobs }: SidebarProps) {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-slate-800 flex items-center gap-2">
-          <Link
-            href="/jobs/new"
-            className="flex items-center gap-2 flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors justify-center"
-          >
-            <Plus className="w-4 h-4" />
-            New Job
-          </Link>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-            title="API Keys"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+        <div className="px-3 py-3 border-t border-slate-800 space-y-2">
+          <div className="flex items-center gap-2">
+            <Link
+              href="/jobs/new"
+              className="flex items-center gap-2 flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors justify-center"
+            >
+              <Plus className="w-4 h-4" />
+              New Job
+            </Link>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+              title="API Keys"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Signed-in user */}
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0">
+                {isOwner
+                  ? <Shield className="w-3 h-3 text-blue-400" />
+                  : <Users className="w-3 h-3 text-slate-400" />
+                }
+              </div>
+              <span className="text-xs text-slate-400 truncate">{username}</span>
+              {isOwner && (
+                <Link
+                  href="/admin"
+                  className={cn(
+                    "text-xs px-1.5 py-0.5 rounded font-medium transition-colors flex-shrink-0",
+                    pathname === "/admin"
+                      ? "bg-blue-500 text-white"
+                      : "bg-slate-700 text-blue-400 hover:bg-slate-600"
+                  )}
+                >
+                  Admin
+                </Link>
+              )}
+            </div>
+            <button
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              className="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors flex-shrink-0"
+              title="Sign out"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </aside>
     </>

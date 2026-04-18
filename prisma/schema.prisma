@@ -30,6 +30,15 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String   // bcrypt hash
+  role      String   @default("user") // "owner" | "user"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model Candidate {
   id           String   @id @default(cuid())
   jobId        String
