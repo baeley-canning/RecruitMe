@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 const CONCURRENCY = 3;
 
@@ -10,10 +11,12 @@ export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
 
-  const job = await prisma.job.findUnique({ where: { id } });
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  const { job, error } = await requireJobAccess(id, auth);
+  if (error || !job) return error;
   if (!job.parsedRole) {
     return NextResponse.json({ error: "Parse the job description first." }, { status: 400 });
   }

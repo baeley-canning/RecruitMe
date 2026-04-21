@@ -1,0 +1,6 @@
+electron/
+dist/
+build-resources/
+*.db
+*.db-shm
+*.db-wal

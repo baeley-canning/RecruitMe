@@ -1,5 +1,5 @@
 import { normaliseLinkedInUrl } from "./linkedin";
-import { NZ_CITIES } from "./nz-cities";
+import { getCityCoords, NZ_CITIES } from "./nz-cities";
 
 export interface SearchResult {
   name: string;
@@ -39,6 +39,31 @@ function cleanSearchText(value: string): string {
   return value.replace(/\u00a0/g, " ").replace(/[ \t]{2,}/g, " ").trim();
 }
 
+function stripSearchLocationNoise(value: string): string {
+  return value
+    .replace(/\b(hybrid|remote|remotely|onsite|on-site|in office|office based|office|work from home|wfh)\b.*$/i, "")
+    .replace(/[|/]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[,\-–—\s]+$/g, "")
+    .trim();
+}
+
+function buildLocationSearchTerm(location: string): string {
+  const cleaned = stripSearchLocationNoise(location);
+  if (!cleaned) return "";
+
+  const city = getCityCoords(cleaned);
+  if (city) return `${city.name} New Zealand`;
+  return cleaned;
+}
+
+function buildLinkedInSearchQuery(query: string, location: string): string {
+  const locationTerm = buildLocationSearchTerm(location);
+  return locationTerm
+    ? `site:linkedin.com/in ${query} ${locationTerm}`
+    : `site:linkedin.com/in ${query}`;
+}
+
 function looksLikeLocationFragment(fragment: string): boolean {
   const lower = fragment.toLowerCase();
   if (!lower || lower.length < 2 || lower.length > 80) return false;
@@ -51,8 +76,14 @@ function looksLikeLocationFragment(fragment: string): boolean {
   }
 
   if (LOCATION_COUNTRY_RE.test(fragment)) return true;
-  if (NZ_CITIES.some((city) => city.keywords.some((kw) => lower.includes(kw)))) return true;
-  return /^[a-z .'-]+,\s*[a-z .'-]+(?:,\s*[a-z .'-]+)?$/i.test(fragment);
+  // Comma-separated "City, Country" pattern is a reliable location indicator.
+  if (/^[a-z .'-]+,\s*[a-z .'-]+(?:,\s*[a-z .'-]+)?$/i.test(fragment)) return true;
+  // NZ city keyword — but only if the fragment is short enough to be a place name,
+  // not a person's full name (e.g. "Wellington Gomes Graciani" has 3 words and is
+  // NOT a location, even though it starts with the NZ city "Wellington").
+  const wordCount = fragment.trim().split(/\s+/).length;
+  if (wordCount <= 2 && NZ_CITIES.some((city) => city.keywords.some((kw) => lower.includes(kw)))) return true;
+  return false;
 }
 
 export function inferLocationFromSearchText(...values: string[]): string {
@@ -135,9 +166,7 @@ export async function searchLinkedInProfiles(
   const apiKey = process.env.SERPAPI_API_KEY;
   if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured");
 
-  const searchQuery = location
-    ? `site:linkedin.com/in ${query} ${location}`
-    : `site:linkedin.com/in ${query}`;
+  const searchQuery = buildLinkedInSearchQuery(query, location);
 
   const params = new URLSearchParams({
     engine: "google",
@@ -168,9 +197,7 @@ export async function searchBingLinkedInProfiles(
   const apiKey = process.env.BING_API_KEY;
   if (!apiKey) throw new Error("BING_API_KEY is not configured");
 
-  const searchQuery = location
-    ? `site:linkedin.com/in ${query} ${location}`
-    : `site:linkedin.com/in ${query}`;
+  const searchQuery = buildLinkedInSearchQuery(query, location);
 
   const params = new URLSearchParams({
     q: searchQuery,

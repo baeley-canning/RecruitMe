@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import {
   MapPin,
   ChevronDown,
@@ -19,6 +19,7 @@ import {
   Check,
   RefreshCw,
   FileText,
+  Mail,
 } from "lucide-react";
 
 function LinkedInIcon({ className }: { className?: string }) {
@@ -45,6 +46,9 @@ import {
   buildProfileExcerpt,
   SCORE_PROFILE_EXCERPT_MAX_CHARS,
 } from "@/lib/profile-excerpt";
+import { ScreeningSection } from "./screening-section";
+import { ReferencePanel } from "./reference-panel";
+import { InterviewSection } from "./interview-section";
 
 interface AcceptanceSignal {
   label: string;
@@ -72,6 +76,8 @@ interface Candidate {
   acceptanceReason: string | null;
   scoreBreakdown: string | null;
   notes: string | null;
+  screeningData: string | null;
+  interviewNotes: string | null;
   status: string;
   statusHistory: string | null;
   source: string;
@@ -89,6 +95,9 @@ interface CandidateCardProps {
   onScore: (id: string) => void;
   onFetchProfile: (id: string) => void;
   onNotesChange: (id: string, notes: string) => void;
+  onLinkedInChange?: (id: string, url: string) => void;
+  onScreeningDataChange?: (id: string, data: string) => void;
+  onInterviewNotesChange?: (id: string, data: string) => void;
   onDelete: (id: string) => void;
   scoring?: boolean;
   fetchingProfile?: boolean;
@@ -99,12 +108,12 @@ interface OutreachMessage {
   email: string;
 }
 
-type LegacyRadarDimensions = Partial<RadarDimensions & { experience: number }>;
+type LegacyRadarDimensions = Partial<RadarDimensions>;
 
 function candidateSourceLabel(candidate: Candidate) {
   if (candidate.source === "extension") return "LinkedIn extension";
   if (candidate.source === "talent_pool") return "Talent pool";
-  if (candidate.source === "bookmarklet") return "LinkedIn import";
+  if (candidate.source === "bookmarklet") return "LinkedIn capture";
   if (candidate.source === "pdl") return "People Data Labs";
   if (candidate.source === "serpapi") {
     return candidate.profileText && candidate.profileText.length >= 500 ? "LinkedIn profile text" : "SerpAPI snippet";
@@ -146,7 +155,7 @@ function getRadarDimensions(
 
   return {
     skills: legacyDimensions.skills ?? 0,
-    title: legacyDimensions.title ?? legacyDimensions.experience ?? 0,
+    title: legacyDimensions.title ?? 0,
     industry: legacyDimensions.industry ?? 0,
     location: legacyDimensions.location ?? 0,
     seniority: legacyDimensions.seniority ?? 0,
@@ -634,9 +643,18 @@ function ProfileDrawer({
   candidate: Candidate;
   onClose: () => void;
 }) {
-  const breakdown = safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null);
-  const matchReason = safeParseJson<{ summary?: string; reasoning?: string } | null>(candidate.matchReason, null);
-  const acceptanceData = safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null);
+  const breakdown = useMemo(
+    () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
+    [candidate.scoreBreakdown]
+  );
+  const matchReason = useMemo(
+    () => safeParseJson<{ summary?: string; reasoning?: string } | null>(candidate.matchReason, null),
+    [candidate.matchReason]
+  );
+  const acceptanceData = useMemo(
+    () => safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null),
+    [candidate.acceptanceReason]
+  );
   const displaySummary = breakdown?.recruiter_summary ?? matchReason?.summary ?? null;
   const captureLabel = candidateSourceLabel(candidate);
   const capturedAt = candidate.profileCapturedAt ? new Date(candidate.profileCapturedAt) : null;
@@ -646,11 +664,11 @@ function ProfileDrawer({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/30 backdrop-blur-[2px] z-40"
+        className="fixed inset-0 bg-black/30 backdrop-blur-[2px] z-[1200]"
         onClick={onClose}
       />
       {/* Drawer */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl z-50 flex flex-col">
+      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl z-[1210] flex flex-col">
         {/* Header */}
         <div className="flex items-start gap-4 px-6 py-5 border-b border-slate-100 flex-shrink-0">
           <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 text-white font-bold text-lg">
@@ -813,13 +831,16 @@ function ProfileDrawer({
   );
 }
 
-export function CandidateCard({
+export const CandidateCard = memo(function CandidateCard({
   candidate,
   jobId,
   onStatusChange,
   onScore,
   onFetchProfile,
   onNotesChange,
+  onLinkedInChange,
+  onScreeningDataChange,
+  onInterviewNotesChange,
   onDelete,
   scoring = false,
   fetchingProfile = false,
@@ -832,11 +853,25 @@ export function CandidateCard({
   const scoreBadgeRef = useRef<HTMLDivElement>(null);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notes, setNotes] = useState(candidate.notes ?? "");
+  const [editingLinkedIn, setEditingLinkedIn] = useState(false);
+  const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
   const [outreachOpen, setOutreachOpen] = useState(false);
   const [outreachLoading, setOutreachLoading] = useState(false);
   const [outreachData, setOutreachData] = useState<OutreachMessage | null>(null);
   const [outreachError, setOutreachError] = useState("");
   const [outreachTab, setOutreachTab] = useState<"linkedin" | "email">("linkedin");
+
+  const [rejectionOpen, setRejectionOpen] = useState(false);
+  const [rejectionLoading, setRejectionLoading] = useState(false);
+  const [rejectionText, setRejectionText] = useState("");
+  const [rejectionError, setRejectionError] = useState("");
+  const [rejectionCopied, setRejectionCopied] = useState(false);
+
+  const [offerOpen, setOfferOpen] = useState(false);
+  const [offerLoading, setOfferLoading] = useState(false);
+  const [offerData, setOfferData] = useState<{ subject: string; body: string } | null>(null);
+  const [offerError, setOfferError] = useState("");
+  const [offerCopied, setOfferCopied] = useState(false);
 
   const handleGenerateOutreach = async () => {
     setOutreachOpen(true);
@@ -860,16 +895,66 @@ export function CandidateCard({
     }
   };
 
-  const matchReason = safeParseJson<{
-    summary?: string;
-    reasoning?: string;
-    dimensions?: LegacyRadarDimensions;
-    strengths?: string[];
-    gaps?: string[];
-  } | null>(candidate.matchReason, null);
+  const handleGenerateRejection = async () => {
+    setRejectionOpen(true);
+    if (rejectionText) return;
+    setRejectionLoading(true);
+    setRejectionError("");
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/candidates/${candidate.id}/rejection-email`, { method: "POST" });
+      const data = await res.json() as { email?: string; error?: string };
+      if (!res.ok || data.error) {
+        setRejectionError(data.error ?? "Generation failed");
+      } else {
+        setRejectionText(data.email ?? "");
+      }
+    } catch {
+      setRejectionError("Failed to generate. Try again.");
+    } finally {
+      setRejectionLoading(false);
+    }
+  };
 
-  const breakdown = safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null);
-  const acceptanceData = safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null);
+  const handleGenerateOffer = async () => {
+    setOfferOpen(true);
+    if (offerData) return;
+    setOfferLoading(true);
+    setOfferError("");
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/candidates/${candidate.id}/offer-letter`, { method: "POST" });
+      const data = await res.json() as { subject?: string; body?: string; error?: string };
+      if (!res.ok || data.error) {
+        setOfferError(data.error ?? "Generation failed");
+      } else {
+        setOfferData({ subject: data.subject ?? "", body: data.body ?? "" });
+      }
+    } catch {
+      setOfferError("Failed to generate. Try again.");
+    } finally {
+      setOfferLoading(false);
+    }
+  };
+
+  const matchReason = useMemo(
+    () =>
+      safeParseJson<{
+        summary?: string;
+        reasoning?: string;
+        dimensions?: LegacyRadarDimensions;
+        strengths?: string[];
+        gaps?: string[];
+      } | null>(candidate.matchReason, null),
+    [candidate.matchReason]
+  );
+
+  const breakdown = useMemo(
+    () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
+    [candidate.scoreBreakdown]
+  );
+  const acceptanceData = useMemo(
+    () => safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null),
+    [candidate.acceptanceReason]
+  );
   const captureLabel = candidateSourceLabel(candidate);
   const hasExtensionCapture = candidate.source === "extension" && !!candidate.profileText;
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
@@ -881,6 +966,11 @@ export function CandidateCard({
   const handleSaveNotes = () => {
     onNotesChange(candidate.id, notes);
     setEditingNotes(false);
+  };
+
+  const handleSaveLinkedIn = () => {
+    onLinkedInChange?.(candidate.id, linkedInInput.trim());
+    setEditingLinkedIn(false);
   };
 
   return (
@@ -1212,6 +1302,47 @@ export function CandidateCard({
             )}
           </div>
 
+          {/* LinkedIn URL — editable when missing or to update */}
+          {onLinkedInChange && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-medium text-slate-600">LinkedIn URL</p>
+                {!editingLinkedIn && (
+                  <button
+                    onClick={() => { setLinkedInInput(candidate.linkedinUrl ?? ""); setEditingLinkedIn(true); }}
+                    className="text-xs text-blue-600 hover:text-blue-700"
+                  >
+                    {candidate.linkedinUrl ? "Edit" : "Add"}
+                  </button>
+                )}
+              </div>
+              {editingLinkedIn ? (
+                <div>
+                  <input
+                    type="url"
+                    value={linkedInInput}
+                    onChange={(e) => setLinkedInInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSaveLinkedIn(); if (e.key === "Escape") setEditingLinkedIn(false); }}
+                    placeholder="https://linkedin.com/in/..."
+                    className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                  <div className="flex gap-2 mt-1.5">
+                    <button onClick={handleSaveLinkedIn} className="text-xs text-blue-600 font-medium hover:text-blue-700">Save</button>
+                    <button onClick={() => setEditingLinkedIn(false)} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                  </div>
+                </div>
+              ) : candidate.linkedinUrl ? (
+                <a href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:underline truncate block max-w-full">
+                  {candidate.linkedinUrl}
+                </a>
+              ) : (
+                <p className="text-xs text-slate-400">No LinkedIn URL — add one to enable profile fetch</p>
+              )}
+            </div>
+          )}
+
           {/* Status timeline */}
           {(() => {
             const history = safeParseJson<StatusEvent[]>(candidate.statusHistory, []);
@@ -1241,6 +1372,23 @@ export function CandidateCard({
               </div>
             );
           })()}
+
+          {/* Phone screening + Interview notes + Reference checks */}
+          <ScreeningSection
+            candidateId={candidate.id}
+            jobId={jobId}
+            screeningData={candidate.screeningData}
+            onSaved={(updated) => onScreeningDataChange?.(candidate.id, updated)}
+          />
+          {["contacted", "interviewing", "offer_sent", "hired"].includes(candidate.status) ? (
+            <InterviewSection
+              candidateId={candidate.id}
+              jobId={jobId}
+              interviewNotes={candidate.interviewNotes}
+              onSaved={(updated) => onInterviewNotesChange?.(candidate.id, updated)}
+            />
+          ) : null}
+          <ReferencePanel candidateId={candidate.id} jobId={jobId} />
         </div>
       )}
 
@@ -1356,36 +1504,94 @@ export function CandidateCard({
               Reject
             </Button>
           )}
+
+          {/* Rejection email — when rejected/declined */}
+          {["rejected", "declined"].includes(candidate.status) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleGenerateRejection}
+              className="text-slate-500 hover:text-red-700 hover:bg-red-50"
+              title="Draft rejection email"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Draft email
+            </Button>
+          )}
+
+          {/* Offer letter — when offer sent or hired */}
+          {["offer_sent", "hired"].includes(candidate.status) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleGenerateOffer}
+              className="text-emerald-600 hover:bg-emerald-50"
+              title="Generate offer letter"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Offer letter
+            </Button>
+          )}
         </div>
 
         {/* Right side */}
         <div className="flex items-center gap-1">
-          {(candidate.profileText || candidate.source === "extension") && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowProfile(true)}
-              className="text-slate-500 hover:text-blue-700 hover:bg-blue-50"
-              title="View stored LinkedIn capture"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              View
-            </Button>
-          )}
-          {candidate.linkedinUrl && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onFetchProfile(candidate.id)}
-              loading={fetchingProfile}
-              disabled={fetchingProfile}
-              className="text-slate-500 hover:text-blue-600 hover:bg-blue-50"
-              title={candidate.profileText ? "Re-fetch LinkedIn profile" : "Fetch full LinkedIn profile and score"}
-            >
-              {!fetchingProfile && <RefreshCw className="w-3.5 h-3.5" />}
-              {fetchingProfile ? "Fetching…" : "Fetch profile"}
-            </Button>
-          )}
+          {(() => {
+            // profileCapturedAt means we've already done a deliberate fetch — treat as done
+            // regardless of char count (some profiles are genuinely short)
+            const hasGoodProfile = !!(
+              candidate.profileText && (
+                candidate.profileText.length >= 500 || candidate.profileCapturedAt
+              )
+            );
+            return (
+              <>
+                {/* View: only when there's a meaningful profile */}
+                {hasGoodProfile && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowProfile(true)}
+                    className="text-slate-500 hover:text-blue-700 hover:bg-blue-50"
+                    title="View stored LinkedIn profile"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    View
+                  </Button>
+                )}
+
+                {/* Fetch profile button — prominent when profile missing/thin, subtle icon when good */}
+                {candidate.linkedinUrl && (
+                  fetchingProfile ? (
+                    <Button size="sm" variant="ghost" loading disabled className="text-slate-400">
+                      Fetching…
+                    </Button>
+                  ) : hasGoodProfile ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onFetchProfile(candidate.id)}
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                      title="Re-fetch LinkedIn profile"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onFetchProfile(candidate.id)}
+                      className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 font-medium"
+                      title="Fetch full LinkedIn profile and score"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Fetch profile
+                    </Button>
+                  )
+                )}
+              </>
+            );
+          })()}
           {candidate.profileText && (
             <Button
               size="sm"
@@ -1439,7 +1645,7 @@ export function CandidateCard({
 
       {/* Outreach modal */}
       {outreachOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
               <div>
@@ -1530,6 +1736,117 @@ export function CandidateCard({
         </div>
       )}
 
+      {/* Rejection email modal */}
+      {rejectionOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="font-semibold text-slate-900">Rejection Email</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Drafted for {candidate.name}</p>
+              </div>
+              <button onClick={() => setRejectionOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              {rejectionLoading && (
+                <div className="flex items-center gap-2 text-sm text-slate-500 py-6 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                  Drafting rejection email…
+                </div>
+              )}
+              {rejectionError && <p className="text-sm text-red-600 text-center">{rejectionError}</p>}
+              {rejectionText && (
+                <>
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
+                    {rejectionText}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(rejectionText).then(() => {
+                          setRejectionCopied(true);
+                          setTimeout(() => setRejectionCopied(false), 2000);
+                        });
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium"
+                    >
+                      {rejectionCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      {rejectionCopied ? "Copied!" : "Copy email"}
+                    </button>
+                    <button
+                      onClick={() => { setRejectionText(""); handleGenerateRejection(); }}
+                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Offer letter modal */}
+      {offerOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="font-semibold text-slate-900">Offer Letter</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Drafted for {candidate.name}</p>
+              </div>
+              <button onClick={() => setOfferOpen(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              {offerLoading && (
+                <div className="flex items-center gap-2 text-sm text-slate-500 py-6 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                  Drafting offer letter…
+                </div>
+              )}
+              {offerError && <p className="text-sm text-red-600 text-center">{offerError}</p>}
+              {offerData && (
+                <>
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <p className="text-xs font-medium text-emerald-700 mb-0.5">Subject line</p>
+                    <p className="text-sm text-slate-800">{offerData.subject}</p>
+                  </div>
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
+                    {offerData.body}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        const full = `Subject: ${offerData.subject}\n\n${offerData.body}`;
+                        navigator.clipboard.writeText(full).then(() => {
+                          setOfferCopied(true);
+                          setTimeout(() => setOfferCopied(false), 2000);
+                        });
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium"
+                    >
+                      {offerCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      {offerCopied ? "Copied!" : "Copy letter"}
+                    </button>
+                    <button
+                      onClick={() => { setOfferData(null); handleGenerateOffer(); }}
+                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showProfile && (
         <ProfileDrawer
           candidate={candidate}
@@ -1538,4 +1855,6 @@ export function CandidateCard({
       )}
     </div>
   );
-}
+});
+
+CandidateCard.displayName = "CandidateCard";

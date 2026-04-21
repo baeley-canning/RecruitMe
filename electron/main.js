@@ -1,5 +1,5 @@
-const { app, BrowserWindow, shell, dialog } = require("electron");
-const { spawn } = require("child_process");
+const { app, BrowserWindow, shell, dialog, ipcMain } = require("electron");
+const { spawn, execFileSync } = require("child_process");
 const path = require("path");
 const net = require("net");
 const fs = require("fs");
@@ -10,6 +10,78 @@ const DEV_PORT = 3000;
 let mainWindow = null;
 let serverProcess = null;
 let activePort = DEV_PORT;
+
+function findOperaExecutable() {
+  if (process.platform === "darwin") {
+    const macPaths = [
+      "/Applications/Opera.app/Contents/MacOS/Opera",
+      "/Applications/Opera GX.app/Contents/MacOS/Opera GX",
+    ];
+    return macPaths.find((p) => fs.existsSync(p)) ?? null;
+  }
+
+  if (process.platform !== "win32") return null;
+
+  // Use PowerShell — it has access to Windows env/registry regardless of how Electron was launched
+  try {
+    const ps = `
+$found = $null
+$lad = [Environment]::GetFolderPath('LocalApplicationData')
+$pf  = [Environment]::GetFolderPath('ProgramFiles')
+$pf86= [Environment]::GetFolderPath('ProgramFilesX86')
+$paths = @(
+  "$lad\\Programs\\Opera\\launcher.exe",
+  "$lad\\Programs\\Opera\\opera.exe",
+  "$lad\\Programs\\Opera GX\\launcher.exe",
+  "$lad\\Programs\\Opera GX\\opera.exe",
+  "$pf\\Opera\\launcher.exe",
+  "$pf\\Opera GX\\launcher.exe",
+  "$pf86\\Opera\\launcher.exe",
+  "$pf86\\Opera GX\\launcher.exe"
+)
+foreach ($p in $paths) { if (Test-Path $p) { $found = $p; break } }
+if (-not $found) {
+  $cmd = Get-Command opera.exe -ErrorAction SilentlyContinue
+  if ($cmd) { $found = $cmd.Source }
+}
+if (-not $found) {
+  $regKey = 'HKCU:\\SOFTWARE\\Clients\\StartMenuInternet\\OperaStable\\shell\\open\\command'
+  try {
+    $val = (Get-ItemProperty -Path $regKey -ErrorAction Stop).'(Default)'
+    $exe = ($val -replace '"','') -replace ' .*',''
+    if (Test-Path $exe) { $found = $exe }
+  } catch {}
+}
+if ($found) { Write-Output $found }
+`;
+    const result = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], {
+      encoding: "utf8", timeout: 8000,
+    }).trim();
+
+    if (result && fs.existsSync(result)) {
+      console.log("[opera] found at:", result);
+      return result;
+    }
+    console.warn("[opera] PowerShell search returned nothing");
+  } catch (err) {
+    console.warn("[opera] PowerShell search failed:", err.message);
+  }
+  return null;
+}
+
+/** Open a URL in Opera. Returns true if Opera was found and launched, false otherwise. */
+function openInOpera(url) {
+  const exe = findOperaExecutable();
+  if (!exe) return false;
+  try {
+    const child = spawn(exe, [url], { detached: true, stdio: "ignore" });
+    child.unref();
+    return true;
+  } catch (err) {
+    console.error("[opera] spawn failed:", err);
+    return false;
+  }
+}
 
 // ── Port helpers ──────────────────────────────────────────────────────────────
 
@@ -22,6 +94,21 @@ function getFreePort() {
     });
     srv.on("error", reject);
   });
+}
+
+function canBindPort(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "127.0.0.1", () => {
+      srv.close(() => resolve(true));
+    });
+  });
+}
+
+async function getPreferredPort(preferredPort) {
+  if (await canBindPort(preferredPort)) return preferredPort;
+  return getFreePort();
 }
 
 function waitForPort(port, maxMs = 30000) {
@@ -120,11 +207,17 @@ function createWindow(port) {
   mainWindow.loadURL(`http://localhost:${port}`);
   mainWindow.once("ready-to-show", () => mainWindow.show());
 
-  // External links (LinkedIn, etc.) open in the user's browser
+  // External links open in the system default browser (not the Electron window)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith(`http://localhost:${port}`)) return { action: "allow" };
-    shell.openExternal(url);
+    void shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith(`http://localhost:${port}`)) return;
+    event.preventDefault();
+    void shell.openExternal(url);
   });
 
   mainWindow.on("closed", () => { mainWindow = null; });
@@ -138,7 +231,7 @@ app.whenReady().then(async () => {
       // Dev: Next.js dev server is already running
       activePort = DEV_PORT;
     } else {
-      activePort = await getFreePort();
+      activePort = await getPreferredPort(DEV_PORT);
       const dbPath = ensureDatabase();
       startProductionServer(activePort, dbPath);
       await waitForPort(activePort);
@@ -164,4 +257,11 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   if (serverProcess) { serverProcess.kill(); serverProcess = null; }
+});
+
+// Opens a LinkedIn URL specifically in Opera (required for the capture extension).
+// Returns true if Opera was found and launched, false if Opera isn't installed.
+ipcMain.handle("recruitme:open-external", (_event, url) => {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
+  return openInOpera(url);
 });

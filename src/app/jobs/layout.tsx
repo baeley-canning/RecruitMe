@@ -1,12 +1,16 @@
 import { prisma } from "@/lib/db";
 import { Sidebar, SidebarWrapper } from "@/components/sidebar";
+import { getAuth, jobsWhere } from "@/lib/session";
 
 export default async function JobsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const auth = await getAuth();
+  const where = auth ? jobsWhere(auth) : {};
   const jobs = await prisma.job.findMany({
+    where,
     orderBy: { createdAt: "desc" },
     select: {
       id: true,

@@ -7,10 +7,10 @@
     "skill_fit": { "score": 70, "weight": 0.24, "evidence": "Some stack overlap but not complete." },
     "location_fit": { "score": 65, "weight": 0.14, "evidence": "Initial model score before deterministic override." },
     "seniority_fit": { "score": 45, "weight": 0.14, "evidence": "Looks more mid-level than senior." },
-    "title_fit": { "score": 60, "weight": 0.1, "evidence": "Titles are adjacent but not exact." },
-    "industry_fit": { "score": 55, "weight": 0.08, "evidence": "Some relevant domain crossover." },
-    "nice_to_have_fit": { "score": 20, "weight": 0.05, "evidence": "Preferred tooling is mostly absent." },
-    "keyword_alignment": { "score": 58, "weight": 0.05, "evidence": "Partial vocabulary overlap." }
+    "title_fit": { "score": 60, "weight": 0.08, "evidence": "Titles are adjacent but not exact." },
+    "industry_fit": { "score": 55, "weight": 0.06, "evidence": "Some relevant domain crossover." },
+    "nice_to_have_fit": { "score": 20, "weight": 0.04, "evidence": "Preferred tooling is mostly absent." },
+    "keyword_alignment": { "score": 58, "weight": 0.02, "evidence": "Partial vocabulary overlap." }
   },
   "must_have_coverage": [
     { "requirement": "React", "status": "confirmed", "evidence": "React appears in skills and project history." },
@@ -33,10 +33,10 @@
   ],
   "recruiter_summary": "Some relevant frontend overlap, but this is not a strong office-based Wellington match.",
   "expected": {
-    "overall": 34,
+    "overall": 33,
     "locationFit": 20,
-    "mustHavePct": 25,
-    "confidenceScore": 39,
+    "mustHavePct": 27,
+    "confidenceScore": 29,
     "confidenceLevel": "low",
     "summaryIncludes": "Based in Napier"
   }

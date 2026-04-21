@@ -3,12 +3,14 @@
 // The AI populates raw category scores + coverage + reasons.
 // These functions compute overall, pcts, evidence coverage, and confidence.
 //
-// v1 → v2 changelog:
-//   - Added nice_to_have_fit and keyword_alignment scoring categories
-//   - Added nice_to_have_coverage (NiceToHaveStatus[])
-//   - Added reasons_for, reasons_against, missing_evidence
-//   - Added evidence_coverage_score (% of requirements with explicit textual evidence)
-//   - Weight formula rebalanced to accommodate 7 categories
+// v2 → v3 changelog:
+//   - Must-have weight raised from 0.28 → 0.36 (skills over location)
+//   - Location weight cut from 0.14 → 0.08
+//   - Seniority weight cut from 0.14 → 0.10
+//   - Snippet point table tightened: missing=5, unknown=15, likely=55
+//   - Per-requirement importance weights (WordPress/CMS/RightToWork = 1.5×)
+//   - Critical gate: unconfirmed 1.5× must-have on snippet hard-caps to 45
+//   - Snippet cap held at 55, minimal at 40
 
 // ─── Status types ──────────────────────────────────────────────────────────────
 
@@ -19,15 +21,12 @@ export type ConfidenceLevel = "high" | "medium" | "low";
 
 // ─── Evidence item types ───────────────────────────────────────────────────────
 
-/** One must-have requirement with coverage status and textual evidence. */
 export interface MustHaveStatus {
   requirement:  string;
   status:       MustHaveCoverageStatus;
-  /** Direct quote or paraphrase from the profile, or "Not mentioned" */
   evidence:     string;
 }
 
-/** One nice-to-have requirement with simpler 3-state coverage. */
 export interface NiceToHaveStatus {
   requirement:  string;
   status:       NiceToHaveCoverageStatus;
@@ -37,26 +36,15 @@ export interface NiceToHaveStatus {
 // ─── Score structures ──────────────────────────────────────────────────────────
 
 export interface CategoryScore {
-  score:    number; // 0–100
-  weight:   number; // category's contribution weight (for display only)
-  evidence: string; // one sentence grounding the score
+  score:    number;
+  weight:   number;
+  evidence: string;
 }
 
-/** v2 ScoreBreakdown — fully self-contained, all computed fields included. */
 export interface ScoreBreakdown {
   version: 2;
-
-  /** Deterministic overall: weighted sum of categories + must_have_pct contribution. */
   overall: number;
-
-  /**
-   * Evidence coverage score: % of all requirements (must + nice-to-have) where the
-   * AI found EXPLICIT textual evidence (status === "confirmed").
-   * Separate from confidence — a high-scoring candidate can have low evidence coverage
-   * if most matches are inferred rather than quoted from the profile.
-   */
   evidence_coverage_score: number;
-
   categories: {
     skill_fit:         CategoryScore;
     location_fit:      CategoryScore;
@@ -66,67 +54,67 @@ export interface ScoreBreakdown {
     nice_to_have_fit:  CategoryScore;
     keyword_alignment: CategoryScore;
   };
-
-  /** Per-requirement coverage for every must-have listed in the role. */
-  must_have_coverage: MustHaveStatus[];
-
-  /** Deterministic weighted average of must-have coverage. */
-  must_have_pct: number;
-
-  /** Per-requirement coverage for up to 6 nice-to-haves. */
+  must_have_coverage:   MustHaveStatus[];
+  must_have_pct:        number;
   nice_to_have_coverage: NiceToHaveStatus[];
-
-  /** Deterministic simple average of nice-to-have coverage. */
-  nice_to_have_pct: number;
-
-  /** Up to 4 grounded positive signals from the profile. */
-  reasons_for: string[];
-
-  /** Up to 4 grounded concerns or gaps. */
-  reasons_against: string[];
-
-  /**
-   * 2–4 specific pieces of missing information that would materially change the score.
-   * e.g. "Years of experience not stated", "No mention of React Native despite being a must-have"
-   */
-  missing_evidence: string[];
-
+  nice_to_have_pct:     number;
+  reasons_for:          string[];
+  reasons_against:      string[];
+  missing_evidence:     string[];
   confidence: {
     level:   ConfidenceLevel;
-    score:   number;     // 0–100
-    reasons: string[];   // human-readable explanation of confidence level
+    score:   number;
+    reasons: string[];
   };
-
-  data_quality: DataQuality;
-
-  /** 1–2 sentences, plain English, no jargon. Derived from structured output, not freeform. */
+  data_quality:      DataQuality;
   recruiter_summary: string;
 }
 
-// ─── Category weights — v2 (must sum to 1.0) ───────────────────────────────────
+// ─── Category weights — v3 (must sum to 1.0) ───────────────────────────────────
+// Must-have coverage is now 36%: can you do the job matters most.
+// Location cut to 8%: being nearby should not carry a weak profile.
 
 export const CATEGORY_WEIGHTS_V2 = {
-  skill_fit:         0.24,
-  location_fit:      0.14,
-  seniority_fit:     0.14,
-  title_fit:         0.10,
-  industry_fit:      0.08,
-  nice_to_have_fit:  0.05,
-  keyword_alignment: 0.05,
-  // must_have_pct contributes 0.20
+  skill_fit:         0.22,
+  location_fit:      0.08,
+  seniority_fit:     0.10,
+  title_fit:         0.08,
+  industry_fit:      0.04,
+  nice_to_have_fit:  0.06,
+  keyword_alignment: 0.06,
+  // must_have_pct contributes 0.36
 } as const;
-// Check: 0.24+0.14+0.14+0.10+0.08+0.05+0.05 = 0.80; plus must_have_pct*0.20 = 1.00 ✓
+// Check: 0.22+0.08+0.10+0.08+0.04+0.06+0.06 = 0.64; plus must_have_pct*0.36 = 1.00 ✓
 
-export const MUST_HAVE_WEIGHT_V2 = 0.20;
+export const MUST_HAVE_WEIGHT_V2 = 0.36;
 
 // ─── Point tables ───────────────────────────────────────────────────────────────
+// For full profiles: absence is a real zero.
+// For snippets: "missing" and "unknown" mean "not yet proven" — very low credit.
+// "likely" is still worth something, but not a free ride.
 
-const MUST_HAVE_POINTS: Record<MustHaveCoverageStatus, number> = {
-  confirmed: 100,
-  likely:    65,
-  missing:   0,
-  negative:  0,
-  unknown:   0,
+const MUST_HAVE_POINTS_BY_QUALITY: Record<DataQuality, Record<MustHaveCoverageStatus, number>> = {
+  full_profile: {
+    confirmed: 100,
+    likely:    65,
+    missing:   0,
+    negative:  0,
+    unknown:   0,
+  },
+  snippet: {
+    confirmed: 100,
+    likely:    55,
+    missing:   5,
+    negative:  0,
+    unknown:   15,
+  },
+  minimal: {
+    confirmed: 100,
+    likely:    45,
+    missing:   0,
+    negative:  0,
+    unknown:   10,
+  },
 };
 
 const NICE_TO_HAVE_POINTS: Record<NiceToHaveCoverageStatus, number> = {
@@ -135,65 +123,70 @@ const NICE_TO_HAVE_POINTS: Record<NiceToHaveCoverageStatus, number> = {
   absent:    0,
 };
 
+// ─── Importance weights ────────────────────────────────────────────────────────
+// Per-requirement multiplier derived from the requirement text itself.
+// Critical skills that cannot be compensated for by location or title get 1.5×.
+// Soft behavioural traits that don't differentiate on their own get 0.7×.
+
+export function getMustHaveImportance(requirement: string): number {
+  const r = requirement.toLowerCase();
+  // Critical — cannot be compensated for by location or title alone
+  if (/wordpress|content management system|\bcms\b/i.test(r))                return 1.5;
+  if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(r)) return 1.5;
+  // Very important
+  if (/\bux\b|user experience|design principle|web design|ux.{0,10}design|design.{0,10}develop/i.test(r)) return 1.3;
+  if (/concept to launch|full.{0,5}site|full.{0,5}build|full website|ownership|end.to.end/i.test(r)) return 1.2;
+  if (/shopify|squarespace|woocommerce/i.test(r))                            return 1.2;
+  if (/front.?end|back.?end|full.?stack/i.test(r))                          return 1.1;
+  // Soft traits — useful but cannot rescue a weak technical profile
+  if (/goal.orient|deadline|desire to learn|attention to detail|collaborate|communication|team/i.test(r)) return 0.7;
+  return 1.0;
+}
+
 // ─── Pure computation functions ─────────────────────────────────────────────────
 
-/**
- * Weighted coverage of all must-have requirements.
- * Returns 100 when the role has no must-haves (nothing to fail).
- */
-export function computeMustHavePct(coverage: MustHaveStatus[]): number {
-  if (coverage.length === 0) return 100;
-  const total = coverage.reduce((sum, c) => sum + MUST_HAVE_POINTS[c.status], 0);
-  return Math.round(total / coverage.length);
-}
-
-/**
- * Simple average coverage of nice-to-have requirements.
- * Returns 50 (neutral) when the role has no nice-to-haves.
- */
-export function computeNiceToHavePct(coverage: NiceToHaveStatus[]): number {
-  if (coverage.length === 0) return 50;
-  const total = coverage.reduce((sum, c) => sum + NICE_TO_HAVE_POINTS[c.status], 0);
-  return Math.round(total / coverage.length);
-}
-
-/**
- * Evidence coverage score: % of all requirements (must + nice) where the AI found
- * EXPLICIT textual evidence (status === "confirmed"). Inferred ("likely") and
- * not-found ("missing"/"unknown"/"absent") do not count.
- *
- * This measures how auditable the score is, not how good the candidate is.
- */
-export function computeEvidenceCoverageScore(
-  mustHaveCoverage:    MustHaveStatus[],
-  niceToHaveCoverage:  NiceToHaveStatus[]
-): number {
-  const total = mustHaveCoverage.length + niceToHaveCoverage.length;
-  if (total === 0) return 0;
-
-  const explicit =
-    mustHaveCoverage.filter((c) => c.status === "confirmed").length +
-    niceToHaveCoverage.filter((c) => c.status === "confirmed").length;
-
-  return Math.round((explicit / total) * 100);
-}
-
-/**
- * Classify data quality from raw profile character count.
- */
 export function classifyDataQuality(charCount: number): DataQuality {
   if (charCount >= 2000) return "full_profile";
   if (charCount >= 200)  return "snippet";
   return "minimal";
 }
 
-/**
- * Compute overall score from all 7 category scores + must-have coverage %.
- * v2 weight formula:
- *   skill_fit*0.24 + location_fit*0.14 + seniority_fit*0.14 + title_fit*0.10
- *   + industry_fit*0.08 + nice_to_have_fit*0.05 + keyword_alignment*0.05
- *   + must_have_pct*0.20
- */
+export function computeMustHavePct(
+  coverage: MustHaveStatus[],
+  dataQuality: DataQuality = "full_profile"
+): number {
+  if (coverage.length === 0) return 100;
+  const pointTable = MUST_HAVE_POINTS_BY_QUALITY[dataQuality];
+
+  let totalPoints = 0;
+  let totalWeight = 0;
+  for (const c of coverage) {
+    const importance = getMustHaveImportance(c.requirement);
+    totalPoints += pointTable[c.status] * importance;
+    totalWeight += importance;
+  }
+
+  return Math.round(totalPoints / totalWeight);
+}
+
+export function computeNiceToHavePct(coverage: NiceToHaveStatus[]): number {
+  if (coverage.length === 0) return 50;
+  const total = coverage.reduce((sum, c) => sum + NICE_TO_HAVE_POINTS[c.status], 0);
+  return Math.round(total / coverage.length);
+}
+
+export function computeEvidenceCoverageScore(
+  mustHaveCoverage:    MustHaveStatus[],
+  niceToHaveCoverage:  NiceToHaveStatus[]
+): number {
+  const total = mustHaveCoverage.length + niceToHaveCoverage.length;
+  if (total === 0) return 0;
+  const explicit =
+    mustHaveCoverage.filter((c) => c.status === "confirmed").length +
+    niceToHaveCoverage.filter((c) => c.status === "confirmed").length;
+  return Math.round((explicit / total) * 100);
+}
+
 export function computeOverallScore(
   categories: ScoreBreakdown["categories"],
   mustHavePct: number
@@ -211,13 +204,6 @@ export function computeOverallScore(
   return Math.min(100, Math.max(0, Math.round(weighted)));
 }
 
-/**
- * Compute confidence level and score.
- * Deterministic — the AI does not produce this. Based on:
- *   - Profile data quality (char count)
- *   - How many must-haves have unknown vs confirmed evidence
- *   - Whether any must-haves were actively contradicted (negative)
- */
 export function computeConfidence(
   profileCharCount: number,
   mustHaveCoverage: MustHaveStatus[]
@@ -225,49 +211,51 @@ export function computeConfidence(
   const reasons: string[] = [];
   const quality = classifyDataQuality(profileCharCount);
 
-  // Base confidence from data quality
   let score: number;
   if (quality === "full_profile") {
-    score = 70;
+    score = 60;
     reasons.push("Full profile text available");
   } else if (quality === "snippet") {
-    score = 45;
-    reasons.push("Only a short snippet — some signals may be undetectable");
+    score = 35;
+    reasons.push("Short snippet only — score is provisional until full profile is fetched");
   } else {
-    score = 20;
-    reasons.push("Very little profile data — score is largely speculative");
+    score = 15;
+    reasons.push("Minimal data — score is largely speculative");
   }
 
-  // Penalise for unknown coverage
   const total        = mustHaveCoverage.length;
+  const supportedCount = mustHaveCoverage.filter((c) => c.status === "confirmed" || c.status === "likely").length;
   const unknownCount = mustHaveCoverage.filter((c) => c.status === "unknown").length;
   const missingCount = mustHaveCoverage.filter((c) => c.status === "missing").length;
   const negativeCount = mustHaveCoverage.filter((c) => c.status === "negative").length;
 
   if (total > 0) {
+    const supportedFrac = supportedCount / total;
+    if (supportedFrac >= 0.75 && negativeCount === 0 && unknownCount === 0 && missingCount === 0) {
+      const bonus = quality === "full_profile" ? 15 : quality === "snippet" ? 5 : 0;
+      if (bonus > 0) {
+        score += bonus;
+        reasons.push(`${supportedCount} of ${total} must-haves are supported by profile evidence`);
+      }
+    }
+
     const unknownFrac = unknownCount / total;
     if (unknownFrac > 0.5) {
       score -= 20;
-      reasons.push(
-        `${unknownCount} of ${total} must-haves couldn't be verified — insufficient profile data`
-      );
+      reasons.push(`${unknownCount} of ${total} must-haves unverified — insufficient data`);
     } else if (unknownFrac > 0.25) {
       score -= 10;
-      reasons.push(`${unknownCount} must-have(s) not clearly confirmable from the profile`);
+      reasons.push(`${unknownCount} must-have(s) not confirmable from profile`);
     }
 
     if (missingCount > 0) {
       score -= missingCount * 8;
-      reasons.push(
-        `${missingCount} must-have(s) not mentioned — may be present but unverifiable`
-      );
+      reasons.push(`${missingCount} must-have(s) not mentioned`);
     }
 
     if (negativeCount > 0) {
       score -= negativeCount * 15;
-      reasons.push(
-        `${negativeCount} must-have(s) actively contradicted by the profile`
-      );
+      reasons.push(`${negativeCount} must-have(s) actively contradicted`);
     }
   }
 
@@ -281,29 +269,43 @@ export function computeConfidence(
   return { level, score, reasons };
 }
 
-/**
- * Assemble a complete v2 ScoreBreakdown from AI-provided raw data.
- * All derived fields are computed here — the AI never produces the final score.
- */
 export function buildScoreBreakdown(params: {
-  categories:           ScoreBreakdown["categories"];
-  must_have_coverage:   MustHaveStatus[];
+  categories:            ScoreBreakdown["categories"];
+  must_have_coverage:    MustHaveStatus[];
   nice_to_have_coverage: NiceToHaveStatus[];
-  reasons_for:          string[];
-  reasons_against:      string[];
-  missing_evidence:     string[];
-  recruiter_summary:    string;
-  profileCharCount:     number;
+  reasons_for:           string[];
+  reasons_against:       string[];
+  missing_evidence:      string[];
+  recruiter_summary:     string;
+  profileCharCount:      number;
 }): ScoreBreakdown {
-  const mustHavePct        = computeMustHavePct(params.must_have_coverage);
-  const niceToHavePct      = computeNiceToHavePct(params.nice_to_have_coverage);
-  const overall            = computeOverallScore(params.categories, mustHavePct);
-  const evidenceCoverage   = computeEvidenceCoverageScore(
+  const dataQuality   = classifyDataQuality(params.profileCharCount);
+  const mustHavePct   = computeMustHavePct(params.must_have_coverage, dataQuality);
+  const niceToHavePct = computeNiceToHavePct(params.nice_to_have_coverage);
+  const rawOverall    = computeOverallScore(params.categories, mustHavePct);
+
+  // Base cap by data quality
+  let cap = dataQuality === "snippet" ? 55 : dataQuality === "minimal" ? 40 : 100;
+
+  // Critical gate: if any 1.5× importance must-have is unconfirmed on a non-full profile,
+  // the candidate cannot be presented as a real match until fetch proves otherwise.
+  if (dataQuality !== "full_profile") {
+    const criticalUnconfirmed = params.must_have_coverage.filter(
+      (c) =>
+        getMustHaveImportance(c.requirement) >= 1.5 &&
+        (c.status === "missing" || c.status === "negative" || c.status === "unknown")
+    );
+    if (criticalUnconfirmed.length > 0) {
+      cap = Math.min(cap, 45);
+    }
+  }
+
+  const overall         = Math.min(rawOverall, cap);
+  const evidenceCoverage = computeEvidenceCoverageScore(
     params.must_have_coverage,
     params.nice_to_have_coverage
   );
-  const confidence         = computeConfidence(params.profileCharCount, params.must_have_coverage);
-  const dataQuality        = classifyDataQuality(params.profileCharCount);
+  const confidence = computeConfidence(params.profileCharCount, params.must_have_coverage);
 
   return {
     version:                 2,

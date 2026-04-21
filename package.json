@@ -5,8 +5,9 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
+    "start:prod": "prisma db push && npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts && next start",
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -28,6 +29,7 @@
     "clsx": "^2.1.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
+    "mammoth": "^1.12.0",
     "next": "^15.1.0",
     "next-auth": "^4.24.14",
     "openai": "^4.73.0",

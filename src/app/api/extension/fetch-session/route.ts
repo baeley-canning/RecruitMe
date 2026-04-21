@@ -10,6 +10,7 @@ import {
   removeSessionFromQueue,
   type ExtensionCaptureSession,
 } from "@/lib/linkedin-capture";
+import { verifyAnyAuth, requireJobAccess, verifyExtensionAuth } from "@/lib/session";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -27,15 +28,22 @@ export async function OPTIONS() {
 }
 
 export async function POST(req: Request) {
+  const auth = await verifyAnyAuth(req);
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+
   const parsed = StartSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: CORS });
   }
 
   const { jobId, candidateId } = parsed.data;
-  const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
 
-  if (!candidate || candidate.jobId !== jobId) {
+  // Verify the job belongs to the caller's org before creating a capture session.
+  const { error: jobError } = await requireJobAccess(jobId, auth);
+  if (jobError) return NextResponse.json({ error: "Job not found or access denied" }, { status: 403, headers: CORS });
+
+  const candidate = await prisma.candidate.findFirst({ where: { id: candidateId, jobId } });
+  if (!candidate) {
     return NextResponse.json({ error: "Candidate not found" }, { status: 404, headers: CORS });
   }
   if (!candidate.linkedinUrl) {
@@ -45,6 +53,8 @@ export async function POST(req: Request) {
   const now = new Date().toISOString();
   const session: ExtensionCaptureSession = {
     sessionId: randomUUID(),
+    userId: auth.userId,
+    orgId: auth.orgId,
     jobId,
     candidateId,
     candidateName: candidate.name,
@@ -65,7 +75,10 @@ export async function GET(req: Request) {
   const sessionId = url.searchParams.get("sessionId");
 
   if (sessionId) {
-    // Polling by sessionId: 404 signals the session has expired or been cleared.
+    // Polling by sessionId from the web UI — requires auth so only the session owner can poll.
+    const auth = await verifyAnyAuth(req);
+    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+
     const session = await findSessionInQueue((s) => s.sessionId === sessionId);
     if (!session) {
       return NextResponse.json({ session: null }, { status: 404, headers: CORS });
@@ -73,27 +86,39 @@ export async function GET(req: Request) {
     return NextResponse.json(session, { headers: CORS });
   }
 
-  // No sessionId = popup / status query; return all sessions (or null if empty).
+  // No sessionId = extension alarm / popup status query.
+  // Try Basic auth first (configured extension). If no credentials, still return
+  // sessions so the extension can open LinkedIn tabs even before setup is complete.
+  const auth = await verifyExtensionAuth(req);
   const queue = await getSessionQueue();
-  return NextResponse.json(queue.length > 0 ? queue : null, { headers: CORS });
+
+  // If authenticated, show only this user's sessions. Otherwise show the entire
+  // queue so the popup can still show processing/error/completed states without
+  // extra setup, and the extension can auto-open pending tabs.
+  const visible = auth
+    ? queue.filter((s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId))
+    : queue;
+
+  return NextResponse.json(visible.length > 0 ? visible : null, { headers: CORS });
 }
 
 export async function DELETE(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
 
+  // Auth is best-effort for DELETE. The sessionId itself is the access control
+  // for individual deletes; bulk deletes require auth.
+  const auth = await verifyAnyAuth(req).catch(() => null);
+
   if (sessionId) {
-    const session = await findSessionInQueue((s) => s.sessionId === sessionId);
-    if (!session) {
-      return NextResponse.json({ cleared: false }, { headers: CORS });
-    }
     await removeSessionFromQueue(sessionId);
     return NextResponse.json({ cleared: true }, { headers: CORS });
   }
 
-  // No sessionId = clear entire queue.
+  // No sessionId = clear this user's sessions (requires auth for bulk clear).
+  if (!auth) return NextResponse.json({ cleared: false }, { headers: CORS });
   const queue = await getSessionQueue();
-  for (const s of queue) {
+  for (const s of queue.filter((s) => !s.userId || s.userId === auth.userId)) {
     await removeSessionFromQueue(s.sessionId);
   }
   return NextResponse.json({ cleared: true }, { headers: CORS });

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeCapturedLinkedInText } from "../linkedin-capture";
+import {
+  extractIdentityFromLinkedInProfileText,
+  sanitizeCapturedLinkedInText,
+} from "../linkedin-capture";
 
 describe("sanitizeCapturedLinkedInText", () => {
   it("removes LinkedIn page chrome and unrelated sidebar profiles", () => {
@@ -70,5 +73,40 @@ TypeScript • React • Node.js
     expect(cleaned).toContain("Top skills");
     expect(cleaned).not.toContain("Show all 5 experiences");
     expect(cleaned).not.toContain("See all 2 education entries");
+  });
+});
+
+describe("extractIdentityFromLinkedInProfileText", () => {
+  it("pulls name, headline, and location from the intro lines of a captured profile", () => {
+    const capture = `Owen Bannister
+Artificial Intelligence Practice Lead
+Wellington, New Zealand
+Datacom
+Victoria University of Wellington
+About
+I have worked across the full software lifecycle with Python, Rails, React, and cloud services.`;
+
+    expect(extractIdentityFromLinkedInProfileText(capture)).toEqual({
+      name: "Owen Bannister",
+      headline: "Artificial Intelligence Practice Lead",
+      location: "Wellington, New Zealand",
+    });
+  });
+
+  it("does not mistake org lines for the headline or location", () => {
+    const capture = `Priya Sodhi
+She/Her
+Engineer at Xero | RubyOnRails | React
+Wellington, Wellington, New Zealand
+Xero
+Whitireia Community Polytechnic
+About
+Software developer based in Wellington.`;
+
+    expect(extractIdentityFromLinkedInProfileText(capture)).toEqual({
+      name: "Priya Sodhi",
+      headline: "Engineer at Xero | RubyOnRails | React",
+      location: "Wellington, Wellington, New Zealand",
+    });
   });
 });

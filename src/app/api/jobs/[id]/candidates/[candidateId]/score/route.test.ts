@@ -15,8 +15,15 @@ const aiMocks = vi.hoisted(() => ({
   scoreCandidateStructured: vi.fn(),
 }));
 
+const sessionMocks = vi.hoisted(() => ({
+  getAuth: vi.fn(),
+  requireCandidateAccess: vi.fn(),
+  unauthorized: vi.fn(() => new Response(null, { status: 401 })),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
+vi.mock("@/lib/session", () => sessionMocks);
 
 import { POST } from "./route";
 
@@ -46,7 +53,7 @@ function makeBreakdown() {
 describe("candidate re-score route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbMocks.prisma.job.findUnique.mockResolvedValue({
+    const job = {
       id: "job-1",
       parsedRole: JSON.stringify({
         title: "Software Engineer",
@@ -60,13 +67,17 @@ describe("candidate re-score route", () => {
       }),
       salaryMin: null,
       salaryMax: null,
-    });
-    dbMocks.prisma.candidate.findUnique.mockResolvedValue({
+    };
+    const candidate = {
       id: "cand-5",
       jobId: "job-1",
       location: "Wellington, New Zealand",
       profileText: "Candidate profile text",
-    });
+    };
+    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+    sessionMocks.requireCandidateAccess.mockResolvedValue({ job, candidate, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(job);
+    dbMocks.prisma.candidate.findUnique.mockResolvedValue(candidate);
     dbMocks.prisma.candidate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
       id: "cand-5",
       ...data,

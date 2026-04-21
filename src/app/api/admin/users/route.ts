@@ -17,15 +17,25 @@ export async function GET() {
 
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "asc" },
-    select: { id: true, username: true, role: true, createdAt: true },
+    select: {
+      id: true,
+      username: true,
+      role: true,
+      createdAt: true,
+      orgId: true,
+      org: { select: { name: true } },
+    },
   });
-  return NextResponse.json(users);
+  return NextResponse.json(
+    users.map(({ org, ...u }) => ({ ...u, orgName: org?.name ?? null }))
+  );
 }
 
 const CreateUserSchema = z.object({
   username: z.string().min(2).max(50).trim(),
   password: z.string().min(6).max(100),
   role: z.enum(["user", "owner"]).default("user"),
+  orgId: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -37,7 +47,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
   }
 
-  const { username, password, role } = result.data;
+  const { username, password, role, orgId } = result.data;
   const existing = await prisma.user.findUnique({ where: { username } });
   if (existing) {
     return NextResponse.json({ error: "Username already exists" }, { status: 409 });
@@ -45,7 +55,12 @@ export async function POST(req: Request) {
 
   const hashed = await bcrypt.hash(password, 12);
   const user = await prisma.user.create({
-    data: { username, password: hashed, role },
+    data: {
+      username,
+      password: hashed,
+      role,
+      orgId: role === "owner" ? null : (orgId || null),
+    },
     select: { id: true, username: true, role: true, createdAt: true },
   });
   return NextResponse.json(user, { status: 201 });

@@ -16,6 +16,7 @@ import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
+import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
@@ -119,6 +120,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
 
   const parsed = SearchSchema.safeParse(await req.json().catch(() => ({})));
@@ -135,8 +138,8 @@ export async function POST(
     return NextResponse.json({ error: "No search API configured. Add SERPAPI_API_KEY to .env.local." }, { status: 400 });
   }
 
-  const job = await prisma.job.findUnique({ where: { id } });
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  const { job, error } = await requireJobAccess(id, auth);
+  if (error || !job) return error;
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) {
@@ -144,15 +147,17 @@ export async function POST(
   }
 
   const location = parsedRole.location ?? "";
+  const locationSource = location || parsedRole.location_rules || "";
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
 
   const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
-  const effectiveLocation = customCenterCity?.name ?? location;
-  const targetLocation = effectiveLocation || location;
-  const baseKeywords     = customCenterCity?.keywords ?? expandLocationKeywords(location);
-  const jobCoords        = getCityCoords(location);
+  const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
+  const searchLocation = customCenterCity?.name ?? (canonicalJobCity || locationSource);
+  const targetLocation = customCenterCity?.name ?? (location || canonicalJobCity || locationSource);
+  const baseKeywords     = customCenterCity?.keywords ?? expandLocationKeywords(targetLocation);
+  const jobCoords        = getCityCoords(locationSource);
   const searchCenter     = centerLat != null && centerLng != null
     ? { lat: centerLat, lng: centerLng }
     : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
@@ -162,20 +167,16 @@ export async function POST(
   // Build query pool: explicit search queries + synonym titles as standalone title searches
   // Synonym titles are the key insight — recruiters search off real titles, not JD language
   const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
-  const queries = [
+  const searchQueries = [
+    ...synonymQueries,
     ...parsedRole.search_queries,
     ...parsedRole.google_queries,
-    ...synonymQueries,
+    parsedRole.title,
   ]
     .map(cleanQuery)
     .filter(Boolean)
-    .filter((q, i, arr) => arr.indexOf(q) === i) // deduplicate
-    .slice(0, 8); // up from 5 — synonyms add genuine breadth
-
-  // How many raw candidates to collect before scoring.
-  // 4× buffer so name/location filtering still leaves maxResults after scoring.
-  // Use a deeper raw-candidate buffer because dedupe, location filters, and
-  // minimum-score thresholds can remove a large share of search hits.
+    .filter((q, i, arr) => arr.indexOf(q) === i)
+    .slice(0, 12);
   const targetRaw = Math.min(Math.max(maxResults * 8, maxResults + 20), 400);
 
   try {
@@ -185,7 +186,7 @@ export async function POST(
     // ── Phase 1a: PDL bulk fetch (not paginated — returns full profiles) ──────
     if (hasPDL) {
       try {
-        const pdl = await searchPDLProfiles(parsedRole.title, effectiveLocation, Math.min(maxResults, 25));
+        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(maxResults, 25));
         for (const r of pdl) {
           if (!seenUrls.has(r.linkedinUrl)) { seenUrls.add(r.linkedinUrl); allRaw.push(r); }
         }
@@ -209,10 +210,10 @@ export async function POST(
           const pageTasks: Promise<SearchTaskOutcome>[] = [];
 
           if (hasSerpApi) {
-            pageTasks.push(...queries.map((q) => executeSearchTask("serpapi", q, effectiveLocation, offset)));
+            pageTasks.push(...searchQueries.map((q) => executeSearchTask("serpapi", q, searchLocation, offset)));
           }
           if (hasBing) {
-            pageTasks.push(...queries.map((q) => executeSearchTask("bing", q, effectiveLocation, offset)));
+            pageTasks.push(...searchQueries.map((q) => executeSearchTask("bing", q, searchLocation, offset)));
           }
 
           if (pageTasks.length === 0) return null;
@@ -279,7 +280,10 @@ export async function POST(
     // For any new result whose LinkedIn URL already has a full profile in our
     // DB (from a different job), reuse that profile instead of fetching again.
     // We still score them fresh against this job's requirements.
-    const poolMap = await buildTalentPoolMap(allNew.map((r) => r.linkedinUrl));
+    const poolMap = await buildTalentPoolMap(
+      allNew.map((r) => r.linkedinUrl),
+      auth.isOwner ? null : auth.orgId,
+    );
     console.log(`[search] talent pool: ${poolMap.size} of ${allNew.length} have existing full profiles`);
 
     type SavedCandidate = NonNullable<Awaited<ReturnType<typeof prisma.candidate.findFirst>>>;
@@ -318,6 +322,7 @@ export async function POST(
 
           const scoreData: Record<string, unknown> = {};
           let matchScore: number | null = null;
+          let locationFitScore: number | null = null;
           try {
             const rawBreakdown = await scoreCandidateStructured(textToScore, parsedRole, salary);
             const breakdown = applyLocationFitOverride(
@@ -328,11 +333,12 @@ export async function POST(
               job.isRemote,
             );
             matchScore = breakdown.overall;
+            locationFitScore = breakdown.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(breakdown));
           } catch (err) {
             console.error(`[search] score failed for "${r.name}":`, err);
           }
-          return { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, matchScore };
+          return { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore };
         })
       );
 
@@ -340,9 +346,17 @@ export async function POST(
 
       for (const item of results) {
         if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, matchScore } = item;
+        const { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore } = item;
 
         if (candidateLocation && locationKeywords.length > 0 && !locationMatches(candidateLocation, locationKeywords)) {
+          continue;
+        }
+
+        // Hard location cutoff: drop clearly out-of-area candidates for non-remote roles.
+        // Score ≤20 means >150 km away; these slip through when SerpAPI reports the
+        // company location instead of where the candidate actually lives.
+        if (!job.isRemote && locationFitScore !== null && locationFitScore <= 20) {
+          skippedScore++;
           continue;
         }
 

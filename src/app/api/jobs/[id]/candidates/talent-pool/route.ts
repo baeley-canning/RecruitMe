@@ -19,6 +19,7 @@ import { safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { locationMatches, expandLocationKeywords } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
+import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 const BodySchema = z.object({
   minScore:  z.number().int().min(0).max(100).default(0),
@@ -32,6 +33,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id: jobId } = await params;
 
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
@@ -40,8 +43,8 @@ export async function POST(
   }
   const { minScore, maxResults, radiusKm, centerLat, centerLng } = parsed.data;
 
-  const job = await prisma.job.findUnique({ where: { id: jobId } });
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  const { job, error } = await requireJobAccess(jobId, auth);
+  if (error || !job) return error;
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) {
@@ -52,14 +55,16 @@ export async function POST(
   }
 
   const location = parsedRole.location ?? "";
+  const locationSource = location || parsedRole.location_rules || "";
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
 
   const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
-  const targetLocation = customCenterCity?.name ?? location;
-  const baseKeywords   = customCenterCity?.keywords ?? expandLocationKeywords(location);
-  const jobCoords      = getCityCoords(location);
+  const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
+  const targetLocation = customCenterCity?.name ?? (location || canonicalJobCity || locationSource);
+  const baseKeywords   = customCenterCity?.keywords ?? expandLocationKeywords(targetLocation);
+  const jobCoords      = getCityCoords(locationSource);
   const searchCenter   = centerLat != null && centerLng != null
     ? { lat: centerLat, lng: centerLng }
     : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
@@ -74,11 +79,13 @@ export async function POST(
     })).map((c) => c.linkedinUrl).filter(Boolean)
   );
 
-  // 2. Pull all candidates from OTHER jobs that have a full profile.
+  // 2. Pull all candidates from OTHER jobs in the same org that have a full profile.
   const poolRows = await prisma.candidate.findMany({
     where: {
       jobId: { not: jobId },
       profileText: { not: null },
+      // Owners can see across all orgs; regular users are scoped to their own.
+      ...(auth.isOwner ? {} : { job: { orgId: auth.orgId } }),
     },
     select: {
       id: true,
@@ -139,6 +146,7 @@ export async function POST(
 
     const scoreData: Record<string, unknown> = {};
     let matchScore: number | null = null;
+    let locationFitScore: number | null = null;
 
     try {
       const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
@@ -150,10 +158,18 @@ export async function POST(
         job.isRemote,
       );
       matchScore = breakdown.overall;
+      locationFitScore = breakdown.categories.location_fit.score;
       Object.assign(scoreData, deriveUpdateData(breakdown));
     } catch (err) {
       console.error(`[talent-pool] score failed for "${row.name}":`, err);
       if (minScore > 0) { skippedScore++; continue; }
+    }
+
+    // Hard location cutoff: don't import talent-pool candidates who are clearly
+    // out of area for non-remote roles (score ≤20 means >150 km away).
+    if (!job.isRemote && locationFitScore !== null && locationFitScore <= 20) {
+      skippedScore++;
+      continue;
     }
 
     if (minScore > 0 && matchScore !== null && matchScore < minScore) {

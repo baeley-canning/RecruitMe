@@ -71,6 +71,12 @@ export function applyLocationFitOverride(
     overall = Math.max(0, Math.round(overall * multiplier));
   }
 
+  // Hard-cap at 50 only for candidates who are genuinely out-of-area (score < 50
+  // means > 150 km away). Commutable candidates (score 55–80) keep their full score.
+  if (!isRemote && assessment.score < 50 && overall > 50) {
+    overall = 50;
+  }
+
   return {
     ...breakdown,
     categories,

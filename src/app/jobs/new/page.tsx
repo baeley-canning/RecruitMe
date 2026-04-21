@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, FileText, X, ChevronRight, Loader2, DollarSign, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { JobBriefUploadPrefill } from "@/lib/job-brief-prefill";
 import { cn } from "@/lib/utils";
 
 const SALARY_OPTIONS = [
@@ -12,8 +13,20 @@ const SALARY_OPTIONS = [
   250000, 300000,
 ];
 
+const LISTING_SEED_KEY = "recruitme:new-job-from-listing";
+
 function fmtSalary(n: number) {
   return n >= 1000 ? `$${(n / 1000).toFixed(0)}k` : `$${n}`;
+}
+
+function snapSalaryFloor(value: number) {
+  const match = [...SALARY_OPTIONS].reverse().find((option) => option <= value);
+  return match ?? SALARY_OPTIONS[0];
+}
+
+function snapSalaryCeil(value: number) {
+  const match = SALARY_OPTIONS.find((option) => option >= value);
+  return match ?? SALARY_OPTIONS[SALARY_OPTIONS.length - 1];
 }
 
 export default function NewJobPage() {
@@ -33,26 +46,77 @@ export default function NewJobPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [loadedFromListing, setLoadedFromListing] = useState(false);
+  const [autofilledFromUpload, setAutofilledFromUpload] = useState(false);
+
+  useEffect(() => {
+    const raw = window.sessionStorage.getItem(LISTING_SEED_KEY);
+    if (!raw) return;
+
+    try {
+      const seed = JSON.parse(raw) as {
+        title?: string;
+        company?: string;
+        location?: string;
+        isRemote?: boolean;
+        salaryEnabled?: boolean;
+        salaryMin?: number;
+        salaryMax?: number;
+        jdText?: string;
+      };
+      if (seed.title) setTitle(seed.title);
+      if (seed.company) setCompany(seed.company);
+      if (seed.location) setLocation(seed.location);
+      if (typeof seed.isRemote === "boolean") setIsRemote(seed.isRemote);
+      if (typeof seed.salaryEnabled === "boolean") setSalaryEnabled(seed.salaryEnabled);
+      if (typeof seed.salaryMin === "number") setSalaryMin(seed.salaryMin);
+      if (typeof seed.salaryMax === "number") setSalaryMax(seed.salaryMax);
+      if (seed.jdText) setJdText(seed.jdText);
+      setLoadedFromListing(true);
+    } catch {
+      // ignore bad seed
+    } finally {
+      window.sessionStorage.removeItem(LISTING_SEED_KEY);
+    }
+  }, []);
 
   const handleFile = async (file: File) => {
     if (!file.name.toLowerCase().endsWith(".pdf") && !file.name.toLowerCase().endsWith(".txt")) {
+      setAutofilledFromUpload(false);
       setError("Please upload a PDF or TXT file.");
       return;
     }
     setUploading(true);
+    setAutofilledFromUpload(false);
     setError("");
     try {
       const form = new FormData();
       form.append("file", file);
+      form.append("mode", "job-brief");
       const res = await fetch("/api/upload", { method: "POST", body: form });
-      const data = await res.json() as { text?: string; error?: string };
+      const data = await res.json() as { text?: string; error?: string; prefill?: JobBriefUploadPrefill | null };
       if (!res.ok || data.error) {
         setError(data.error ?? "Upload failed");
       } else {
         setJdText(data.text ?? "");
         setFileName(file.name);
+        if (data.prefill) {
+          if (data.prefill.title) setTitle(data.prefill.title);
+          if (data.prefill.company) setCompany(data.prefill.company);
+          if (data.prefill.location) setLocation(data.prefill.location);
+          setIsRemote(data.prefill.isRemote);
+          if (data.prefill.salaryEnabled && data.prefill.salaryMin && data.prefill.salaryMax) {
+            setSalaryEnabled(true);
+            setSalaryMin(snapSalaryFloor(data.prefill.salaryMin));
+            setSalaryMax(snapSalaryCeil(data.prefill.salaryMax));
+          }
+          setAutofilledFromUpload(true);
+        } else {
+          setAutofilledFromUpload(false);
+        }
       }
     } catch {
+      setAutofilledFromUpload(false);
       setError("Upload failed. Try pasting the JD text instead.");
     } finally {
       setUploading(false);
@@ -104,11 +168,22 @@ export default function NewJobPage() {
       <div className="mb-7">
         <h1 className="text-2xl font-bold text-slate-900">New Job</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Upload or paste a job description or hiring brief — AI extracts must-haves, knockout criteria, salary band, and generates search queries off real recruiter thinking, not JD language.
+          Build the role search from a finished job description or hiring brief.
         </p>
       </div>
 
-      {/* Job details */}
+      {loadedFromListing && (
+        <div className="mb-5 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+          Draft listing loaded from the Listing Builder. Review it, then create the job search.
+        </div>
+      )}
+
+      {autofilledFromUpload && (
+        <div className="mb-5 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800">
+          Brief uploaded and the top fields were auto-filled. Review them before creating the job.
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-5 space-y-4">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">
@@ -122,6 +197,7 @@ export default function NewJobPage() {
             className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
+
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">
@@ -149,7 +225,6 @@ export default function NewJobPage() {
           </div>
         </div>
 
-        {/* Remote toggle */}
         <div className={cn(
           "rounded-lg border transition-colors",
           isRemote ? "border-violet-200 bg-violet-50" : "border-slate-200 bg-slate-50"
@@ -167,7 +242,7 @@ export default function NewJobPage() {
                 </p>
                 <p className="text-xs text-slate-400">
                   {isRemote
-                    ? "Location penalty disabled — out-of-area candidates scored fairly"
+                    ? "Location penalty disabled - out-of-area candidates scored fairly"
                     : "Enable if candidates can work from anywhere"}
                 </p>
               </div>
@@ -184,7 +259,6 @@ export default function NewJobPage() {
           </button>
         </div>
 
-        {/* Salary range toggle */}
         <div className={cn(
           "rounded-lg border transition-colors",
           salaryEnabled ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50"
@@ -202,12 +276,11 @@ export default function NewJobPage() {
                 </p>
                 <p className="text-xs text-slate-400">
                   {salaryEnabled
-                    ? `${fmtSalary(salaryMin)} – ${fmtSalary(salaryMax)} NZD / year`
-                    : "Optional — enable to compare candidate seniority"}
+                    ? `${fmtSalary(salaryMin)} - ${fmtSalary(salaryMax)} NZD / year`
+                    : "Optional - enable to compare candidate seniority"}
                 </p>
               </div>
             </div>
-            {/* Toggle switch */}
             <div className={cn(
               "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
               salaryEnabled ? "bg-blue-500" : "bg-slate-300"
@@ -258,18 +331,16 @@ export default function NewJobPage() {
         </div>
       </div>
 
-      {/* JD / brief input */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-5">
         <div className="mb-3">
           <label className="block text-sm font-medium text-slate-700">
             Job Description or Hiring Brief <span className="text-red-500">*</span>
           </label>
           <p className="text-xs text-slate-400 mt-0.5">
-            Paste a JD, upload a PDF/Word brief, or even paste a client email — AI handles both formal and informal formats.
+            Paste a JD, upload a PDF/TXT brief, or bring in the finished ad from the Listing Builder.
           </p>
         </div>
 
-        {/* Drop zone */}
         <div
           onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
@@ -295,14 +366,14 @@ export default function NewJobPage() {
           {uploading ? (
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-              <p className="text-sm text-slate-500">Extracting text...</p>
+              <p className="text-sm text-slate-500">Reading brief and filling fields...</p>
             </div>
           ) : fileName ? (
             <div className="flex items-center justify-center gap-2">
               <FileText className="w-5 h-5 text-blue-500" />
               <span className="text-sm font-medium text-slate-700">{fileName}</span>
               <button
-                onClick={(e) => { e.stopPropagation(); setFileName(""); setJdText(""); }}
+                onClick={(e) => { e.stopPropagation(); setFileName(""); setJdText(""); setAutofilledFromUpload(false); }}
                 className="text-slate-400 hover:text-red-500 ml-1"
               >
                 <X className="w-4 h-4" />
@@ -312,8 +383,7 @@ export default function NewJobPage() {
             <div className="flex flex-col items-center gap-2">
               <Upload className="w-8 h-8 text-slate-400" />
               <p className="text-sm text-slate-500">
-                Drop a PDF or TXT, or{" "}
-                <span className="text-blue-600 font-medium">click to browse</span>
+                Drop a PDF or TXT, or <span className="text-blue-600 font-medium">click to browse</span>
               </p>
               <p className="text-xs text-slate-400">PDF, TXT up to 10MB</p>
             </div>
@@ -332,7 +402,7 @@ export default function NewJobPage() {
         <textarea
           value={jdText}
           onChange={(e) => setJdText(e.target.value)}
-          placeholder="Paste a job description, hiring brief, client email, or any informal requirements document…"
+          placeholder="Paste a job description, hiring brief, client email, or the finished listing you want turned into a candidate search..."
           className="w-full mt-3 px-3.5 py-3 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           rows={10}
         />

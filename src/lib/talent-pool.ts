@@ -93,14 +93,18 @@ export interface TalentPoolEntry {
 /**
  * Given a list of LinkedIn URLs (from a fresh search), return a Map from
  * normalised URL → TalentPoolEntry for every URL that already has a full
- * profile stored in our DB (across any job).
+ * profile stored in our DB.
+ *
+ * orgId — when provided, only considers candidates whose job belongs to that
+ * org (enforces org isolation). Pass null to search across all orgs (owner).
  *
  * "Full profile" = profileText with at least 500 characters.
  * When multiple Candidate rows exist for the same URL, we prefer the one
  * with the most recent profileCapturedAt (or createdAt as fallback).
  */
 export async function buildTalentPoolMap(
-  linkedinUrls: string[]
+  linkedinUrls: string[],
+  orgId?: string | null,
 ): Promise<Map<string, TalentPoolEntry>> {
   if (linkedinUrls.length === 0) return new Map();
 
@@ -123,6 +127,8 @@ export async function buildTalentPoolMap(
     where: {
       linkedinUrl: { in: [...normMap.keys()] },
       profileText: { not: null },
+      // Scope to the caller's org when one is set; owners see all profiles.
+      ...(orgId != null ? { job: { orgId } } : {}),
     },
     select: {
       id: true,

@@ -1,10 +1,16 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { Plus, Briefcase, Users, Star, TrendingUp, Clock, CheckCircle2 } from "lucide-react";
-import { timeAgo } from "@/lib/utils";
+import { getAuth, jobsWhere } from "@/lib/session";
+import { Plus, Briefcase, Users, Star } from "lucide-react";
+import { JobsListClient } from "@/components/jobs-list-client";
 
 export default async function JobsPage() {
+  const auth = await getAuth();
+  if (!auth) redirect("/login");
+
   const jobs = await prisma.job.findMany({
+    where: jobsWhere(auth),
     orderBy: { createdAt: "desc" },
     include: {
       candidates: {
@@ -13,8 +19,8 @@ export default async function JobsPage() {
     },
   });
 
-  const activeJobs      = jobs.filter((j) => j.status === "active").length;
-  const totalCandidates = jobs.reduce((sum, j) => sum + j.candidates.length, 0);
+  const activeJobs       = jobs.filter((j) => j.status === "active").length;
+  const totalCandidates  = jobs.reduce((sum, j) => sum + j.candidates.length, 0);
   const totalShortlisted = jobs.reduce(
     (sum, j) => sum + j.candidates.filter((c) => c.status === "shortlisted").length,
     0
@@ -74,7 +80,7 @@ export default async function JobsPage() {
         </div>
       </div>
 
-      {/* Job cards */}
+      {/* Job list */}
       {jobs.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border border-slate-200 border-dashed">
           <div className="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -93,127 +99,7 @@ export default async function JobsPage() {
           </Link>
         </div>
       ) : (
-        <div className="space-y-3">
-          {jobs.map((job) => {
-            const candidates      = job.candidates;
-            const total           = candidates.length;
-            const newCount        = candidates.filter((c) => c.status === "new").length;
-            const shortlisted     = candidates.filter((c) => c.status === "shortlisted").length;
-            const contacted       = candidates.filter((c) => ["contacted", "interviewing", "offer_sent"].includes(c.status)).length;
-            const hired           = candidates.filter((c) => c.status === "hired").length;
-            const hasBeenParsed   = Boolean(job.parsedRole);
-            const isClosed        = job.status === "closed";
-            const daysSinceUpdate = Math.floor((Date.now() - new Date(job.updatedAt).getTime()) / 86_400_000);
-            const isStale         = !isClosed && daysSinceUpdate >= 14 && total > 0;
-
-            // Average match score of scored candidates
-            const scored = candidates.filter((c) => c.matchScore != null);
-            const avgScore = scored.length
-              ? Math.round(scored.reduce((s, c) => s + (c.matchScore ?? 0), 0) / scored.length)
-              : null;
-
-            return (
-              <Link
-                key={job.id}
-                href={`/jobs/${job.id}`}
-                className={`flex items-center gap-5 p-5 bg-white rounded-xl border transition-all group ${
-                  isClosed
-                    ? "border-slate-200 opacity-60 hover:opacity-80"
-                    : "border-slate-200 hover:border-blue-300 hover:shadow-md"
-                }`}
-              >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                  isClosed ? "bg-slate-200" : "bg-gradient-to-br from-blue-500 to-blue-700"
-                }`}>
-                  <Briefcase className={`w-6 h-6 ${isClosed ? "text-slate-500" : "text-white"}`} />
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="font-semibold text-slate-900 group-hover:text-blue-700 transition-colors truncate">
-                      {job.title}
-                    </h3>
-                    {isClosed ? (
-                      <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full font-medium">
-                        Closed
-                      </span>
-                    ) : (
-                      <span className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-medium">
-                        Active
-                      </span>
-                    )}
-                    {!hasBeenParsed && (
-                      <span className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
-                        Needs parsing
-                      </span>
-                    )}
-                    {isStale && (
-                      <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full font-medium" title={`No activity for ${daysSinceUpdate} days`}>
-                        Dormant
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 mt-1 flex-wrap">
-                    {job.company && (
-                      <span className="text-sm text-slate-500 truncate">{job.company}</span>
-                    )}
-                    {job.location && (
-                      <span className="text-sm text-slate-400">{job.location}</span>
-                    )}
-                    <span className="text-xs text-slate-400 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {timeAgo(job.createdAt)}
-                    </span>
-                  </div>
-
-                  {/* Pipeline mini-bar */}
-                  {total > 0 && (
-                    <div className="flex items-center gap-3 mt-2 flex-wrap">
-                      {newCount > 0 && (
-                        <span className="text-xs text-slate-500 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block" />
-                          {newCount} new
-                        </span>
-                      )}
-                      {shortlisted > 0 && (
-                        <span className="text-xs text-amber-600 flex items-center gap-1">
-                          <Star className="w-3 h-3" />
-                          {shortlisted} shortlisted
-                        </span>
-                      )}
-                      {contacted > 0 && (
-                        <span className="text-xs text-blue-600 flex items-center gap-1">
-                          <TrendingUp className="w-3 h-3" />
-                          {contacted} in progress
-                        </span>
-                      )}
-                      {hired > 0 && (
-                        <span className="text-xs text-emerald-600 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          {hired} hired
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-6 flex-shrink-0 text-right">
-                  <div>
-                    <p className="text-lg font-bold text-slate-900">{total}</p>
-                    <p className="text-xs text-slate-500">Candidates</p>
-                  </div>
-                  {avgScore != null && (
-                    <div>
-                      <p className="text-lg font-bold text-blue-600">{avgScore}%</p>
-                      <p className="text-xs text-slate-500">Avg score</p>
-                    </div>
-                  )}
-                  <TrendingUp className="w-5 h-5 text-slate-300 group-hover:text-blue-400 transition-colors" />
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+        <JobsListClient jobs={jobs} />
       )}
     </div>
   );

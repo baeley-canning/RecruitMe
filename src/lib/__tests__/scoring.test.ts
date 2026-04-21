@@ -85,6 +85,23 @@ describe("computeMustHavePct", () => {
     expect(computeMustHavePct(coverage)).toBe(0);
   });
 
+  it("treats unknown must-haves as provisional for snippets", () => {
+    const coverage: MustHaveStatus[] = [
+      { requirement: "Leadership", status: "unknown", evidence: "Insufficient data" },
+    ];
+    // snippet.unknown = 15 (partial credit — absence may just mean not mentioned)
+    expect(computeMustHavePct(coverage, "snippet")).toBe(15);
+  });
+
+  it("treats missing must-haves as provisional for minimal snippets", () => {
+    const coverage: MustHaveStatus[] = [
+      { requirement: "WordPress", status: "missing", evidence: "Not mentioned in snippet" },
+      { requirement: "UX", status: "unknown", evidence: "Insufficient data" },
+    ];
+    // WordPress (1.5×, missing=0) + UX (1.3×, unknown=10): (0+13)/2.8 = 4.64 → 5
+    expect(computeMustHavePct(coverage, "minimal")).toBe(5);
+  });
+
   it("averages mixed statuses correctly (confirmed=100, missing=0 → 50)", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "A", status: "confirmed", evidence: "Found" },
@@ -226,7 +243,7 @@ describe("computeOverallScore", () => {
   it("computes weighted sum correctly", () => {
     // 80*0.24 + 100*0.14 + 80*0.14 + 70*0.10 + 90*0.08 + 60*0.05 + 75*0.05 + 100*0.20
     // = 19.2 + 14 + 11.2 + 7 + 7.2 + 3 + 3.75 + 20 = 85.35 → 85
-    expect(computeOverallScore(baseCategories, 100)).toBe(85);
+    expect(computeOverallScore(baseCategories, 100)).toBe(87);
   });
 
   it("clamps to 100 when all inputs exceed 100", () => {
@@ -249,8 +266,8 @@ describe("computeOverallScore", () => {
     ) as ScoreBreakdown["categories"];
     const withAllMust    = computeOverallScore(highCats, 100);
     const withZeroMust   = computeOverallScore(highCats, 0);
-    // must_have_pct contributes 0.20 weight: 100*0.20=20 vs 0*0.20=0 → delta=20
-    expect(withAllMust - withZeroMust).toBe(20);
+    // must_have_pct contributes 0.36 weight: 100*0.36=36 vs 0*0.36=0 → delta=36
+    expect(withAllMust - withZeroMust).toBe(36);
   });
 });
 
@@ -286,8 +303,8 @@ describe("computeConfidence", () => {
     ];
     // 3/4 unknown (75%) → -20 from full_profile base of 70 → 50
     const conf = computeConfidence(3000, manyUnknown);
-    expect(conf.score).toBeLessThanOrEqual(50);
-    expect(conf.reasons.some((r) => r.includes("verified"))).toBe(true);
+    expect(conf.score).toBeLessThanOrEqual(40);
+    expect(conf.reasons.some((r) => r.includes("unverified"))).toBe(true);
   });
 
   it("reduces confidence for each negative must-have", () => {
@@ -410,5 +427,44 @@ describe("buildScoreBreakdown", () => {
       profileCharCount:      3000,
     });
     expect(allMH.overall).toBeGreaterThan(noMH.overall);
+  });
+
+  it("keeps snippet scores provisional when evidence is sparse", () => {
+    const sparseCoverage: MustHaveStatus[] = [
+      { requirement: "WordPress", status: "confirmed", evidence: "WordPress mentioned" },
+      { requirement: "UX", status: "unknown", evidence: "Not enough snippet detail" },
+      { requirement: "Full website builds", status: "unknown", evidence: "Not enough snippet detail" },
+      { requirement: "Back-end development", status: "missing", evidence: "Not mentioned" },
+    ];
+
+    const fullProfileBreakdown = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    sparseCoverage,
+      nice_to_have_coverage: [],
+      reasons_for:           [],
+      reasons_against:       [],
+      missing_evidence:      [],
+      recruiter_summary:     "",
+      profileCharCount:      2500,
+    });
+
+    const snippetBreakdown = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    sparseCoverage,
+      nice_to_have_coverage: [],
+      reasons_for:           [],
+      reasons_against:       [],
+      missing_evidence:      [],
+      recruiter_summary:     "",
+      profileCharCount:      350,
+    });
+
+    // Snippet is more charitable on must_have_pct (unknown/missing get partial credit)
+    expect(snippetBreakdown.must_have_pct).toBeGreaterThan(fullProfileBreakdown.must_have_pct);
+    // But the hard cap at 55 keeps snippet overall LOWER than a full-profile with sparse evidence
+    expect(snippetBreakdown.overall).toBeLessThan(fullProfileBreakdown.overall);
+    expect(snippetBreakdown.overall).toBeLessThanOrEqual(55);
+    expect(snippetBreakdown.confidence.level).toBe("low");
+    expect(snippetBreakdown.data_quality).toBe("snippet");
   });
 });

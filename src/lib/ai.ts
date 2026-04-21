@@ -18,8 +18,27 @@ import {
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude, OpenAI, and Ollama so all AI functions stay clean.
 
-export async function chat(prompt: string, temperature = 0.1, maxTokens = 2048): Promise<string> {
-  const provider = process.env.AI_PROVIDER ?? "ollama";
+type ChatProvider = "claude" | "openai" | "ollama";
+
+interface ChatOptions {
+  provider?: ChatProvider;
+}
+
+function resolveChatProvider(override?: ChatProvider): ChatProvider {
+  return override ?? ((process.env.AI_PROVIDER as ChatProvider | undefined) ?? "ollama");
+}
+
+export function getJobParsingProvider(): ChatProvider | undefined {
+  return process.env.ANTHROPIC_API_KEY ? "claude" : undefined;
+}
+
+export async function chat(
+  prompt: string,
+  temperature = 0.1,
+  maxTokens = 2048,
+  options?: ChatOptions
+): Promise<string> {
+  const provider = resolveChatProvider(options?.provider);
 
   // ── Claude (Anthropic) ──
   if (provider === "claude") {
@@ -172,21 +191,47 @@ function findCoverageMatch<T extends { requirement: string }>(
   return null;
 }
 
+function ensureString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function ensureStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeSource(value: unknown): "explicit" | "inferred" | "" {
+  return value === "explicit" || value === "inferred" ? value : "";
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ParsedRole {
   title: string;
+  title_source: "explicit" | "inferred" | "";
   company: string;
+  company_source: "explicit" | "inferred" | "";
   location: string;
+  location_source: "explicit" | "inferred" | "";
   experience: string;
   // Rich hiring brief fields (populated by updated parser)
   seniority_band: string;       // e.g. "Senior IC", "Tech Lead", "Mid-level"
+  seniority_source: "explicit" | "inferred" | "";
   salary_band: string;          // inferred e.g. "$110k–$140k NZD"
+  salary_source: "explicit" | "inferred" | "";
   location_rules: string;       // e.g. "Auckland CBD 3 days/week"
+  location_rules_source: "explicit" | "inferred" | "";
   visa_flags: string[];         // e.g. ["NZ citizen or PR only"]
   must_haves: string[];         // non-negotiable requirements
   nice_to_haves: string[];      // desirable but not blocking
   knockout_criteria: string[];  // instant disqualifiers
+  application_requirements: string[];
+  explicitly_stated: string[];
+  strongly_inferred: string[];
+  search_expansion: string[];
   synonym_titles: string[];     // alternative LinkedIn titles to search
   responsibilities: string[];
   search_queries: string[];
@@ -225,16 +270,26 @@ ${jd.slice(0, 5000)}
 Return ONLY valid JSON (no markdown, no explanation):
 {
   "title": "standardised market-facing job title — if the internal title is unusual, translate it to what the person would actually be called",
+  "title_source": "explicit|inferred|empty string if unknown",
   "company": "company or client name, or empty string",
+  "company_source": "explicit|inferred|empty string if unknown",
   "location": "city or region only — e.g. 'Auckland', 'Wellington'",
+  "location_source": "explicit|inferred|empty string if unknown",
   "experience": "years requirement only if explicitly stated — e.g. '5+ years'. Empty string otherwise.",
   "seniority_band": "one of: Graduate | Junior | Mid-level | Senior | Lead | Principal | Manager | Director | Executive",
+  "seniority_source": "explicit|inferred|empty string if unknown",
   "salary_band": "inferred NZD salary range — use your NZ market knowledge if not stated. Format '$90k–$120k NZD'. Empty string only if genuinely impossible to estimate.",
+  "salary_source": "explicit|inferred|empty string if unknown",
   "location_rules": "office/remote policy in plain English — e.g. 'Auckland CBD, 3 days in office' or 'Fully remote, NZ-based only' or 'Flexible'",
+  "location_rules_source": "explicit|inferred|empty string if unknown",
   "visa_flags": ["work rights or visa requirements — e.g. 'NZ citizen or permanent resident only', 'Open Work Visa accepted'. Empty array if not mentioned."],
-  "must_haves": ["non-negotiable requirements the person MUST have — hard skills, certs, experience the JD treats as mandatory. Be specific and exhaustive."],
+  "must_haves": ["only explicit or near-explicit must-haves from the ad — do not harden soft wording into stricter requirements than the ad supports. Be specific and exhaustive."],
   "nice_to_haves": ["explicitly preferred or advantageous things — 'would be great', 'advantageous', 'desirable'. Separate from must-haves."],
   "knockout_criteria": ["ONLY true binary gates — legal/compliance requirements a recruiter would ask on a screening call before reading the CV. Examples: work rights, mandatory licences (driver's licence, security clearance), specific mandatory professional registration. DO NOT include skills, experience years, or technologies here — those belong in must_haves and are scoring factors, not gates. Most JDs have zero or one knockout criteria. If there are none, return an empty array."],
+  "application_requirements": ["explicit application asks or screening asks such as 'Portfolio requested', 'Cover letter requested', 'Expected salary question'. Empty array if none."],
+  "explicitly_stated": ["short recruiter-readable facts written in the ad itself. Do not include inference here."],
+  "strongly_inferred": ["short recruiter-readable inferences that are reasonable but not explicitly written in the ad."],
+  "search_expansion": ["broader sourcing angles that help search but are NOT ad facts."],
   "synonym_titles": ["7-10 real LinkedIn headline titles — how actual people in this role describe themselves on their profile, NOT generic job board terms. Only include titles you would genuinely find on LinkedIn profiles. Examples for a Rails developer: 'Ruby on Rails Developer', 'Full Stack Engineer', 'Backend Engineer', 'Rails Engineer', 'Software Engineer' — NOT made-up compound titles like 'Technical Developer' or 'Application Developer' that no one uses."],
   "responsibilities": ["concrete day-to-day activities from the JD — what they will actually do"],
   "search_queries": [
@@ -251,32 +306,49 @@ Return ONLY valid JSON (no markdown, no explanation):
 }
 
 Rules:
+- Separate truth from inference. If the ad does not explicitly say something, do not place it in explicitly_stated.
+- Use the *_source fields honestly. If seniority, salary, or work setup are inferred from context, mark them as "inferred".
+- must_haves should stay faithful to the ad. If wording is softer (for example "assist with backend and front-end applications"), do not rewrite it into a harder requirement than the ad supports.
+- Put broader recruiter logic in strongly_inferred and search_expansion, not in explicitly_stated.
 - search_queries and google_queries: KEYWORD TERMS ONLY. Location and site:linkedin.com/in are added automatically. No years of experience. Never copy the exact job title verbatim.
 - synonym_titles is the most important field for search coverage — a "Digital Solutions Analyst" might be "Business Analyst", "Systems Analyst", "Product Analyst", "IT Analyst", "Digital Analyst" on LinkedIn. Think about what 10 different people doing this job would call themselves. Banned terms that no one uses on LinkedIn: "Application Developer", "Technical Developer", "IT Developer", "Mid-level Developer", "Junior Developer", "Graduate Developer" — use the actual technology stack or domain in the title instead.
 - must_haves vs nice_to_haves: if the JD says "required" or "must have" it's a must-have. If it says "preferred", "advantageous", "desirable", "bonus" it's nice-to-have.
 - knockout_criteria: STRICT — only legal/compliance binary gates a recruiter asks on a phone screen before looking at the CV. Work rights, mandatory licences, security clearances. Skills and experience are NOT knockouts — they go in must_haves. Most roles have one knockout or none. When in doubt, leave it out.
-- salary_band: if the JD states a range, use it. If not, use your knowledge of NZ market rates for this role and seniority.`);
+- application_requirements: use this for portfolio / CV / cover letter asks and application questions. These are not knockout criteria unless the ad clearly says mandatory.
+- salary_band: if the JD states a range, use it. If not, use your knowledge of NZ market rates for this role and seniority.`, 0.1, 2048, {
+    provider: getJobParsingProvider(),
+  });
 
   const parsed = parseJson<Partial<ParsedRole>>(text);
 
   return {
-    title:             parsed.title ?? "",
-    company:           parsed.company ?? "",
-    location:          parsed.location ?? "",
-    experience:        parsed.experience ?? "",
-    seniority_band:    parsed.seniority_band ?? "",
-    salary_band:       parsed.salary_band ?? "",
-    location_rules:    parsed.location_rules ?? "",
-    visa_flags:        parsed.visa_flags ?? [],
-    must_haves:        parsed.must_haves ?? [],
-    nice_to_haves:     parsed.nice_to_haves ?? [],
-    knockout_criteria: parsed.knockout_criteria ?? [],
-    synonym_titles:    parsed.synonym_titles ?? [],
-    responsibilities:  parsed.responsibilities ?? [],
-    search_queries:    parsed.search_queries ?? [],
-    google_queries:    parsed.google_queries ?? [],
-    skills_required:   parsed.skills_required ?? [],
-    skills_preferred:  parsed.skills_preferred ?? [],
+    title: ensureString(parsed.title),
+    title_source: normalizeSource(parsed.title_source),
+    company: ensureString(parsed.company),
+    company_source: normalizeSource(parsed.company_source),
+    location: ensureString(parsed.location),
+    location_source: normalizeSource(parsed.location_source),
+    experience: ensureString(parsed.experience),
+    seniority_band: ensureString(parsed.seniority_band),
+    seniority_source: normalizeSource(parsed.seniority_source),
+    salary_band: ensureString(parsed.salary_band),
+    salary_source: normalizeSource(parsed.salary_source),
+    location_rules: ensureString(parsed.location_rules),
+    location_rules_source: normalizeSource(parsed.location_rules_source),
+    visa_flags: ensureStringArray(parsed.visa_flags),
+    must_haves: ensureStringArray(parsed.must_haves),
+    nice_to_haves: ensureStringArray(parsed.nice_to_haves),
+    knockout_criteria: ensureStringArray(parsed.knockout_criteria),
+    application_requirements: ensureStringArray(parsed.application_requirements),
+    explicitly_stated: ensureStringArray(parsed.explicitly_stated),
+    strongly_inferred: ensureStringArray(parsed.strongly_inferred),
+    search_expansion: ensureStringArray(parsed.search_expansion),
+    synonym_titles: ensureStringArray(parsed.synonym_titles),
+    responsibilities: ensureStringArray(parsed.responsibilities),
+    search_queries: ensureStringArray(parsed.search_queries),
+    google_queries: ensureStringArray(parsed.google_queries),
+    skills_required: ensureStringArray(parsed.skills_required),
+    skills_preferred: ensureStringArray(parsed.skills_preferred),
   };
 }
 
@@ -487,7 +559,7 @@ reasons_for: 2–4 specific, evidenced positive signals. Not generic praise. Ref
 reasons_against: 2–4 specific concerns. Not speculation — only what the profile actually shows or fails to show.
 missing_evidence: 2–4 specific facts that are NOT in the profile and would materially change the score (e.g. "Years in role not stated", "No mention of team leadership despite Senior title").
 
-Short snippet rule: score what IS confirmed. Do not penalise for skills not mentioned. Only penalise hard for active contradictions.`,
+Short snippet rule: if the profile is a short snippet (under ~500 chars), treat unmentioned skills as genuinely unknown — do NOT assume they are present. Mark them "missing" or "unknown" accordingly. A snippet that does not mention WordPress does not confirm WordPress. Score only what is explicitly evidenced. Location and title alone should not carry a weak profile into 60%+ territory.`,
     0.1,
     3000
   );
@@ -618,4 +690,222 @@ Return ONLY valid JSON:
   } catch {
     return { name: "Unknown", headline: "", location: "" };
   }
+}
+
+// ── Reference check questions ─────────────────────────────────────────────────
+
+export interface ReferenceQuestion {
+  question: string;
+  category: string; // "performance" | "culture" | "skills" | "reliability" | "role-specific"
+}
+
+export async function generateReferenceQuestions(
+  candidateName: string,
+  candidateProfile: string,
+  roleTitle: string,
+  requiredSkills: string[],
+  relationship: string
+): Promise<ReferenceQuestion[]> {
+  const profileExcerpt = candidateProfile.slice(0, 1500);
+  const prompt = `You are a senior recruiter preparing a structured reference check for a candidate.
+
+Candidate: ${candidateName}
+Role they're being considered for: ${roleTitle}
+Key skills required: ${requiredSkills.slice(0, 6).join(", ")}
+Referee relationship to candidate: ${relationship}
+Candidate profile excerpt:
+${profileExcerpt}
+
+Generate 10 targeted reference check questions. Mix of:
+- 3 performance/output questions (concrete results, metrics)
+- 2 culture/behaviour questions (team fit, communication style)
+- 2 role-specific skill questions (directly tied to the required skills above)
+- 2 reliability/professionalism questions (attendance, delivery, attitude)
+- 1 closing question (would you rehire / what should we know)
+
+Tailor the questions to the referee relationship (e.g. manager questions differ from peer questions).
+
+Return ONLY a JSON array, no commentary:
+[{"question":"...", "category":"performance"}, ...]`;
+
+  const text = await chat(prompt, 0.3, 1200);
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[0]) as ReferenceQuestion[];
+    return parsed.filter((q) => q.question && q.category).slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+// ── Reference check summariser ────────────────────────────────────────────────
+
+export async function summariseReferenceCheck(
+  candidateName: string,
+  roleTitle: string,
+  referee: { name: string; title?: string; company?: string; relationship?: string },
+  responses: Array<{ question: string; answer: string }>
+): Promise<string> {
+  const qa = responses
+    .filter((r) => r.answer.trim())
+    .map((r) => `Q: ${r.question}\nA: ${r.answer}`)
+    .join("\n\n");
+
+  const prompt = `You are a senior recruiter writing a reference check summary for a client report.
+
+Candidate: ${candidateName}
+Role: ${roleTitle}
+Referee: ${referee.name}${referee.title ? `, ${referee.title}` : ""}${referee.company ? ` at ${referee.company}` : ""} (${referee.relationship ?? "referee"})
+
+Reference Q&A:
+${qa}
+
+Write a 3–4 sentence professional summary of this reference check suitable for sharing with a hiring manager. Cover:
+- Overall assessment of the candidate
+- Key strengths highlighted
+- Any concerns or caveats raised
+- Whether the referee would recommend the candidate
+
+Be direct and specific. No bullet points. Professional tone. Return only the paragraph.`;
+
+  return (await chat(prompt, 0.3, 400)).trim();
+}
+
+// ── Job advertisement generator ───────────────────────────────────────────────
+
+export interface GeneratedJobAd {
+  headline: string;
+  body: string;
+}
+
+export async function generateJobAd(
+  parsedRole: ParsedRole,
+  company: string | null,
+  rawJd: string
+): Promise<GeneratedJobAd> {
+  const mustHaves = (parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required).slice(0, 8);
+  const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 5);
+  const responsibilities = (parsedRole.responsibilities ?? []).slice(0, 6);
+  const salaryLine = parsedRole.salary_band ? `Salary: ${parsedRole.salary_band}` : "";
+  const seniorityLine = parsedRole.seniority_band ? `Seniority: ${parsedRole.seniority_band}` : "";
+  const experienceLine = parsedRole.experience ? `Experience: ${parsedRole.experience}` : "";
+  const locationLine = parsedRole.location_rules || parsedRole.location;
+
+  const prompt = `You are an expert recruitment copywriter. Write a compelling job advertisement based on the information below.
+
+Role: ${parsedRole.title}
+Company: ${company ?? parsedRole.company ?? "our client"}
+Location: ${locationLine}
+Employment type: Full-time
+${salaryLine}
+${seniorityLine}
+${experienceLine}
+
+Required skills: ${mustHaves.join(", ")}
+${niceToHaves.length ? `Nice to have: ${niceToHaves.join(", ")}` : ""}
+${responsibilities.length ? `Key responsibilities: ${responsibilities.join("; ")}` : ""}
+
+Original JD for context:
+${rawJd.slice(0, 1500)}
+
+Write a job ad in this format:
+- An engaging 2–3 sentence opening about the opportunity and company
+- "The Role" section: 4–6 bullet points on key responsibilities
+- "What You'll Bring" section: 5–7 bullet points on skills/experience
+- A compelling 1–2 sentence closing call-to-action
+
+Keep it honest, direct, and compelling. No filler phrases like "dynamic" or "passionate". Write for a New Zealand professional audience.
+
+Return JSON: {"headline": "short compelling tagline under 10 words", "body": "full ad text with sections"}`;
+
+  const text = await chat(prompt, 0.4, 1500);
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[0]) as GeneratedJobAd;
+      if (parsed.headline && parsed.body) return parsed;
+    } catch { /* fall through */ }
+  }
+  // Fallback if JSON parse fails
+  return { headline: `${parsedRole.title} — ${parsedRole.location}`, body: text.trim() };
+}
+
+// ── Rejection email generator ─────────────────────────────────────────────────
+
+export async function generateRejectionEmail(
+  candidateName: string,
+  roleTitle: string,
+  company: string | null,
+  recruiterNotes?: string
+): Promise<string> {
+  const prompt = `You are a recruiter writing a professional, warm rejection email for a candidate.
+
+Candidate name: ${candidateName}
+Role they applied for: ${roleTitle}
+Company: ${company ?? "our client"}
+${recruiterNotes ? `Internal notes (do NOT include verbatim, use for tone only): ${recruiterNotes.slice(0, 300)}` : ""}
+
+Write a rejection email that:
+- Opens with genuine thanks for their time and interest
+- Clearly but kindly communicates they haven't been selected
+- Does NOT give specific reasons (keeps it clean legally)
+- Encourages them to apply for future roles if appropriate
+- Is warm, human, and 3–4 short paragraphs
+- Signs off from "The ${company ?? "Recruitment"} Team"
+
+Write only the email body (no subject line). No filler phrases like "we were overwhelmed with applications". Keep it real.`;
+
+  return (await chat(prompt, 0.4, 600)).trim();
+}
+
+// ── Offer letter generator ────────────────────────────────────────────────────
+
+export interface GeneratedOfferLetter {
+  subject: string;
+  body: string;
+}
+
+export async function generateOfferLetter(
+  candidateName: string,
+  roleTitle: string,
+  company: string | null,
+  salary?: { min?: number; max?: number } | null,
+  startDate?: string
+): Promise<GeneratedOfferLetter> {
+  const salaryLine = salary?.min || salary?.max
+    ? `Salary: $${((salary.min ?? salary.max ?? 0) / 1000).toFixed(0)}k–$${((salary.max ?? salary.min ?? 0) / 1000).toFixed(0)}k NZD per annum`
+    : "Salary: [TO BE CONFIRMED]";
+
+  const prompt = `You are a recruiter drafting an offer letter for a successful candidate.
+
+Candidate: ${candidateName}
+Role: ${roleTitle}
+Company: ${company ?? "[Company Name]"}
+${salaryLine}
+Start date: ${startDate ?? "[START DATE]"}
+
+Write a professional offer letter that:
+- Warmly congratulates them and expresses genuine excitement
+- Confirms the role title, company, and key terms
+- Includes salary, start date, and notes that a formal employment agreement will follow
+- Sets a clear acceptance deadline (suggest 5 business days)
+- Is professional but not overly corporate — genuine and human
+- Is 4–5 paragraphs
+
+Return JSON: {"subject": "email subject line", "body": "full letter text"}
+Use [PLACEHOLDER] format for anything that needs to be filled in.`;
+
+  const text = await chat(prompt, 0.4, 800);
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[0]) as GeneratedOfferLetter;
+      if (parsed.subject && parsed.body) return parsed;
+    } catch { /* fall through */ }
+  }
+  return {
+    subject: `Offer of Employment — ${roleTitle} at ${company ?? "[Company]"}`,
+    body: text.trim(),
+  };
 }

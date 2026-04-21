@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
@@ -194,10 +194,34 @@ export function Sidebar({ jobs }: SidebarProps) {
             Dashboard
           </Link>
           <Link
+            href="/jobs/listing-builder"
+            className={cn(
+              "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
+              pathname === "/jobs/listing-builder"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            )}
+          >
+            <FileText className="w-4 h-4" />
+            Listing Builder
+          </Link>
+          <Link
+            href="/candidates"
+            className={cn(
+              "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
+              pathname === "/candidates" || pathname.startsWith("/candidates/")
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            )}
+          >
+            <Library className="w-4 h-4" />
+            Candidates Library
+          </Link>
+          <Link
             href="/linkedin-setup"
             className={cn(
               "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
-              pathname === "/linkedin-setup" || pathname === "/bookmarklet"
+              pathname === "/linkedin-setup"
                 ? "bg-slate-800 text-white"
                 : "text-slate-400 hover:text-white hover:bg-slate-800"
             )}

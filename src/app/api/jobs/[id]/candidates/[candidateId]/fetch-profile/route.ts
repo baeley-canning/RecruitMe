@@ -5,6 +5,8 @@ import { scoreCandidateStructured, predictAcceptance, extractCandidateInfo, clea
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
+import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 
 // ---------------------------------------------------------------------------
 // Server-side LinkedIn scraper
@@ -118,18 +120,13 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string; candidateId: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id: jobId, candidateId } = await params;
 
   const body = BodySchema.safeParse(await req.json().catch(() => ({})));
-
-  const [candidate, job] = await Promise.all([
-    prisma.candidate.findUnique({ where: { id: candidateId } }),
-    prisma.job.findUnique({ where: { id: jobId } }),
-  ]);
-
-  if (!candidate || !job) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const { job, candidate, error } = await requireCandidateAccess(jobId, candidateId, auth);
+  if (error || !job || !candidate) return error;
 
   let profileText: string;
 
@@ -177,11 +174,19 @@ export async function POST(
   let headline = candidate.headline;
   let location = candidate.location;
 
+  const extracted = extractIdentityFromLinkedInProfileText(profileText);
+  if (extracted.name) name = extracted.name;
+  if (extracted.headline) headline = extracted.headline;
+  if (extracted.location) location = extracted.location;
+  const hasDirectName = Boolean(extracted.name);
+  const hasDirectHeadline = Boolean(extracted.headline);
+  const hasDirectLocation = Boolean(extracted.location);
+
   try {
     const info = await extractCandidateInfo(profileText);
-    if (info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
-    if (info.headline && info.headline.length > 2) headline = info.headline;
-    if (info.location && info.location.length > 2) location = info.location;
+    if (!hasDirectName && info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
+    if (!hasDirectHeadline && info.headline && info.headline.length > 2) headline = info.headline;
+    if (!hasDirectLocation && info.location && info.location.length > 2) location = info.location;
   } catch {
     /* keep existing values */
   }

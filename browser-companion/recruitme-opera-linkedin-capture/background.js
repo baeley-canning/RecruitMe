@@ -4,7 +4,24 @@ const DEFAULT_SERVER_BASES = [
   "http://10.255.255.254:3000",
 ];
 
+const PENDING_CAPTURE_ALARM = "recruitme-pending-capture-check";
 const activeAutoCaptures = new Set();
+const pendingSessionEnsures = new Set();
+const ERROR_BADGE_COLOR = "#b91c1c";
+
+async function setExtensionError(message) {
+  const error = message || "RecruitMe extension error";
+  await chrome.storage.local.set({ lastError: error });
+  await chrome.action.setBadgeText({ text: "!" });
+  await chrome.action.setBadgeBackgroundColor({ color: ERROR_BADGE_COLOR });
+  await chrome.action.setTitle({ title: `RecruitMe LinkedIn Capture\n${error}` });
+}
+
+async function clearExtensionError() {
+  await chrome.storage.local.set({ lastError: "" });
+  await chrome.action.setBadgeText({ text: "" });
+  await chrome.action.setTitle({ title: "RecruitMe LinkedIn Capture" });
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,6 +33,7 @@ async function getStoredSettings() {
     lastWorkingServerBase: "",
     authUser: "",
     authPass: "",
+    lastError: "",
   });
 }
 
@@ -44,25 +62,41 @@ function withTimeout(url, options = {}, timeoutMs = 4000) {
   });
 }
 
-async function requestRecruitMe(path, options = {}, preferredBase = "") {
+async function requestRecruitMe(path, options = {}, preferredBase = "", overrides = {}) {
   const settings = await getStoredSettings();
   const bases = preferredBase
     ? [preferredBase, ...(await getServerBases()).filter((base) => base !== preferredBase)]
     : await getServerBases();
+  const authUser =
+    typeof overrides.authUser === "string" ? overrides.authUser.trim() : settings.authUser || "";
+  const authPass =
+    typeof overrides.authPass === "string" ? overrides.authPass : settings.authPass || "";
+  const rememberFailure = overrides.rememberFailure !== false;
+  const timeoutMs =
+    typeof overrides.timeoutMs === "number"
+      ? overrides.timeoutMs
+      : typeof options.timeoutMs === "number"
+      ? options.timeoutMs
+      : 4000;
 
   let lastError = new Error("Could not connect to RecruitMe");
 
   for (const base of bases) {
     try {
       const headers = new Headers(options.headers || {});
-      if (options.body && !headers.has("Content-Type")) {
+      const requestOptions = { ...options };
+      delete requestOptions.authUser;
+      delete requestOptions.authPass;
+      delete requestOptions.timeoutMs;
+
+      if (requestOptions.body && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
-      if (settings.authUser || settings.authPass) {
-        headers.set("Authorization", `Basic ${btoa(`${settings.authUser}:${settings.authPass}`)}`);
+      if (authUser || authPass) {
+        headers.set("Authorization", `Basic ${btoa(`${authUser}:${authPass}`)}`);
       }
 
-      const response = await withTimeout(`${base}${path}`, { ...options, headers });
+      const response = await withTimeout(`${base}${path}`, { ...requestOptions, headers }, timeoutMs);
       const text = await response.text();
       let data = null;
       if (text) {
@@ -76,7 +110,7 @@ async function requestRecruitMe(path, options = {}, preferredBase = "") {
       if (!response.ok) {
         if (response.status === 401) {
           lastError = new Error(
-            "RecruitMe returned 401 Unauthorized. Save the same username and password you use in the browser."
+            "RecruitMe extension auth failed. Enter the same username and password you use to sign into RecruitMe, then click Save and test connection."
           );
         } else {
           lastError = new Error(data?.error || `RecruitMe request failed (${response.status})`);
@@ -85,13 +119,63 @@ async function requestRecruitMe(path, options = {}, preferredBase = "") {
       }
 
       await chrome.storage.local.set({ lastWorkingServerBase: base });
+      await clearExtensionError();
       return { base, data };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
     }
   }
 
+  if (rememberFailure) {
+    await setExtensionError(lastError.message);
+  }
   throw lastError;
+}
+
+function toUserFacingCaptureError(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+
+  if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
+    return "RecruitMe could not attach to the LinkedIn tab. Reload the extension and try again.";
+  }
+  if (/Request timed out/i.test(message)) {
+    return "RecruitMe took too long to respond. Check the app is running and the server URL in the popup.";
+  }
+  if (/401 Unauthorized|extension auth failed/i.test(message)) {
+    return "RecruitMe login for manual import is invalid. Auto-capture can still run, but update the popup credentials if you need job list access.";
+  }
+  if (/LinkedIn URL mismatch/i.test(message)) {
+    return "The open LinkedIn profile did not match the queued candidate.";
+  }
+  if (/not contain enough usable profile text|too short/i.test(message)) {
+    return "LinkedIn did not expose enough profile content to capture. Open the full profile and try again.";
+  }
+
+  return message || "LinkedIn capture failed";
+}
+
+async function markPendingCaptureError(pending, error, preferredBase = "") {
+  if (!pending?.sessionId) return;
+
+  const message = toUserFacingCaptureError(error).slice(0, 500);
+  await setExtensionError(message);
+
+  try {
+    await requestRecruitMe(
+      "/api/extension/fetch-session/error",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: pending.sessionId,
+          error: message,
+        }),
+      },
+      preferredBase,
+      { rememberFailure: false }
+    );
+  } catch (reportError) {
+    console.warn("RecruitMe failed to report capture error:", reportError);
+  }
 }
 
 function sendMessageToTab(tabId, message) {
@@ -117,12 +201,49 @@ async function checkPendingCapture(linkedinUrl) {
   return { base, data };
 }
 
+async function getPendingSessions() {
+  const { base, data } = await requestRecruitMe("/api/extension/fetch-session");
+  const sessions = Array.isArray(data) ? data : data ? [data] : [];
+  return {
+    base,
+    sessions: sessions.filter((session) => session?.status === "pending" && session.linkedinUrl),
+  };
+}
+
+function normaliseLinkedInUrl(url = "") {
+  if (!url) return "";
+
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/^\/in\/([^/?#]+)/i);
+    if (!match) return "";
+    return `https://www.linkedin.com/in/${match[1].toLowerCase()}`;
+  } catch {
+    const match = url.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+    return match ? `https://www.linkedin.com/in/${match[1].toLowerCase()}` : "";
+  }
+}
+
+async function findLinkedInProfileTab(linkedinUrl) {
+  const targetUrl = normaliseLinkedInUrl(linkedinUrl);
+  if (!targetUrl) return null;
+
+  const tabs = await chrome.tabs.query({ url: ["https://www.linkedin.com/in/*"] });
+  return tabs.find((tab) => normaliseLinkedInUrl(tab.url) === targetUrl) || null;
+}
+
+async function openPendingProfileTab(linkedinUrl) {
+  const created = await chrome.tabs.create({ url: linkedinUrl, active: false });
+  return created?.id ?? null;
+}
+
 async function completePendingCapture(tabId, pending, preferredBase = "") {
   const capture = await sendMessageToTab(tabId, { type: "capture-profile" });
   return requestRecruitMe(
     "/api/extension/fetch-session/complete",
     {
       method: "POST",
+      timeoutMs: 15000,
       body: JSON.stringify({
         sessionId: pending.sessionId,
         linkedinUrl: capture.linkedinUrl,
@@ -151,22 +272,59 @@ async function completePendingCaptureWithRetry(tabId, pending, preferredBase = "
   throw lastError || new Error("LinkedIn capture failed");
 }
 
-async function maybeAutoCapture(tabId, linkedinUrl) {
-  const lockKey = `${tabId}:${linkedinUrl}`;
+async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
+  const lockKey = `${pending.sessionId}:${tabId}`;
   if (activeAutoCaptures.has(lockKey)) return;
-
-  const pending = await checkPendingCapture(linkedinUrl);
-  if (!pending.data?.pending || !pending.data?.sessionId) return;
 
   activeAutoCaptures.add(lockKey);
   try {
     await sleep(600);
-    await completePendingCaptureWithRetry(tabId, pending.data, pending.base);
+    await completePendingCaptureWithRetry(tabId, pending, preferredBase);
   } catch (error) {
-    console.warn("RecruitMe auto-capture failed:", error);
+    await markPendingCaptureError(pending, error, preferredBase);
+    throw error;
   } finally {
     activeAutoCaptures.delete(lockKey);
   }
+}
+
+async function maybeAutoCapture(tabId, linkedinUrl) {
+  const pending = await checkPendingCapture(linkedinUrl);
+  if (!pending.data?.pending || !pending.data?.sessionId) return;
+  await capturePendingSessionInTab(tabId, pending.data, pending.base);
+}
+
+async function ensurePendingSessionTabs() {
+  const { base, sessions } = await getPendingSessions();
+  if (!sessions.length) return;
+
+  for (const session of sessions) {
+    if (pendingSessionEnsures.has(session.sessionId)) continue;
+
+    pendingSessionEnsures.add(session.sessionId);
+    try {
+      const existingTab = await findLinkedInProfileTab(session.linkedinUrl);
+
+      if (existingTab?.id) {
+        if (existingTab.status === "complete") {
+          await capturePendingSessionInTab(existingTab.id, session, base);
+        }
+        continue;
+      }
+
+      await openPendingProfileTab(session.linkedinUrl);
+    } catch (error) {
+      console.warn("RecruitMe pending-session ensure failed:", error);
+    } finally {
+      pendingSessionEnsures.delete(session.sessionId);
+    }
+  }
+}
+
+async function ensurePendingCaptureAlarm() {
+  const existing = await chrome.alarms.get(PENDING_CAPTURE_ALARM);
+  if (existing) return;
+  await chrome.alarms.create(PENDING_CAPTURE_ALARM, { periodInMinutes: 0.5 });
 }
 
 async function getActiveLinkedInTab() {
@@ -199,6 +357,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           serverBase: settings.serverBase || settings.lastWorkingServerBase || DEFAULT_SERVER_BASES[0],
           authUser: settings.authUser || "",
           authPass: settings.authPass || "",
+          lastError: settings.lastError || "",
         })
       )
       .catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -206,19 +365,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "set-config") {
-    void chrome.storage.local
-      .set({
-        serverBase: (message.serverBase || "").trim(),
-        authUser: (message.authUser || "").trim(),
-        authPass: message.authPass || "",
-      })
-      .then(() => sendResponse({ ok: true }))
+    void (async () => {
+      const serverBase = (message.serverBase || "").trim() || DEFAULT_SERVER_BASES[0];
+      const authUser = (message.authUser || "").trim();
+      const authPass = message.authPass || "";
+
+      const hasAuth = Boolean(authUser && authPass);
+      const { base } = await requestRecruitMe(
+        hasAuth ? "/api/extension/jobs" : "/api/extension/fetch-session",
+        {},
+        serverBase,
+        hasAuth ? { authUser, authPass } : { rememberFailure: false }
+      );
+
+      await chrome.storage.local.set({
+        serverBase,
+        lastWorkingServerBase: base,
+        authUser,
+        authPass,
+        lastError: "",
+      });
+      await ensurePendingCaptureAlarm();
+      await ensurePendingSessionTabs().catch(() => {});
+      return { base, hasAuth };
+    })()
+      .then(({ base, hasAuth }) => sendResponse({ ok: true, serverBase: base, hasAuth }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
   if (message?.type === "get-jobs") {
-    void requestRecruitMe("/api/extension/jobs")
+    void requestRecruitMe("/api/extension/jobs", {}, "", { rememberFailure: false })
       .then(({ base, data }) => sendResponse({ ok: true, jobs: data, serverBase: base }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -257,7 +434,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!pending.data?.pending || !pending.data?.sessionId) {
         throw new Error("No pending RecruitMe fetch matches this LinkedIn profile");
       }
-      await completePendingCaptureWithRetry(tab.id, pending.data, pending.base);
+      try {
+        await completePendingCaptureWithRetry(tab.id, pending.data, pending.base);
+      } catch (error) {
+        await markPendingCaptureError(pending.data, error, pending.base);
+        throw error;
+      }
       return pending.data.candidateName || "Profile";
     })()
       .then((candidateName) => sendResponse({ ok: true, candidateName }))
@@ -271,6 +453,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const capture = await sendMessageToTab(tab.id, { type: "capture-profile" });
       const imported = await requestRecruitMe("/api/extension/import", {
         method: "POST",
+        timeoutMs: 120000,
         body: JSON.stringify({
           jobId: message.jobId,
           linkedinUrl: capture.linkedinUrl,
@@ -284,3 +467,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+chrome.runtime.onInstalled.addListener(() => {
+  void ensurePendingCaptureAlarm();
+  void clearExtensionError().catch(() => {});
+  void ensurePendingSessionTabs().catch(() => {});
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void ensurePendingCaptureAlarm();
+  void ensurePendingSessionTabs().catch(() => {});
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== PENDING_CAPTURE_ALARM) return;
+  void ensurePendingSessionTabs().catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  if (!tab.url || !tab.url.includes("linkedin.com/in/")) return;
+
+  void maybeAutoCapture(tabId, tab.url.replace(/[?#].*$/, "")).catch((error) => {
+    console.warn("RecruitMe auto-capture on tab update failed:", error);
+  });
+});
+
+void ensurePendingCaptureAlarm();
+void ensurePendingSessionTabs().catch(() => {});

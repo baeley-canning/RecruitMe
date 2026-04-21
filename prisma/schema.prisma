@@ -1,6 +1,6 @@
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "windows", "darwin", "darwin-arm64"]
+  binaryTargets = ["native", "windows", "darwin", "darwin-arm64", "linux-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -23,6 +23,8 @@ model Job {
   updatedAt   DateTime @updatedAt
 
   candidates  Candidate[]
+  orgId       String?
+  org         Org?     @relation(fields: [orgId], references: [id])
 }
 
 model Setting {
@@ -31,11 +33,22 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+model Org {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+  jobs      Job[]
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
   password  String   // bcrypt hash
   role      String   @default("user") // "owner" | "user"
+  orgId     String?
+  org       Org?     @relation(fields: [orgId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -50,18 +63,56 @@ model Candidate {
   location     String?
   linkedinUrl  String?
   profileText  String?  // Raw pasted/captured profile text
-  matchScore       Int?     // 0–100
-  matchReason      String?  // AI explanation JSON: { summary, strengths, gaps }
-  acceptanceScore  Int?     // 0–100 likelihood candidate would accept this offer
+  matchScore       Int?
+  matchReason      String?  // AI JSON: { summary, strengths, gaps }
+  acceptanceScore  Int?
   acceptanceReason String?  // AI JSON: { likelihood, headline, signals, summary }
   scoreBreakdown   String?  // Structured scoring JSON: ScoreBreakdown type
   notes            String?  // Recruiter notes
+  screeningData    String?  // JSON: {availability,salaryExpectation,visaStatus,noticePeriod,motivations,notes,screenedAt}
+  interviewNotes   String?  // JSON: {date,interviewer,format,impression,technical,culture,recommendation,updatedAt}
   status       String   @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
   statusHistory    String?  // JSON: [{status, changedAt}]
-  contactedAt      DateTime? // When status first moved to "contacted"
+  contactedAt      DateTime?
   source       String   @default("manual") // manual | serpapi | pdl | extension | talent_pool
-  profileCapturedAt DateTime? // When the full profile text was last fetched/captured
+  profileCapturedAt DateTime?
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  references   ReferenceCheck[]
+  files        CandidateFile[]
+}
+
+model CandidateFile {
+  id          String    @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  type        String    // "cv" | "cover_letter" | "other"
+  filename    String
+  mimeType    String
+  data        String    // base64 encoded file content
+  size        Int       // original size in bytes
+  createdAt   DateTime  @default(now())
+}
+
+model ReferenceCheck {
+  id              String    @id @default(cuid())
+  candidateId     String
+  candidate       Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  refereeName     String
+  refereeTitle    String?
+  refereeCompany  String?
+  refereeEmail    String?
+  refereePhone    String?
+  relationship    String?   // "Direct manager" | "Peer" | "Report" | "Client"
+
+  status          String    @default("pending") // pending | contacted | received | complete
+  questions       String?   // JSON: [{question, category}]
+  responses       String?   // JSON: [{question, answer}]
+  summary         String?   // AI-generated paragraph
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }

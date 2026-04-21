@@ -4,6 +4,7 @@ import { chat } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
+import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 export interface CandidateSummaryInput {
   id: string;
@@ -30,10 +31,12 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
 
-  const job = await prisma.job.findUnique({ where: { id } });
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  const { job, error } = await requireJobAccess(id, auth);
+  if (error || !job) return error;
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole ?? null, null);
   if (!parsedRole) {

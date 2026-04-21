@@ -4,12 +4,17 @@ import { prisma } from "@/lib/db";
 import { extractCandidateInfo, predictAcceptance, scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
+  const { error } = await requireJobAccess(id, auth);
+  if (error) return error;
   const candidates = await prisma.candidate.findMany({
     where: { jobId: id },
     orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }],
@@ -30,6 +35,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
   const result = CreateCandidateSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) {
@@ -37,8 +44,8 @@ export async function POST(
   }
   const body = result.data;
 
-  const job = await prisma.job.findUnique({ where: { id } });
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  const { job, error } = await requireJobAccess(id, auth);
+  if (error || !job) return error;
 
   let name = body.name ?? "";
   let headline = body.headline ?? "";

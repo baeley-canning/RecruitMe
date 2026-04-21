@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { getAuth, unauthorized, jobsWhere } from "@/lib/session";
 
 export async function GET() {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+
   const jobs = await prisma.job.findMany({
+    where: jobsWhere(auth),
     orderBy: { createdAt: "desc" },
     include: {
       _count: { select: { candidates: true } },
@@ -24,6 +29,9 @@ const CreateJobSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+
   const result = CreateJobSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
@@ -39,6 +47,7 @@ export async function POST(req: Request) {
       rawJd,
       salaryMin: salaryMin ?? null,
       salaryMax: salaryMax ?? null,
+      orgId:     auth.orgId,
     },
   });
 

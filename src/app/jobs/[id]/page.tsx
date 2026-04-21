@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, use } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, useCallback, useRef, use } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -26,6 +26,7 @@ import {
   Copy,
   Check,
   Paperclip,
+  Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
@@ -36,6 +37,14 @@ import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
 import { getCityCoords, getCityNamesWithinRadius } from "@/lib/nz-cities";
 import type { ParsedRole } from "@/lib/ai";
 
+interface BulkFileEntry {
+  id: string;
+  file: File;
+  status: "queued" | "extracting" | "scoring" | "done" | "error";
+  error?: string;
+  candidateName?: string;
+}
+
 interface Candidate {
   id: string;
   name: string;
@@ -43,12 +52,15 @@ interface Candidate {
   location: string | null;
   linkedinUrl: string | null;
   profileText: string | null;
+  profileCapturedAt: string | null;
   matchScore: number | null;
   matchReason: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
   scoreBreakdown: string | null;
   notes: string | null;
+  screeningData: string | null;
+  interviewNotes: string | null;
   status: string;
   statusHistory: string | null;
   source: string;
@@ -66,6 +78,81 @@ interface Job {
   salaryMax: number | null;
   status: string;
   candidates: Candidate[];
+}
+
+interface ElectronBridge {
+  platform?: string;
+  openExternal?: (url: string) => Promise<boolean>;
+}
+
+function getElectronBridge(): ElectronBridge | null {
+  if (typeof window === "undefined") return null;
+  return (window as Window & { electron?: ElectronBridge }).electron ?? null;
+}
+
+type ParsedRoleSource = ParsedRole["title_source"];
+
+function normalizeParsedRoleSource(value: unknown): ParsedRoleSource {
+  return value === "explicit" || value === "inferred" ? value : "";
+}
+
+function SourceBadge({ source }: { source?: ParsedRoleSource }) {
+  const normalized = normalizeParsedRoleSource(source);
+  if (!normalized) return null;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        normalized === "explicit"
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border-blue-200 bg-blue-50 text-blue-700"
+      )}
+    >
+      {normalized === "explicit" ? "Explicit" : "Inferred"}
+    </span>
+  );
+}
+
+interface HiringBriefChipSectionProps {
+  title: string;
+  items: string[] | undefined;
+  chipClassName: string;
+  labelClassName?: string;
+  monospace?: boolean;
+}
+
+function HiringBriefChipSection({
+  title,
+  items,
+  chipClassName,
+  labelClassName,
+  monospace = false,
+}: HiringBriefChipSectionProps) {
+  const cleanItems = (items ?? []).filter(Boolean);
+  if (!cleanItems.length) return null;
+
+  return (
+    <div>
+      <p className={cn("text-xs font-medium uppercase tracking-wide mb-2", labelClassName ?? "text-slate-500")}>
+        {title}
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {cleanItems.map((item) => (
+          <span
+            key={item}
+            className={cn(
+              "px-2 py-0.5 text-xs rounded-md border",
+              chipClassName,
+              monospace && "font-mono"
+            )}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export default function JobDetailPage({
@@ -116,6 +203,13 @@ export default function JobDetailPage({
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
+
+  // Bulk CV upload
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [bulkFiles, setBulkFiles] = useState<BulkFileEntry[]>([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkDragOver, setBulkDragOver] = useState(false);
 
   const [salaryMin, setSalaryMin] = useState<string>("");
   const [salaryMax, setSalaryMax] = useState<string>("");
@@ -131,11 +225,18 @@ export default function JobDetailPage({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
 
+  // Job ad generator modal
+  const [showJobAd, setShowJobAd] = useState(false);
+  const [jobAdLoading, setJobAdLoading] = useState(false);
+  const [jobAdError, setJobAdError] = useState("");
+  const [jobAd, setJobAd] = useState<{ headline: string; body: string } | null>(null);
+  const [jobAdCopied, setJobAdCopied] = useState(false);
+
   // Per-candidate fetch tracking.
   interface FetchEntry {
     sessionId: string;
     candidateId: string;
-    tab: Window;
+    tab: Window | null;
     startedAt: number;
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
@@ -318,7 +419,7 @@ export default function JobDetailPage({
     }
   };
 
-  const handleScore = async (candidateId: string) => {
+  const handleScore = useCallback(async (candidateId: string) => {
     setScoringId(candidateId);
     try {
       const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}/score`, { method: "POST" });
@@ -326,7 +427,7 @@ export default function JobDetailPage({
     } finally {
       setScoringId(null);
     }
-  };
+  }, [fetchJob, id]);
 
   const clearCandidateStatus = (candidateId: string, delay: number, expectedState?: string) =>
     setTimeout(() => {
@@ -359,7 +460,11 @@ export default function JobDetailPage({
     const entry = activeFetchesRef.current.get(candidateId);
     if (!entry || entry.done) return;
     if (Date.now() - entry.startedAt > 90_000) {
-      finishFetchRef.current(candidateId, "error", "Capture timed out — try Fetch Profile again");
+      finishFetchRef.current(
+        candidateId,
+        "error",
+        "Capture timed out - try again. If it keeps failing, reload the Opera extension and check the extension popup for the real error."
+      );
       return;
     }
     try {
@@ -367,8 +472,20 @@ export default function JobDetailPage({
         `/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`
       );
       if (!res.ok) {
-        if (entry.tab.closed) {
-          finishFetchRef.current(candidateId, "error", "Capture did not complete — try again");
+        if (res.status === 404) {
+          finishFetchRef.current(
+            candidateId,
+            "error",
+            "Capture session expired before completion - try Fetch Profile again"
+          );
+          return;
+        }
+        if (res.status === 401) {
+          finishFetchRef.current(
+            candidateId,
+            "error",
+            "RecruitMe session expired - sign back in and try again"
+          );
         }
         return;
       }
@@ -381,7 +498,7 @@ export default function JobDetailPage({
       if (data.status === "processing") {
         setFetchStatuses((prev) => ({
           ...prev,
-          [candidateId]: { state: "fetching", message: data.message ?? "Scoring with AI…" },
+          [candidateId]: { state: "fetching", message: data.message ?? "Scoring with AI..." },
         }));
         return;
       }
@@ -398,12 +515,6 @@ export default function JobDetailPage({
         finishFetchRef.current(candidateId, "error", data.error ?? data.message ?? "Capture failed");
         return;
       }
-      if (entry.tab.closed) {
-        setFetchStatuses((prev) => ({
-          ...prev,
-          [candidateId]: { state: "waiting", message: "LinkedIn tab closed — waiting for extension to finish…" },
-        }));
-      }
     } catch { /* network error — keep polling */ }
   };
 
@@ -412,16 +523,30 @@ export default function JobDetailPage({
   finishFetchRef.current = finishFetch;
 
   // Must NOT be async — window.open is blocked after an await.
-  const handleFetchProfile = (candidateId: string) => {
+  const handleFetchProfile = useCallback((candidateId: string) => {
     const candidate = job?.candidates.find((c) => c.id === candidateId);
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
 
-    const tab = window.open("about:blank", "rm-fetch");
-    if (!tab) {
+    const electron = getElectronBridge();
+    const useExternalBrowser = typeof electron?.openExternal === "function";
+    const isOperaBrowser = typeof navigator !== "undefined" && /\bOPR\//.test(navigator.userAgent);
+    if (!useExternalBrowser && !isOperaBrowser) {
       setFetchStatuses((prev) => ({
         ...prev,
-        [candidateId]: { state: "error", message: "Popup blocked — allow popups for this site and try again" },
+        [candidateId]: {
+          state: "error",
+          message: "Open RecruitMe in Opera or use the desktop app - the browser build cannot force LinkedIn to open in Opera.",
+        },
+      }));
+      clearCandidateStatus(candidateId, 7000, "error");
+      return;
+    }
+    const tab = useExternalBrowser ? null : window.open("about:blank", `_rm-fetch-${candidateId}`);
+    if (!useExternalBrowser && !tab) {
+      setFetchStatuses((prev) => ({
+        ...prev,
+        [candidateId]: { state: "error", message: "Popup blocked - allow popups for this site and try again" },
       }));
       clearCandidateStatus(candidateId, 6000, "error");
       return;
@@ -429,7 +554,7 @@ export default function JobDetailPage({
 
     setFetchStatuses((prev) => ({
       ...prev,
-      [candidateId]: { state: "waiting", message: "Opening LinkedIn profile…" },
+      [candidateId]: { state: "waiting", message: "Queueing LinkedIn capture..." },
     }));
 
     void (async () => {
@@ -442,7 +567,7 @@ export default function JobDetailPage({
         const session = (await start.json()) as { sessionId?: string; error?: string };
 
         if (!start.ok || !session.sessionId) {
-          try { tab.close(); } catch { /* ignore */ }
+          try { tab?.close(); } catch { /* ignore */ }
           setFetchStatuses((prev) => ({
             ...prev,
             [candidateId]: { state: "error", message: session.error ?? "Could not start capture" },
@@ -451,11 +576,31 @@ export default function JobDetailPage({
           return;
         }
 
-        if (!tab.closed) tab.location.href = candidate.linkedinUrl!;
+        if (useExternalBrowser) {
+          const opened = await electron?.openExternal?.(candidate.linkedinUrl!);
+          if (!opened) {
+            await fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(session.sessionId)}`, {
+              method: "DELETE",
+            }).catch(() => {});
+            setFetchStatuses((prev) => ({
+              ...prev,
+              [candidateId]: { state: "error", message: "Opera not found — install Opera and the RecruitMe extension (see LinkedIn Setup)" },
+            }));
+            clearCandidateStatus(candidateId, 6000, "error");
+            return;
+          }
+        } else if (tab && !tab.closed) {
+          tab.location.href = candidate.linkedinUrl!;
+        }
 
         setFetchStatuses((prev) => ({
           ...prev,
-          [candidateId]: { state: "waiting", message: "LinkedIn opened — extension capturing automatically…" },
+          [candidateId]: {
+            state: "waiting",
+            message: useExternalBrowser
+              ? "Queued - waiting for Opera extension to open and capture the LinkedIn profile..."
+              : "LinkedIn tab requested - waiting for the extension to confirm capture...",
+          },
         }));
 
         const entry: FetchEntry = {
@@ -478,25 +623,58 @@ export default function JobDetailPage({
         clearCandidateStatus(candidateId, 6000, "error");
       }
     })();
-  };
+  }, [id, job]);
 
-  const handleStatusChange = async (candidateId: string, status: string) => {
+  const handleStatusChange = useCallback(async (candidateId: string, status: string) => {
     await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
     await fetchJob();
-  };
+  }, [fetchJob, id]);
 
-  const handleNotesChange = async (candidateId: string, notes: string) => {
+  const handleNotesChange = useCallback(async (candidateId: string, notes: string) => {
     await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ notes }),
     });
     await fetchJob();
-  };
+  }, [fetchJob, id]);
+
+  const handleLinkedInChange = useCallback(async (candidateId: string, linkedinUrl: string) => {
+    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ linkedinUrl: linkedinUrl || null }),
+    });
+    await fetchJob();
+  }, [fetchJob, id]);
+
+  const handleScreeningDataChange = useCallback((_candidateId: string, data: string) => {
+    setJob((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        candidates: prev.candidates.map((c) =>
+          c.id === _candidateId ? { ...c, screeningData: data } : c
+        ),
+      };
+    });
+  }, []);
+
+  const handleInterviewNotesChange = useCallback((_candidateId: string, notes: string) => {
+    setJob((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        candidates: prev.candidates.map((c) =>
+          c.id === _candidateId ? { ...c, interviewNotes: notes } : c
+        ),
+      };
+    });
+  }, []);
 
   const handleRescoreAll = async () => {
     setRescoringAll(true);
@@ -513,12 +691,12 @@ export default function JobDetailPage({
     }
   };
 
-  const handleDelete = async (candidateId: string) => {
+  const handleDelete = useCallback(async (candidateId: string) => {
     if (!confirm("Remove this candidate?")) return;
     await fetch(`/api/jobs/${id}/candidates/${candidateId}`, { method: "DELETE" });
     setSelectedIds((prev) => { const next = new Set(prev); next.delete(candidateId); return next; });
     await fetchJob();
-  };
+  }, [fetchJob, id]);
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
@@ -531,6 +709,23 @@ export default function JobDetailPage({
     });
     setSelectedIds(new Set());
     setBulkDeleting(false);
+    await fetchJob();
+  };
+
+  const handleBulkStatusChange = async (status: string) => {
+    if (selectedIds.size === 0) return;
+    setBulkStatusChanging(true);
+    await Promise.allSettled(
+      [...selectedIds].map((candidateId) =>
+        fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        })
+      )
+    );
+    setSelectedIds(new Set());
+    setBulkStatusChanging(false);
     await fetchJob();
   };
 
@@ -586,6 +781,27 @@ export default function JobDetailPage({
       setReportError("Network error. Try again.");
     } finally {
       setReportLoading(false);
+    }
+  };
+
+  const handleGenerateJobAd = async (force = false) => {
+    setShowJobAd(true);
+    if (jobAd && !force) return;
+    setJobAd(null);
+    setJobAdLoading(true);
+    setJobAdError("");
+    try {
+      const res = await fetch(`/api/jobs/${id}/generate-ad`, { method: "POST" });
+      const data = await res.json() as { headline?: string; body?: string; error?: string };
+      if (!res.ok || data.error) {
+        setJobAdError(data.error ?? "Failed to generate job ad");
+      } else {
+        setJobAd({ headline: data.headline ?? "", body: data.body ?? "" });
+      }
+    } catch {
+      setJobAdError("Network error. Try again.");
+    } finally {
+      setJobAdLoading(false);
     }
   };
 
@@ -678,6 +894,115 @@ export default function JobDetailPage({
     }
   };
 
+  const addBulkFiles = (files: FileList | File[]) => {
+    const allowed = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword", "text/plain"];
+    const newEntries: BulkFileEntry[] = Array.from(files)
+      .filter((f) => allowed.includes(f.type) || /\.(pdf|docx?|txt)$/i.test(f.name))
+      .map((f) => ({ id: Math.random().toString(36).slice(2), file: f, status: "queued" as const }));
+    setBulkFiles((prev) => [...prev, ...newEntries]);
+  };
+
+  const processBulkCVs = async () => {
+    setBulkProcessing(true);
+    const BATCH = 3;
+    const entries = bulkFiles.filter((e) => e.status === "queued");
+
+    const processOne = async (entry: BulkFileEntry) => {
+      const update = (patch: Partial<BulkFileEntry>) =>
+        setBulkFiles((prev) => prev.map((e) => e.id === entry.id ? { ...e, ...patch } : e));
+
+      update({ status: "extracting" });
+      try {
+        const formData = new FormData();
+        formData.append("file", entry.file);
+        const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+        const uploadData = await uploadRes.json() as { text?: string; error?: string };
+        if (!uploadRes.ok || !uploadData.text) {
+          update({ status: "error", error: uploadData.error ?? "Could not extract text" });
+          return;
+        }
+        update({ status: "scoring" });
+        const createRes = await fetch(`/api/jobs/${id}/candidates`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profileText: uploadData.text, autoScore: true }),
+        });
+        const created = await createRes.json() as { name?: string; error?: string };
+        if (!createRes.ok) {
+          update({ status: "error", error: created.error ?? "Failed to create candidate" });
+          return;
+        }
+        update({ status: "done", candidateName: created.name ?? entry.file.name });
+      } catch (err) {
+        update({ status: "error", error: err instanceof Error ? err.message : "Unknown error" });
+      }
+    };
+
+    // Process in batches of BATCH
+    for (let i = 0; i < entries.length; i += BATCH) {
+      await Promise.all(entries.slice(i, i + BATCH).map(processOne));
+    }
+
+    await fetchJob();
+    setBulkProcessing(false);
+  };
+
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const jobCandidates = job?.candidates ?? [];
+  const parsedRole = useMemo(
+    () => safeParseJson<ParsedRole | null>(job?.parsedRole ?? null, null),
+    [job?.parsedRole]
+  );
+  const senioritySource = parsedRole ? normalizeParsedRoleSource(parsedRole.seniority_source) : "";
+  const locationSource = parsedRole
+    ? normalizeParsedRoleSource(parsedRole.location_rules_source || parsedRole.location_source)
+    : "";
+  const salarySource: ParsedRoleSource =
+    job?.salaryMin || job?.salaryMax
+      ? "explicit"
+      : parsedRole
+        ? normalizeParsedRoleSource(parsedRole.salary_source)
+        : "";
+  const mustHaves = parsedRole?.must_haves?.length
+    ? parsedRole.must_haves
+    : (parsedRole?.skills_required ?? []);
+  const niceToHaves = parsedRole?.nice_to_haves?.length
+    ? parsedRole.nice_to_haves
+    : (parsedRole?.skills_preferred ?? []);
+  const jobCoords = useMemo(
+    () => (parsedRole?.location ? getCityCoords(parsedRole.location) : null),
+    [parsedRole?.location]
+  );
+  const requiresLocationLock = !!jobCoords && !locationLocked;
+  const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
+  const filteredCandidates = useMemo(() => {
+    return [...jobCandidates]
+      .filter((candidate) => (filter === "all" ? true : candidate.status === filter))
+      .filter((candidate) => {
+        if (!normalizedSearchQuery) return true;
+        return (
+          candidate.name.toLowerCase().includes(normalizedSearchQuery) ||
+          (candidate.headline ?? "").toLowerCase().includes(normalizedSearchQuery) ||
+          (candidate.location ?? "").toLowerCase().includes(normalizedSearchQuery) ||
+          (candidate.notes ?? "").toLowerCase().includes(normalizedSearchQuery)
+        );
+      })
+      .sort((a, b) => {
+        const scoreDiff = (b.matchScore ?? -1) - (a.matchScore ?? -1);
+        if (scoreDiff !== 0) return scoreDiff;
+        return (b.acceptanceScore ?? -1) - (a.acceptanceScore ?? -1);
+      });
+  }, [filter, jobCandidates, normalizedSearchQuery]);
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: jobCandidates.length };
+    for (const candidate of jobCandidates) {
+      counts[candidate.status] = (counts[candidate.status] ?? 0) + 1;
+    }
+    return counts;
+  }, [jobCandidates]);
+  const shortlistCount = statusCounts.shortlisted ?? 0;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -690,31 +1015,9 @@ export default function JobDetailPage({
     return <div className="p-8 text-center text-slate-500">Job not found.</div>;
   }
 
-  const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
-  const jobCoords = parsedRole?.location ? getCityCoords(parsedRole.location) : null;
-  const requiresLocationLock = !!jobCoords && !locationLocked;
 
-  const filteredCandidates = job.candidates
-    .filter((c) => (filter === "all" ? true : c.status === filter))
-    .filter((c) => {
-      if (!searchQuery.trim()) return true;
-      const q = searchQuery.toLowerCase();
-      return (
-        c.name.toLowerCase().includes(q) ||
-        (c.headline ?? "").toLowerCase().includes(q) ||
-        (c.location ?? "").toLowerCase().includes(q) ||
-        (c.notes ?? "").toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => {
-      // Primary: match score descending
-      const scoreDiff = (b.matchScore ?? -1) - (a.matchScore ?? -1);
-      if (scoreDiff !== 0) return scoreDiff;
       // Tiebreaker: acceptance score descending — "likely open" ranks above "may consider"
-      return (b.acceptanceScore ?? -1) - (a.acceptanceScore ?? -1);
-    });
 
-  const shortlistCount = job.candidates.filter((c) => c.status === "shortlisted").length;
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -772,6 +1075,10 @@ export default function JobDetailPage({
               {togglingStatus ? "Closing…" : "Close job"}
             </button>
           )}
+          <Button variant="outline" onClick={() => { setBulkFiles([]); setShowBulkUpload(true); }}>
+            <Upload className="w-4 h-4" />
+            Upload CVs
+          </Button>
           <Button onClick={() => setShowAddCandidate(true)}>
             <UserPlus className="w-4 h-4" />
             Add Candidate
@@ -835,14 +1142,16 @@ export default function JobDetailPage({
             <CardHeader>
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold text-slate-900 text-sm">Hiring Brief</h2>
-                <button
-                  onClick={handleParse}
-                  disabled={parsing}
-                  className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1"
-                >
-                  {parsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                  Re-analyse
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleParse}
+                    disabled={parsing}
+                    className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1"
+                  >
+                    {parsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    Re-analyse
+                  </button>
+                </div>
               </div>
             </CardHeader>
             <CardBody className="space-y-4">
@@ -851,19 +1160,28 @@ export default function JobDetailPage({
               <div className="grid grid-cols-3 gap-3">
                 {parsedRole.seniority_band && (
                   <div>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Seniority</p>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Seniority</p>
+                      <SourceBadge source={senioritySource} />
+                    </div>
                     <p className="text-sm text-slate-800">{parsedRole.seniority_band}</p>
                   </div>
                 )}
                 {(parsedRole.location_rules || parsedRole.location) && (
                   <div>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Location / Remote</p>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Location / Remote</p>
+                      <SourceBadge source={locationSource} />
+                    </div>
                     <p className="text-sm text-slate-800">{parsedRole.location_rules || parsedRole.location}</p>
                   </div>
                 )}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Salary (NZD)</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Salary (NZD)</p>
+                      <SourceBadge source={salarySource} />
+                    </div>
                     {!editingSalary && (
                       <button onClick={() => setEditingSalary(true)} className="text-xs text-blue-600 hover:text-blue-700">
                         {job.salaryMin || job.salaryMax ? "Edit" : "Set"}
@@ -915,81 +1233,79 @@ export default function JobDetailPage({
                 </div>
               </div>
 
+              <HiringBriefChipSection
+                title="Explicitly Stated"
+                items={parsedRole.explicitly_stated}
+                labelClassName="text-emerald-700"
+                chipClassName="bg-emerald-50 text-emerald-700 border-emerald-200"
+              />
+
+              <HiringBriefChipSection
+                title="Strongly Inferred"
+                items={parsedRole.strongly_inferred}
+                labelClassName="text-blue-700"
+                chipClassName="bg-blue-50 text-blue-700 border-blue-200"
+              />
+
               {/* Knockout criteria */}
-              {parsedRole.knockout_criteria?.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-red-600 uppercase tracking-wide mb-2">Knockout Criteria</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {parsedRole.knockout_criteria.map((s) => (
-                      <span key={s} className="px-2 py-0.5 bg-red-50 text-red-700 text-xs rounded-md border border-red-200 font-medium">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <HiringBriefChipSection
+                title="Knockout Criteria"
+                items={parsedRole.knockout_criteria}
+                labelClassName="text-red-600"
+                chipClassName="bg-red-50 text-red-700 border-red-200 font-medium"
+              />
 
               {/* Must-haves — fall back to skills_required for old jobs */}
-              {(parsedRole.must_haves?.length > 0 || parsedRole.skills_required?.length > 0) && (
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Must-haves</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(parsedRole.must_haves?.length > 0 ? parsedRole.must_haves : parsedRole.skills_required).map((s) => (
-                      <span key={s} className="px-2 py-0.5 bg-violet-50 text-violet-700 text-xs rounded-md border border-violet-100 font-medium">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <HiringBriefChipSection
+                title="Must-haves"
+                items={mustHaves}
+                chipClassName="bg-violet-50 text-violet-700 border-violet-100 font-medium"
+              />
 
               {/* Nice-to-haves — fall back to skills_preferred */}
-              {(parsedRole.nice_to_haves?.length > 0 || parsedRole.skills_preferred?.length > 0) && (
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Nice-to-haves</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(parsedRole.nice_to_haves?.length > 0 ? parsedRole.nice_to_haves : parsedRole.skills_preferred).map((s) => (
-                      <span key={s} className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded-md border border-slate-200">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <HiringBriefChipSection
+                title="Nice-to-haves"
+                items={niceToHaves}
+                chipClassName="bg-slate-100 text-slate-600 border-slate-200"
+              />
 
               {/* Visa / work rights — only show if not already covered by knockout criteria */}
+              <HiringBriefChipSection
+                title="Application / Screening"
+                items={parsedRole.application_requirements}
+                labelClassName="text-amber-700"
+                chipClassName="bg-amber-50 text-amber-800 border-amber-200"
+              />
+
               {parsedRole.visa_flags?.length > 0 && (() => {
                 const knockoutText = (parsedRole.knockout_criteria ?? []).join(" ").toLowerCase();
                 const extra = parsedRole.visa_flags.filter(
                   (f) => !knockoutText.includes(f.toLowerCase().slice(0, 12))
                 );
-                return extra.length > 0 ? (
-                  <div>
-                    <p className="text-xs font-medium text-amber-700 uppercase tracking-wide mb-2">Work Rights</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {extra.map((s) => (
-                        <span key={s} className="px-2 py-0.5 bg-amber-50 text-amber-800 text-xs rounded-md border border-amber-200">
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null;
+                return (
+                  <HiringBriefChipSection
+                    title="Work Rights"
+                    items={extra}
+                    labelClassName="text-amber-700"
+                    chipClassName="bg-amber-50 text-amber-800 border-amber-200"
+                  />
+                );
               })()}
 
+              <HiringBriefChipSection
+                title="Search Expansion"
+                items={parsedRole.search_expansion}
+                labelClassName="text-slate-600"
+                chipClassName="bg-slate-50 text-slate-600 border-slate-200"
+              />
+
               {/* Synonym titles searched */}
-              {parsedRole.synonym_titles?.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Titles Searched</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {parsedRole.synonym_titles.map((s) => (
-                      <span key={s} className="px-2 py-0.5 bg-slate-50 text-slate-500 text-xs rounded-md border border-slate-200 font-mono">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <HiringBriefChipSection
+                title="Titles Searched"
+                items={parsedRole.synonym_titles}
+                chipClassName="bg-slate-50 text-slate-500 border-slate-200"
+                monospace
+              />
 
             </CardBody>
           </Card>
@@ -1011,14 +1327,14 @@ export default function JobDetailPage({
                   )}
                 >
                   <span>All candidates</span>
-                  <span className="font-semibold">{job.candidates.length}</span>
+                  <span className="font-semibold">{jobCandidates.length}</span>
                 </button>
               ))}
 
               {/* Active pipeline */}
               <p className="text-xs text-slate-400 font-medium uppercase tracking-wide px-3 pt-2 pb-0.5">Pipeline</p>
               {(["new", "reviewing", "shortlisted", "contacted", "interviewing", "offer_sent"] as const).map((s) => {
-                const count = job.candidates.filter((c) => c.status === s).length;
+                const count = statusCounts[s] ?? 0;
                 if (count === 0 && !["new", "reviewing", "shortlisted"].includes(s)) return null;
                 return (
                   <button
@@ -1038,7 +1354,7 @@ export default function JobDetailPage({
               {/* Closed */}
               <p className="text-xs text-slate-400 font-medium uppercase tracking-wide px-3 pt-2 pb-0.5">Closed</p>
               {(["hired", "declined", "rejected"] as const).map((s) => {
-                const count = job.candidates.filter((c) => c.status === s).length;
+                const count = statusCounts[s] ?? 0;
                 return (
                   <button
                     key={s}
@@ -1398,13 +1714,28 @@ export default function JobDetailPage({
           <div className="flex items-center gap-2">
             {selectedIds.size > 0 ? (
               <>
-                <span className="text-xs text-slate-500">{selectedIds.size} selected</span>
+                <span className="text-xs font-medium text-slate-600">{selectedIds.size} selected</span>
+                <select
+                  onChange={(e) => { if (e.target.value) handleBulkStatusChange(e.target.value); e.target.value = ""; }}
+                  disabled={bulkStatusChanging}
+                  defaultValue=""
+                  className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
+                >
+                  <option value="" disabled>Move to…</option>
+                  <option value="reviewing">Reviewing</option>
+                  <option value="shortlisted">Shortlisted</option>
+                  <option value="contacted">Contacted</option>
+                  <option value="interviewing">Interviewing</option>
+                  <option value="offer_sent">Offer sent</option>
+                  <option value="hired">Hired</option>
+                  <option value="rejected">Rejected</option>
+                </select>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={handleBulkDelete}
                   loading={bulkDeleting}
-                  disabled={bulkDeleting}
+                  disabled={bulkDeleting || bulkStatusChanging}
                   className="text-red-600 border-red-200 hover:bg-red-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -1483,6 +1814,32 @@ export default function JobDetailPage({
           </div>
         )}
 
+        {/* Needs-profile notice — computed from live candidate list */}
+        {(() => {
+          const needsFetch = job.candidates.filter(
+            (c) => c.linkedinUrl && !c.profileCapturedAt && (!c.profileText || c.profileText.length < 500)
+          );
+          const n = needsFetch.length;
+          if (n === 0) return null;
+          const scrollToFirst = () => {
+            const sorted = [...needsFetch].sort((a, b) =>
+              (a.name.split(" ")[0] ?? a.name).localeCompare(b.name.split(" ")[0] ?? b.name)
+            );
+            const target = document.getElementById(`candidate-${sorted[0].id}`);
+            target?.scrollIntoView({ behavior: "smooth", block: "center" });
+          };
+          return (
+            <button
+              type="button"
+              onClick={scrollToFirst}
+              className="mb-3 w-full flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 hover:bg-amber-100 transition-colors text-left"
+            >
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              {n} candidate{n > 1 ? "s" : ""} {n > 1 ? "need" : "needs"} a full profile fetch — look for the amber <strong className="mx-0.5">Fetch profile</strong> button on each card.
+            </button>
+          );
+        })()}
+
         {/* Re-score result */}
         {rescoreResult && !rescoringAll && (
           <div className="mb-3 flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
@@ -1508,7 +1865,7 @@ export default function JobDetailPage({
         ) : (
           <div className="space-y-3">
             {filteredCandidates.map((candidate) => (
-              <div key={candidate.id} className="flex items-start gap-3">
+              <div key={candidate.id} id={`candidate-${candidate.id}`} className="flex items-start gap-3">
                 <input
                   type="checkbox"
                   className="mt-4 w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer flex-shrink-0"
@@ -1523,6 +1880,9 @@ export default function JobDetailPage({
                     onScore={handleScore}
                     onFetchProfile={handleFetchProfile}
                     onNotesChange={handleNotesChange}
+                    onLinkedInChange={handleLinkedInChange}
+                    onScreeningDataChange={handleScreeningDataChange}
+                    onInterviewNotesChange={handleInterviewNotesChange}
                     onDelete={handleDelete}
                     scoring={scoringId === candidate.id}
                     fetchingProfile={fetchStatuses[candidate.id] !== undefined}
@@ -1536,7 +1896,7 @@ export default function JobDetailPage({
 
       {/* Fetch Queue Status Toast */}
       {Object.keys(fetchStatuses).length > 0 && (
-        <div className="fixed bottom-6 right-6 z-50 w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-4">
+        <div className="fixed bottom-6 right-6 z-[1100] w-80 bg-white border border-slate-200 rounded-xl shadow-2xl p-4">
           <div className="flex items-start justify-between gap-2 mb-1">
             <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
               Fetching profiles
@@ -1576,7 +1936,7 @@ export default function JobDetailPage({
 
       {/* Client Report Modal */}
       {showReport && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
@@ -1643,9 +2003,201 @@ export default function JobDetailPage({
         </div>
       )}
 
+      {/* Job Ad Generator Modal */}
+      {showJobAd && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+              <div>
+                <h3 className="font-semibold text-slate-900">Generated Job Ad</h3>
+                <p className="text-xs text-slate-500 mt-0.5">AI-written advertisement based on parsed role requirements.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {jobAd && (
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${jobAd.headline}\n\n${jobAd.body}`).then(() => {
+                        setJobAdCopied(true);
+                        setTimeout(() => setJobAdCopied(false), 2000);
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    {jobAdCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    {jobAdCopied ? "Copied!" : "Copy All"}
+                  </button>
+                )}
+                <button
+                  onClick={() => { setShowJobAd(false); setJobAdError(""); }}
+                  className="text-slate-400 hover:text-slate-700 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+              {jobAdLoading && (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                  <p className="text-sm text-slate-500">Writing your job ad…</p>
+                </div>
+              )}
+              {jobAdError && !jobAdLoading && (
+                <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{jobAdError}</p>
+                </div>
+              )}
+              {jobAd && !jobAdLoading && (
+                <>
+                  <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                    <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">Headline</p>
+                    <p className="font-bold text-slate-900 text-lg leading-snug">{jobAd.headline}</p>
+                  </div>
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Body</p>
+                    <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{jobAd.body}</p>
+                  </div>
+                  <button
+                    onClick={() => handleGenerateJobAd(true)}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Regenerate
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk CV Upload Modal */}
+      {showBulkUpload && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+              <div>
+                <h3 className="font-semibold text-slate-900">Upload CVs</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Drop PDF, DOCX, or TXT files — each CV becomes a candidate and is auto-scored
+                </p>
+              </div>
+              <button onClick={() => { if (!bulkProcessing) setShowBulkUpload(false); }}
+                className="text-slate-400 hover:text-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Drop zone */}
+            {!bulkProcessing && (
+              <div
+                className={`mx-6 mt-5 border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${
+                  bulkDragOver ? "border-blue-400 bg-blue-50" : "border-slate-200 hover:border-blue-300 hover:bg-slate-50"
+                }`}
+                onDragOver={(e) => { e.preventDefault(); setBulkDragOver(true); }}
+                onDragLeave={() => setBulkDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setBulkDragOver(false); addBulkFiles(e.dataTransfer.files); }}
+                onClick={() => document.getElementById("bulk-cv-input")?.click()}
+              >
+                <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-sm font-medium text-slate-600">Drop CVs here or click to browse</p>
+                <p className="text-xs text-slate-400 mt-1">PDF, DOCX, DOC, TXT · multiple files supported</p>
+                <input
+                  id="bulk-cv-input"
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.doc,.txt"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files) addBulkFiles(e.target.files); e.target.value = ""; }}
+                />
+              </div>
+            )}
+
+            {/* File list */}
+            {bulkFiles.length > 0 && (
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-1.5 min-h-0">
+                {bulkFiles.map((entry) => (
+                  <div key={entry.id} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-slate-100 bg-slate-50">
+                    <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-700 truncate">{entry.file.name}</p>
+                      {entry.candidateName && (
+                        <p className="text-[11px] text-emerald-600">{entry.candidateName}</p>
+                      )}
+                      {entry.error && (
+                        <p className="text-[11px] text-red-500">{entry.error}</p>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0 flex items-center gap-1.5">
+                      {entry.status === "queued" && (
+                        <span className="text-[11px] text-slate-400">Queued</span>
+                      )}
+                      {entry.status === "extracting" && (
+                        <span className="text-[11px] text-blue-500 flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Reading…
+                        </span>
+                      )}
+                      {entry.status === "scoring" && (
+                        <span className="text-[11px] text-violet-500 flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Scoring…
+                        </span>
+                      )}
+                      {entry.status === "done" && (
+                        <span className="text-[11px] text-emerald-600 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Done
+                        </span>
+                      )}
+                      {entry.status === "error" && (
+                        <span className="text-[11px] text-red-500">Failed</span>
+                      )}
+                      {!bulkProcessing && entry.status === "queued" && (
+                        <button onClick={() => setBulkFiles((p) => p.filter((e) => e.id !== entry.id))}
+                          className="text-slate-300 hover:text-red-400 ml-1">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 flex-shrink-0 flex items-center justify-between gap-3">
+              <div className="text-xs text-slate-400">
+                {bulkFiles.length > 0
+                  ? `${bulkFiles.filter((e) => e.status === "done").length} / ${bulkFiles.length} processed`
+                  : "No files selected"}
+              </div>
+              <div className="flex items-center gap-2">
+                {!bulkProcessing && (
+                  <button onClick={() => setShowBulkUpload(false)}
+                    className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900">
+                    {bulkFiles.some((e) => e.status === "done") ? "Done" : "Cancel"}
+                  </button>
+                )}
+                {bulkFiles.some((e) => e.status === "queued") && !bulkProcessing && (
+                  <Button onClick={processBulkCVs}>
+                    <Upload className="w-4 h-4" />
+                    Process {bulkFiles.filter((e) => e.status === "queued").length} CV{bulkFiles.filter((e) => e.status === "queued").length !== 1 ? "s" : ""}
+                  </Button>
+                )}
+                {bulkProcessing && (
+                  <span className="text-sm text-slate-500 flex items-center gap-1.5">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                    Processing…
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Candidate Modal */}
       {showAddCandidate && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
               <div>

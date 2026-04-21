@@ -58,11 +58,11 @@ export default function LocationRadiusMapInner({ lat, lng, radiusKm, onCenterCha
   });
 
   return (
-    <div style={{ position: "relative" }}>
+    <div className="recruitme-radius-map relative isolate z-0">
       {onCenterChange && (
         <div style={{
           position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)",
-          zIndex: 1000, background: "rgba(255,255,255,0.9)", borderRadius: 8,
+          zIndex: 70, background: "rgba(255,255,255,0.9)", borderRadius: 8,
           padding: "2px 10px", fontSize: 11, color: "#475569", pointerEvents: "none",
           boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
         }}>
@@ -70,6 +70,7 @@ export default function LocationRadiusMapInner({ lat, lng, radiusKm, onCenterCha
         </div>
       )}
       <MapContainer
+        className="z-0"
         center={[lat, lng]}
         zoom={zoom}
         style={{ height: "220px", width: "100%", borderRadius: "12px" }}

@@ -1,21 +1,17 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
 import { generateOutreachMessage } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string; candidateId: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id, candidateId } = await params;
-
-  const [job, candidate] = await Promise.all([
-    prisma.job.findUnique({ where: { id } }),
-    prisma.candidate.findUnique({ where: { id: candidateId } }),
-  ]);
-
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  if (!candidate) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
+  const { job, candidate, error } = await requireCandidateAccess(id, candidateId, auth);
+  if (error || !job || !candidate) return error;
   if (!job.parsedRole) {
     return NextResponse.json(
       { error: "Parse the job description first." },

@@ -23,6 +23,40 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+async function processCaptureCompletion(args: {
+  sessionId: string;
+  session: NonNullable<Awaited<ReturnType<typeof findSessionInQueue>>>;
+  linkedinUrl: string;
+  profileText: string;
+}) {
+  const { sessionId, session, linkedinUrl, profileText } = args;
+
+  try {
+    const candidate = await saveCapturedProfileToCandidate({
+      jobId: session.jobId,
+      candidateId: session.candidateId,
+      linkedinUrl,
+      profileText,
+    });
+
+    await updateSessionInQueue({
+      sessionId,
+      status: "completed",
+      message: "Profile captured and scored",
+      completedAt: new Date().toISOString(),
+      candidate,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save captured profile";
+    await updateSessionInQueue({
+      sessionId,
+      status: "error",
+      message,
+      error: message,
+    });
+  }
+}
+
 export async function POST(req: Request) {
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -49,34 +83,18 @@ export async function POST(req: Request) {
   await updateSessionInQueue({
     sessionId,
     status: "processing",
-    message: "Profile received — scoring with AI",
+    message: "Profile received - scoring with AI",
   });
 
-  try {
-    const candidate = await saveCapturedProfileToCandidate({
-      jobId: session.jobId,
-      candidateId: session.candidateId,
-      linkedinUrl,
-      profileText,
-    });
+  void processCaptureCompletion({ sessionId, session, linkedinUrl, profileText });
 
-    await updateSessionInQueue({
+  return NextResponse.json(
+    {
+      accepted: true,
       sessionId,
-      status: "completed",
-      message: "Profile captured and scored",
-      completedAt: new Date().toISOString(),
-      candidate,
-    });
-
-    return NextResponse.json(candidate, { headers: CORS });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to save captured profile";
-    await updateSessionInQueue({
-      sessionId,
-      status: "error",
-      message,
-      error: message,
-    });
-    return NextResponse.json({ error: message }, { status: 500, headers: CORS });
-  }
+      status: "processing",
+      message: "Profile received - scoring with AI",
+    },
+    { status: 202, headers: CORS }
+  );
 }

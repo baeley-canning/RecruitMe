@@ -26,11 +26,11 @@ The popup also supports manual imports:
 - Choose a job
 - Click **Import current LinkedIn profile**
 
-## If RecruitMe uses a login prompt
+## Connection requirements
 
-RecruitMe currently uses HTTP Basic auth when `ADMIN_USER` / `ADMIN_PASS` are set. Browser extensions do not inherit that login automatically.
+The extension always needs the correct RecruitMe server URL. The automatic `Fetch profile` flow does not need popup credentials.
 
 - Open the extension popup
 - Enter the same RecruitMe server URL
-- Enter the same username and password you use in the browser
-- Click **Save connection**
+- Add your RecruitMe username and password only if you want to use manual import from the popup
+- Click **Save and test connection**

@@ -24,6 +24,12 @@ const talentPoolMocks = vi.hoisted(() => ({
   buildTalentPoolMap: vi.fn(),
 }));
 
+const sessionMocks = vi.hoisted(() => ({
+  getAuth: vi.fn(),
+  requireJobAccess: vi.fn(),
+  unauthorized: vi.fn(() => new Response(null, { status: 401 })),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/search", () => ({
@@ -33,6 +39,7 @@ vi.mock("@/lib/search", () => ({
 }));
 vi.mock("@/lib/search-collection", () => searchCollectionMocks);
 vi.mock("@/lib/talent-pool", () => talentPoolMocks);
+vi.mock("@/lib/session", () => sessionMocks);
 
 import { POST } from "./route";
 
@@ -67,7 +74,7 @@ describe("search import route", () => {
     delete process.env.BING_API_KEY;
     delete process.env.PDL_API_KEY;
 
-    dbMocks.prisma.job.findUnique.mockResolvedValue({
+    const job = {
       id: "job-1",
       parsedRole: JSON.stringify({
         title: "Software Engineer",
@@ -84,7 +91,10 @@ describe("search import route", () => {
       }),
       salaryMin: null,
       salaryMax: null,
-    });
+    };
+    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(job);
     dbMocks.prisma.candidate.findMany
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);

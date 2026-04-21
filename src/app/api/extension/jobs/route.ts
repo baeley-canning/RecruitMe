@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { verifyExtensionAuth, jobsWhere } from "@/lib/session";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -11,9 +12,12 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const auth = await verifyExtensionAuth(req);
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+
   const jobs = await prisma.job.findMany({
-    where: { status: "active" },
+    where: { status: "active", ...jobsWhere(auth) },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,

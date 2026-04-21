@@ -7,10 +7,10 @@
     "skill_fit": { "score": 88, "weight": 0.24, "evidence": "Strong React, Rails, and API delivery evidence." },
     "location_fit": { "score": 60, "weight": 0.14, "evidence": "Initial model score before deterministic override." },
     "seniority_fit": { "score": 90, "weight": 0.14, "evidence": "Lead-level ownership and mentoring." },
-    "title_fit": { "score": 85, "weight": 0.1, "evidence": "Recent titles closely match the role." },
-    "industry_fit": { "score": 72, "weight": 0.08, "evidence": "Strong SaaS and platform experience." },
-    "nice_to_have_fit": { "score": 60, "weight": 0.05, "evidence": "Some preferred cloud tooling present." },
-    "keyword_alignment": { "score": 78, "weight": 0.05, "evidence": "Uses the same technical language as the brief." }
+    "title_fit": { "score": 85, "weight": 0.08, "evidence": "Recent titles closely match the role." },
+    "industry_fit": { "score": 72, "weight": 0.06, "evidence": "Strong SaaS and platform experience." },
+    "nice_to_have_fit": { "score": 60, "weight": 0.04, "evidence": "Some preferred cloud tooling present." },
+    "keyword_alignment": { "score": 78, "weight": 0.02, "evidence": "Uses the same technical language as the brief." }
   },
   "must_have_coverage": [
     { "requirement": "Ruby on Rails", "status": "confirmed", "evidence": "Rails listed in current role and skills." },
@@ -37,7 +37,7 @@
     "overall": 86,
     "locationFit": 100,
     "mustHavePct": 88,
-    "confidenceScore": 70,
+    "confidenceScore": 75,
     "confidenceLevel": "high",
     "summaryIncludes": "Strong local senior engineer"
   }

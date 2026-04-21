@@ -66,8 +66,13 @@ export function LinkedInSetupPage() {
           </button>
         </div>
         <p className="text-sm text-slate-600">
-          If RecruitMe prompts you for a username and password in the browser, save those same credentials in the extension
-          popup as well. The extension cannot reuse the browser&apos;s HTTP Basic auth automatically.
+          Save the same RecruitMe username and password in the extension popup only if you want the extension popup to load
+          your RecruitMe jobs for manual import. The automatic <strong>Fetch profile</strong> flow does not need those popup
+          credentials.
+        </p>
+        <p className="text-sm text-slate-600">
+          If you are using the desktop app, copy the exact URL shown here, including the port. The extension must point to the
+          same local RecruitMe address that the app is currently using.
         </p>
       </div>
 
@@ -75,7 +80,8 @@ export function LinkedInSetupPage() {
         <p className="text-sm font-semibold text-slate-900 mb-3">Step 3 — Use it</p>
         <ol className="text-sm text-slate-700 space-y-2 list-decimal list-inside">
           <li>In RecruitMe, click <strong>Fetch profile</strong> on a candidate card.</li>
-          <li>RecruitMe opens LinkedIn and creates a pending capture session.</li>
+          <li>RecruitMe creates a pending capture session and opens LinkedIn.</li>
+          <li>If you are using the browser build, RecruitMe itself must be open in <strong>Opera</strong>. The desktop app can launch Opera for you.</li>
           <li>The extension detects that pending session and captures the full rendered profile automatically.</li>
           <li>RecruitMe stores the profile text on the candidate and re-scores from that richer profile.</li>
         </ol>

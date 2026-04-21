@@ -2,6 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "./db";
 import bcrypt from "bcryptjs";
+import { ensureDefaultOrg } from "./org";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -14,7 +15,7 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.username || !credentials?.password) return null;
 
-        const user = await prisma.user.findUnique({
+        let user = await prisma.user.findUnique({
           where: { username: credentials.username },
         });
 
@@ -23,23 +24,39 @@ export const authOptions: NextAuthOptions = {
         const valid = await bcrypt.compare(credentials.password, user.password);
         if (!valid) return null;
 
-        return { id: user.id, name: user.username, email: user.role };
+        if (user.role !== "owner" && !user.orgId) {
+          const defaultOrg = await ensureDefaultOrg();
+          user = await prisma.user.update({
+            where: { id: user.id },
+            data: { orgId: defaultOrg.id },
+          });
+        }
+
+        return {
+          id: user.id,
+          name: user.username,
+          role: user.role,
+          orgId: user.orgId ?? null,
+        };
       },
     }),
   ],
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        // Stash role in the token — user.email holds it from authorize()
-        token.role = user.email;
-        token.id = user.id;
+        const authUser = user as { id?: string; role?: string; orgId?: string | null };
+        token.role = authUser.role;
+        token.id = authUser.id;
+        token.orgId = authUser.orgId ?? null;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as { role?: string }).role = token.role as string;
-        (session.user as { id?: string }).id = token.id as string;
+        const u = session.user as Record<string, unknown>;
+        u.role  = token.role;
+        u.id    = token.id;
+        u.orgId = token.orgId ?? null;
       }
       return session;
     },

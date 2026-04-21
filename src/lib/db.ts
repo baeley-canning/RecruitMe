@@ -8,11 +8,14 @@ function createPrisma() {
   const client = new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
-  // WAL mode allows concurrent reads during writes — prevents SQLITE_BUSY
-  // under parallel AI scoring / search operations.
-  // $queryRawUnsafe is used because PRAGMA journal_mode returns a result set,
-  // which $executeRawUnsafe rejects in SQLite.
-  client.$queryRawUnsafe("PRAGMA journal_mode=WAL;").catch(() => {});
+  const databaseUrl = process.env.DATABASE_URL ?? "";
+  if (databaseUrl.startsWith("file:")) {
+    // WAL mode allows concurrent reads during writes in SQLite — prevents
+    // SQLITE_BUSY under parallel AI scoring / search operations.
+    // $queryRawUnsafe is used because PRAGMA journal_mode returns a result set,
+    // which $executeRawUnsafe rejects in SQLite.
+    client.$queryRawUnsafe("PRAGMA journal_mode=WAL;").catch(() => {});
+  }
   return client;
 }
 

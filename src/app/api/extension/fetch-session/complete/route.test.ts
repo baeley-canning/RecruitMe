@@ -45,9 +45,11 @@ describe("extension capture completion route", () => {
 
     const res = await POST(req);
     const body = await res.json();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(res.status).toBe(200);
-    expect(body.id).toBe("cand-4");
+    expect(res.status).toBe(202);
+    expect(body.accepted).toBe(true);
+    expect(body.status).toBe("processing");
     expect(linkedinCaptureMocks.saveCapturedProfileToCandidate).toHaveBeenCalledTimes(1);
     expect(linkedinCaptureMocks.updateSessionInQueue).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "sess-1", status: "completed" })

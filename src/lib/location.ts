@@ -153,6 +153,24 @@ export function assessLocationFit(
     };
   }
 
+  // Detect when the stored "location" is actually a person's full name — a data
+  // extraction error (e.g. "Wellington Gomes Graciani" parsed as Wellington NZ).
+  // Heuristic: 3+ titlecase words, no comma, no digits, no overseas markers.
+  const nameWords = candidateRaw.trim().split(/\s+/);
+  const looksLikeName =
+    nameWords.length >= 3 &&
+    !candidateRaw.includes(",") &&
+    !/\d/.test(candidateRaw) &&
+    nameWords.every((w) => /^[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÜÇ]/u.test(w)) &&
+    !isExplicitlyOverseasLocation(candidateRaw) &&
+    !isNzLocation(candidateRaw);
+  if (looksLikeName) {
+    return {
+      score: remoteFriendly ? 55 : 45,
+      evidence: "Candidate location is not clearly stated in the available profile data.",
+    };
+  }
+
   if (isExplicitlyOverseasLocation(candidateRaw)) {
     return {
       score: 0,

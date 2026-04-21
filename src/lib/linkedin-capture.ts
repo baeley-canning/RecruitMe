@@ -9,6 +9,7 @@ import {
 import { safeParseJson } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
+import { isExplicitlyOverseasLocation, isNzLocation } from "./location";
 
 export { normaliseLinkedInUrl } from "./linkedin";
 
@@ -23,6 +24,8 @@ export type ExtensionCaptureStatus = "pending" | "processing" | "completed" | "e
 
 export interface ExtensionCaptureSession {
   sessionId: string;
+  userId?: string;
+  orgId?: string | null;
   jobId: string;
   candidateId: string;
   linkedinUrl: string;
@@ -114,6 +117,63 @@ export function sanitizeCapturedLinkedInText(profileText: string): string {
   }
 
   return cleaned.join("\n").trim();
+}
+
+function looksLikeCapturedName(value: string): boolean {
+  if (!value || value.length < 4 || value.length > 80) return false;
+  if (/[|,@\d]/.test(value)) return false;
+  if (isNzLocation(value) || isExplicitlyOverseasLocation(value)) return false;
+
+  const words = value.trim().split(/\s+/);
+  if (words.length < 2 || words.length > 5) return false;
+
+  return words.every((word) => /^[A-Z][A-Za-z.'’-]*$/.test(word));
+}
+
+function looksLikeCapturedLocation(value: string): boolean {
+  if (!value || value.length < 3) return false;
+  if (isNzLocation(value) || isExplicitlyOverseasLocation(value)) return true;
+  return /^[A-Za-z .'-]+,\s*[A-Za-z .'-]+(?:,\s*[A-Za-z .'-]+)?$/.test(value);
+}
+
+function looksLikeMetaLine(value: string): boolean {
+  return /^(she\/her|he\/him|they\/them|she\s*\/\s*they|he\s*\/\s*they|contact info|message|follow|connect|save in sales navigator|open to|top skills|about|experience|education)$/i.test(
+    value
+  );
+}
+
+export function extractIdentityFromLinkedInProfileText(profileText: string): {
+  name: string;
+  headline: string;
+  location: string;
+} {
+  const lines = sanitizeCapturedLinkedInText(profileText)
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+
+  if (lines.length === 0) {
+    return { name: "", headline: "", location: "" };
+  }
+
+  const name = looksLikeCapturedName(lines[0]) ? lines[0] : "";
+
+  let headline = "";
+  let location = "";
+
+  for (const line of lines.slice(name ? 1 : 0)) {
+    if (!location && looksLikeCapturedLocation(line)) {
+      location = line;
+      continue;
+    }
+    if (!headline && !looksLikeMetaLine(line) && !looksLikeCapturedLocation(line)) {
+      headline = line;
+    }
+    if (headline && location) break;
+  }
+
+  return { name, headline, location };
 }
 
 // ---------------------------------------------------------------------------
@@ -244,12 +304,20 @@ async function buildCapturedCandidateData(args: {
   let headline = currentHeadline;
   let location = currentLocation;
 
+  const extracted = extractIdentityFromLinkedInProfileText(cleanedProfileText);
+  if (extracted.name) name = extracted.name;
+  if (extracted.headline) headline = extracted.headline;
+  if (extracted.location) location = extracted.location;
+  const hasDirectName = Boolean(extracted.name);
+  const hasDirectHeadline = Boolean(extracted.headline);
+  const hasDirectLocation = Boolean(extracted.location);
+
   if (!profileUnchanged) {
     try {
       const info = await extractCandidateInfo(cleanedProfileText);
-      if (info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
-      if (info.headline && info.headline.length > 2) headline = info.headline;
-      if (info.location && info.location.length > 2) location = info.location;
+      if (!hasDirectName && info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
+      if (!hasDirectHeadline && info.headline && info.headline.length > 2) headline = info.headline;
+      if (!hasDirectLocation && info.location && info.location.length > 2) location = info.location;
     } catch {
       // Keep existing identity fields on parse failures.
     }

@@ -1,22 +1,23 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
-  const job = await prisma.job.findUnique({
+  const { job, error } = await requireJobAccess(id, auth);
+  if (error) return error;
+
+  const full = await prisma.job.findUnique({
     where: { id },
-    include: {
-      candidates: {
-        orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }],
-      },
-    },
+    include: { candidates: { orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }] } },
   });
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  return NextResponse.json(job);
+  return NextResponse.json(full);
 }
 
 const PatchJobSchema = z.object({
@@ -28,17 +29,21 @@ const PatchJobSchema = z.object({
   parsedRole: z.string().max(100_000).optional(),
   salaryMin:  z.number().int().min(0).max(2_000_000).nullable().optional(),
   salaryMax:  z.number().int().min(0).max(2_000_000).nullable().optional(),
+  orgId:      z.string().nullable().optional(), // owner-only: reassign after org delete
 });
 
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
+  const { error } = await requireJobAccess(id, auth);
+  if (error) return error;
+
   const result = PatchJobSchema.safeParse(await req.json().catch(() => ({})));
-  if (!result.success) {
-    return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
-  }
+  if (!result.success) return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
   const body = result.data;
 
   const job = await prisma.job.update({
@@ -52,9 +57,10 @@ export async function PATCH(
       ...(body.parsedRole !== undefined && { parsedRole: body.parsedRole }),
       ...(body.salaryMin  !== undefined && { salaryMin: body.salaryMin }),
       ...(body.salaryMax  !== undefined && { salaryMax: body.salaryMax }),
+      // orgId reassignment is owner-only (used after an org delete orphans jobs)
+      ...(body.orgId !== undefined && auth.isOwner && { orgId: body.orgId }),
     },
   });
-
   return NextResponse.json(job);
 }
 
@@ -62,7 +68,11 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const { id } = await params;
+  const { error } = await requireJobAccess(id, auth);
+  if (error) return error;
   await prisma.job.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

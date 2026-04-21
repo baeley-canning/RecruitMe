@@ -7,10 +7,10 @@
     "skill_fit": { "score": 82, "weight": 0.24, "evidence": "Strong backend and frontend skill overlap." },
     "location_fit": { "score": 70, "weight": 0.14, "evidence": "Initial model score before deterministic override." },
     "seniority_fit": { "score": 68, "weight": 0.14, "evidence": "Mid-level delivery evidence with some leadership." },
-    "title_fit": { "score": 75, "weight": 0.1, "evidence": "Recent titles are adjacent to the role." },
-    "industry_fit": { "score": 65, "weight": 0.08, "evidence": "Relevant product engineering experience." },
-    "nice_to_have_fit": { "score": 40, "weight": 0.05, "evidence": "Only a few preferred tools are shown." },
-    "keyword_alignment": { "score": 70, "weight": 0.05, "evidence": "Technical vocabulary mostly aligns." }
+    "title_fit": { "score": 75, "weight": 0.08, "evidence": "Recent titles are adjacent to the role." },
+    "industry_fit": { "score": 65, "weight": 0.06, "evidence": "Relevant product engineering experience." },
+    "nice_to_have_fit": { "score": 40, "weight": 0.04, "evidence": "Only a few preferred tools are shown." },
+    "keyword_alignment": { "score": 70, "weight": 0.02, "evidence": "Technical vocabulary mostly aligns." }
   },
   "must_have_coverage": [
     { "requirement": "React", "status": "confirmed", "evidence": "React used in current role." },
@@ -31,10 +31,10 @@
   ],
   "recruiter_summary": "Technically relevant candidate, but location is the major risk.",
   "expected": {
-    "overall": 32,
+    "overall": 31,
     "locationFit": 0,
     "mustHavePct": 33,
-    "confidenceScore": 52,
+    "confidenceScore": 42,
     "confidenceLevel": "medium",
     "summaryIncludes": "Based in Shanghai, China"
   }

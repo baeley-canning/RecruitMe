@@ -45,6 +45,14 @@ async function loadConfig() {
     serverBaseInput.value = response.serverBase || "http://localhost:3000";
     authUserInput.value = response.authUser || "";
     authPassInput.value = response.authPass || "";
+    if (response.lastError) {
+      setStatus(serverStatus, response.lastError, "error");
+    } else if (!response.authUser || !response.authPass) {
+      setStatus(
+        serverStatus,
+        "Save the app URL first. Username/password are only needed for manual import and the job list."
+      );
+    }
   } catch (error) {
     setStatus(serverStatus, error.message, "error");
   }
@@ -53,6 +61,16 @@ async function loadConfig() {
 async function loadJobs() {
   jobSelect.innerHTML = "";
   importProfileButton.disabled = false;
+
+  if (!authUserInput.value.trim() || !authPassInput.value) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Add RecruitMe login to load jobs";
+    jobSelect.appendChild(option);
+    importProfileButton.disabled = true;
+    setStatus(importStatus, "Manual import needs your RecruitMe username/password in the popup.");
+    return;
+  }
 
   try {
     const response = await sendMessage({ type: "get-jobs" });
@@ -76,7 +94,11 @@ async function loadJobs() {
     option.textContent = "Could not load jobs";
     jobSelect.appendChild(option);
     importProfileButton.disabled = true;
-    setStatus(importStatus, error.message, "error");
+    if (/401 Unauthorized|auth failed/i.test(error.message)) {
+      setStatus(importStatus, "Add RecruitMe username/password in the popup to load jobs for manual import.", "error");
+    } else {
+      setStatus(importStatus, error.message, "error");
+    }
   }
 }
 
@@ -172,15 +194,21 @@ async function refreshPendingStatus() {
 }
 
 saveServerButton.addEventListener("click", async () => {
-  setStatus(serverStatus, "Saving...");
+  setStatus(serverStatus, "Testing RecruitMe connection...");
   try {
-    await sendMessage({
+    const response = await sendMessage({
       type: "set-config",
       serverBase: serverBaseInput.value,
       authUser: authUserInput.value,
       authPass: authPassInput.value,
     });
-    setStatus(serverStatus, "Connection saved.", "ok");
+    setStatus(
+      serverStatus,
+      response.hasAuth
+        ? "Connection verified and saved."
+        : "Connection saved. Add RecruitMe username/password only if you want manual import and job list access.",
+      "ok"
+    );
     await loadJobs();
     await refreshPendingStatus();
   } catch (error) {
