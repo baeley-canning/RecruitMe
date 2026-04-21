@@ -25,7 +25,7 @@ interface ChatOptions {
 }
 
 function resolveChatProvider(override?: ChatProvider): ChatProvider {
-  return override ?? ((process.env.AI_PROVIDER as ChatProvider | undefined) ?? "ollama");
+  return override ?? ((process.env.AI_PROVIDER as ChatProvider | undefined) ?? "claude");
 }
 
 export function getJobParsingProvider(): ChatProvider | undefined {
