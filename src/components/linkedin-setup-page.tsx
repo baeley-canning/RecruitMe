@@ -2,9 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Copy, Check, Puzzle } from "lucide-react";
-
-const EXTENSION_FOLDER = "browser-companion/recruitme-opera-linkedin-capture";
+import { Copy, Check, Download, Puzzle, Settings, Zap, ArrowRight } from "lucide-react";
 
 export function LinkedInSetupPage() {
   const [origin, setOrigin] = useState("");
@@ -22,76 +20,108 @@ export function LinkedInSetupPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto py-10 px-6 space-y-6">
+    <div className="max-w-2xl mx-auto py-10 px-6 space-y-5">
       <div>
-        <Link href="/jobs" className="text-sm text-teal-700 hover:underline">
+        <Link href="/jobs" className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1">
           ← Back to jobs
         </Link>
         <h1 className="text-2xl font-bold text-slate-900 mt-3">LinkedIn Capture Setup</h1>
         <p className="text-slate-500 text-sm mt-1">
-          RecruitMe uses an Opera/Chromium extension for LinkedIn profile capture. The extension reads the rendered
-          LinkedIn page and sends the captured profile back into RecruitMe for scoring.
+          A small browser extension lets RecruitMe capture full LinkedIn profiles automatically — no copy-pasting required.
         </p>
       </div>
 
-      <div className="bg-white rounded-xl border border-teal-200 p-6 space-y-4">
-        <div className="flex items-center gap-2 text-teal-700">
-          <Puzzle className="w-5 h-5" />
-          <p className="text-sm font-semibold uppercase tracking-wide">Step 1 — Load the extension</p>
+      {/* Step 1 — Download */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 bg-slate-50">
+          <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">1</span>
+          <div className="flex items-center gap-2">
+            <Download className="w-4 h-4 text-slate-500" />
+            <p className="text-sm font-semibold text-slate-800">Download the extension</p>
+          </div>
         </div>
-        <ol className="text-sm text-slate-700 space-y-2 list-decimal list-inside">
-          <li>Open <strong>Opera extensions</strong> at <code className="bg-slate-100 px-1.5 py-0.5 rounded">opera://extensions</code>.</li>
-          <li>Turn on <strong>Developer mode</strong>.</li>
-          <li>Click <strong>Load unpacked</strong>.</li>
-          <li>Select the extension folder in this repo:</li>
-        </ol>
-        <div className="rounded-lg bg-slate-900 text-slate-100 px-4 py-3 text-sm font-mono">
-          {EXTENSION_FOLDER}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
-        <p className="text-sm font-semibold text-slate-900">Step 2 — Point the extension at RecruitMe</p>
-        <p className="text-sm text-slate-600">
-          Open the extension popup once and make sure the server URL matches your RecruitMe app. The default is usually correct:
-        </p>
-        <div className="flex items-center gap-3 flex-wrap">
-          <code className="bg-slate-100 px-3 py-2 rounded text-sm text-slate-700">{origin || "http://localhost:3000"}</code>
-          <button
-            onClick={handleCopyOrigin}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm text-slate-700 transition-colors"
+        <div className="px-5 py-5 space-y-4">
+          <a
+            href="/api/extension/download"
+            download="recruitme-extension.zip"
+            className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm transition-colors"
           >
-            {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-            {copied ? "Copied" : "Copy URL"}
-          </button>
+            <Download className="w-4 h-4" />
+            Download RecruitMe Extension (.zip)
+          </a>
+          <div className="space-y-2 text-sm text-slate-600">
+            <p className="font-medium text-slate-700">Load it into Opera or Chrome:</p>
+            <ol className="space-y-1.5 list-decimal list-inside">
+              <li>Unzip the downloaded file</li>
+              <li>Go to <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">opera://extensions</code> (or <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">chrome://extensions</code>)</li>
+              <li>Enable <strong>Developer mode</strong></li>
+              <li>Click <strong>Load unpacked</strong> and select the unzipped folder</li>
+            </ol>
+          </div>
         </div>
-        <p className="text-sm text-slate-600">
-          Save the same RecruitMe username and password in the extension popup only if you want the extension popup to load
-          your RecruitMe jobs for manual import. The automatic <strong>Fetch profile</strong> flow does not need those popup
-          credentials.
-        </p>
-        <p className="text-sm text-slate-600">
-          If you are using the desktop app, copy the exact URL shown here, including the port. The extension must point to the
-          same local RecruitMe address that the app is currently using.
-        </p>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <p className="text-sm font-semibold text-slate-900 mb-3">Step 3 — Use it</p>
-        <ol className="text-sm text-slate-700 space-y-2 list-decimal list-inside">
-          <li>In RecruitMe, click <strong>Fetch profile</strong> on a candidate card.</li>
-          <li>RecruitMe creates a pending capture session and opens LinkedIn.</li>
-          <li>If you are using the browser build, RecruitMe itself must be open in <strong>Opera</strong>. The desktop app can launch Opera for you.</li>
-          <li>The extension detects that pending session and captures the full rendered profile automatically.</li>
-          <li>RecruitMe stores the profile text on the candidate and re-scores from that richer profile.</li>
-        </ol>
+      {/* Step 2 — Point at RecruitMe */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 bg-slate-50">
+          <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">2</span>
+          <div className="flex items-center gap-2">
+            <Settings className="w-4 h-4 text-slate-500" />
+            <p className="text-sm font-semibold text-slate-800">Point the extension at RecruitMe</p>
+          </div>
+        </div>
+        <div className="px-5 py-5 space-y-3">
+          <p className="text-sm text-slate-600">
+            Click the extension icon in your browser toolbar. Set the server URL to:
+          </p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <code className="flex-1 bg-slate-100 px-3 py-2.5 rounded-lg text-sm text-slate-700 font-mono min-w-0 break-all">
+              {origin || "https://your-app.up.railway.app"}
+            </code>
+            <button
+              onClick={handleCopyOrigin}
+              className="inline-flex items-center gap-2 px-3 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm text-slate-700 transition-colors flex-shrink-0"
+            >
+              {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <p className="text-sm text-slate-500">
+            Enter your RecruitMe username and password in the popup too — this lets you pick a job for manual imports.
+          </p>
+        </div>
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-        <p className="text-sm font-semibold text-amber-800">Manual import is still available</p>
-        <p className="text-sm text-amber-700 mt-1">
-          If you are already on a LinkedIn profile and want to import it manually, open the extension popup, choose a job,
-          and click <strong>Import current LinkedIn profile</strong>.
+      {/* Step 3 — Use it */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 bg-slate-50">
+          <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">3</span>
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-slate-500" />
+            <p className="text-sm font-semibold text-slate-800">Start capturing profiles</p>
+          </div>
+        </div>
+        <div className="px-5 py-5">
+          <div className="space-y-3">
+            {[
+              { label: "Automatic", desc: "Click Fetch profile on a candidate card. RecruitMe opens their LinkedIn page and the extension captures it automatically." },
+              { label: "Manual", desc: "Browse to any LinkedIn profile, open the extension popup, choose a job, and click Import current profile." },
+            ].map(({ label, desc }) => (
+              <div key={label} className="flex gap-3">
+                <ArrowRight className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-slate-600">
+                  <span className="font-medium text-slate-800">{label} — </span>{desc}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
+        <p className="text-sm font-semibold text-emerald-800">RecruitMe must be open in the same browser</p>
+        <p className="text-sm text-emerald-700 mt-1">
+          The extension and the app talk to each other through the browser. Keep your RecruitMe tab open in Opera or Chrome while capturing profiles.
         </p>
       </div>
     </div>

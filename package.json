@@ -27,6 +27,7 @@
     "@types/leaflet": "^1.9.21",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
+    "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.12.0",
