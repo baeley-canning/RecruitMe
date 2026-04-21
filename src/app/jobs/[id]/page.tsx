@@ -1446,9 +1446,8 @@ export default function JobDetailPage({
                         {sources && (
                           <div className="flex items-center gap-1">
                             {[
-                              { key: "serpapi", label: "Google" },
-                              { key: "bing",    label: "Bing" },
-                              { key: "pdl",     label: "PDL" },
+                              { key: "serpapi", label: "SerpAPI" },
+                              { key: "claude",  label: "Claude" },
                             ].map(({ key, label }) => (
                               <span
                                 key={key}
