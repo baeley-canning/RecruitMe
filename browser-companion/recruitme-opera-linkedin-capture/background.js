@@ -272,6 +272,17 @@ async function completePendingCaptureWithRetry(tabId, pending, preferredBase = "
   throw lastError || new Error("LinkedIn capture failed");
 }
 
+async function notifyCaptureDone(candidateName) {
+  const name = candidateName || "Profile";
+  chrome.notifications.create({
+    type: "basic",
+    iconUrl: "https://www.linkedin.com/favicon.ico",
+    title: "RecruitMe — Profile captured",
+    message: `${name} has been captured and scored. You can switch back to RecruitMe.`,
+    priority: 2,
+  });
+}
+
 async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
   const lockKey = `${pending.sessionId}:${tabId}`;
   if (activeAutoCaptures.has(lockKey)) return;
@@ -280,6 +291,7 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
   try {
     await sleep(600);
     await completePendingCaptureWithRetry(tabId, pending, preferredBase);
+    await notifyCaptureDone(pending.candidateName);
   } catch (error) {
     await markPendingCaptureError(pending, error, preferredBase);
     throw error;
@@ -440,7 +452,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await markPendingCaptureError(pending.data, error, pending.base);
         throw error;
       }
-      return pending.data.candidateName || "Profile";
+      const candidateName = pending.data.candidateName || "Profile";
+      await notifyCaptureDone(candidateName);
+      return candidateName;
     })()
       .then((candidateName) => sendResponse({ ok: true, candidateName }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
