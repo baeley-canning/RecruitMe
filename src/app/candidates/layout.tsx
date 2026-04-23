@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { Sidebar, SidebarWrapper } from "@/components/sidebar";
 import { getAuth, jobsWhere } from "@/lib/session";
 
+export const dynamic = "force-dynamic";
+
 export default async function CandidatesLayout({
   children,
 }: {

@@ -4,6 +4,8 @@ import { getAuth } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { CandidatesLibraryClient } from "@/components/candidates-library-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function CandidatesPage() {
   const auth = await getAuth();
   if (!auth) redirect("/login");

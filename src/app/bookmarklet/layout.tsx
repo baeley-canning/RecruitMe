@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { Sidebar, SidebarWrapper } from "@/components/sidebar";
 
+export const dynamic = "force-dynamic";
+
 export default async function BookmarkletLayout({
   children,
 }: {

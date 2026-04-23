@@ -5,6 +5,8 @@ import { getAuth, jobsWhere } from "@/lib/session";
 import { Plus, Briefcase, Users, Star } from "lucide-react";
 import { JobsListClient } from "@/components/jobs-list-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function JobsPage() {
   const auth = await getAuth();
   if (!auth) redirect("/login");
