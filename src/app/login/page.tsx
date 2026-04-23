@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { Users, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -28,8 +26,10 @@ export default function LoginPage() {
       setError("Invalid username or password.");
       setLoading(false);
     } else {
-      router.push("/jobs");
-      router.refresh();
+      const target = result?.url && result.url.startsWith(window.location.origin)
+        ? result.url
+        : "/jobs";
+      window.location.assign(target);
     }
   };
 

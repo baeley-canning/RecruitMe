@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { ensureDefaultOrg } from "./org";
 
 export const authOptions: NextAuthOptions = {
+  secret: process.env.NEXTAUTH_SECRET,
   providers: [
     CredentialsProvider({
       name: "credentials",
