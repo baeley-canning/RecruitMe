@@ -36,7 +36,7 @@ const nextBin = "node_modules/next/dist/bin/next";
 const port = process.env.PORT || "3000";
 
 console.log(`[startup] starting Next on 0.0.0.0:${port}`);
-const next = spawn(process.execPath, [nextBin, "start", "-H", "0.0.0.0", "-p", port], {
+const next = spawn(process.execPath, [nextBin, "start", "-p", port], {
   stdio: "inherit",
   env: process.env,
   shell: false,
