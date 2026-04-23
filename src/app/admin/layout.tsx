@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { Sidebar, SidebarWrapper } from "@/components/sidebar";
 import { getAuth, jobsWhere } from "@/lib/session";
@@ -10,7 +11,10 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const auth = await getAuth();
-  const where = auth ? jobsWhere(auth) : {};
+  if (!auth) redirect("/login");
+  if (!auth.isOwner) redirect("/jobs");
+
+  const where = jobsWhere(auth);
   const jobs = await prisma.job.findMany({
     where,
     orderBy: { createdAt: "desc" },
