@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm run build"
+buildCommand = "DATABASE_URL=postgresql://user:password@localhost:5432/recruitme npm run build"
 
 [deploy]
 startCommand = "npm run start:prod"
