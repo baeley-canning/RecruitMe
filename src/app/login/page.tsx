@@ -16,6 +16,15 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
+    try {
+      await fetch("/api/auth/clear-session", {
+        method: "POST",
+        cache: "no-store",
+      });
+    } catch {
+      // Continue anyway: a failed cleanup should not block a normal login attempt.
+    }
+
     const result = await signIn("credentials", {
       username: username.trim(),
       password,
@@ -30,7 +39,7 @@ export default function LoginPage() {
       const target = result?.url && result.url.startsWith(window.location.origin)
         ? result.url
         : "/jobs";
-      window.location.assign(target);
+      window.location.replace(target);
     }
   };
 
