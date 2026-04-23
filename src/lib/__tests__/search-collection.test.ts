@@ -65,4 +65,31 @@ describe("collectPagedSearchResults", () => {
     expect(result.items).toEqual([{ linkedinUrl: "https://www.linkedin.com/in/alpha" }]);
     expect(result.sawRetryableFailure).toBe(false);
   });
+
+  it("stops after a persistently throttled page instead of burning through later pages", async () => {
+    const sleep = vi.fn(async () => {});
+    const pageCalls: Array<{ page: number; attempt: number }> = [];
+
+    const result = await collectPagedSearchResults<MockCandidate>({
+      targetCount: 10,
+      maxPages: 5,
+      maxPageRetries: 2,
+      emptyRoundsBeforeStop: 2,
+      keyFn: (item) => item.linkedinUrl,
+      sleep,
+      getPage: async (page, attempt) => {
+        pageCalls.push({ page, attempt });
+        return [{ items: [], retryable: true, error: "429 Too Many Requests" }];
+      },
+    });
+
+    expect(result.items).toEqual([]);
+    expect(result.sawRetryableFailure).toBe(true);
+    expect(pageCalls).toEqual([
+      { page: 0, attempt: 0 },
+      { page: 0, attempt: 1 },
+      { page: 0, attempt: 2 },
+    ]);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
 });

@@ -91,6 +91,10 @@ export async function collectPagedSearchResults<T>(
         continue;
       }
 
+      if (retryableFailures.length > 0 && pageItems.length === 0 && attempt >= maxPageRetries) {
+        break outer;
+      }
+
       pageSettled = true;
 
       if (pageItems.length === 0 && retryableFailures.length === 0) {

@@ -18,7 +18,7 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { expandLocationKeywords, locationMatches } from "@/lib/location";
+import { expandLocationKeywords, isNzLocation, locationMatches, normalizeLocationText } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
@@ -138,10 +138,13 @@ function buildProvisionalSearchScore(
 
   const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
     if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(requirement)) {
+      const nzBased = Boolean(candidateLocation && isNzLocation(candidateLocation));
       return {
         requirement,
-        status: "unknown",
-        evidence: "Search snippet does not verify work rights.",
+        status: nzBased ? "likely" : "unknown",
+        evidence: nzBased
+          ? `Candidate appears NZ-based from the search location (${candidateLocation}); work rights still need confirmation.`
+          : "Search snippet does not verify work rights.",
       };
     }
 
@@ -356,17 +359,37 @@ export async function POST(
         keyFn: (candidate) => candidate.linkedinUrl,
         getPage: async (page) => {
           const offset = page * PAGE_SIZE;
-          const pageTasks: Promise<SearchTaskOutcome>[] = [];
+          const buildTasks = (taskLocation: string, queries = searchQueries) => {
+            const pageTasks: Promise<SearchTaskOutcome>[] = [];
 
-          if (hasSerpApi) {
-            pageTasks.push(...searchQueries.map((q) => executeSearchTask("serpapi", q, searchLocation, offset)));
-          }
-          if (hasBing) {
-            pageTasks.push(...searchQueries.map((q) => executeSearchTask("bing", q, searchLocation, offset)));
-          }
+            if (hasSerpApi) {
+              pageTasks.push(...queries.map((q) => executeSearchTask("serpapi", q, taskLocation, offset)));
+            }
+            if (hasBing) {
+              pageTasks.push(...queries.map((q) => executeSearchTask("bing", q, taskLocation, offset)));
+            }
 
-          if (pageTasks.length === 0) return null;
-          return Promise.all(pageTasks);
+            return pageTasks;
+          };
+
+          const primaryTasks = buildTasks(searchLocation);
+          if (primaryTasks.length === 0) return null;
+
+          const primaryOutcomes = await Promise.all(primaryTasks);
+          const primaryItems = primaryOutcomes.flatMap((outcome) => outcome.items);
+          const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
+          const shouldTryNzFallback =
+            page === 0 &&
+            primaryItems.length === 0 &&
+            !primaryRetryable &&
+            normalizeLocationText(searchLocation) !== "new zealand";
+
+          if (!shouldTryNzFallback) return primaryOutcomes;
+
+          const fallbackQueries = searchQueries.slice(0, Math.min(4, searchQueries.length));
+          const fallbackTasks = buildTasks("New Zealand", fallbackQueries);
+          const fallbackOutcomes = await Promise.all(fallbackTasks);
+          return [...primaryOutcomes, ...fallbackOutcomes];
         },
         sleep,
         onPage: ({ page, attempt, added, total, retryableFailures, hardFailures }) => {
@@ -388,9 +411,17 @@ export async function POST(
     console.log(`[search] collected ${allRaw.length} raw profiles (target ${targetRaw}, retryableFailures=${sawRetryableSearchFailure})`);
 
     if (allRaw.length === 0) {
+      if (sawRetryableSearchFailure) {
+        return NextResponse.json({
+          count: 0,
+          candidates: [],
+          message: "Search API was rate-limited before it returned profiles. Wait a minute and search again.",
+        });
+      }
+
       return NextResponse.json({
         count: 0, candidates: [],
-        message: "No LinkedIn profiles found. Try re-analysing the job description.",
+        message: "No LinkedIn profiles found for the exact search area. Try broadening the radius or adding broader title variants.",
       });
     }
 
