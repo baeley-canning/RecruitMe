@@ -7,14 +7,19 @@
 //   - Must-have weight raised from 0.28 → 0.36 (skills over location)
 //   - Location weight cut from 0.14 → 0.08
 //   - Seniority weight cut from 0.14 → 0.10
-//   - Snippet point table tightened: missing=5, unknown=15, likely=55
+//   - Snippet point table: missing=5, unknown=30, likely=55 (unknown raised from 15 — absence of evidence ≠ absence)
 //   - Per-requirement importance weights (WordPress/CMS/RightToWork = 1.5×)
-//   - Critical gate: unconfirmed 1.5× must-have on snippet hard-caps to 45
+//   - Degree importance weights: regulated profession=1.5×, technical field degree=1.3×, general degree=1.1×
+//   - "equivalent" status: requirement satisfied via experience (full=100, snippet=85, minimal=70); not "unconfirmed"
+//   - Critical gate: unconfirmed 1.5× must-have on snippet hard-caps to 45; "equivalent" does not trigger gate
 //   - Snippet cap held at 55, minimal at 40
+//   - Search route applies 30% floor for snippet data so provisional results surface
+//   - Search route locationFitScore cutoff only fires when candidateLocation is known
+//   - Knockout criteria merged into must_haves for scoring so they affect the coverage score
 
 // ─── Status types ──────────────────────────────────────────────────────────────
 
-export type MustHaveCoverageStatus = "confirmed" | "likely" | "missing" | "negative" | "unknown";
+export type MustHaveCoverageStatus = "confirmed" | "equivalent" | "likely" | "missing" | "negative" | "unknown";
 export type NiceToHaveCoverageStatus = "confirmed" | "likely" | "absent";
 export type DataQuality = "full_profile" | "snippet" | "minimal";
 export type ConfidenceLevel = "high" | "medium" | "low";
@@ -95,25 +100,28 @@ export const MUST_HAVE_WEIGHT_V2 = 0.36;
 
 const MUST_HAVE_POINTS_BY_QUALITY: Record<DataQuality, Record<MustHaveCoverageStatus, number>> = {
   full_profile: {
-    confirmed: 100,
-    likely:    65,
-    missing:   0,
-    negative:  0,
-    unknown:   0,
+    confirmed:  100,
+    equivalent: 100, // satisfies the requirement via experience — treated identically to confirmed
+    likely:     65,
+    missing:    0,
+    negative:   0,
+    unknown:    0,
   },
   snippet: {
-    confirmed: 100,
-    likely:    55,
-    missing:   5,
-    negative:  0,
-    unknown:   15,
+    confirmed:  100,
+    equivalent: 85,  // high credit but less certainty than a full-profile equivalent assessment
+    likely:     55,
+    missing:    5,
+    negative:   0,
+    unknown:    30,
   },
   minimal: {
-    confirmed: 100,
-    likely:    45,
-    missing:   0,
-    negative:  0,
-    unknown:   10,
+    confirmed:  100,
+    equivalent: 70,
+    likely:     45,
+    missing:    0,
+    negative:   0,
+    unknown:    10,
   },
 };
 
@@ -133,7 +141,19 @@ export function getMustHaveImportance(requirement: string): number {
   // Critical — cannot be compensated for by location or title alone
   if (/wordpress|content management system|\bcms\b/i.test(r))                return 1.5;
   if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(r)) return 1.5;
-  // Very important
+  // Regulated-profession qualifications: degree is a legal/professional prerequisite
+  if (/\b(chartered accountant|cpa|ca qualification|cfa)\b/i.test(r))        return 1.5;
+  if (/\b(registered nurse|nursing registration|nzrn|nursing council)\b/i.test(r)) return 1.5;
+  if (/\b(engineering degree|civil engineering|structural engineering)\b.*\b(degree|qualification)\b/i.test(r)) return 1.5;
+  if (/\b(law degree|llb|legal qualification|bar admission)\b/i.test(r))     return 1.5;
+  if (/\b(medical degree|mbchb|mbbs|nzmc registration)\b/i.test(r))         return 1.5;
+  // Technical degrees where field relevance matters
+  if (/\b(degree|bachelor|master|phd|doctorate)\b.{0,30}\b(computer science|software|information technology|data science|cybersecurity|electrical engineering)\b/i.test(r)) return 1.3;
+  if (/\b(computer science|software engineering|information technology)\b.{0,30}\b(degree|qualification)\b/i.test(r)) return 1.3;
+  // General degree requirement — more important than soft skills but field is flexible
+  if (/\b(bachelor'?s?\s+degree|master'?s?\s+degree|university degree|tertiary qualification|relevant degree)\b/i.test(r)) return 1.1;
+  if (/\bdegree\b|\bdiploma\b/i.test(r) && !/equivalent|or equivalent|preferred/i.test(r)) return 1.1;
+  // Very important technical requirements
   if (/\bux\b|user experience|design principle|web design|ux.{0,10}design|design.{0,10}develop/i.test(r)) return 1.3;
   if (/concept to launch|full.{0,5}site|full.{0,5}build|full website|ownership|end.to.end/i.test(r)) return 1.2;
   if (/shopify|squarespace|woocommerce/i.test(r))                            return 1.2;
@@ -182,7 +202,7 @@ export function computeEvidenceCoverageScore(
   const total = mustHaveCoverage.length + niceToHaveCoverage.length;
   if (total === 0) return 0;
   const explicit =
-    mustHaveCoverage.filter((c) => c.status === "confirmed").length +
+    mustHaveCoverage.filter((c) => c.status === "confirmed" || c.status === "equivalent").length +
     niceToHaveCoverage.filter((c) => c.status === "confirmed").length;
   return Math.round((explicit / total) * 100);
 }
@@ -224,7 +244,7 @@ export function computeConfidence(
   }
 
   const total        = mustHaveCoverage.length;
-  const supportedCount = mustHaveCoverage.filter((c) => c.status === "confirmed" || c.status === "likely").length;
+  const supportedCount = mustHaveCoverage.filter((c) => c.status === "confirmed" || c.status === "equivalent" || c.status === "likely").length;
   const unknownCount = mustHaveCoverage.filter((c) => c.status === "unknown").length;
   const missingCount = mustHaveCoverage.filter((c) => c.status === "missing").length;
   const negativeCount = mustHaveCoverage.filter((c) => c.status === "negative").length;
@@ -290,6 +310,7 @@ export function buildScoreBreakdown(params: {
   // Critical gate: if any 1.5× importance must-have is unconfirmed on a non-full profile,
   // the candidate cannot be presented as a real match until fetch proves otherwise.
   if (dataQuality !== "full_profile") {
+    // "equivalent" counts as satisfied — only unresolved statuses trigger the cap
     const criticalUnconfirmed = params.must_have_coverage.filter(
       (c) =>
         getMustHaveImportance(c.requirement) >= 1.5 &&

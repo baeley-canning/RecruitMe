@@ -7,6 +7,7 @@ import {
   classifyDataQuality,
   computeConfidence,
   buildScoreBreakdown,
+  getMustHaveImportance,
   CATEGORY_WEIGHTS_V2,
   type MustHaveStatus,
   type NiceToHaveStatus,
@@ -89,8 +90,8 @@ describe("computeMustHavePct", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "Leadership", status: "unknown", evidence: "Insufficient data" },
     ];
-    // snippet.unknown = 15 (partial credit — absence may just mean not mentioned)
-    expect(computeMustHavePct(coverage, "snippet")).toBe(15);
+    // snippet.unknown = 30 (neutral credit — absence of evidence ≠ evidence of absence)
+    expect(computeMustHavePct(coverage, "snippet")).toBe(30);
   });
 
   it("treats missing must-haves as provisional for minimal snippets", () => {
@@ -118,6 +119,74 @@ describe("computeMustHavePct", () => {
       { requirement: "C", status: "missing",   evidence: "Not found" },
     ];
     expect(computeMustHavePct(coverage)).toBe(55);
+  });
+
+  it("treats equivalent as 100 for full_profile (satisfies the requirement)", () => {
+    const coverage: MustHaveStatus[] = [
+      { requirement: "Bachelor's degree or equivalent experience", status: "equivalent", evidence: "10 years directly relevant experience satisfies equivalency clause" },
+    ];
+    expect(computeMustHavePct(coverage, "full_profile")).toBe(100);
+  });
+
+  it("treats equivalent as 85 for snippet (high credit but provisional)", () => {
+    const coverage: MustHaveStatus[] = [
+      { requirement: "Bachelor's degree or equivalent experience", status: "equivalent", evidence: "Senior title and long tenure suggest equivalency" },
+    ];
+    expect(computeMustHavePct(coverage, "snippet")).toBe(85);
+  });
+
+  it("does not trigger the critical gate for equivalent status on 1.5× requirements", () => {
+    // "equivalent" is satisfied — should NOT cap to 45%
+    const coverage: MustHaveStatus[] = [
+      { requirement: "NZ citizenship or permanent residency", status: "equivalent", evidence: "Profile states NZ work rights confirmed" },
+    ];
+    // This would normally be 1.5× importance — equivalent still scores 100
+    expect(computeMustHavePct(coverage, "full_profile")).toBe(100);
+  });
+
+  it("mixes equivalent and other statuses correctly", () => {
+    // equivalent=100, confirmed=100, missing=0 → avg = 200/3 = 67
+    const coverage: MustHaveStatus[] = [
+      { requirement: "Bachelor's degree or equivalent", status: "equivalent", evidence: "8 years relevant experience" },
+      { requirement: "React",                           status: "confirmed",  evidence: "Listed in skills" },
+      { requirement: "Docker",                          status: "missing",    evidence: "Not mentioned" },
+    ];
+    expect(computeMustHavePct(coverage, "full_profile")).toBe(67);
+  });
+});
+
+// ─── getMustHaveImportance — degree weights ────────────────────────────────────
+
+describe("getMustHaveImportance — degree requirements", () => {
+  it("returns 1.5 for regulated profession qualifications", () => {
+    expect(getMustHaveImportance("Chartered Accountant (CA) or CPA qualification")).toBe(1.5);
+    expect(getMustHaveImportance("Registered Nurse with Nursing Council registration")).toBe(1.5);
+    expect(getMustHaveImportance("Law degree (LLB)")).toBe(1.5);
+    expect(getMustHaveImportance("Medical degree (MBChB) required")).toBe(1.5);
+  });
+
+  it("returns 1.3 for technical field degrees", () => {
+    expect(getMustHaveImportance("Bachelor's degree in Computer Science or Software Engineering")).toBe(1.3);
+    expect(getMustHaveImportance("Degree in Information Technology")).toBe(1.3);
+  });
+
+  it("returns 1.1 for general degree requirements", () => {
+    expect(getMustHaveImportance("Bachelor's degree in a relevant field")).toBe(1.1);
+    expect(getMustHaveImportance("University degree or equivalent tertiary qualification")).toBe(1.1);
+    expect(getMustHaveImportance("Relevant diploma or degree")).toBe(1.1);
+  });
+
+  it("returns 1.0 for degree-or-equivalent flexibility clauses", () => {
+    expect(getMustHaveImportance("Degree or equivalent experience")).toBe(1.0);
+  });
+
+  it("returns 0.7 for soft traits regardless of wording", () => {
+    expect(getMustHaveImportance("Strong communication and team collaboration skills")).toBe(0.7);
+  });
+
+  it("returns 1.5 for work rights requirements (existing behaviour unchanged)", () => {
+    expect(getMustHaveImportance("NZ citizenship or permanent residency required")).toBe(1.5);
+    expect(getMustHaveImportance("Right to work in New Zealand")).toBe(1.5);
   });
 });
 

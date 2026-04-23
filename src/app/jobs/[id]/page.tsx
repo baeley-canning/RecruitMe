@@ -1448,44 +1448,35 @@ export default function JobDetailPage({
                             {[
                               { key: "serpapi", label: "SerpAPI" },
                               { key: "claude",  label: "Claude" },
-                            ].map(({ key, label }) => (
-                              <span
-                                key={key}
-                                className={cn(
-                                  "text-xs px-1.5 py-0.5 rounded font-medium border",
-                                  (sources as Record<string, boolean>)[key]
-                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                    : "bg-slate-50 text-slate-400 border-slate-200"
-                                )}
-                                title={
-                                  (sources as Record<string, boolean>)[key]
-                                    ? `${label} configured`
-                                    : `${label} not configured — add API key to .env.local`
-                                }
-                              >
-                                {label}
-                              </span>
-                            ))}
-                            {claudeStatus && (
-                              <span
-                                className={cn(
-                                  "text-xs px-1.5 py-0.5 rounded font-medium border",
-                                  claudeStatus === "ok"
-                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                    : claudeStatus === "unconfigured"
-                                    ? "bg-slate-50 text-slate-400 border-slate-200"
-                                    : "bg-red-50 text-red-600 border-red-200"
-                                )}
-                                title={
-                                  claudeStatus === "ok"       ? "Claude API connected" :
-                                  claudeStatus === "invalid"  ? "Claude API key invalid" :
-                                  claudeStatus === "error"    ? "Claude API unreachable" :
-                                  "Claude not configured"
-                                }
-                              >
-                                Claude
-                              </span>
-                            )}
+                            ].map(({ key, label }) => {
+                              const isOk = key === "claude"
+                                ? claudeStatus === "ok"
+                                : (sources as Record<string, boolean>)[key];
+                              const isError = key === "claude" && (claudeStatus === "invalid" || claudeStatus === "error");
+                              return (
+                                <span
+                                  key={key}
+                                  className={cn(
+                                    "text-xs px-1.5 py-0.5 rounded font-medium border",
+                                    isOk    ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                    isError ? "bg-red-50 text-red-600 border-red-200" :
+                                              "bg-slate-50 text-slate-400 border-slate-200"
+                                  )}
+                                  title={
+                                    key === "claude"
+                                      ? claudeStatus === "ok"          ? "Claude API connected"
+                                        : claudeStatus === "invalid"   ? "Claude API key invalid"
+                                        : claudeStatus === "error"     ? "Claude API unreachable"
+                                        : "Claude not configured"
+                                      : isOk
+                                        ? `${label} configured`
+                                        : `${label} not configured — add API key to .env.local`
+                                  }
+                                >
+                                  {label}
+                                </span>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -1764,8 +1755,8 @@ export default function JobDetailPage({
                     variant="outline"
                     onClick={handleRescoreAll}
                     loading={rescoringAll}
-                    disabled={rescoringAll || requiresLocationLock}
-                    title={requiresLocationLock ? "Lock search area on the map above before re-scoring" : "Re-score all candidates with current job requirements"}
+                    disabled={rescoringAll}
+                    title="Re-score all candidates with current job requirements"
                   >
                     {!rescoringAll && <Sparkles className="w-3.5 h-3.5" />}
                     {rescoringAll ? "Scoring…" : "Re-score all"}

@@ -10,6 +10,7 @@ import {
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { classifyDataQuality } from "@/lib/scoring";
 import { expandLocationKeywords, locationMatches } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
@@ -352,15 +353,24 @@ export async function POST(
           continue;
         }
 
-        // Hard location cutoff: drop clearly out-of-area candidates for non-remote roles.
-        // Score ≤20 means >150 km away; these slip through when SerpAPI reports the
-        // company location instead of where the candidate actually lives.
-        if (!job.isRemote && locationFitScore !== null && locationFitScore <= 20) {
+        // Hard location cutoff: drop candidates we KNOW are far out-of-area.
+        // Only applies when candidateLocation is set — if it's empty, the AI had no location
+        // data and may have defaulted to 0 (overseas assumption). Dropping a snippet with no
+        // location info would silently discard candidates we simply can't assess yet.
+        if (!job.isRemote && candidateLocation && locationFitScore !== null && locationFitScore <= 20) {
           skippedScore++;
           continue;
         }
 
-        if (minScore > 0 && (matchScore === null || matchScore < minScore)) {
+        // Snippet/minimal candidates are capped at 55% (or 45% with a critical unconfirmed
+        // must-have like NZ residency). Applying the full minScore would filter all of them
+        // out when it's set to 50%+. Use a 30% floor for provisional data so candidates
+        // worth fetching actually surface — the score updates to full once profile is fetched.
+        const SNIPPET_MIN_FLOOR = 30;
+        const isSnippetData = classifyDataQuality(profileText?.length ?? 0) !== "full_profile";
+        const effectiveMin = isSnippetData ? Math.min(minScore, SNIPPET_MIN_FLOOR) : minScore;
+
+        if (effectiveMin > 0 && (matchScore === null || matchScore < effectiveMin)) {
           skippedScore++;
           continue;
         }
@@ -396,7 +406,7 @@ export async function POST(
 
     if (sorted.length === 0) {
       const reason = skippedScore > 0
-        ? `Scored ${scored} candidates but none cleared ${minScore}% — try lowering the minimum score or broadening the search.`
+        ? `Scored ${scored} candidates but none cleared the threshold. Snippet-level results are capped at 55% — try lowering the minimum score below 30% or fetching full profiles.`
         : "No matching candidates found. Try re-analysing the job description or adjusting the search area.";
       return NextResponse.json({ count: 0, candidates: [], message: reason });
     }

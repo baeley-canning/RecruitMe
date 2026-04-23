@@ -482,9 +482,17 @@ export async function scoreCandidateStructured(
   const clamp = (v: unknown, fallback = 50) =>
     typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : fallback;
 
-  const mustHaves   = (parsedRole.must_haves?.length   ? parsedRole.must_haves   : parsedRole.skills_required).slice(0, 12);
-  const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
-  const knockouts   = parsedRole.knockout_criteria ?? [];
+  const baseMustHaves = (parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required);
+  const niceToHaves   = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
+  const knockouts     = parsedRole.knockout_criteria ?? [];
+
+  // Ensure knockout criteria appear in must_have_coverage. They're binary gates but often
+  // land only in knockout_criteria (not must_haves) when parsed. Merge any that aren't
+  // already covered so Claude produces a per-item verdict for each one.
+  const knockoutsNotInMustHaves = knockouts.filter((ko) =>
+    !baseMustHaves.some((mh) => mh.toLowerCase().includes(ko.toLowerCase().slice(0, 25)))
+  );
+  const mustHaves = [...baseMustHaves, ...knockoutsNotInMustHaves].slice(0, 14);
 
   const salaryLine    = salary?.min || salary?.max
     ? `Budget: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD` : "";
@@ -522,7 +530,7 @@ Return EXACTLY this JSON structure:
     "keyword_alignment": {"score":0,"evidence":"one sentence about vocabulary and terminology match"}
   },
   "must_have_coverage": [
-    {"requirement":"exact text from must-haves list","status":"confirmed|likely|missing|negative|unknown","evidence":"direct quote or paraphrase from profile, or Not mentioned"}
+    {"requirement":"exact text from must-haves list","status":"confirmed|equivalent|likely|missing|negative|unknown","evidence":"direct quote or paraphrase from profile, or Not mentioned"}
   ],
   "nice_to_have_coverage": [
     {"requirement":"exact text from nice-to-haves list","status":"confirmed|likely|absent","evidence":"direct quote or paraphrase, or Not mentioned"}
@@ -544,9 +552,10 @@ Category score rules:
 
 must_have_coverage rules:
 - "confirmed" = clearly and explicitly stated in the profile
-- "likely" = strongly implied by adjacent evidence (e.g. a company or framework implies a skill)
-- "missing" = not mentioned — could have it but unverifiable
-- "negative" = profile actively contradicts this requirement (e.g. no work rights, wrong country)
+- "equivalent" = requirement uses an equivalency clause ("or equivalent experience", "or comparable experience", "preferred but not essential") AND the candidate's experience is sufficient to satisfy it — use the thresholds in the equivalency rules below
+- "likely" = strongly implied by adjacent evidence (e.g. a company or framework implies a skill); also use for partial equivalency where experience is present but not clearly sufficient
+- "missing" = not mentioned AND no equivalency route applies — could have it but unverifiable
+- "negative" = profile actively contradicts this requirement (e.g. no work rights, wrong country, degree stated in a completely unrelated field)
 - "unknown" = insufficient data to make any assessment
 - Include EXACTLY one entry per must-have. Do not skip or merge any.${knockouts.length ? `
 - If any knockout criterion is failed, status must be "negative".` : ""}
@@ -559,7 +568,34 @@ reasons_for: 2–4 specific, evidenced positive signals. Not generic praise. Ref
 reasons_against: 2–4 specific concerns. Not speculation — only what the profile actually shows or fails to show.
 missing_evidence: 2–4 specific facts that are NOT in the profile and would materially change the score (e.g. "Years in role not stated", "No mention of team leadership despite Senior title").
 
-Short snippet rule: if the profile is a short snippet (under ~500 chars), treat unmentioned skills as genuinely unknown — do NOT assume they are present. Mark them "missing" or "unknown" accordingly. A snippet that does not mention WordPress does not confirm WordPress. Score only what is explicitly evidenced. Location and title alone should not carry a weak profile into 60%+ territory.`,
+Short snippet rule: if the profile is a short snippet (under ~500 chars), treat unmentioned skills as genuinely unknown — do NOT assume they are present. Mark them "missing" or "unknown" accordingly. A snippet that does not mention WordPress does not confirm WordPress. Score only what is explicitly evidenced. Location and title alone should not carry a weak profile into 60%+ territory.
+
+Degree/qualification rules: when a must-have specifies a degree or qualification, assess BOTH level and field relevance.
+- "confirmed" = candidate explicitly states a degree in the required field or a directly equivalent field (e.g. CS degree for software role, Accounting degree for accountant role, Nursing degree for nursing role).
+- "likely" = candidate has a degree in an adjacent field (e.g. IT degree for CS role, Finance degree for Accounting role, or strong industry signals implying relevant education).
+- "missing" = profile gives no education information for a role where a degree is required.
+- "negative" = profile explicitly states a degree in a clearly unrelated field with no bridging evidence.
+Do NOT mark as "confirmed" just because a candidate has a degree — the field must align with what the role requires.
+
+Education-based skill inference: when assessing must-have SKILLS (not qualifications), use the candidate's degree/diploma to infer curriculum-core skills as "likely" — even if those skills aren't listed explicitly. Apply this inference only for skills that are standard curriculum content for that qualification:
+- Software development diploma or degree → front-end web (HTML, CSS, JavaScript), basic back-end, version control (Git), databases. NOT web design, UX, or specific CMS platforms like WordPress unless explicitly stated.
+- Computer Science degree → algorithms, data structures, general programming. NOT specific frameworks unless stack is mentioned.
+- Accounting/Finance degree → financial reporting, Excel, bookkeeping. NOT specific accounting software unless mentioned.
+- Design degree (graphic/visual/UX) → Figma/Adobe tools, visual hierarchy, UX principles. NOT front-end coding unless explicitly stated.
+The inference only goes as far as the standard curriculum — a software dev diploma does not confirm WordPress, UX design, or video editing. Do NOT over-infer: use "likely" conservatively and only for the core technical skills the qualification is known to teach.
+
+Equivalency clause rules: when a must-have requirement contains "or equivalent experience", "or comparable experience", "preferred but not essential", "beneficial but not required", or similar flexibility language, do NOT treat it as a hard degree gate. Instead, judge whether the candidate's directly relevant experience satisfies the clause:
+- 0–2 years relevant experience → "missing" (insufficient, equivalency not met)
+- 3–4 years adjacent experience → "likely" (partial equivalency, use with a note that it may satisfy)
+- 5–7 years strong, directly relevant experience → "equivalent" (satisfies the clause — note this in evidence)
+- 8+ years directly relevant experience, or senior-level titles in the same domain → "equivalent" with high confidence
+The evidence string MUST explain HOW the equivalency is met: e.g. "11 years as IT Systems Administrator satisfies 'degree or equivalent experience' clause" — not just "has experience".
+IMPORTANT CARVE-OUTS — do NOT apply experience equivalency to requirements involving:
+- Professional registration (Registered Nurse, Chartered Accountant, Licensed Electrician, Engineer NZ, solicitor)
+- Legal compliance requirements (NZ work rights, security clearances, mandatory licences)
+- Roles where formal accreditation is a legal prerequisite for practice
+For these, equivalency does not apply. If no formal qualification is stated, mark "unknown" or "missing" as appropriate.
+Do NOT let seniority in an unrelated domain satisfy the clause. A senior accountant's experience does not satisfy "engineering degree or equivalent experience." Domain must match.`,
     0.1,
     3000
   );
@@ -591,7 +627,7 @@ Short snippet rule: if the profile is a short snippet (under ~500 chars), treat 
     evidence: typeof raw.categories?.[key]?.evidence === "string" ? raw.categories[key]!.evidence : "",
   });
 
-  const validMH  = new Set(["confirmed", "likely", "missing", "negative", "unknown"]);
+  const validMH  = new Set(["confirmed", "equivalent", "likely", "missing", "negative", "unknown"]);
   const validNTH = new Set(["confirmed", "likely", "absent"]);
 
   const rawMustHaveCoverage: MustHaveStatus[] = (raw.must_have_coverage ?? [])
