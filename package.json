@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "start:prod": "prisma db push && npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts && next start",
+    "start:prod": "prisma db push || true && (npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts || true) && next start",
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
