@@ -6,7 +6,7 @@ export async function GET() {
   const auth = await getAuth();
   if (!auth?.isOwner) return unauthorized();
 
-  const paths = ["/data/dev.db", "/data/prisma/dev.db", "/app/prisma/dev.db", "/app/dev.db"];
+  const paths = ["/data/dev.db", "/app/prisma/dev.db", "/app/dev.db"];
   const results: Record<string, { exists: boolean; size?: number; modified?: Date }> = {};
   for (const p of paths) {
     if (existsSync(p)) {
