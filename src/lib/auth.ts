@@ -4,8 +4,19 @@ import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { ensureDefaultOrg } from "./org";
 
+const authUrl =
+  process.env.NEXTAUTH_URL ||
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.RAILWAY_PUBLIC_DOMAIN ||
+  "";
+
+const useSecureCookies =
+  authUrl.startsWith("https://") ||
+  Boolean(process.env.RAILWAY_PUBLIC_DOMAIN && !authUrl.startsWith("http://"));
+
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
+  useSecureCookies,
   providers: [
     CredentialsProvider({
       name: "credentials",
