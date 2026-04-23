@@ -36,3 +36,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# generated test/demo PDFs
+/job-pdfs/
+/scripts/generate-job-pdfs.js

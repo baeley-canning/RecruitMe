@@ -772,10 +772,14 @@ function ProfileDrawer({
   candidate,
   onClose,
   onLinkedInChange,
+  onFetchProfile,
+  fetchingProfile = false,
 }: {
   candidate: Candidate;
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
+  onFetchProfile?: (id: string) => void;
+  fetchingProfile?: boolean;
 }) {
   const breakdown = useMemo(
     () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
@@ -812,6 +816,10 @@ function ProfileDrawer({
     onLinkedInChange?.(candidate.id, linkedInInput.trim());
     setEditingLinkedIn(false);
   }, [candidate.id, linkedInInput, onLinkedInChange]);
+
+  const hasGoodProfile = !!(
+    candidate.profileText && (candidate.profileText.length >= 500 || candidate.profileCapturedAt)
+  );
 
   return (
     <>
@@ -892,12 +900,37 @@ function ProfileDrawer({
               )}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-700 transition-colors flex-shrink-0 mt-0.5"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-slate-700 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            {onFetchProfile && candidate.linkedinUrl && (
+              fetchingProfile ? (
+                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />Fetching…
+                </span>
+              ) : hasGoodProfile ? (
+                <button
+                  onClick={() => onFetchProfile(candidate.id)}
+                  className="text-[11px] text-slate-400 hover:text-slate-600 flex items-center gap-1 transition-colors"
+                  title="Re-fetch LinkedIn profile"
+                >
+                  <RefreshCw className="w-3 h-3" />Re-fetch
+                </button>
+              ) : (
+                <button
+                  onClick={() => onFetchProfile(candidate.id)}
+                  className="text-[11px] text-amber-600 hover:text-amber-700 flex items-center gap-1 font-medium transition-colors"
+                  title="Fetch full LinkedIn profile"
+                >
+                  <RefreshCw className="w-3 h-3" />Fetch profile
+                </button>
+              )
+            )}
+          </div>
         </div>
 
         {/* Scrollable body */}
@@ -2058,6 +2091,8 @@ export const CandidateCard = memo(function CandidateCard({
           candidate={candidate}
           onClose={() => setShowProfile(false)}
           onLinkedInChange={onLinkedInChange}
+          onFetchProfile={onFetchProfile}
+          fetchingProfile={fetchingProfile}
         />
       )}
     </div>
