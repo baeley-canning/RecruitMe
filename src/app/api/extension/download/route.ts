@@ -20,7 +20,7 @@ export async function GET() {
 
     const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
 
-    return new NextResponse(buffer, {
+    return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition": 'attachment; filename="recruitme-extension.zip"',
