@@ -19,6 +19,7 @@ export default function LoginPage() {
     const result = await signIn("credentials", {
       username: username.trim(),
       password,
+      callbackUrl: "/jobs",
       redirect: false,
     });
 
