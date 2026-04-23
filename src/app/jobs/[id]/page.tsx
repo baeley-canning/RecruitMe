@@ -1482,8 +1482,8 @@ export default function JobDetailPage({
                       </div>
                       <p className="text-xs text-slate-500">
                         {searching
-                          ? "Searching profiles and scoring matches. This takes 1–2 minutes."
-                          : "Searches across all configured sources, fetches full profiles, and scores each match against the role."
+                          ? "Searching LinkedIn and importing provisional matches. Full scoring happens after profile capture."
+                          : "Searches configured sources, imports likely LinkedIn profiles, and uses full scoring for captured profiles."
                         }
                       </p>
                       {searchResult && (
