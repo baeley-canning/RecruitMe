@@ -17,7 +17,7 @@ export default function LoginPage() {
     setError("");
 
     try {
-      await fetch("/api/auth/clear-session", {
+      await fetch("/api/session/clear", {
         method: "POST",
         cache: "no-store",
       });
