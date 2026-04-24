@@ -215,6 +215,10 @@ const MAX_PAGES = 30;
 const MAX_PAGE_RETRIES = 3;
 const EMPTY_ROUNDS_BEFORE_STOP = 2;
 const MAX_QUERY_VARIANTS = 6;
+const SERPAPI_CONCURRENCY = 1;
+const BING_CONCURRENCY = 2;
+const SERPAPI_DELAY_MS = 400;
+const BING_DELAY_MS = 150;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 type SearchProvider = "serpapi" | "bing";
@@ -227,6 +231,34 @@ interface SearchTaskOutcome extends SearchPageTaskResult<SearchResult> {
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function limitQueriesForAttempt(queries: string[], page: number, attempt: number): string[] {
+  const pageBaseLimit = page === 0 ? MAX_QUERY_VARIANTS : Math.min(4, MAX_QUERY_VARIANTS);
+  const attemptPenalty = attempt * 2;
+  const limit = Math.max(1, pageBaseLimit - attemptPenalty);
+  return queries.slice(0, limit);
+}
+
+async function executeSearchTaskQueue(
+  tasks: Array<{ provider: SearchProvider; query: string; location: string; offset: number }>,
+  options: { concurrency: number; delayMs: number },
+): Promise<SearchTaskOutcome[]> {
+  const outcomes: SearchTaskOutcome[] = [];
+
+  for (let i = 0; i < tasks.length; i += options.concurrency) {
+    const batch = tasks.slice(i, i + options.concurrency);
+    const batchOutcomes = await Promise.all(
+      batch.map((task) => executeSearchTask(task.provider, task.query, task.location, task.offset))
+    );
+    outcomes.push(...batchOutcomes);
+
+    if (i + options.concurrency < tasks.length) {
+      await sleep(options.delayMs);
+    }
+  }
+
+  return outcomes;
 }
 
 function isRetryableSearchError(message: string): boolean {
@@ -320,10 +352,10 @@ export async function POST(
   // Synonym titles are the key insight — recruiters search off real titles, not JD language
   const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
   const searchQueries = [
+    parsedRole.title,
     ...synonymQueries,
     ...parsedRole.search_queries,
     ...parsedRole.google_queries,
-    parsedRole.title,
   ]
     .map(cleanQuery)
     .filter(Boolean)
@@ -357,25 +389,32 @@ export async function POST(
         maxPageRetries: MAX_PAGE_RETRIES,
         emptyRoundsBeforeStop: EMPTY_ROUNDS_BEFORE_STOP,
         keyFn: (candidate) => candidate.linkedinUrl,
-        getPage: async (page) => {
+        getPage: async (page, attempt) => {
           const offset = page * PAGE_SIZE;
-          const buildTasks = (taskLocation: string, queries = searchQueries) => {
-            const pageTasks: Promise<SearchTaskOutcome>[] = [];
+          const queriesForAttempt = limitQueriesForAttempt(searchQueries, page, attempt);
 
-            if (hasSerpApi) {
-              pageTasks.push(...queries.map((q) => executeSearchTask("serpapi", q, taskLocation, offset)));
-            }
-            if (hasBing) {
-              pageTasks.push(...queries.map((q) => executeSearchTask("bing", q, taskLocation, offset)));
-            }
-
-            return pageTasks;
+          const buildTasks = (provider: SearchProvider, taskLocation: string, queries = queriesForAttempt) => {
+            return queries.map((q) => ({
+              provider,
+              query: q,
+              location: taskLocation,
+              offset,
+            }));
           };
 
-          const primaryTasks = buildTasks(searchLocation);
-          if (primaryTasks.length === 0) return null;
+          const serpTasks = hasSerpApi ? buildTasks("serpapi", searchLocation) : [];
+          const bingTasks = hasBing ? buildTasks("bing", searchLocation) : [];
+          if (serpTasks.length === 0 && bingTasks.length === 0) return null;
 
-          const primaryOutcomes = await Promise.all(primaryTasks);
+          const serpOutcomes = await executeSearchTaskQueue(serpTasks, {
+            concurrency: SERPAPI_CONCURRENCY,
+            delayMs: SERPAPI_DELAY_MS,
+          });
+          const bingOutcomes = await executeSearchTaskQueue(bingTasks, {
+            concurrency: BING_CONCURRENCY,
+            delayMs: BING_DELAY_MS,
+          });
+          const primaryOutcomes = [...serpOutcomes, ...bingOutcomes];
           const primaryItems = primaryOutcomes.flatMap((outcome) => outcome.items);
           const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
           const shouldTryNzFallback =
@@ -386,9 +425,19 @@ export async function POST(
 
           if (!shouldTryNzFallback) return primaryOutcomes;
 
-          const fallbackQueries = searchQueries.slice(0, Math.min(4, searchQueries.length));
-          const fallbackTasks = buildTasks("New Zealand", fallbackQueries);
-          const fallbackOutcomes = await Promise.all(fallbackTasks);
+          const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
+          const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
+          const fallbackBingTasks = hasBing ? buildTasks("bing", "New Zealand", fallbackQueries) : [];
+          const fallbackOutcomes = [
+            ...(await executeSearchTaskQueue(fallbackSerpTasks, {
+              concurrency: SERPAPI_CONCURRENCY,
+              delayMs: SERPAPI_DELAY_MS,
+            })),
+            ...(await executeSearchTaskQueue(fallbackBingTasks, {
+              concurrency: BING_CONCURRENCY,
+              delayMs: BING_DELAY_MS,
+            })),
+          ];
           return [...primaryOutcomes, ...fallbackOutcomes];
         },
         sleep,
