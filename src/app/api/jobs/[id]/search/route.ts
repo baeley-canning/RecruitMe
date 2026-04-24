@@ -211,13 +211,13 @@ function buildProvisionalSearchScore(
 }
 
 const PAGE_SIZE = 10;
-const MAX_PAGES = 30;
-const MAX_PAGE_RETRIES = 3;
+const MAX_PAGES = 5;
+const MAX_PAGE_RETRIES = 2;
 const EMPTY_ROUNDS_BEFORE_STOP = 2;
-const MAX_QUERY_VARIANTS = 6;
+const MAX_QUERY_VARIANTS = 2; // SerpAPI free = 100 calls/month — keep searches cheap
 const SERPAPI_CONCURRENCY = 1;
 const BING_CONCURRENCY = 2;
-const SERPAPI_DELAY_MS = 400;
+const SERPAPI_DELAY_MS = 600;
 const BING_DELAY_MS = 150;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
