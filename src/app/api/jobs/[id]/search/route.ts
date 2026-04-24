@@ -18,7 +18,7 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { expandLocationKeywords, isNzLocation, locationMatches, normalizeLocationText } from "@/lib/location";
+import { expandLocationKeywords, isExplicitlyOverseasLocation, isNzLocation, locationMatches, normalizeLocationText } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
@@ -55,7 +55,7 @@ function looksLikePersonName(s: string): boolean {
   if (!looksReal(s)) return false;
   if (ORG_PATTERNS.some((p) => p.test(s))) return false;
   const words = s.trim().split(/\s+/).filter(Boolean);
-  return words.length >= 2 && words.length <= 5;
+  return words.length >= 2 && words.length <= 6;
 }
 
 function cleanQuery(q: string): string {
@@ -521,13 +521,18 @@ export async function POST(
     let skippedScore = 0;
     let fromPool = 0;
 
-    // Pre-filter name/location before scoring, then cap the scoring pool.
+    // Pre-filter: drop confirmed overseas candidates and non-person names before scoring.
+    // We use isExplicitlyOverseasLocation instead of locationMatches here because
+    // locationMatches checks against specific city keywords — a candidate with location
+    // "New Zealand" (very common on LinkedIn) would fail that check even though they
+    // could be exactly the right person. isExplicitlyOverseasLocation only drops people
+    // who are unambiguously outside NZ (Australia, UK, USA, etc.).
     const toScore = allNew
       .filter((r) => {
         if (!looksLikePersonName(r.name)) return false;
         const poolLoc = poolMap.get(r.linkedinUrl)?.location ?? "";
         const loc = poolLoc || r.location || "";
-        if (loc && !locationMatches(loc, locationKeywords)) return false;
+        if (loc && isExplicitlyOverseasLocation(loc)) return false;
         return true;
       })
       .slice(0, Math.min(Math.max(maxResults * 3, maxResults + 15), 100));
@@ -598,10 +603,6 @@ export async function POST(
       for (const item of results) {
         if (saved.length >= maxResults) break;
         const { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore } = item;
-
-        if (candidateLocation && locationKeywords.length > 0 && !locationMatches(candidateLocation, locationKeywords)) {
-          continue;
-        }
 
         // Hard location cutoff: drop candidates we KNOW are far out-of-area.
         // Only applies when candidateLocation is set — if it's empty, the AI had no location
