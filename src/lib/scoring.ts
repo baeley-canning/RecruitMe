@@ -12,7 +12,7 @@
 //   - Degree importance weights: regulated profession=1.5×, technical field degree=1.3×, general degree=1.1×
 //   - "equivalent" status: requirement satisfied via experience (full=100, snippet=85, minimal=70); not "unconfirmed"
 //   - Critical gate: unconfirmed 1.5× must-have on snippet hard-caps to 45; "equivalent" does not trigger gate
-//   - Snippet cap held at 55, minimal at 40
+//   - Snippet cap raised from 55 to 70 (snippets are genuinely informative), minimal at 40
 //   - Search route applies 30% floor for snippet data so provisional results surface
 //   - Search route locationFitScore cutoff only fires when candidateLocation is known
 //   - Knockout criteria merged into must_haves for scoring so they affect the coverage score
@@ -304,8 +304,8 @@ export function buildScoreBreakdown(params: {
   const niceToHavePct = computeNiceToHavePct(params.nice_to_have_coverage);
   const rawOverall    = computeOverallScore(params.categories, mustHavePct);
 
-  // Base cap by data quality
-  let cap = dataQuality === "snippet" ? 55 : dataQuality === "minimal" ? 40 : 100;
+  // Base cap by data quality — snippets are informative enough to score to 70%
+  let cap = dataQuality === "snippet" ? 70 : dataQuality === "minimal" ? 40 : 100;
 
   // Critical gate: if any 1.5× importance must-have is unconfirmed on a non-full profile,
   // the candidate cannot be presented as a real match until fetch proves otherwise.
