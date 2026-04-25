@@ -613,15 +613,7 @@ export async function POST(
           continue;
         }
 
-        // Snippet/minimal candidates are capped at 55% (or 45% with a critical unconfirmed
-        // must-have like NZ residency). Applying the full minScore would filter all of them
-        // out when it's set to 50%+. Use a 30% floor for provisional data so candidates
-        // worth fetching actually surface — the score updates to full once profile is fetched.
-        const SNIPPET_MIN_FLOOR = 30;
-        const isSnippetData = classifyDataQuality(profileText?.length ?? 0) !== "full_profile";
-        const effectiveMin = isSnippetData ? Math.min(minScore, SNIPPET_MIN_FLOOR) : minScore;
-
-        if (effectiveMin > 0 && (matchScore === null || matchScore < effectiveMin)) {
+        if (minScore > 0 && (matchScore === null || matchScore < minScore)) {
           skippedScore++;
           continue;
         }
@@ -656,8 +648,8 @@ export async function POST(
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
     if (sorted.length === 0) {
-      const reason = skippedScore > 0
-        ? `Scored ${scored} candidates but none cleared the threshold. Snippet-level results are capped at 55% — try lowering the minimum score below 30% or fetching full profiles.`
+      const reason = skippedScore > 0 && minScore > 0
+        ? `Found ${scored} candidates but none scored ${minScore}%+. LinkedIn search snippets are short — scores top out around 50–55% until you fetch the full profile. Lower the minimum score to 0% to see all provisional results, then fetch profiles on the ones that look promising.`
         : "No matching candidates found. Try re-analysing the job description or adjusting the search area.";
       return NextResponse.json({ count: 0, candidates: [], message: reason });
     }
