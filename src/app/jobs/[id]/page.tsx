@@ -1573,19 +1573,6 @@ export default function JobDetailPage({
                             ))}
                           </select>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <label className="text-xs text-slate-500 whitespace-nowrap">Min. match score</label>
-                          <select
-                            value={minScore}
-                            onChange={(e) => setMinScore(Number(e.target.value))}
-                            disabled={searching}
-                            className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                          >
-                            {[0, 50, 60, 70, 80, 90].map((n) => (
-                              <option key={n} value={n}>{n === 0 ? "No filter" : `${n}%`}</option>
-                            ))}
-                          </select>
-                        </div>
                       </div>
 
                       {/* Locked location banner */}

@@ -613,10 +613,9 @@ export async function POST(
           continue;
         }
 
-        if (minScore > 0 && (matchScore === null || matchScore < minScore)) {
-          skippedScore++;
-          continue;
-        }
+        // minScore is not applied during search — all results are snippets which
+        // cap at ~55% regardless of candidate quality. The filter applies in the
+        // candidate list view after profiles have been fetched and properly scored.
 
         try {
           const candidate = await prisma.candidate.create({
@@ -648,9 +647,7 @@ export async function POST(
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
     if (sorted.length === 0) {
-      const reason = skippedScore > 0 && minScore > 0
-        ? `Found ${scored} candidates but none scored ${minScore}%+. LinkedIn search snippets are short — scores top out around 50–55% until you fetch the full profile. Lower the minimum score to 0% to see all provisional results, then fetch profiles on the ones that look promising.`
-        : "No matching candidates found. Try re-analysing the job description or adjusting the search area.";
+      const reason = "No matching candidates found. Try re-analysing the job description or adjusting the search area.";
       return NextResponse.json({ count: 0, candidates: [], message: reason });
     }
 
