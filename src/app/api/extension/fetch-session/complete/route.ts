@@ -44,7 +44,6 @@ async function processCaptureCompletion(args: {
       status: "completed",
       message: "Profile captured and scored",
       completedAt: new Date().toISOString(),
-      candidate,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to save captured profile";

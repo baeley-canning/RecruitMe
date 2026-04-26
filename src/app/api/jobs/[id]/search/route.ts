@@ -18,7 +18,7 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { expandLocationKeywords, isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
+import { isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
 import { getCityCoords, getNearestCity } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
@@ -340,7 +340,6 @@ export async function POST(
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
   const searchLocation = customCenterCity?.name ?? (canonicalJobCity || locationSource);
   const targetLocation = customCenterCity?.name ?? (location || canonicalJobCity || locationSource);
-  const baseKeywords     = customCenterCity?.keywords ?? expandLocationKeywords(targetLocation);
   const jobCoords        = getCityCoords(locationSource);
   const searchCenter     = centerLat != null && centerLng != null
     ? { lat: centerLat, lng: centerLng }

@@ -37,8 +37,6 @@ export async function POST(
     return NextResponse.json({ scored: 0, total: 0, message: "No candidates with profile text to score." });
   }
 
-  lastScored.set(id, Date.now());
-
   const parsedRole = JSON.parse(job.parsedRole) as ParsedRole;
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
@@ -72,5 +70,6 @@ export async function POST(
     );
   }
 
+  lastScored.set(id, Date.now());
   return NextResponse.json({ scored, total: candidates.length });
 }
