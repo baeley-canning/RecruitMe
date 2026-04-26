@@ -363,6 +363,19 @@ export async function POST(
     .slice(0, MAX_QUERY_VARIANTS);
   const targetRaw = Math.min(Math.max(maxResults * 3, maxResults + 15), 120);
 
+  // Create a search session to persist progress — if rate-limited mid-search,
+  // results already saved to DB are preserved and the session records what happened.
+  const session = await prisma.searchSession.create({
+    data: {
+      jobId:    id,
+      status:   "running",
+      queries:  JSON.stringify(searchQueries),
+      location: searchLocation,
+      target:   maxResults,
+      orgId:    auth.orgId,
+    },
+  });
+
   try {
     const seenUrls = new Set<string>();
     const allRaw: SearchResult[] = [];
@@ -646,24 +659,44 @@ export async function POST(
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
+    const finalStatus = sawRetryableSearchFailure ? "rate_limited" : "complete";
+    const importedIds = sorted.map((c) => c.id);
+
+    await prisma.searchSession.update({
+      where: { id: session.id },
+      data: {
+        status:      finalStatus,
+        collected:   sorted.length,
+        importedIds: JSON.stringify(importedIds),
+        message:     sorted.length === 0
+          ? "No matching candidates found."
+          : `Found ${sorted.length} candidate${sorted.length !== 1 ? "s" : ""}${sawRetryableSearchFailure ? " (partial — rate limited)" : ""}.`,
+      },
+    });
+
     if (sorted.length === 0) {
-      const reason = "No matching candidates found. Try re-analysing the job description or adjusting the search area.";
+      const reason = sawRetryableSearchFailure
+        ? "Search was rate-limited before returning results. Wait a moment and search again — already-imported candidates won't be duplicated."
+        : "No matching candidates found. Try re-analysing the job description or adjusting the search area.";
       return NextResponse.json({ count: 0, candidates: [], message: reason });
     }
 
     const poolNote = fromPool > 0 ? ` (${fromPool} from talent pool, ${saved.length - fromPool} from LinkedIn)` : "";
-    const limitNote =
-      saved.length < maxResults && sawRetryableSearchFailure
-        ? " Search APIs throttled during collection, so RecruitMe retried and kept going, but results may still be partial."
-        : "";
+    const limitNote = sawRetryableSearchFailure
+      ? " Search was partially rate-limited — run again to find more, already-imported candidates won't be duplicated."
+      : "";
     return NextResponse.json({
       count: sorted.length,
       candidates: sorted,
       fromPool,
-      message: sorted.length > 0 ? `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim() : undefined,
+      message: `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
     });
   } catch (err) {
     console.error("Search error:", err);
+    await prisma.searchSession.update({
+      where: { id: session.id },
+      data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search failed" },
+    }).catch(() => {});
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Search failed" },
       { status: 500 }

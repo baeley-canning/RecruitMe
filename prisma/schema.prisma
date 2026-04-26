@@ -96,6 +96,44 @@ model CandidateFile {
   createdAt   DateTime  @default(now())
 }
 
+// Replaces the Setting-JSON extension queue — proper indexed table per session.
+model FetchSession {
+  id          String   @id @default(cuid())
+  jobId       String
+  candidateId String
+  linkedinUrl String
+  status      String   @default("pending") // pending | processing | completed | error
+  message     String   @default("")
+  error       String?
+  orgId       String?
+  userId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([candidateId])
+  @@index([jobId])
+  @@index([status])
+}
+
+// Persists search progress so partial results survive rate-limit interruptions.
+model SearchSession {
+  id          String   @id @default(cuid())
+  jobId       String
+  status      String   @default("running") // running | complete | rate_limited
+  queries     String   // JSON: string[]
+  location    String
+  collected   Int      @default(0)
+  target      Int
+  page        Int      @default(0)
+  importedIds String   @default("[]") // JSON: candidateId[]
+  message     String?
+  orgId       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([jobId])
+}
+
 model ReferenceCheck {
   id              String    @id @default(cuid())
   candidateId     String

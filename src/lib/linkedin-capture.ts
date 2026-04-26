@@ -177,57 +177,57 @@ export function extractIdentityFromLinkedInProfileText(profileText: string): {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-session queue helpers
+// Multi-session queue helpers — backed by FetchSession table (was Setting JSON)
 // ---------------------------------------------------------------------------
 
-async function readSessionQueue(): Promise<ExtensionCaptureSession[]> {
-  const row = await prisma.setting.findUnique({ where: { key: LINKEDIN_EXTENSION_QUEUE_KEY } });
-  if (!row?.value) return [];
-  try {
-    const data = JSON.parse(row.value) as unknown;
-    if (!Array.isArray(data)) return [];
-    return data as ExtensionCaptureSession[];
-  } catch {
-    return [];
-  }
-}
-
-async function writeSessionQueue(sessions: ExtensionCaptureSession[]): Promise<void> {
-  const now = Date.now();
-  const active = sessions.filter(
-    (s) => now - new Date(s.updatedAt || s.createdAt).getTime() <= SESSION_TTL_MS
-  );
-
-  if (active.length === 0) {
-    await prisma.setting.delete({ where: { key: LINKEDIN_EXTENSION_QUEUE_KEY } }).catch(() => {});
-    return;
-  }
-
-  await prisma.setting.upsert({
-    where: { key: LINKEDIN_EXTENSION_QUEUE_KEY },
-    update: { value: JSON.stringify(active) },
-    create: { key: LINKEDIN_EXTENSION_QUEUE_KEY, value: JSON.stringify(active) },
-  });
+function dbRowToSession(row: {
+  id: string; jobId: string; candidateId: string; linkedinUrl: string;
+  status: string; message: string; error: string | null;
+  orgId: string | null; userId: string | null;
+  createdAt: Date; updatedAt: Date;
+}, candidateName = ""): ExtensionCaptureSession {
+  return {
+    sessionId:     row.id,
+    jobId:         row.jobId,
+    candidateId:   row.candidateId,
+    linkedinUrl:   row.linkedinUrl,
+    candidateName,
+    status:        row.status as ExtensionCaptureStatus,
+    message:       row.message,
+    error:         row.error ?? undefined,
+    orgId:         row.orgId,
+    userId:        row.userId ?? undefined,
+    createdAt:     row.createdAt.toISOString(),
+    updatedAt:     row.updatedAt.toISOString(),
+  };
 }
 
 /** Returns all non-expired sessions currently in the queue. */
 export async function getSessionQueue(): Promise<ExtensionCaptureSession[]> {
-  const sessions = await readSessionQueue();
-  const now = Date.now();
-  const active = sessions.filter(
-    (s) => now - new Date(s.updatedAt || s.createdAt).getTime() <= SESSION_TTL_MS
-  );
-  if (active.length !== sessions.length) {
-    await writeSessionQueue(active);
-  }
-  return active;
+  const cutoff = new Date(Date.now() - SESSION_TTL_MS);
+  const rows = await prisma.fetchSession.findMany({
+    where: { updatedAt: { gte: cutoff } },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map((r) => dbRowToSession(r));
 }
 
 /** Add (or replace an existing session for the same candidateId) in the queue. */
 export async function addSessionToQueue(session: ExtensionCaptureSession): Promise<void> {
-  const queue = await getSessionQueue();
-  const filtered = queue.filter((s) => s.candidateId !== session.candidateId);
-  await writeSessionQueue([...filtered, session]);
+  await prisma.fetchSession.deleteMany({ where: { candidateId: session.candidateId } });
+  await prisma.fetchSession.create({
+    data: {
+      id:          session.sessionId,
+      jobId:       session.jobId,
+      candidateId: session.candidateId,
+      linkedinUrl: session.linkedinUrl,
+      status:      session.status,
+      message:     session.message,
+      error:       session.error ?? null,
+      orgId:       session.orgId ?? null,
+      userId:      session.userId ?? null,
+    },
+  });
 }
 
 /** Find the first session matching a predicate. */
@@ -242,20 +242,22 @@ export async function findSessionInQueue(
 export async function updateSessionInQueue(
   patch: Partial<ExtensionCaptureSession> & Pick<ExtensionCaptureSession, "sessionId">
 ): Promise<ExtensionCaptureSession | null> {
-  const queue = await getSessionQueue();
-  const idx = queue.findIndex((s) => s.sessionId === patch.sessionId);
-  if (idx === -1) return null;
-
-  const updated: ExtensionCaptureSession = { ...queue[idx], ...patch, updatedAt: nowIso() };
-  queue[idx] = updated;
-  await writeSessionQueue(queue);
-  return updated;
+  const existing = await prisma.fetchSession.findUnique({ where: { id: patch.sessionId } });
+  if (!existing) return null;
+  const updated = await prisma.fetchSession.update({
+    where: { id: patch.sessionId },
+    data: {
+      ...(patch.status  !== undefined && { status:  patch.status }),
+      ...(patch.message !== undefined && { message: patch.message }),
+      ...(patch.error   !== undefined && { error:   patch.error }),
+    },
+  });
+  return dbRowToSession(updated);
 }
 
 /** Remove a session from the queue by sessionId. */
 export async function removeSessionFromQueue(sessionId: string): Promise<void> {
-  const queue = await getSessionQueue();
-  await writeSessionQueue(queue.filter((s) => s.sessionId !== sessionId));
+  await prisma.fetchSession.delete({ where: { id: sessionId } }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
