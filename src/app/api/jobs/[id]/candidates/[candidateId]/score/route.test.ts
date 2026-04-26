@@ -13,6 +13,13 @@ const dbMocks = vi.hoisted(() => ({
 
 const aiMocks = vi.hoisted(() => ({
   scoreCandidateStructured: vi.fn(),
+  predictAcceptance: vi.fn().mockResolvedValue({
+    score: 65,
+    likelihood: "medium",
+    headline: "May consider",
+    signals: [],
+    summary: "Mock acceptance prediction.",
+  }),
 }));
 
 const sessionMocks = vi.hoisted(() => ({

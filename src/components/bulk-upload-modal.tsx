@@ -38,7 +38,6 @@ export function BulkUploadModal({ jobId, onClose, onComplete }: BulkUploadModalP
 
   const processAll = async () => {
     setProcessing(true);
-    const BATCH = 3;
     const queued = files.filter((e) => e.status === "queued");
 
     const processOne = async (entry: BulkFileEntry) => {
@@ -72,8 +71,9 @@ export function BulkUploadModal({ jobId, onClose, onComplete }: BulkUploadModalP
       }
     };
 
-    for (let i = 0; i < queued.length; i += BATCH) {
-      await Promise.all(queued.slice(i, i + BATCH).map(processOne));
+    // Serial — each CV scores with Claude before the next starts (avoids parallel API bursts)
+    for (const entry of queued) {
+      await processOne(entry);
     }
 
     onComplete();

@@ -145,13 +145,15 @@ describe("computeMustHavePct", () => {
   });
 
   it("mixes equivalent and other statuses correctly", () => {
-    // equivalent=100, confirmed=100, missing=0 → avg = 200/3 = 67
+    // "Bachelor's degree or equivalent" matches the 1.1× degree weight (first clause matches before the
+    // 'or equivalent' exclusion in the second clause); React and Docker are 1.0×.
+    // Points: (100×1.1) + (100×1.0) + (0×1.0) = 210; weight: 1.1+1.0+1.0 = 3.1 → round(67.74) = 68
     const coverage: MustHaveStatus[] = [
       { requirement: "Bachelor's degree or equivalent", status: "equivalent", evidence: "8 years relevant experience" },
       { requirement: "React",                           status: "confirmed",  evidence: "Listed in skills" },
       { requirement: "Docker",                          status: "missing",    evidence: "Not mentioned" },
     ];
-    expect(computeMustHavePct(coverage, "full_profile")).toBe(67);
+    expect(computeMustHavePct(coverage, "full_profile")).toBe(68);
   });
 });
 
