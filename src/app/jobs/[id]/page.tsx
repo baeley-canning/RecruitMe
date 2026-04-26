@@ -173,9 +173,9 @@ export default function JobDetailPage({
   const [sources, setSources] = useState<{ serpapi: boolean; bing: boolean; pdl: boolean } | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
   const [maxResults, setMaxResults] = useState(20);
-  const [minScore, setMinScore] = useState(0);
+  const [minScore] = useState(0);
   const [radiusKm, setRadiusKm] = useState(25);
-  const [showMap, setShowMap] = useState(false);
+  const [showMap, setShowMap] = useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
   const [locationLocked, setLocationLocked] = useState(false);
   const [customCenter, setCustomCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
@@ -1013,7 +1013,7 @@ export default function JobDetailPage({
               {togglingStatus ? "Closing…" : "Close job"}
             </button>
           )}
-          <Button variant="outline" onClick={() => { setBulkFiles([]); setShowBulkUpload(true); }}>
+          <Button variant="outline" onClick={() => setShowBulkUpload(true)}>
             <Upload className="w-4 h-4" />
             Upload CVs
           </Button>

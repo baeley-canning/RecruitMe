@@ -18,7 +18,7 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { expandLocationKeywords, isExplicitlyOverseasLocation, isNzLocation, locationMatches, normalizeLocationText } from "@/lib/location";
+import { expandLocationKeywords, isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
@@ -345,8 +345,7 @@ export async function POST(
   const searchCenter     = centerLat != null && centerLng != null
     ? { lat: centerLat, lng: centerLng }
     : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
-  const radiusKeywords   = searchCenter ? getCityKeywordsWithinRadius(searchCenter.lat, searchCenter.lng, radiusKm) : [];
-  const locationKeywords = [...new Set([...baseKeywords, ...radiusKeywords])];
+  const _radiusKeywords  = searchCenter ? getCityKeywordsWithinRadius(searchCenter.lat, searchCenter.lng, radiusKm) : [];
 
   // Build query pool: explicit search queries + synonym titles as standalone title searches
   // Synonym titles are the key insight — recruiters search off real titles, not JD language
@@ -615,7 +614,7 @@ export async function POST(
 
       for (const item of results) {
         if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore } = item;
+        const { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, locationFitScore } = item;
 
         // Hard location cutoff: drop candidates we KNOW are far out-of-area.
         // Only applies when candidateLocation is set — if it's empty, the AI had no location
