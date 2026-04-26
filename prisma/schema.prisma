@@ -98,17 +98,19 @@ model CandidateFile {
 
 // Replaces the Setting-JSON extension queue — proper indexed table per session.
 model FetchSession {
-  id          String   @id @default(cuid())
-  jobId       String
-  candidateId String
-  linkedinUrl String
-  status      String   @default("pending") // pending | processing | completed | error
-  message     String   @default("")
-  error       String?
-  orgId       String?
-  userId      String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  jobId         String
+  candidateId   String
+  linkedinUrl   String
+  candidateName String   @default("")
+  status        String   @default("pending") // pending | processing | completed | error
+  message       String   @default("")
+  error         String?
+  completedAt   DateTime?
+  orgId         String?
+  userId        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([candidateId])
   @@index([jobId])

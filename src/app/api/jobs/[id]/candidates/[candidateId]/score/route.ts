@@ -27,24 +27,31 @@ export async function POST(
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
 
-    const [rawBreakdown, acceptance] = await Promise.all([
+    const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
       scoreCandidateStructured(candidate.profileText, parsedRole, salary),
       predictAcceptance(candidate.profileText, parsedRole, salary),
     ]);
+
+    if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
+
     const breakdown = applyLocationFitOverride(
-      rawBreakdown,
+      rawBreakdown.value,
       candidate.location,
       parsedRole.location,
       parsedRole.location_rules,
       job.isRemote,
     );
 
+    const acceptanceData = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
+
     const updated = await prisma.candidate.update({
       where: { id: candidateId },
       data: {
         ...deriveUpdateData(breakdown),
-        acceptanceScore: acceptance.score,
-        acceptanceReason: JSON.stringify(acceptance),
+        ...(acceptanceData && {
+          acceptanceScore: acceptanceData.score,
+          acceptanceReason: JSON.stringify(acceptanceData),
+        }),
       },
     });
 

@@ -19,7 +19,7 @@ import {
   type ScoreBreakdown,
 } from "@/lib/scoring";
 import { expandLocationKeywords, isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
-import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
+import { getCityCoords, getNearestCity } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
@@ -345,7 +345,6 @@ export async function POST(
   const searchCenter     = centerLat != null && centerLng != null
     ? { lat: centerLat, lng: centerLng }
     : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
-  const _radiusKeywords  = searchCenter ? getCityKeywordsWithinRadius(searchCenter.lat, searchCenter.lng, radiusKm) : [];
 
   // Build query pool: explicit search queries + synonym titles as standalone title searches
   // Synonym titles are the key insight — recruiters search off real titles, not JD language

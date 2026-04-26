@@ -182,19 +182,20 @@ export function extractIdentityFromLinkedInProfileText(profileText: string): {
 
 function dbRowToSession(row: {
   id: string; jobId: string; candidateId: string; linkedinUrl: string;
-  status: string; message: string; error: string | null;
-  orgId: string | null; userId: string | null;
+  candidateName: string; status: string; message: string; error: string | null;
+  completedAt: Date | null; orgId: string | null; userId: string | null;
   createdAt: Date; updatedAt: Date;
-}, candidateName = ""): ExtensionCaptureSession {
+}): ExtensionCaptureSession {
   return {
     sessionId:     row.id,
     jobId:         row.jobId,
     candidateId:   row.candidateId,
     linkedinUrl:   row.linkedinUrl,
-    candidateName,
+    candidateName: row.candidateName,
     status:        row.status as ExtensionCaptureStatus,
     message:       row.message,
     error:         row.error ?? undefined,
+    completedAt:   row.completedAt?.toISOString(),
     orgId:         row.orgId,
     userId:        row.userId ?? undefined,
     createdAt:     row.createdAt.toISOString(),
@@ -217,15 +218,16 @@ export async function addSessionToQueue(session: ExtensionCaptureSession): Promi
   await prisma.fetchSession.deleteMany({ where: { candidateId: session.candidateId } });
   await prisma.fetchSession.create({
     data: {
-      id:          session.sessionId,
-      jobId:       session.jobId,
-      candidateId: session.candidateId,
-      linkedinUrl: session.linkedinUrl,
-      status:      session.status,
-      message:     session.message,
-      error:       session.error ?? null,
-      orgId:       session.orgId ?? null,
-      userId:      session.userId ?? null,
+      id:            session.sessionId,
+      jobId:         session.jobId,
+      candidateId:   session.candidateId,
+      linkedinUrl:   session.linkedinUrl,
+      candidateName: session.candidateName,
+      status:        session.status,
+      message:       session.message,
+      error:         session.error ?? null,
+      orgId:         session.orgId ?? null,
+      userId:        session.userId ?? null,
     },
   });
 }
@@ -247,9 +249,10 @@ export async function updateSessionInQueue(
   const updated = await prisma.fetchSession.update({
     where: { id: patch.sessionId },
     data: {
-      ...(patch.status  !== undefined && { status:  patch.status }),
-      ...(patch.message !== undefined && { message: patch.message }),
-      ...(patch.error   !== undefined && { error:   patch.error }),
+      ...(patch.status      !== undefined && { status:      patch.status }),
+      ...(patch.message     !== undefined && { message:     patch.message }),
+      ...(patch.error       !== undefined && { error:       patch.error }),
+      ...(patch.completedAt !== undefined && { completedAt: new Date(patch.completedAt) }),
     },
   });
   return dbRowToSession(updated);
