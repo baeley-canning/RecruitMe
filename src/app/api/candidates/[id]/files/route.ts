@@ -164,5 +164,6 @@ export async function POST(
     }
   }
 
-  return NextResponse.json(created, { status: 201 });
+  const scored = type === "cv" && candidate.job.parsedRole ? true : false;
+  return NextResponse.json({ ...created, scored }, { status: 201 });
 }

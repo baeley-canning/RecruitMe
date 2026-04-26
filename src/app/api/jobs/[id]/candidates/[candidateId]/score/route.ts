@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
@@ -27,7 +27,10 @@ export async function POST(
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
 
-    const rawBreakdown = await scoreCandidateStructured(candidate.profileText, parsedRole, salary);
+    const [rawBreakdown, acceptance] = await Promise.all([
+      scoreCandidateStructured(candidate.profileText, parsedRole, salary),
+      predictAcceptance(candidate.profileText, parsedRole, salary),
+    ]);
     const breakdown = applyLocationFitOverride(
       rawBreakdown,
       candidate.location,
@@ -38,7 +41,11 @@ export async function POST(
 
     const updated = await prisma.candidate.update({
       where: { id: candidateId },
-      data:  deriveUpdateData(breakdown),
+      data: {
+        ...deriveUpdateData(breakdown),
+        acceptanceScore: acceptance.score,
+        acceptanceReason: JSON.stringify(acceptance),
+      },
     });
 
     return NextResponse.json(updated);

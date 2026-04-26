@@ -709,12 +709,14 @@ function DrawerFileRow({ file, candidateId, onDeleted }: { file: DrawerFile; can
 function DrawerUploadZone({ candidateId, onUploaded }: { candidateId: string; onUploaded: (file: DrawerFile) => void }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [type, setType] = useState<"cv" | "cover_letter" | "other">("cv");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setError(null);
+    setNotice(null);
     setUploading(true);
     try {
       const form = new FormData();
@@ -725,7 +727,13 @@ function DrawerUploadZone({ candidateId, onUploaded }: { candidateId: string; on
         const json = await res.json().catch(() => ({}));
         setError(json.error ?? "Upload failed");
       } else {
-        onUploaded(await res.json());
+        const data = await res.json();
+        onUploaded(data);
+        if (type === "cv" && data.scored === false) {
+          setNotice("CV saved — no score generated because this job hasn't been parsed yet.");
+        } else if (type === "cv" && data.scored) {
+          setNotice("CV uploaded and scored.");
+        }
       }
     } catch {
       setError("Upload failed — please try again");
@@ -764,6 +772,7 @@ function DrawerUploadZone({ candidateId, onUploaded }: { candidateId: string; on
       </div>
       <p className="text-[10px] text-slate-400">PDF, Word, or plain text · max 10 MB</p>
       {error && <p className="text-xs text-red-500">{error}</p>}
+      {notice && <p className="text-xs text-slate-500">{notice}</p>}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 const CONCURRENCY = 3;
+const COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes per job
+const lastScored = new Map<string, number>();
 
 export async function POST(
   _req: Request,
@@ -14,6 +16,12 @@ export async function POST(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
+
+  const last = lastScored.get(id);
+  if (last && Date.now() - last < COOLDOWN_MS) {
+    const waitSec = Math.ceil((COOLDOWN_MS - (Date.now() - last)) / 1000);
+    return NextResponse.json({ error: `Re-score all was just run. Wait ${waitSec}s before running again.` }, { status: 429 });
+  }
 
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
@@ -28,6 +36,8 @@ export async function POST(
   if (candidates.length === 0) {
     return NextResponse.json({ scored: 0, total: 0, message: "No candidates with profile text to score." });
   }
+
+  lastScored.set(id, Date.now());
 
   const parsedRole = JSON.parse(job.parsedRole) as ParsedRole;
   const salary = (job.salaryMin || job.salaryMax)
