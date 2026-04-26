@@ -528,12 +528,50 @@ describe("buildScoreBreakdown", () => {
       profileCharCount:      350,
     });
 
-    // Snippet is more charitable on must_have_pct (unknown/missing get partial credit)
+    // Snippets give unknowns partial credit (30pts) vs full profiles (0pts) —
+    // absence of evidence is not evidence of absence.
     expect(snippetBreakdown.must_have_pct).toBeGreaterThan(fullProfileBreakdown.must_have_pct);
-    // But the hard cap at 55 keeps snippet overall LOWER than a full-profile with sparse evidence
-    expect(snippetBreakdown.overall).toBeLessThan(fullProfileBreakdown.overall);
-    expect(snippetBreakdown.overall).toBeLessThanOrEqual(55);
+    // Snippet cap is 70% — prevents snippets from looking like confirmed strong matches.
+    expect(snippetBreakdown.overall).toBeLessThanOrEqual(70);
+    // Snippet with sparse must-have evidence should not reach 70% cap.
+    expect(snippetBreakdown.overall).toBeLessThan(70);
     expect(snippetBreakdown.confidence.level).toBe("low");
     expect(snippetBreakdown.data_quality).toBe("snippet");
+  });
+
+  it("snippet cannot outscore a full profile when all must-haves are confirmed", () => {
+    const allConfirmedCoverage: MustHaveStatus[] = [
+      { requirement: "WordPress", status: "confirmed", evidence: "Confirmed" },
+      { requirement: "UX", status: "confirmed", evidence: "Confirmed" },
+      { requirement: "Full website builds", status: "confirmed", evidence: "Confirmed" },
+      { requirement: "Back-end development", status: "confirmed", evidence: "Confirmed" },
+    ];
+
+    const fullProfileBreakdown = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    allConfirmedCoverage,
+      nice_to_have_coverage: [],
+      reasons_for:           [],
+      reasons_against:       [],
+      missing_evidence:      [],
+      recruiter_summary:     "",
+      profileCharCount:      3000,
+    });
+
+    const snippetBreakdown = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    allConfirmedCoverage,
+      nice_to_have_coverage: [],
+      reasons_for:           [],
+      reasons_against:       [],
+      missing_evidence:      [],
+      recruiter_summary:     "",
+      profileCharCount:      350,
+    });
+
+    // When all must-haves are confirmed, full profile should always outscore a snippet
+    // because snippet cap (70%) is below where a fully-confirmed full profile lands.
+    expect(fullProfileBreakdown.overall).toBeGreaterThan(snippetBreakdown.overall);
+    expect(snippetBreakdown.overall).toBeLessThanOrEqual(70);
   });
 });
