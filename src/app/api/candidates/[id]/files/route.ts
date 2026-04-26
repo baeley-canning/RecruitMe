@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
-import { scoreCandidateStructured } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { safeParseJson } from "@/lib/utils";
@@ -142,28 +142,44 @@ export async function POST(
       };
 
       const parsedRole = safeParseJson<ParsedRole | null>(candidate.job.parsedRole, null);
+      let scored = false;
       if (parsedRole) {
         try {
           const salary = (candidate.job.salaryMin || candidate.job.salaryMax)
             ? { min: candidate.job.salaryMin ?? 0, max: candidate.job.salaryMax ?? 0 }
             : null;
-          const breakdown = applyLocationFitOverride(
-            await scoreCandidateStructured(profileText.trim(), parsedRole, salary),
-            candidate.location,
-            parsedRole.location ?? candidate.job.location ?? "",
-            parsedRole.location_rules,
-            candidate.job.isRemote,
-          );
-          Object.assign(updates, deriveUpdateData(breakdown));
+          const text = profileText.trim();
+          const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
+            scoreCandidateStructured(text, parsedRole, salary),
+            predictAcceptance(text, parsedRole, salary),
+          ]);
+          if (rawBreakdown.status === "fulfilled") {
+            const breakdown = applyLocationFitOverride(
+              rawBreakdown.value,
+              candidate.location,
+              parsedRole.location ?? candidate.job.location ?? "",
+              parsedRole.location_rules,
+              candidate.job.isRemote,
+            );
+            Object.assign(updates, deriveUpdateData(breakdown));
+            if (acceptanceResult.status === "fulfilled") {
+              updates.acceptanceScore = acceptanceResult.value.score;
+              updates.acceptanceReason = JSON.stringify(acceptanceResult.value);
+            }
+            scored = true;
+          } else {
+            console.error("[cv-upload] scoring failed:", rawBreakdown.reason);
+          }
         } catch (err) {
           console.error("[cv-upload] scoring failed:", err);
         }
       }
 
       await prisma.candidate.update({ where: { id }, data: updates });
+      return NextResponse.json({ ...created, scored }, { status: 201 });
     }
   }
 
-  const scored = type === "cv" && candidate.job.parsedRole ? true : false;
+  const scored = false;
   return NextResponse.json({ ...created, scored }, { status: 201 });
 }

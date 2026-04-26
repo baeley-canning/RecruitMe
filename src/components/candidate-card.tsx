@@ -814,11 +814,13 @@ function ProfileDrawer({
   const [filesLoading, setFilesLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/candidates/${candidate.id}/files`)
+    const controller = new AbortController();
+    fetch(`/api/candidates/${candidate.id}/files`, { signal: controller.signal })
       .then((r) => r.ok ? r.json() : [])
       .then(setFiles)
-      .catch(() => {})
+      .catch((e) => { if (e.name !== "AbortError") console.error(e); })
       .finally(() => setFilesLoading(false));
+    return () => controller.abort();
   }, [candidate.id]);
 
   const handleSaveLinkedIn = useCallback(() => {

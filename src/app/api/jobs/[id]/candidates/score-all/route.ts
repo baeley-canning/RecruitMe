@@ -22,6 +22,8 @@ export async function POST(
     const waitSec = Math.ceil((COOLDOWN_MS - (Date.now() - last)) / 1000);
     return NextResponse.json({ error: `Re-score all was just run. Wait ${waitSec}s before running again.` }, { status: 429 });
   }
+  // Claim the slot immediately to block concurrent requests before async work starts.
+  lastScored.set(id, Date.now());
 
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
@@ -70,6 +72,5 @@ export async function POST(
     );
   }
 
-  lastScored.set(id, Date.now());
   return NextResponse.json({ scored, total: candidates.length });
 }
