@@ -152,6 +152,7 @@ function UploadZone({
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [type, setType] = useState<"cv" | "cover_letter" | "other">("cv");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -169,8 +170,13 @@ function UploadZone({
           const json = await res.json().catch(() => ({}));
           setError(json.error ?? "Upload failed");
         } else {
-          const created = await res.json();
-          onUploaded(created);
+          const data = await res.json();
+          onUploaded(data);
+          if (type === "cv") {
+            setNotice(data.scored
+              ? "CV uploaded and scored against this candidate's job."
+              : "CV saved. To score it, open the candidate from a job page where the JD has been parsed.");
+          }
         }
       } catch {
         setError("Upload failed — please try again");
@@ -218,11 +224,8 @@ function UploadZone({
         </label>
       </div>
       <p className="text-xs text-slate-400">PDF, Word, or plain text · max 10 MB</p>
-      {error && (
-        <p className="text-xs text-red-500 flex items-center gap-1">
-          <X className="w-3 h-3" /> {error}
-        </p>
-      )}
+      {error && <p className="text-xs text-red-500 flex items-center gap-1"><X className="w-3 h-3" /> {error}</p>}
+      {notice && <p className="text-xs text-slate-500">{notice}</p>}
     </div>
   );
 }
