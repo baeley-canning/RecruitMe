@@ -18,7 +18,7 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { isExplicitlyOverseasLocation, isNzLocation } from "@/lib/location";
+import { isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
