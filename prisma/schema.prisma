@@ -22,9 +22,11 @@ model Job {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  candidates  Candidate[]
-  orgId       String?
-  org         Org?     @relation(fields: [orgId], references: [id])
+  candidates     Candidate[]
+  fetchSessions  FetchSession[]
+  searchSessions SearchSession[]
+  orgId          String?
+  org            Org?     @relation(fields: [orgId], references: [id])
 }
 
 model Setting {
@@ -80,8 +82,9 @@ model Candidate {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  references   ReferenceCheck[]
-  files        CandidateFile[]
+  references    ReferenceCheck[]
+  files         CandidateFile[]
+  fetchSessions FetchSession[]
 }
 
 model CandidateFile {
@@ -98,19 +101,21 @@ model CandidateFile {
 
 // Replaces the Setting-JSON extension queue — proper indexed table per session.
 model FetchSession {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   jobId         String
+  job           Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
   candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   linkedinUrl   String
-  candidateName String   @default("")
-  status        String   @default("pending") // pending | processing | completed | error
-  message       String   @default("")
+  candidateName String    @default("")
+  status        String    @default("pending") // pending | processing | completed | error
+  message       String    @default("")
   error         String?
   completedAt   DateTime?
   orgId         String?
   userId        String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([candidateId])
   @@index([jobId])
@@ -121,6 +126,7 @@ model FetchSession {
 model SearchSession {
   id          String   @id @default(cuid())
   jobId       String
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
   status      String   @default("running") // running | complete | rate_limited
   queries     String   // JSON: string[]
   location    String
