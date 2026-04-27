@@ -1744,7 +1744,10 @@ export default function JobDetailPage({
                     onInterviewNotesChange={handleInterviewNotesChange}
                     onDelete={handleDelete}
                     scoring={scoringId === candidate.id}
-                    fetchingProfile={fetchStatuses[candidate.id] !== undefined}
+                    fetchingProfile={
+                      fetchStatuses[candidate.id]?.state === "waiting" ||
+                      fetchStatuses[candidate.id]?.state === "fetching"
+                    }
                   />
                 </div>
               </div>
