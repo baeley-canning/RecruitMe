@@ -6,7 +6,7 @@ import {
   scoreCandidateStructured,
   type ParsedRole,
 } from "./ai";
-import { safeParseJson } from "./utils";
+import { safeParseJson, hashProfileText } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isExplicitlyOverseasLocation, isNzLocation } from "./location";
@@ -378,6 +378,7 @@ async function buildCapturedCandidateData(args: {
     location,
     linkedinUrl: normaliseLinkedInUrl(linkedinUrl),
     profileText: cleanedProfileText,
+    profileTextHash: hashProfileText(cleanedProfileText),
     profileCapturedAt: new Date(),
     ...scoreData,
   };

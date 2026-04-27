@@ -167,6 +167,7 @@ export default function JobDetailPage({
   const [poolError, setPoolError] = useState("");
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
   const [sources, setSources] = useState<{ serpapi: boolean; bing: boolean; pdl: boolean } | null>(null);
+  const [searchHistory, setSearchHistory] = useState<Array<{ id: string; status: string; collected: number; location: string; message: string | null; createdAt: string }>>([]);
   const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
   const [maxResults, setMaxResults] = useState(20);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
@@ -306,6 +307,14 @@ export default function JobDetailPage({
       })
       .catch(() => setHasSerpApi(false));
   }, []);
+
+  // Load recent search history for this job
+  useEffect(() => {
+    fetch(`/api/jobs/${id}/search-sessions`)
+      .then((r) => r.ok ? r.json() : [])
+      .then(setSearchHistory)
+      .catch(() => {});
+  }, [id, searchResult]); // refetch when a new search completes
 
   useEffect(() => {
     if (shouldParse && job && !job.parsedRole && !parsing) {
@@ -1431,6 +1440,23 @@ export default function JobDetailPage({
                           <AlertCircle className="w-3 h-3" />
                           {searchError}
                         </p>
+                      )}
+                      {!searching && searchHistory.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {searchHistory.map((s) => (
+                            <p key={s.id} className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                              {s.status === "complete"
+                                ? <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                                : <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" />}
+                              {new Date(s.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                              {" · "}
+                              {s.status === "complete"
+                                ? `${s.collected} found`
+                                : s.status === "rate_limited" ? "rate limited" : s.status}
+                              {s.location ? ` in ${s.location}` : ""}
+                            </p>
+                          ))}
+                        </div>
                       )}
                       {poolResult && (
                         <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">

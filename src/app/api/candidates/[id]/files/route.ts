@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
 import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
+import { hashProfileText } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { safeParseJson } from "@/lib/utils";
@@ -135,8 +136,10 @@ export async function POST(
   if (type === "cv") {
     const profileText = await extractText(buffer, file.type, file.name);
     if (profileText && profileText.trim().length > 100) {
+      const text = profileText.trim();
       const updates: Record<string, unknown> = {
-        profileText: profileText.trim(),
+        profileText: text,
+        profileTextHash: hashProfileText(text),
         profileCapturedAt: new Date(),
         source: candidate.source === "manual" ? "manual" : candidate.source,
       };
@@ -148,7 +151,6 @@ export async function POST(
           const salary = (candidate.job.salaryMin || candidate.job.salaryMax)
             ? { min: candidate.job.salaryMin ?? 0, max: candidate.job.salaryMax ?? 0 }
             : null;
-          const text = profileText.trim();
           const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
             scoreCandidateStructured(text, parsedRole, salary),
             predictAcceptance(text, parsedRole, salary),

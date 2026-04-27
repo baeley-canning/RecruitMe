@@ -1,5 +1,11 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { createHash } from "crypto";
+
+/** Short SHA-256 fingerprint of profile text — used to skip re-scoring unchanged profiles. */
+export function hashProfileText(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

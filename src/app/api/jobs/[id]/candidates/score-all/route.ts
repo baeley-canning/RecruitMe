@@ -4,6 +4,7 @@ import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { hashProfileText } from "@/lib/utils";
 
 const CONCURRENCY = 3;
 const COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes per job
@@ -45,12 +46,21 @@ export async function POST(
     : null;
 
   let scored = 0;
+  let skipped = 0;
 
   for (let i = 0; i < candidates.length; i += CONCURRENCY) {
     const chunk = candidates.slice(i, i + CONCURRENCY);
     await Promise.all(
       chunk.map(async (candidate) => {
         if (!candidate.profileText) return;
+
+        // Skip Claude if profile text is identical to when we last scored.
+        const currentHash = hashProfileText(candidate.profileText);
+        if (candidate.profileTextHash === currentHash && candidate.matchScore !== null) {
+          skipped++;
+          return;
+        }
+
         try {
           const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
             scoreCandidateStructured(candidate.profileText, parsedRole, salary),
@@ -69,6 +79,7 @@ export async function POST(
             where: { id: candidate.id },
             data: {
               ...deriveUpdateData(breakdown),
+              profileTextHash: currentHash,
               ...(acceptance && {
                 acceptanceScore: acceptance.score,
                 acceptanceReason: JSON.stringify(acceptance),
@@ -83,5 +94,6 @@ export async function POST(
     );
   }
 
-  return NextResponse.json({ scored, total: candidates.length });
+  console.log(`[score-all] scored=${scored}, skipped=${skipped} (unchanged profile)`);
+  return NextResponse.json({ scored, skipped, total: candidates.length });
 }

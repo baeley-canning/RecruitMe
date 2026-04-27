@@ -4,6 +4,7 @@ import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { hashProfileText } from "@/lib/utils";
 
 export async function POST(
   _req: Request,
@@ -48,6 +49,7 @@ export async function POST(
       where: { id: candidateId },
       data: {
         ...deriveUpdateData(breakdown),
+        profileTextHash: hashProfileText(candidate.profileText),
         ...(acceptanceData && {
           acceptanceScore: acceptanceData.score,
           acceptanceReason: JSON.stringify(acceptanceData),
