@@ -1,4 +1,6 @@
 const DEFAULT_SERVER_BASES = [
+  "https://recruitme-production-8cc6.up.railway.app",
+  "https://recruitme.railway.app",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://10.255.255.254:3000",
@@ -27,6 +29,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normaliseServerBase(base = "") {
+  const trimmed = base.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 async function getStoredSettings() {
   return chrome.storage.local.get({
     serverBase: "",
@@ -40,8 +49,8 @@ async function getStoredSettings() {
 async function getServerBases() {
   const settings = await getStoredSettings();
   const bases = [
-    settings.serverBase?.trim(),
-    settings.lastWorkingServerBase?.trim(),
+    normaliseServerBase(settings.serverBase || ""),
+    normaliseServerBase(settings.lastWorkingServerBase || ""),
     ...DEFAULT_SERVER_BASES,
   ].filter(Boolean);
   return [...new Set(bases)];
@@ -379,7 +388,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "set-config") {
     void (async () => {
-      const serverBase = (message.serverBase || "").trim() || DEFAULT_SERVER_BASES[0];
+      const serverBase = normaliseServerBase(message.serverBase || "") || DEFAULT_SERVER_BASES[0];
       const authUser = (message.authUser || "").trim();
       const authPass = message.authPass || "";
 
