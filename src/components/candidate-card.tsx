@@ -52,6 +52,10 @@ import {
 import { ScreeningSection } from "./screening-section";
 import { ReferencePanel } from "./reference-panel";
 import { InterviewSection } from "./interview-section";
+import { CopyButton } from "./copy-button";
+import { OutreachModal } from "./outreach-modal";
+import { RejectionEmailModal } from "./rejection-email-modal";
+import { OfferLetterModal } from "./offer-letter-modal";
 
 interface AcceptanceSignal {
   label: string;
@@ -223,24 +227,6 @@ function LocationFitPill({
       <span className="truncate max-w-[220px]">{location}</span>
       {score != null && <span className="tabular-nums opacity-80">{score}%</span>}
     </div>
-  );
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <button
-      onClick={handleCopy}
-      className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 transition-colors"
-    >
-      {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-      {copied ? "Copied!" : "Copy"}
-    </button>
   );
 }
 
@@ -1106,84 +1092,8 @@ export const CandidateCard = memo(function CandidateCard({
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
   const [outreachOpen, setOutreachOpen] = useState(false);
-  const [outreachLoading, setOutreachLoading] = useState(false);
-  const [outreachData, setOutreachData] = useState<OutreachMessage | null>(null);
-  const [outreachError, setOutreachError] = useState("");
-  const [outreachTab, setOutreachTab] = useState<"linkedin" | "email">("linkedin");
-
   const [rejectionOpen, setRejectionOpen] = useState(false);
-  const [rejectionLoading, setRejectionLoading] = useState(false);
-  const [rejectionText, setRejectionText] = useState("");
-  const [rejectionError, setRejectionError] = useState("");
-  const [rejectionCopied, setRejectionCopied] = useState(false);
-
   const [offerOpen, setOfferOpen] = useState(false);
-  const [offerLoading, setOfferLoading] = useState(false);
-  const [offerData, setOfferData] = useState<{ subject: string; body: string } | null>(null);
-  const [offerError, setOfferError] = useState("");
-  const [offerCopied, setOfferCopied] = useState(false);
-
-  const handleGenerateOutreach = async () => {
-    setOutreachOpen(true);
-    if (outreachData) return; // already generated
-    setOutreachLoading(true);
-    setOutreachError("");
-    try {
-      const res = await fetch(`/api/jobs/${jobId}/candidates/${candidate.id}/outreach`, {
-        method: "POST",
-      });
-      const data = await res.json() as OutreachMessage & { error?: string };
-      if (!res.ok || data.error) {
-        setOutreachError(data.error ?? "Generation failed");
-      } else {
-        setOutreachData(data);
-      }
-    } catch {
-      setOutreachError("Failed to generate message. Check Ollama is running.");
-    } finally {
-      setOutreachLoading(false);
-    }
-  };
-
-  const handleGenerateRejection = async () => {
-    setRejectionOpen(true);
-    if (rejectionText) return;
-    setRejectionLoading(true);
-    setRejectionError("");
-    try {
-      const res = await fetch(`/api/jobs/${jobId}/candidates/${candidate.id}/rejection-email`, { method: "POST" });
-      const data = await res.json() as { email?: string; error?: string };
-      if (!res.ok || data.error) {
-        setRejectionError(data.error ?? "Generation failed");
-      } else {
-        setRejectionText(data.email ?? "");
-      }
-    } catch {
-      setRejectionError("Failed to generate. Try again.");
-    } finally {
-      setRejectionLoading(false);
-    }
-  };
-
-  const handleGenerateOffer = async () => {
-    setOfferOpen(true);
-    if (offerData) return;
-    setOfferLoading(true);
-    setOfferError("");
-    try {
-      const res = await fetch(`/api/jobs/${jobId}/candidates/${candidate.id}/offer-letter`, { method: "POST" });
-      const data = await res.json() as { subject?: string; body?: string; error?: string };
-      if (!res.ok || data.error) {
-        setOfferError(data.error ?? "Generation failed");
-      } else {
-        setOfferData({ subject: data.subject ?? "", body: data.body ?? "" });
-      }
-    } catch {
-      setOfferError("Failed to generate. Try again.");
-    } finally {
-      setOfferLoading(false);
-    }
-  };
 
   const matchReason = useMemo(
     () =>
@@ -1760,7 +1670,7 @@ export const CandidateCard = memo(function CandidateCard({
             <Button
               size="sm"
               variant="ghost"
-              onClick={handleGenerateRejection}
+              onClick={() => setRejectionOpen(true)}
               className="text-slate-500 hover:text-red-700 hover:bg-red-50"
               title="Draft rejection email"
             >
@@ -1774,7 +1684,7 @@ export const CandidateCard = memo(function CandidateCard({
             <Button
               size="sm"
               variant="ghost"
-              onClick={handleGenerateOffer}
+              onClick={() => setOfferOpen(true)}
               className="text-emerald-600 hover:bg-emerald-50"
               title="Generate offer letter"
             >
@@ -1859,7 +1769,7 @@ export const CandidateCard = memo(function CandidateCard({
             <Button
               size="sm"
               variant="ghost"
-              onClick={handleGenerateOutreach}
+              onClick={() => setOutreachOpen(true)}
               className="text-violet-600 hover:bg-violet-50"
               title="Generate outreach message"
             >
@@ -1893,208 +1803,31 @@ export const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
-      {/* Outreach modal */}
       {outreachOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-              <div>
-                <h3 className="font-semibold text-slate-900">Outreach Message</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Personalised for {candidate.name}
-                </p>
-              </div>
-              <button
-                onClick={() => setOutreachOpen(false)}
-                className="text-slate-400 hover:text-slate-700 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="px-6 py-5">
-              {outreachLoading && (
-                <div className="flex items-center gap-2 text-sm text-slate-500 py-6 justify-center">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                  Generating personalised message…
-                </div>
-              )}
-
-              {outreachError && (
-                <p className="text-sm text-red-600 py-4 text-center">{outreachError}</p>
-              )}
-
-              {outreachData && (
-                <div className="space-y-4">
-                  {/* Tab switcher */}
-                  <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
-                    {(["linkedin", "email"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        onClick={() => setOutreachTab(tab)}
-                        className={cn(
-                          "flex-1 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
-                          outreachTab === tab
-                            ? "bg-white text-slate-900 shadow-sm"
-                            : "text-slate-500 hover:text-slate-700"
-                        )}
-                      >
-                        {tab === "linkedin" ? "LinkedIn message" : "Email"}
-                      </button>
-                    ))}
-                  </div>
-
-                  {outreachTab === "linkedin" && (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs font-medium text-slate-500">
-                          Connection request · {outreachData.linkedin.length}/300 chars
-                        </p>
-                        <CopyButton text={outreachData.linkedin} />
-                      </div>
-                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
-                        {outreachData.linkedin}
-                      </div>
-                      <p className="text-xs text-slate-400 mt-2">
-                        Paste this into the LinkedIn &ldquo;Add a note&rdquo; field when sending a connection request.
-                      </p>
-                    </div>
-                  )}
-
-                  {outreachTab === "email" && (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs font-medium text-slate-500">Full email</p>
-                        <CopyButton text={outreachData.email} />
-                      </div>
-                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
-                        {outreachData.email}
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={() => { setOutreachData(null); handleGenerateOutreach(); }}
-                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                  >
-                    Regenerate
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <OutreachModal
+          jobId={jobId}
+          candidateId={candidate.id}
+          candidateName={candidate.name}
+          onClose={() => setOutreachOpen(false)}
+        />
       )}
 
-      {/* Rejection email modal */}
       {rejectionOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-              <div>
-                <h3 className="font-semibold text-slate-900">Rejection Email</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Drafted for {candidate.name}</p>
-              </div>
-              <button onClick={() => setRejectionOpen(false)} className="text-slate-400 hover:text-slate-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="px-6 py-5 space-y-4">
-              {rejectionLoading && (
-                <div className="flex items-center gap-2 text-sm text-slate-500 py-6 justify-center">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                  Drafting rejection email…
-                </div>
-              )}
-              {rejectionError && <p className="text-sm text-red-600 text-center">{rejectionError}</p>}
-              {rejectionText && (
-                <>
-                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
-                    {rejectionText}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(rejectionText).then(() => {
-                          setRejectionCopied(true);
-                          setTimeout(() => setRejectionCopied(false), 2000);
-                        });
-                      }}
-                      className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium"
-                    >
-                      {rejectionCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                      {rejectionCopied ? "Copied!" : "Copy email"}
-                    </button>
-                    <button
-                      onClick={() => { setRejectionText(""); handleGenerateRejection(); }}
-                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                    >
-                      Regenerate
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+        <RejectionEmailModal
+          jobId={jobId}
+          candidateId={candidate.id}
+          candidateName={candidate.name}
+          onClose={() => setRejectionOpen(false)}
+        />
       )}
 
-      {/* Offer letter modal */}
       {offerOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-              <div>
-                <h3 className="font-semibold text-slate-900">Offer Letter</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Drafted for {candidate.name}</p>
-              </div>
-              <button onClick={() => setOfferOpen(false)} className="text-slate-400 hover:text-slate-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="px-6 py-5 space-y-4">
-              {offerLoading && (
-                <div className="flex items-center gap-2 text-sm text-slate-500 py-6 justify-center">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                  Drafting offer letter…
-                </div>
-              )}
-              {offerError && <p className="text-sm text-red-600 text-center">{offerError}</p>}
-              {offerData && (
-                <>
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-                    <p className="text-xs font-medium text-emerald-700 mb-0.5">Subject line</p>
-                    <p className="text-sm text-slate-800">{offerData.subject}</p>
-                  </div>
-                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
-                    {offerData.body}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => {
-                        const full = `Subject: ${offerData.subject}\n\n${offerData.body}`;
-                        navigator.clipboard.writeText(full).then(() => {
-                          setOfferCopied(true);
-                          setTimeout(() => setOfferCopied(false), 2000);
-                        });
-                      }}
-                      className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium"
-                    >
-                      {offerCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                      {offerCopied ? "Copied!" : "Copy letter"}
-                    </button>
-                    <button
-                      onClick={() => { setOfferData(null); handleGenerateOffer(); }}
-                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                    >
-                      Regenerate
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+        <OfferLetterModal
+          jobId={jobId}
+          candidateId={candidate.id}
+          candidateName={candidate.name}
+          onClose={() => setOfferOpen(false)}
+        />
       )}
 
       {showProfile && (
