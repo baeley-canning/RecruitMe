@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Copy, Check, Download, Puzzle, Settings, Zap, ArrowRight } from "lucide-react";
+import { Copy, Check, Download, Settings, Zap, ArrowRight } from "lucide-react";
 
 export function LinkedInSetupPage() {
   const [origin, setOrigin] = useState("");

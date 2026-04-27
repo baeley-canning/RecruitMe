@@ -10,7 +10,7 @@ export async function GET(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-  const { job, error } = await requireJobAccess(id, auth);
+  const { error } = await requireJobAccess(id, auth);
   if (error) return error;
 
   const full = await prisma.job.findUnique({

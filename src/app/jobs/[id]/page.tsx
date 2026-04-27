@@ -248,15 +248,16 @@ export default function JobDetailPage({
   useEffect(() => { jobRef.current = job; }, [job]);
 
   useEffect(() => {
+    const ref = activeFetchesRef.current;
     return () => {
       // Clean up all active sessions and poll intervals on unmount.
-      for (const entry of activeFetchesRef.current.values()) {
+      for (const entry of ref.values()) {
         if (entry.pollInterval) clearInterval(entry.pollInterval);
         void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
           method: "DELETE",
         }).catch(() => {});
       }
-      activeFetchesRef.current.clear();
+      ref.clear();
     };
   }, []);
 
@@ -350,9 +351,15 @@ export default function JobDetailPage({
         return;
       }
 
-      // Search runs in background — poll for completion
+      // Search runs in background — poll until complete or 8 minutes elapsed
       const sessionId = data.sessionId!;
+      const deadline = Date.now() + 8 * 60 * 1000;
       const poll = async () => {
+        if (Date.now() > deadline) {
+          setSearchError("Search is taking too long. It may still be running — refresh the page in a minute.");
+          setSearching(false);
+          return;
+        }
         try {
           const pollRes = await fetch(`/api/jobs/${id}/search?sessionId=${sessionId}`);
           const pollData = await pollRes.json() as { status?: string; count?: number; message?: string; fromPool?: number };
@@ -876,7 +883,7 @@ export default function JobDetailPage({
 
 
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const jobCandidates = job?.candidates ?? [];
+  const jobCandidates = useMemo(() => job?.candidates ?? [], [job?.candidates]);
   const parsedRole = useMemo(
     () => safeParseJson<ParsedRole | null>(job?.parsedRole ?? null, null),
     [job?.parsedRole]

@@ -43,10 +43,7 @@ export async function GET() {
   });
 
   // Filter out short profiles
-  const withProfile = rows.filter((r) => {
-    // We only know profileText exists (not null) from the query; use that as proxy
-    return true;
-  });
+  const withProfile = rows.filter(() => true);
 
   // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.
   // Candidates without a LinkedIn URL are included individually (distinct people).

@@ -238,7 +238,7 @@ function limitQueriesForAttempt(queries: string[], page: number, attempt: number
 }
 
 async function executeSearchTaskQueue(
-  tasks: Array<{ provider: SearchProvider; query: string; location: string; offset: number }>,
+  tasks: Array<{ provider: SearchProvider; query: string; location: string; offset: number; resolvedKey?: string }>,
   options: { concurrency: number; delayMs: number },
 ): Promise<SearchTaskOutcome[]> {
   const outcomes: SearchTaskOutcome[] = [];
@@ -246,7 +246,7 @@ async function executeSearchTaskQueue(
   for (let i = 0; i < tasks.length; i += options.concurrency) {
     const batch = tasks.slice(i, i + options.concurrency);
     const batchOutcomes = await Promise.all(
-      batch.map((task) => executeSearchTask(task.provider, task.query, task.location, task.offset))
+      batch.map((task) => executeSearchTask(task.provider, task.query, task.location, task.offset, task.resolvedKey))
     );
     outcomes.push(...batchOutcomes);
 
@@ -279,11 +279,12 @@ async function executeSearchTask(
   query: string,
   location: string,
   offset: number,
+  resolvedKey?: string,
 ): Promise<SearchTaskOutcome> {
   try {
     const items = provider === "serpapi"
-      ? await searchLinkedInProfiles(query, location, offset)
-      : await searchBingLinkedInProfiles(query, location, offset);
+      ? await searchLinkedInProfiles(query, location, offset, resolvedKey)
+      : await searchBingLinkedInProfiles(query, location, offset, resolvedKey);
     return { provider, query, items, retryable: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -311,19 +312,21 @@ export async function POST(
   }
   const { maxResults } = parsed.data;
 
-  // Fall back to DB-stored keys if env vars are not set (keys entered via the settings UI)
+  // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
+  // We do NOT mutate process.env so changing a key in settings takes effect immediately
+  // without requiring a server restart.
   const [dbSerpApi, dbBing, dbPdl] = await Promise.all([
     process.env.SERPAPI_API_KEY ? null : getServerSetting("SERPAPI_API_KEY"),
     process.env.BING_API_KEY    ? null : getServerSetting("BING_API_KEY"),
     process.env.PDL_API_KEY     ? null : getServerSetting("PDL_API_KEY"),
   ]);
-  if (dbSerpApi) process.env.SERPAPI_API_KEY = dbSerpApi;
-  if (dbBing)    process.env.BING_API_KEY    = dbBing;
-  if (dbPdl)     process.env.PDL_API_KEY     = dbPdl;
+  const serpApiKey = process.env.SERPAPI_API_KEY || dbSerpApi || "";
+  const bingKey    = process.env.BING_API_KEY    || dbBing    || "";
+  const pdlKey     = process.env.PDL_API_KEY     || dbPdl     || "";
 
-  const hasSerpApi = Boolean(process.env.SERPAPI_API_KEY);
-  const hasBing    = Boolean(process.env.BING_API_KEY);
-  const hasPDL     = Boolean(process.env.PDL_API_KEY);
+  const hasSerpApi = Boolean(serpApiKey);
+  const hasBing    = Boolean(bingKey);
+  const hasPDL     = Boolean(pdlKey);
 
   if (!hasSerpApi && !hasBing && !hasPDL) {
     return NextResponse.json({ error: "No search API configured. Add SERPAPI_API_KEY to .env.local." }, { status: 400 });
@@ -390,6 +393,9 @@ export async function POST(
     hasSerpApi,
     hasBing,
     hasPDL,
+    serpApiKey,
+    bingKey,
+    pdlKey,
     isOwner: auth.isOwner,
     orgId: auth.orgId,
   }).catch((err) => {
@@ -415,9 +421,21 @@ export async function GET(
   const sessionId = new URL(req.url).searchParams.get("sessionId");
   if (!sessionId) return NextResponse.json({ error: "sessionId required" }, { status: 400 });
 
-  const session = await prisma.searchSession.findUnique({ where: { id: sessionId } });
+  let session = await prisma.searchSession.findUnique({ where: { id: sessionId } });
   if (!session || session.jobId !== id) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  }
+
+  // Mark stale sessions (running > 10 min) as failed — handles Railway restarts
+  // that kill the background promise mid-search.
+  if (session.status === "running") {
+    const ageMs = Date.now() - session.createdAt.getTime();
+    if (ageMs > 10 * 60 * 1000) {
+      session = await prisma.searchSession.update({
+        where: { id: sessionId },
+        data: { status: "rate_limited", message: "Search timed out — try again." },
+      });
+    }
   }
 
   const importedIds: string[] = JSON.parse(session.importedIds || "[]");
@@ -453,12 +471,15 @@ async function runSearchBackground(args: {
   hasSerpApi: boolean;
   hasBing: boolean;
   hasPDL: boolean;
+  serpApiKey: string;
+  bingKey: string;
+  pdlKey: string;
   isOwner: boolean;
   orgId: string | null;
 }) {
   const { sessionId, jobId, job, parsedRole, salary, maxResults, targetRaw,
     searchQueries, searchLocation, targetLocation, hasSerpApi, hasBing, hasPDL,
-    isOwner, orgId } = args;
+    serpApiKey, bingKey, pdlKey, isOwner, orgId } = args;
 
   try {
     const seenUrls = new Set<string>();
@@ -467,7 +488,7 @@ async function runSearchBackground(args: {
     // ── Phase 1a: PDL bulk fetch (not paginated — returns full profiles) ──────
     if (hasPDL) {
       try {
-        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(maxResults, 25));
+        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(maxResults, 25), pdlKey);
         for (const r of pdl) {
           if (!seenUrls.has(r.linkedinUrl)) { seenUrls.add(r.linkedinUrl); allRaw.push(r); }
         }
@@ -491,11 +512,13 @@ async function runSearchBackground(args: {
           const queriesForAttempt = limitQueriesForAttempt(searchQueries, page, attempt);
 
           const buildTasks = (provider: SearchProvider, taskLocation: string, queries = queriesForAttempt) => {
+            const key = provider === "serpapi" ? serpApiKey : bingKey;
             return queries.map((q) => ({
               provider,
               query: q,
               location: taskLocation,
               offset,
+              resolvedKey: key,
             }));
           };
 
@@ -625,9 +648,10 @@ async function runSearchBackground(args: {
 
     console.log(`[search] ${toScore.length} candidates to score`);
 
-    // Full profiles get Claude scoring. Search snippets get a fast provisional score
-    // and are rescored properly once the extension captures the full LinkedIn page.
-    const BATCH = 10;
+    // Full profiles get Claude scoring; snippets get fast provisional scoring.
+    // Batch size 3 to avoid concurrent Claude bursts when talent-pool/PDL full
+    // profiles are in the result set (matches score-all concurrency).
+    const BATCH = 3;
     for (let i = 0; i < toScore.length && saved.length < maxResults; i += BATCH) {
       const batch = toScore.slice(i, i + BATCH);
 

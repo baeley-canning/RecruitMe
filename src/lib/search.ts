@@ -162,8 +162,9 @@ export async function searchLinkedInProfiles(
   query: string,
   location: string,
   start = 0,
+  resolvedKey?: string,
 ): Promise<SearchResult[]> {
-  const apiKey = process.env.SERPAPI_API_KEY;
+  const apiKey = resolvedKey || process.env.SERPAPI_API_KEY;
   if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured");
 
   const searchQuery = buildLinkedInSearchQuery(query, location);
@@ -193,8 +194,9 @@ export async function searchBingLinkedInProfiles(
   query: string,
   location: string,
   offset = 0,
+  resolvedKey?: string,
 ): Promise<SearchResult[]> {
-  const apiKey = process.env.BING_API_KEY;
+  const apiKey = resolvedKey || process.env.BING_API_KEY;
   if (!apiKey) throw new Error("BING_API_KEY is not configured");
 
   const searchQuery = buildLinkedInSearchQuery(query, location);
@@ -320,9 +322,10 @@ function pdlPersonToText(p: PDLPerson): string {
 export async function searchPDLProfiles(
   roleTitle: string,
   location: string,
-  size: number = 15
+  size: number = 15,
+  resolvedKey?: string,
 ): Promise<SearchResult[]> {
-  const apiKey = process.env.PDL_API_KEY;
+  const apiKey = resolvedKey || process.env.PDL_API_KEY;
   if (!apiKey) return [];
 
   try {

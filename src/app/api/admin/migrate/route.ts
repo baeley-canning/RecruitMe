@@ -35,7 +35,7 @@ const migrations = [
   "ALTER TABLE User ADD COLUMN orgId TEXT",
 ];
 
-export async function POST(_req: Request) {
+export async function POST() {
   const auth = await getAuth();
   if (!auth || !auth.isOwner) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
