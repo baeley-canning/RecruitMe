@@ -110,11 +110,6 @@ interface CandidateCardProps {
   fetchingProfile?: boolean;
 }
 
-interface OutreachMessage {
-  linkedin: string;
-  email: string;
-}
-
 type LegacyRadarDimensions = Partial<RadarDimensions>;
 
 function candidateSourceLabel(candidate: Candidate) {

@@ -418,6 +418,11 @@ export async function GET(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
+
+  // Verify job access before returning any session data.
+  const { error: jobErr } = await requireJobAccess(id, auth);
+  if (jobErr) return jobErr;
+
   const sessionId = new URL(req.url).searchParams.get("sessionId");
   if (!sessionId) return NextResponse.json({ error: "sessionId required" }, { status: 400 });
 

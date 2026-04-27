@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Loader2, Copy, Check } from "lucide-react";
 
 interface OfferLetterModalProps {
@@ -32,7 +32,7 @@ export function OfferLetterModal({ jobId, candidateId, candidateName, onClose }:
     }
   };
 
-  if (!loading && !data && !error) generate();
+  useEffect(() => { generate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">

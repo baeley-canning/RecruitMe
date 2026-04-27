@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
@@ -39,8 +39,8 @@ export function OutreachModal({ jobId, candidateId, candidateName, onClose }: Ou
     }
   };
 
-  // Kick off generation on mount
-  if (!loading && !data && !error) generate();
+  // Kick off generation once on mount
+  useEffect(() => { generate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">

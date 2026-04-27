@@ -215,9 +215,11 @@ export async function getSessionQueue(): Promise<ExtensionCaptureSession[]> {
 
 /** Add (or replace an existing session for the same candidateId) in the queue. */
 export async function addSessionToQueue(session: ExtensionCaptureSession): Promise<void> {
-  await prisma.fetchSession.deleteMany({ where: { candidateId: session.candidateId } });
-  await prisma.fetchSession.create({
-    data: {
+  // upsert on candidateId so concurrent fetches for the same candidate
+  // don't race between deleteMany + create and produce duplicate rows.
+  await prisma.fetchSession.upsert({
+    where: { candidateId: session.candidateId },
+    create: {
       id:            session.sessionId,
       jobId:         session.jobId,
       candidateId:   session.candidateId,
@@ -228,6 +230,16 @@ export async function addSessionToQueue(session: ExtensionCaptureSession): Promi
       error:         session.error ?? null,
       orgId:         session.orgId ?? null,
       userId:        session.userId ?? null,
+    },
+    update: {
+      id:            session.sessionId,
+      jobId:         session.jobId,
+      linkedinUrl:   session.linkedinUrl,
+      candidateName: session.candidateName,
+      status:        session.status,
+      message:       session.message,
+      error:         session.error ?? null,
+      completedAt:   null,
     },
   });
 }
