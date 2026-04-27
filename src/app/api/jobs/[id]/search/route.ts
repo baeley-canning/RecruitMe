@@ -18,8 +18,8 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
-import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
+import { isExplicitlyOverseasLocation } from "@/lib/location";
+import { getCityCoords } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
@@ -28,9 +28,6 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
-  radiusKm:   z.number().min(1).max(200).default(25),
-  centerLat:  z.number().min(-90).max(90).optional(),
-  centerLng:  z.number().min(-180).max(180).optional(),
 });
 
 const PLACEHOLDERS = new Set([
@@ -311,7 +308,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { maxResults, radiusKm, centerLat, centerLng } = parsed.data;
+  const { maxResults } = parsed.data;
 
   const hasSerpApi = Boolean(process.env.SERPAPI_API_KEY);
   const hasBing    = Boolean(process.env.BING_API_KEY);
@@ -335,19 +332,9 @@ export async function POST(
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
 
-  const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
-  const searchLocation = customCenterCity?.name ?? (canonicalJobCity || locationSource);
-  const targetLocation = customCenterCity?.name ?? (location || canonicalJobCity || locationSource);
-  const jobCoords    = getCityCoords(locationSource);
-  const searchCenter = centerLat != null && centerLng != null
-    ? { lat: centerLat, lng: centerLng }
-    : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
-  // Build the set of city keywords within the radius — used to pre-filter
-  // candidates by location before scoring so overseas results are dropped early.
-  const radiusKeywords = searchCenter
-    ? getCityKeywordsWithinRadius(searchCenter.lat, searchCenter.lng, radiusKm)
-    : [];
+  const searchLocation = canonicalJobCity || locationSource;
+  const targetLocation = location || canonicalJobCity || locationSource;
 
   // Build query pool: explicit search queries + synonym titles as standalone title searches
   // Synonym titles are the key insight — recruiters search off real titles, not JD language
@@ -528,25 +515,14 @@ export async function POST(
     let fromPool = 0;
 
     // Pre-filter: drop confirmed overseas candidates and non-person names before scoring.
-    // radiusKeywords: if set, also drop candidates whose location definitely doesn't match
-    // the radius — but only when we can confirm they're in a specific non-matching city.
-    // Candidates with generic locations ("New Zealand") pass through so we don't silently
-    // discard people who just haven't set a city.
+    // NZ candidates with any location (including generic "New Zealand") pass through —
+    // applyLocationFitOverride handles fine-grained location scoring after fetch.
     const toScore = allNew
       .filter((r) => {
         if (!looksLikePersonName(r.name)) return false;
         const poolLoc = poolMap.get(r.linkedinUrl)?.location ?? "";
         const loc = poolLoc || r.location || "";
-        if (!loc) return true; // no location info — keep for scoring
-        if (isExplicitlyOverseasLocation(loc)) return false;
-        // If radius keywords are set, drop candidates whose location is a confirmed
-        // NZ city that falls outside the radius (isNzLocation is true but no radius match).
-        if (radiusKeywords.length > 0 && isNzLocation(loc)) {
-          const normalised = normalizeLocationText(loc);
-          const inRadius = radiusKeywords.some((kw) => normalised.includes(normalizeLocationText(kw)));
-          const isGenericNz = ["new zealand", "aotearoa", "nz"].some((g) => normalised === g || normalised === g.replace(" ", ""));
-          if (!inRadius && !isGenericNz) return false;
-        }
+        if (loc && isExplicitlyOverseasLocation(loc)) return false;
         return true;
       })
       .slice(0, Math.min(Math.max(maxResults * 3, maxResults + 15), 100));

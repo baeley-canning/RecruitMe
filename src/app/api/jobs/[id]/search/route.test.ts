@@ -128,7 +128,7 @@ describe("search import route", () => {
     const req = new Request("http://localhost/api/jobs/job-1/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxResults: 1, radiusKm: 25 }),
+      body: JSON.stringify({ maxResults: 1 }),
     });
 
     const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });

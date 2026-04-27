@@ -18,8 +18,6 @@ import {
   ExternalLink,
   Key,
   CheckCircle2,
-  Lock,
-  LockOpen,
   Trash2,
   Download,
   FileText,
@@ -32,11 +30,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { CandidateCard } from "@/components/candidate-card";
 import { AiStatusBanner } from "@/components/ai-status-banner";
-import { LocationRadiusMap } from "@/components/location-radius-map";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueueToast } from "@/components/fetch-queue-toast";
 import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
-import { getCityCoords, getCityNamesWithinRadius } from "@/lib/nz-cities";
 import type { ParsedRole } from "@/lib/ai";
 
 
@@ -173,11 +169,6 @@ export default function JobDetailPage({
   const [sources, setSources] = useState<{ serpapi: boolean; bing: boolean; pdl: boolean } | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
   const [maxResults, setMaxResults] = useState(20);
-  const [minScore] = useState(0);
-  const [radiusKm, setRadiusKm] = useState(25);
-  const [showMap, setShowMap] = useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
-  const [locationLocked, setLocationLocked] = useState(false);
-  const [customCenter, setCustomCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [scoringId, setScoringId] = useState<string | null>(null);
   // Per-candidate fetch status (keyed by candidateId).
@@ -362,9 +353,6 @@ export default function JobDetailPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           maxResults,
-          minScore,
-          radiusKm,
-          ...(customCenter ? { centerLat: customCenter.lat, centerLng: customCenter.lng } : {}),
         }),
       });
       const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string; fromPool?: number };
@@ -389,12 +377,7 @@ export default function JobDetailPage({
       const res = await fetch(`/api/jobs/${id}/candidates/talent-pool`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          minScore,
-          maxResults,
-          radiusKm,
-          ...(customCenter ? { centerLat: customCenter.lat, centerLng: customCenter.lng } : {}),
-        }),
+        body: JSON.stringify({ maxResults }),
       });
       const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string };
       if (!res.ok || data.error) {
@@ -908,11 +891,6 @@ export default function JobDetailPage({
   const niceToHaves = parsedRole?.nice_to_haves?.length
     ? parsedRole.nice_to_haves
     : (parsedRole?.skills_preferred ?? []);
-  const jobCoords = useMemo(
-    () => (parsedRole?.location ? getCityCoords(parsedRole.location) : null),
-    [parsedRole?.location]
-  );
-  const requiresLocationLock = !!jobCoords && !locationLocked;
   const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
   const filteredCandidates = useMemo(() => {
     return [...jobCandidates]
@@ -1462,9 +1440,8 @@ export default function JobDetailPage({
                     <Button
                       onClick={handleSearch}
                       loading={searching}
-                      disabled={searching || searchingPool || job.status === "closed" || requiresLocationLock}
+                      disabled={searching || searchingPool || job.status === "closed"}
                       size="lg"
-                      title={requiresLocationLock ? "Lock your search area on the map below before searching" : undefined}
                     >
                       <Search className="w-4 h-4" />
                       {searching ? "Searching..." : searchResult ? "Search Again" : "Search LinkedIn Now"}
@@ -1472,129 +1449,41 @@ export default function JobDetailPage({
                     <Button
                       onClick={handleSearchPool}
                       loading={searchingPool}
-                      disabled={searching || searchingPool || job.status === "closed" || requiresLocationLock}
+                      disabled={searching || searchingPool || job.status === "closed"}
                       size="sm"
                       variant="outline"
                       className="text-slate-600"
-                      title={requiresLocationLock ? "Lock your search area on the map below before searching" : undefined}
                     >
                       <Users className="w-3.5 h-3.5" />
                       {searchingPool ? "Searching pool..." : "Search Talent Pool"}
                     </Button>
-                    {requiresLocationLock && (
-                      <p className="text-xs text-amber-600 flex items-center gap-1">
-                        <Lock className="w-3 h-3" />
-                        Lock the search area below first
-                      </p>
-                    )}
                   </div>
                 </div>
 
                 {/* Search controls */}
-                {(() => {
-                  const center = customCenter ?? (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
-                  const nearbyNames = center ? getCityNamesWithinRadius(center.lat, center.lng, radiusKm) : [];
-                  const cityName = nearbyNames[0] ?? parsedRole.location ?? "Unknown";
-                  return (
-                    <div className="space-y-3 pt-1 border-t border-slate-100">
-                      <div className="flex items-center gap-4 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <label className="text-xs text-slate-500 whitespace-nowrap">Max candidates</label>
-                          <select
-                            value={maxResults}
-                            onChange={(e) => setMaxResults(Number(e.target.value))}
-                            disabled={searching}
-                            className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                          >
-                            {[10, 20, 30, 50, 75, 100].map((n) => (
-                              <option key={n} value={n}>{n}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Locked location banner */}
-                      {locationLocked && jobCoords && (
-                        <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
-                          <div className="flex items-center gap-2.5">
-                            <Lock className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                            <div>
-                              <p className="text-xs font-semibold text-emerald-800">
-                                {cityName} · {radiusKm} km radius
-                              </p>
-                              {nearbyNames.length > 1 && (
-                                <p className="text-xs text-emerald-600 mt-0.5">
-                                  {nearbyNames.join(", ")}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => { setLocationLocked(false); setShowMap(true); }}
-                            disabled={searching}
-                            className="text-xs text-emerald-700 hover:text-emerald-900 flex items-center gap-1 font-medium whitespace-nowrap disabled:opacity-50"
-                          >
-                            <LockOpen className="w-3 h-3" />
-                            Edit
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Radius map — always visible until location is locked */}
-                      {!locationLocked && jobCoords && (
-                        <div className="space-y-2">
-                          <div className="overflow-hidden rounded-xl border border-slate-200">
-                            <LocationRadiusMap
-                              lat={customCenter?.lat ?? jobCoords.lat}
-                              lng={customCenter?.lng ?? jobCoords.lng}
-                              radiusKm={radiusKm}
-                              onCenterChange={(lat, lng) => setCustomCenter({ lat, lng })}
-                            />
-                          </div>
-                          {customCenter && (
-                            <button
-                              onClick={() => setCustomCenter(null)}
-                              className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1"
-                            >
-                              <X className="w-3 h-3" /> Reset to {parsedRole?.location || "default"}
-                            </button>
-                          )}
-                          <div className="flex items-center gap-3">
-                            <MapPin className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-                            <input
-                              type="range"
-                              min={5}
-                              max={150}
-                              step={5}
-                              value={radiusKm}
-                              onChange={(e) => setRadiusKm(Number(e.target.value))}
-                              disabled={searching}
-                              className="flex-1 accent-blue-500"
-                            />
-                            <span className="text-xs font-semibold text-slate-700 w-14 text-right">
-                              {radiusKm} km
-                            </span>
-                          </div>
-                          {nearbyNames.length > 0 && (
-                            <p className="text-xs text-slate-500">
-                              <span className="font-medium text-slate-700">Searching within: </span>
-                              {nearbyNames.join(", ")}
-                            </p>
-                          )}
-                          <div className="flex justify-end">
-                            <button
-                              onClick={() => { setLocationLocked(true); setShowMap(false); }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors"
-                            >
-                              <Lock className="w-3 h-3" />
-                              Lock location
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                <div className="space-y-3 pt-1 border-t border-slate-100">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-slate-500 whitespace-nowrap">Max candidates</label>
+                      <select
+                        value={maxResults}
+                        onChange={(e) => setMaxResults(Number(e.target.value))}
+                        disabled={searching}
+                        className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                      >
+                        {[10, 20, 30, 50, 75, 100].map((n) => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                      </select>
                     </div>
-                  );
-                })()}
+                  </div>
+                  {parsedRole.location && (
+                    <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                      <MapPin className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                      Searching in <span className="font-medium text-slate-700">{parsedRole.location}</span>
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </CardBody>
