@@ -419,18 +419,6 @@ export default function JobDetailPage({
 
     const electron = getElectronBridge();
     const useExternalBrowser = typeof electron?.openExternal === "function";
-    const isOperaBrowser = typeof navigator !== "undefined" && /\bOPR\//.test(navigator.userAgent);
-    if (!useExternalBrowser && !isOperaBrowser) {
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: {
-          state: "error",
-          message: "Open RecruitMe in Opera or use the desktop app - the browser build cannot force LinkedIn to open in Opera.",
-        },
-      }));
-      clearCandidateStatus(candidateId, 7000, "error");
-      return;
-    }
     const tab = useExternalBrowser ? null : window.open("about:blank", `_rm-fetch-${candidateId}`);
     if (!useExternalBrowser && !tab) {
       setFetchStatuses((prev) => ({
@@ -487,7 +475,7 @@ export default function JobDetailPage({
           [candidateId]: {
             state: "waiting",
             message: useExternalBrowser
-              ? "Queued - waiting for Opera extension to open and capture the LinkedIn profile..."
+              ? "Queued - waiting for the extension to open and capture the LinkedIn profile..."
               : "LinkedIn tab requested - waiting for the extension to confirm capture...",
           },
         }));
