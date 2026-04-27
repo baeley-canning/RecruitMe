@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { getServerSetting, setServerSetting } from "@/lib/settings";
+import { getAuth, unauthorized } from "@/lib/session";
 
 const MANAGED_KEYS = ["PDL_API_KEY", "SERPAPI_API_KEY", "BING_API_KEY"];
 
 export async function GET() {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const result: Record<string, { configured: boolean; source: "env" | "db" | "none" }> = {};
 
   for (const key of MANAGED_KEYS) {
@@ -20,6 +23,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await getAuth();
+  if (!auth?.isOwner) return unauthorized();
   const body = await req.json() as Record<string, string>;
 
   for (const key of MANAGED_KEYS) {

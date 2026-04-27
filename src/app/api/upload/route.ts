@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { parseJobDescription } from "@/lib/ai";
 import { deriveJobBriefUploadPrefill } from "@/lib/job-brief-prefill";
 import { extractTextFromPdf } from "@/lib/pdf";
+import { getAuth, unauthorized } from "@/lib/session";
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
 export async function POST(req: Request) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   const contentType = req.headers.get("content-type") ?? "";
 
   if (!contentType.includes("multipart/form-data")) {
@@ -16,6 +21,10 @@ export async function POST(req: Request) {
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json({ error: "File too large (max 10 MB)" }, { status: 413 });
   }
 
   const name = file.name.toLowerCase();

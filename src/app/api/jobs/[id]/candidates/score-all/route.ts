@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
@@ -52,17 +52,28 @@ export async function POST(
       chunk.map(async (candidate) => {
         if (!candidate.profileText) return;
         try {
-          const rawBreakdown = await scoreCandidateStructured(candidate.profileText, parsedRole, salary);
+          const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
+            scoreCandidateStructured(candidate.profileText, parsedRole, salary),
+            predictAcceptance(candidate.profileText, parsedRole, salary),
+          ]);
+          if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
           const breakdown = applyLocationFitOverride(
-            rawBreakdown,
+            rawBreakdown.value,
             candidate.location,
             parsedRole.location,
             parsedRole.location_rules,
             job.isRemote,
           );
+          const acceptance = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
           await prisma.candidate.update({
             where: { id: candidate.id },
-            data:  deriveUpdateData(breakdown),
+            data: {
+              ...deriveUpdateData(breakdown),
+              ...(acceptance && {
+                acceptanceScore: acceptance.score,
+                acceptanceReason: JSON.stringify(acceptance),
+              }),
+            },
           });
           scored++;
         } catch (err) {

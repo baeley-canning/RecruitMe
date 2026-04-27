@@ -19,7 +19,7 @@ import {
   type ScoreBreakdown,
 } from "@/lib/scoring";
 import { isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
-import { getCityCoords, getNearestCity } from "@/lib/nz-cities";
+import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
@@ -340,10 +340,15 @@ export async function POST(
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
   const searchLocation = customCenterCity?.name ?? (canonicalJobCity || locationSource);
   const targetLocation = customCenterCity?.name ?? (location || canonicalJobCity || locationSource);
-  const jobCoords        = getCityCoords(locationSource);
-  const searchCenter     = centerLat != null && centerLng != null
+  const jobCoords    = getCityCoords(locationSource);
+  const searchCenter = centerLat != null && centerLng != null
     ? { lat: centerLat, lng: centerLng }
     : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
+  // Build the set of city keywords within the radius — used to pre-filter
+  // candidates by location before scoring so overseas results are dropped early.
+  const radiusKeywords = searchCenter
+    ? getCityKeywordsWithinRadius(searchCenter.lat, searchCenter.lng, radiusKm)
+    : [];
 
   // Build query pool: explicit search queries + synonym titles as standalone title searches
   // Synonym titles are the key insight — recruiters search off real titles, not JD language
@@ -471,17 +476,11 @@ export async function POST(
 
     if (allRaw.length === 0) {
       if (sawRetryableSearchFailure) {
-        return NextResponse.json({
-          count: 0,
-          candidates: [],
-          message: "Search API was rate-limited before it returned profiles. Wait a minute and search again.",
-        });
+        await prisma.searchSession.update({ where: { id: session.id }, data: { status: "rate_limited", message: "Rate-limited before any results were returned." } }).catch(() => {});
+        return NextResponse.json({ count: 0, candidates: [], message: "Search API was rate-limited before it returned profiles. Wait a minute and search again." });
       }
-
-      return NextResponse.json({
-        count: 0, candidates: [],
-        message: "No LinkedIn profiles found for the exact search area. Try broadening the radius or adding broader title variants.",
-      });
+      await prisma.searchSession.update({ where: { id: session.id }, data: { status: "complete", message: "No profiles found." } }).catch(() => {});
+      return NextResponse.json({ count: 0, candidates: [], message: "No LinkedIn profiles found for the exact search area. Try broadening the radius or adding broader title variants." });
     }
 
     // ── Phase 2: Skip already-imported profiles ──────────────────────────────
@@ -509,10 +508,8 @@ export async function POST(
     console.log(`[search] ${allNew.length} new (${allNormed.length - allNew.length} already imported)`);
 
     if (allNew.length === 0) {
-      return NextResponse.json({
-        count: 0, candidates: [],
-        message: "All found profiles are already in this job's candidate list.",
-      });
+      await prisma.searchSession.update({ where: { id: session.id }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
+      return NextResponse.json({ count: 0, candidates: [], message: "All found profiles are already in this job's candidate list." });
     }
 
     // ── Phase 2b: Talent pool lookup ─────────────────────────────────────────
@@ -532,17 +529,25 @@ export async function POST(
     let fromPool = 0;
 
     // Pre-filter: drop confirmed overseas candidates and non-person names before scoring.
-    // We use isExplicitlyOverseasLocation instead of locationMatches here because
-    // locationMatches checks against specific city keywords — a candidate with location
-    // "New Zealand" (very common on LinkedIn) would fail that check even though they
-    // could be exactly the right person. isExplicitlyOverseasLocation only drops people
-    // who are unambiguously outside NZ (Australia, UK, USA, etc.).
+    // radiusKeywords: if set, also drop candidates whose location definitely doesn't match
+    // the radius — but only when we can confirm they're in a specific non-matching city.
+    // Candidates with generic locations ("New Zealand") pass through so we don't silently
+    // discard people who just haven't set a city.
     const toScore = allNew
       .filter((r) => {
         if (!looksLikePersonName(r.name)) return false;
         const poolLoc = poolMap.get(r.linkedinUrl)?.location ?? "";
         const loc = poolLoc || r.location || "";
-        if (loc && isExplicitlyOverseasLocation(loc)) return false;
+        if (!loc) return true; // no location info — keep for scoring
+        if (isExplicitlyOverseasLocation(loc)) return false;
+        // If radius keywords are set, drop candidates whose location is a confirmed
+        // NZ city that falls outside the radius (isNzLocation is true but no radius match).
+        if (radiusKeywords.length > 0 && isNzLocation(loc)) {
+          const normalised = normalizeLocationText(loc);
+          const inRadius = radiusKeywords.some((kw) => normalised.includes(normalizeLocationText(kw)));
+          const isGenericNz = ["new zealand", "aotearoa", "nz"].some((g) => normalised === g || normalised === g.replace(" ", ""));
+          if (!inRadius && !isGenericNz) return false;
+        }
         return true;
       })
       .slice(0, Math.min(Math.max(maxResults * 3, maxResults + 15), 100));
