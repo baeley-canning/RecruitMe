@@ -76,8 +76,21 @@ function looksLikeLocationFragment(fragment: string): boolean {
   }
 
   if (LOCATION_COUNTRY_RE.test(fragment)) return true;
-  // Comma-separated "City, Country" pattern is a reliable location indicator.
-  if (/^[a-z .'-]+,\s*[a-z .'-]+(?:,\s*[a-z .'-]+)?$/i.test(fragment)) return true;
+  // Comma-separated location-like pattern, but reject long title/headline phrases.
+  if (/^[a-z .'-]+,\s*[a-z .'-]+(?:,\s*[a-z .'-]+)?$/i.test(fragment)) {
+    const segments = fragment.split(",").map((part) => cleanSearchText(part)).filter(Boolean);
+    const locationLike = segments.length >= 2 && segments.every((segment) => {
+      const segmentLower = segment.toLowerCase();
+      const words = segment.split(/\s+/).filter(Boolean);
+      if (words.length === 0 || words.length > 4) return false;
+      if (TITLE_STARTERS.some((starter) => segmentLower.startsWith(starter))) return false;
+      if (/\b(at|for|with|across|specialist|delivery|clients?|training|design|development)\b/i.test(segment)) {
+        return false;
+      }
+      return true;
+    });
+    if (locationLike) return true;
+  }
   // NZ city keyword — but only if the fragment is short enough to be a place name,
   // not a person's full name (e.g. "Wellington Gomes Graciani" has 3 words and is
   // NOT a location, even though it starts with the NZ city "Wellington").
