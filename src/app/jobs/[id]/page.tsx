@@ -15,15 +15,9 @@ import {
   X,
   Users,
   Star,
-  ExternalLink,
-  Key,
   CheckCircle2,
   Trash2,
   Download,
-  FileText,
-  Copy,
-  Check,
-  Paperclip,
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";

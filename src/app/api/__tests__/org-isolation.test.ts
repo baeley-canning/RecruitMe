@@ -165,7 +165,7 @@ describe("org isolation — job access", () => {
     dbMocks.prisma.job.findMany.mockResolvedValue([JOB_A]);
 
     const res = await getJobs();
-    const body = await res.json() as { id: string }[];
+    await res.json();
 
     // The route filters by orgId in the Prisma where clause.
     // Verify findMany was called with the correct org filter.
@@ -225,7 +225,7 @@ describe("org isolation — candidate access", () => {
       makeRequest("http://localhost/api/jobs/job-a/candidates"),
       jobParams("job-a"),
     );
-    const body = await res.json() as { id: string }[];
+    await res.json();
 
     expect(res.status).toBe(200);
     // Prisma was called with jobId scoped to this job only.
