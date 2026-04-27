@@ -341,20 +341,36 @@ export default function JobDetailPage({
       const res = await fetch(`/api/jobs/${id}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          maxResults,
-        }),
+        body: JSON.stringify({ maxResults }),
       });
-      const data = await res.json() as { count?: number; candidates?: Candidate[]; error?: string; message?: string; fromPool?: number };
+      const data = await res.json() as { sessionId?: string; error?: string };
       if (!res.ok || data.error) {
         setSearchError(data.error ?? "Search failed");
-      } else {
-        setSearchResult({ count: data.count ?? 0, message: data.message, fromPool: data.fromPool });
-        await fetchJob();
+        setSearching(false);
+        return;
       }
+
+      // Search runs in background — poll for completion
+      const sessionId = data.sessionId!;
+      const poll = async () => {
+        try {
+          const pollRes = await fetch(`/api/jobs/${id}/search?sessionId=${sessionId}`);
+          const pollData = await pollRes.json() as { status?: string; count?: number; message?: string; fromPool?: number };
+          if (pollData.status === "running") {
+            setTimeout(poll, 3000);
+          } else {
+            setSearchResult({ count: pollData.count ?? 0, message: pollData.message, fromPool: pollData.fromPool });
+            await fetchJob();
+            setSearching(false);
+          }
+        } catch {
+          setSearchError("Search failed. Check your connection.");
+          setSearching(false);
+        }
+      };
+      setTimeout(poll, 3000);
     } catch {
       setSearchError("Search failed. Check your connection.");
-    } finally {
       setSearching(false);
     }
   };

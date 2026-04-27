@@ -124,7 +124,7 @@ describe("search import route", () => {
     talentPoolMocks.buildTalentPoolMap.mockResolvedValue(new Map());
   });
 
-  it("imports and scores search results into the job", async () => {
+  it("returns sessionId immediately and processes in background", async () => {
     const req = new Request("http://localhost/api/jobs/job-1/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -134,8 +134,14 @@ describe("search import route", () => {
     const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
     const body = await res.json();
 
+    // POST returns immediately with a session ID
     expect(res.status).toBe(200);
-    expect(body.count).toBe(1);
+    expect(body.sessionId).toBeDefined();
+    expect(body.status).toBe("running");
+
+    // Let the background task complete
+    await new Promise((r) => setTimeout(r, 50));
+
     expect(dbMocks.prisma.candidate.create).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.create.mock.calls[0][0].data.source).toBe("serpapi");
     expect(dbMocks.prisma.candidate.create.mock.calls[0][0].data.scoreBreakdown).toContain("\"version\":2");

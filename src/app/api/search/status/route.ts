@@ -26,7 +26,7 @@ export async function GET() {
   ]);
 
   // AI provider status
-  const provider = process.env.AI_PROVIDER ?? "ollama";
+  const provider = process.env.AI_PROVIDER ?? "claude";
   let claudeStatus: "ok" | "invalid" | "error" | "unconfigured" = "unconfigured";
 
   if (provider === "claude") {

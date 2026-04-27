@@ -25,6 +25,7 @@ import { buildTalentPoolMap } from "@/lib/talent-pool";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { getServerSetting } from "@/lib/settings";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
@@ -310,6 +311,16 @@ export async function POST(
   }
   const { maxResults } = parsed.data;
 
+  // Fall back to DB-stored keys if env vars are not set (keys entered via the settings UI)
+  const [dbSerpApi, dbBing, dbPdl] = await Promise.all([
+    process.env.SERPAPI_API_KEY ? null : getServerSetting("SERPAPI_API_KEY"),
+    process.env.BING_API_KEY    ? null : getServerSetting("BING_API_KEY"),
+    process.env.PDL_API_KEY     ? null : getServerSetting("PDL_API_KEY"),
+  ]);
+  if (dbSerpApi) process.env.SERPAPI_API_KEY = dbSerpApi;
+  if (dbBing)    process.env.BING_API_KEY    = dbBing;
+  if (dbPdl)     process.env.PDL_API_KEY     = dbPdl;
+
   const hasSerpApi = Boolean(process.env.SERPAPI_API_KEY);
   const hasBing    = Boolean(process.env.BING_API_KEY);
   const hasPDL     = Boolean(process.env.PDL_API_KEY);
@@ -351,8 +362,6 @@ export async function POST(
     .slice(0, MAX_QUERY_VARIANTS);
   const targetRaw = Math.min(Math.max(maxResults * 3, maxResults + 15), 120);
 
-  // Create a search session to persist progress — if rate-limited mid-search,
-  // results already saved to DB are preserved and the session records what happened.
   const session = await prisma.searchSession.create({
     data: {
       jobId:    id,
@@ -363,6 +372,93 @@ export async function POST(
       orgId:    auth.orgId,
     },
   });
+
+  // Fire-and-forget: run search in background so the response returns immediately.
+  // On Railway (persistent server) the Node.js event loop keeps running after the
+  // response is sent, so the background promise completes normally.
+  runSearchBackground({
+    sessionId: session.id,
+    jobId: id,
+    job,
+    parsedRole,
+    salary,
+    maxResults,
+    targetRaw,
+    searchQueries,
+    searchLocation,
+    targetLocation,
+    hasSerpApi,
+    hasBing,
+    hasPDL,
+    isOwner: auth.isOwner,
+    orgId: auth.orgId,
+  }).catch((err) => {
+    console.error("[search] background task crashed:", err);
+    prisma.searchSession.update({
+      where: { id: session.id },
+      data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search crashed" },
+    }).catch(() => {});
+  });
+
+  return NextResponse.json({ sessionId: session.id, status: "running" });
+}
+
+// ── GET — poll a running or completed search session ──────────────────────────
+
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+  const { id } = await params;
+  const sessionId = new URL(req.url).searchParams.get("sessionId");
+  if (!sessionId) return NextResponse.json({ error: "sessionId required" }, { status: 400 });
+
+  const session = await prisma.searchSession.findUnique({ where: { id: sessionId } });
+  if (!session || session.jobId !== id) {
+    return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  }
+
+  const importedIds: string[] = JSON.parse(session.importedIds || "[]");
+  const candidates = importedIds.length > 0
+    ? await prisma.candidate.findMany({
+        where: { id: { in: importedIds } },
+        orderBy: { matchScore: "desc" },
+      })
+    : [];
+
+  return NextResponse.json({
+    status: session.status,
+    collected: session.collected,
+    message: session.message,
+    count: candidates.length,
+    candidates,
+  });
+}
+
+// ── Background search processor ───────────────────────────────────────────────
+
+async function runSearchBackground(args: {
+  sessionId: string;
+  jobId: string;
+  job: { parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean };
+  parsedRole: ParsedRole;
+  salary: { min: number; max: number } | null;
+  maxResults: number;
+  targetRaw: number;
+  searchQueries: string[];
+  searchLocation: string;
+  targetLocation: string;
+  hasSerpApi: boolean;
+  hasBing: boolean;
+  hasPDL: boolean;
+  isOwner: boolean;
+  orgId: string | null;
+}) {
+  const { sessionId, jobId, job, parsedRole, salary, maxResults, targetRaw,
+    searchQueries, searchLocation, targetLocation, hasSerpApi, hasBing, hasPDL,
+    isOwner, orgId } = args;
 
   try {
     const seenUrls = new Set<string>();
@@ -462,11 +558,11 @@ export async function POST(
 
     if (allRaw.length === 0) {
       if (sawRetryableSearchFailure) {
-        await prisma.searchSession.update({ where: { id: session.id }, data: { status: "rate_limited", message: "Rate-limited before any results were returned." } }).catch(() => {});
-        return NextResponse.json({ count: 0, candidates: [], message: "Search API was rate-limited before it returned profiles. Wait a minute and search again." });
+        await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "rate_limited", message: "Rate-limited before any results were returned." } }).catch(() => {});
+        return;
       }
-      await prisma.searchSession.update({ where: { id: session.id }, data: { status: "complete", message: "No profiles found." } }).catch(() => {});
-      return NextResponse.json({ count: 0, candidates: [], message: "No LinkedIn profiles found for the exact search area. Try broadening the radius or adding broader title variants." });
+      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "No profiles found." } }).catch(() => {});
+      return;
     }
 
     // ── Phase 2: Skip already-imported profiles ──────────────────────────────
@@ -485,7 +581,7 @@ export async function POST(
 
     const existingUrls = new Set(
       (await prisma.candidate.findMany({
-        where: { jobId: id, linkedinUrl: { in: allNormed.map((r) => r.linkedinUrl) } },
+        where: { jobId: jobId, linkedinUrl: { in: allNormed.map((r) => r.linkedinUrl) } },
         select: { linkedinUrl: true },
       })).map((c) => c.linkedinUrl)
     );
@@ -494,8 +590,8 @@ export async function POST(
     console.log(`[search] ${allNew.length} new (${allNormed.length - allNew.length} already imported)`);
 
     if (allNew.length === 0) {
-      await prisma.searchSession.update({ where: { id: session.id }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
-      return NextResponse.json({ count: 0, candidates: [], message: "All found profiles are already in this job's candidate list." });
+      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
+      return;
     }
 
     // ── Phase 2b: Talent pool lookup ─────────────────────────────────────────
@@ -504,7 +600,7 @@ export async function POST(
     // We still score them fresh against this job's requirements.
     const poolMap = await buildTalentPoolMap(
       allNew.map((r) => r.linkedinUrl),
-      auth.isOwner ? null : auth.orgId,
+      isOwner ? null : orgId,
     );
     console.log(`[search] talent pool: ${poolMap.size} of ${allNew.length} have existing full profiles`);
 
@@ -609,7 +705,7 @@ export async function POST(
         try {
           const candidate = await prisma.candidate.create({
             data: {
-              jobId: id,
+              jobId: jobId,
               name: poolEntry?.name ?? r.name,
               headline: poolEntry?.headline ?? r.headline ?? null,
               location: candidateLocation,
@@ -639,7 +735,7 @@ export async function POST(
     const importedIds = sorted.map((c) => c.id);
 
     await prisma.searchSession.update({
-      where: { id: session.id },
+      where: { id: sessionId },
       data: {
         status:      finalStatus,
         collected:   sorted.length,
@@ -652,30 +748,33 @@ export async function POST(
 
     if (sorted.length === 0) {
       const reason = sawRetryableSearchFailure
-        ? "Search was rate-limited before returning results. Wait a moment and search again — already-imported candidates won't be duplicated."
-        : "No matching candidates found. Try re-analysing the job description or adjusting the search area.";
-      return NextResponse.json({ count: 0, candidates: [], message: reason });
+        ? "Search was rate-limited before returning results. Run search again — already-imported candidates won't be duplicated."
+        : "No matching candidates found. Try re-analysing the job description.";
+      await prisma.searchSession.update({
+        where: { id: sessionId },
+        data: { status: sawRetryableSearchFailure ? "rate_limited" : "complete", message: reason },
+      }).catch(() => {});
+      return;
     }
 
     const poolNote = fromPool > 0 ? ` (${fromPool} from talent pool, ${saved.length - fromPool} from LinkedIn)` : "";
     const limitNote = sawRetryableSearchFailure
-      ? " Search was partially rate-limited — run again to find more, already-imported candidates won't be duplicated."
+      ? " Partially rate-limited — run again to find more."
       : "";
-    return NextResponse.json({
-      count: sorted.length,
-      candidates: sorted,
-      fromPool,
-      message: `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
-    });
-  } catch (err) {
-    console.error("Search error:", err);
     await prisma.searchSession.update({
-      where: { id: session.id },
+      where: { id: sessionId },
+      data: {
+        status: sawRetryableSearchFailure ? "rate_limited" : "complete",
+        collected: sorted.length,
+        importedIds: JSON.stringify(sorted.map((c) => c.id)),
+        message: `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
+      },
+    }).catch(() => {});
+  } catch (err) {
+    console.error("[search] background error:", err);
+    await prisma.searchSession.update({
+      where: { id: sessionId },
       data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search failed" },
     }).catch(() => {});
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Search failed" },
-      { status: 500 }
-    );
   }
 }
