@@ -50,7 +50,7 @@ await runRequiredWithRetry("apply schema changes", process.execPath, ["scripts/a
 
 // Step 2: Sync any remaining schema drift (safe now that unique constraints are clean)
 if (existsSync(prismaBin)) {
-  await runRequiredWithRetry("sync database schema", prismaBin, ["db", "push", "--skip-generate"]);
+  await runRequiredWithRetry("sync database schema", prismaBin, ["db", "push", "--skip-generate", "--accept-data-loss"]);
 } else {
   console.error("[startup] Prisma CLI not found; cannot sync database schema");
   process.exit(1);
