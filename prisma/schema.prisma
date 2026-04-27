@@ -17,10 +17,11 @@ model Job {
   parsedRole  String?  // JSON string: parsed AI output
   salaryMin   Int?     // NZD yearly minimum (optional)
   salaryMax   Int?     // NZD yearly maximum (optional)
-  isRemote    Boolean  @default(false)
-  status      String   @default("active") // active | closed | on-hold
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isRemote     Boolean   @default(false)
+  status       String    @default("active") // active | closed | on-hold
+  lastScoredAt DateTime? // set by score-all; prevents re-runs within cooldown window
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   candidates     Candidate[]
   fetchSessions  FetchSession[]
@@ -143,6 +144,18 @@ model SearchSession {
   updatedAt   DateTime @updatedAt
 
   @@index([jobId])
+}
+
+// Tracks billable/auditable API usage per org. Used for rate limiting and metering.
+model UsageEvent {
+  id        String   @id @default(cuid())
+  orgId     String?
+  userId    String?
+  type      String   // "search" | "score" | "score_all" | "capture" | "parse"
+  meta      String?  // JSON: extra context (jobId, count, etc.)
+  createdAt DateTime @default(now())
+
+  @@index([orgId, type, createdAt])
 }
 
 model ReferenceCheck {

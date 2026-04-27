@@ -8,6 +8,14 @@ const dbMocks = vi.hoisted(() => ({
       findMany: vi.fn(),
       update: vi.fn(),
     },
+    job: {
+      update: vi.fn().mockResolvedValue({}),
+    },
+    usageEvent: {
+      count: vi.fn().mockResolvedValue(0),
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 
@@ -51,6 +59,7 @@ function makeJob(id: string, location = "Wellington") {
     salaryMax: 120000,
     location,
     isRemote: false,
+    lastScoredAt: null,
   };
 }
 

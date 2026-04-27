@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getAuth } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { CandidatesLibraryClient } from "@/components/candidates-library-client";
 
 export const dynamic = "force-dynamic";
@@ -37,9 +38,7 @@ export default async function CandidatesPage() {
     },
   });
 
-  const withProfile = rows.filter(
-    (row) => row.profileCapturedAt || (row.profileText?.trim().length ?? 0) >= 500
-  );
+  const withProfile = rows.filter(hasFullCandidateProfile);
 
   // Deduplicate by LinkedIn URL, keep freshest profile per person.
   type Row = typeof withProfile[number];

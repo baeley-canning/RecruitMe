@@ -5,10 +5,10 @@ import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey } from "@/lib/utils";
+import { checkRateLimit, recordUsage } from "@/lib/usage";
 
 const CONCURRENCY = 3;
 const COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes per job
-const lastScored = new Map<string, number>();
 
 export async function POST(
   _req: Request,
@@ -18,19 +18,28 @@ export async function POST(
   if (!auth) return unauthorized();
   const { id } = await params;
 
-  const last = lastScored.get(id);
-  if (last && Date.now() - last < COOLDOWN_MS) {
-    const waitSec = Math.ceil((COOLDOWN_MS - (Date.now() - last)) / 1000);
-    return NextResponse.json({ error: `Re-score all was just run. Wait ${waitSec}s before running again.` }, { status: 429 });
-  }
-  // Claim the slot immediately to block concurrent requests before async work starts.
-  lastScored.set(id, Date.now());
-
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
   if (!job.parsedRole) {
     return NextResponse.json({ error: "Parse the job description first." }, { status: 400 });
   }
+
+  const rateCheck = await checkRateLimit(auth.orgId, "score_all");
+  if (!rateCheck.allowed) {
+    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
+    return NextResponse.json({ error: `Score-all rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+
+  // DB-backed cooldown — survives server restarts and works across multiple instances.
+  if (job.lastScoredAt) {
+    const elapsed = Date.now() - job.lastScoredAt.getTime();
+    if (elapsed < COOLDOWN_MS) {
+      const waitSec = Math.ceil((COOLDOWN_MS - elapsed) / 1000);
+      return NextResponse.json({ error: `Re-score all was just run. Wait ${waitSec}s before running again.` }, { status: 429 });
+    }
+  }
+  // Claim the slot before async work so concurrent requests see the timestamp.
+  await prisma.job.update({ where: { id }, data: { lastScoredAt: new Date() } });
 
   const candidates = await prisma.candidate.findMany({
     where: { jobId: id, profileText: { not: null } },
@@ -100,5 +109,6 @@ export async function POST(
   }
 
   console.log(`[score-all] scored=${scored}, skipped=${skipped} (unchanged score context)`);
+  void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored, skipped });
   return NextResponse.json({ scored, skipped, total: candidates.length });
 }

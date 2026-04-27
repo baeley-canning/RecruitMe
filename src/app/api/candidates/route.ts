@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 
 /**
  * GET /api/candidates
@@ -43,9 +44,7 @@ export async function GET() {
     },
   });
 
-  const withProfile = rows.filter(
-    (row) => row.profileCapturedAt || (row.profileText?.trim().length ?? 0) >= 500
-  );
+  const withProfile = rows.filter(hasFullCandidateProfile);
 
   // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.
   // Candidates without a LinkedIn URL are included individually (distinct people).

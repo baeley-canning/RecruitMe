@@ -83,6 +83,15 @@ export async function GET(req: Request) {
     if (!session) {
       return NextResponse.json({ session: null }, { status: 404, headers: CORS });
     }
+
+    // When completed, embed the updated candidate so the web UI can update
+    // without an extra round-trip. saveCapturedProfileToCandidate runs before
+    // the session is marked "completed", so the candidate is already up to date.
+    if (session.status === "completed") {
+      const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
+      return NextResponse.json({ ...session, candidate }, { headers: CORS });
+    }
+
     return NextResponse.json(session, { headers: CORS });
   }
 

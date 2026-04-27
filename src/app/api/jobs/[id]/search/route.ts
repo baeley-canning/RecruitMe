@@ -26,9 +26,11 @@ import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
+import { checkRateLimit, recordUsage } from "@/lib/usage";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
+  locationOverride: z.string().max(100).optional(),
 });
 
 const PLACEHOLDERS = new Set([
@@ -314,7 +316,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { maxResults } = parsed.data;
+  const { maxResults, locationOverride } = parsed.data;
 
   // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
   // We do NOT mutate process.env so changing a key in settings takes effect immediately
@@ -339,6 +341,12 @@ export async function POST(
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
 
+  const rateCheck = await checkRateLimit(auth.orgId, "search");
+  if (!rateCheck.allowed) {
+    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
+    return NextResponse.json({ error: `Search rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) {
     return NextResponse.json({ error: "Analyse the job description first before searching." }, { status: 400 });
@@ -351,8 +359,9 @@ export async function POST(
     : null;
 
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
-  const searchLocation = canonicalJobCity || locationSource;
-  const targetLocation = location || canonicalJobCity || locationSource;
+  const parsedSearchLocation = canonicalJobCity || locationSource;
+  const searchLocation = locationOverride?.trim() || parsedSearchLocation;
+  const targetLocation = locationOverride?.trim() || location || canonicalJobCity || locationSource;
 
   // Build query pool: explicit search queries + synonym titles as standalone title searches
   // Synonym titles are the key insight — recruiters search off real titles, not JD language
@@ -409,6 +418,8 @@ export async function POST(
       data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search crashed" },
     }).catch(() => {});
   });
+
+  void recordUsage(auth.orgId, auth.userId, "search", { jobId: id, maxResults });
 
   return NextResponse.json({ sessionId: session.id, status: "running" });
 }

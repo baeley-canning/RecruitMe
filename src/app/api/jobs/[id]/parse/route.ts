@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { parseJobDescription } from "@/lib/ai";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { recordUsage } from "@/lib/usage";
 
 export async function POST(
   _req: Request,
@@ -22,6 +23,7 @@ export async function POST(
       data: { parsedRole: JSON.stringify(parsedRole) },
     });
 
+    void recordUsage(auth.orgId, auth.userId, "parse", { jobId: id });
     return NextResponse.json({ parsedRole });
   } catch (err) {
     console.error("JD parse error:", err);

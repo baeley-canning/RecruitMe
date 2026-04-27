@@ -45,9 +45,9 @@ const prismaBin = process.platform === "win32"
   : "node_modules/.bin/prisma";
 
 if (existsSync(prismaBin)) {
-  await runRequiredWithRetry("sync database schema", prismaBin, ["db", "push"]);
+  await runRequiredWithRetry("run database migrations", prismaBin, ["migrate", "deploy"]);
 } else {
-  console.error("[startup] Prisma CLI not found; cannot sync database schema");
+  console.error("[startup] Prisma CLI not found; cannot run database migrations");
   process.exit(1);
 }
 

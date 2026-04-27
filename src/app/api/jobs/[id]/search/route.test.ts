@@ -15,6 +15,11 @@ const dbMocks = vi.hoisted(() => ({
       create: vi.fn().mockResolvedValue({ id: "session-1" }),
       update: vi.fn().mockResolvedValue({ id: "session-1" }),
     },
+    usageEvent: {
+      count: vi.fn().mockResolvedValue(0),
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 

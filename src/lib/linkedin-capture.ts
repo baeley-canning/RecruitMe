@@ -209,33 +209,27 @@ export async function getSessionQueue(): Promise<ExtensionCaptureSession[]> {
 
 /** Add (or replace an existing session for the same candidateId) in the queue. */
 export async function addSessionToQueue(session: ExtensionCaptureSession): Promise<void> {
-  // upsert on candidateId so concurrent fetches for the same candidate
-  // don't race between deleteMany + create and produce duplicate rows.
-  await prisma.fetchSession.upsert({
-    where: { candidateId: session.candidateId },
-    create: {
-      id:            session.sessionId,
-      jobId:         session.jobId,
-      candidateId:   session.candidateId,
-      linkedinUrl:   session.linkedinUrl,
-      candidateName: session.candidateName,
-      status:        session.status,
-      message:       session.message,
-      error:         session.error ?? null,
-      orgId:         session.orgId ?? null,
-      userId:        session.userId ?? null,
-    },
-    update: {
-      id:            session.sessionId,
-      jobId:         session.jobId,
-      linkedinUrl:   session.linkedinUrl,
-      candidateName: session.candidateName,
-      status:        session.status,
-      message:       session.message,
-      error:         session.error ?? null,
-      completedAt:   null,
-    },
-  });
+  // Delete any stale session for this candidate then create a fresh one in a
+  // single transaction. We need a new row (new PK = new sessionId) each time so
+  // the web UI can poll by the sessionId it received — updating the PK in place
+  // via upsert is not safe across all Prisma/PostgreSQL versions.
+  await prisma.$transaction([
+    prisma.fetchSession.deleteMany({ where: { candidateId: session.candidateId } }),
+    prisma.fetchSession.create({
+      data: {
+        id:            session.sessionId,
+        jobId:         session.jobId,
+        candidateId:   session.candidateId,
+        linkedinUrl:   session.linkedinUrl,
+        candidateName: session.candidateName,
+        status:        session.status,
+        message:       session.message,
+        error:         session.error ?? null,
+        orgId:         session.orgId ?? null,
+        userId:        session.userId ?? null,
+      },
+    }),
+  ]);
 }
 
 /** Find the first session matching a predicate. */
@@ -370,7 +364,9 @@ async function buildCapturedCandidateData(args: {
         isRemote: job.isRemote,
       });
     } catch {
-      // Keep candidate unscored if the model call fails.
+      // Scoring failed — clear any stale cache key so score-all re-scores this
+      // candidate on the next run rather than treating the old key as valid.
+      scoreData.profileTextHash = null;
     }
 
     if (!profileUnchanged && cleanedProfileText.length >= 250) {
