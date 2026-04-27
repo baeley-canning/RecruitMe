@@ -81,9 +81,10 @@ export default function NewJobPage() {
   }, []);
 
   const handleFile = async (file: File) => {
-    if (!file.name.toLowerCase().endsWith(".pdf") && !file.name.toLowerCase().endsWith(".txt")) {
+    const n = file.name.toLowerCase();
+    if (!n.endsWith(".pdf") && !n.endsWith(".txt") && !n.endsWith(".docx") && !n.endsWith(".doc")) {
       setAutofilledFromUpload(false);
-      setError("Please upload a PDF or TXT file.");
+      setError("Please upload a PDF, DOCX, or TXT file.");
       return;
     }
     setUploading(true);
@@ -337,7 +338,7 @@ export default function NewJobPage() {
             Job Description or Hiring Brief <span className="text-red-500">*</span>
           </label>
           <p className="text-xs text-slate-400 mt-0.5">
-            Paste a JD, upload a PDF/TXT brief, or bring in the finished ad from the Listing Builder.
+            Paste a JD, upload a PDF/DOCX/TXT brief, or bring in the finished ad from the Listing Builder.
           </p>
         </div>
 
@@ -356,7 +357,7 @@ export default function NewJobPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.txt"
+            accept=".pdf,.docx,.doc,.txt"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
