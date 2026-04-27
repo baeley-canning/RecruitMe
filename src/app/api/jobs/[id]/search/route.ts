@@ -28,7 +28,6 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
-  minScore:   z.number().int().min(0).max(100).default(0),
   radiusKm:   z.number().min(1).max(200).default(25),
   centerLat:  z.number().min(-90).max(90).optional(),
   centerLng:  z.number().min(-180).max(180).optional(),
@@ -312,7 +311,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { maxResults, minScore, radiusKm, centerLat, centerLng } = parsed.data;
+  const { maxResults, radiusKm, centerLat, centerLng } = parsed.data;
 
   const hasSerpApi = Boolean(process.env.SERPAPI_API_KEY);
   const hasBing    = Boolean(process.env.BING_API_KEY);
@@ -628,9 +627,8 @@ export async function POST(
           continue;
         }
 
-        // minScore is not applied during search — all results are snippets which
-        // cap at ~55% regardless of candidate quality. The filter applies in the
-        // candidate list view after profiles have been fetched and properly scored.
+        // Score filter is not applied during search — all snippet results surface
+        // so the recruiter can fetch profiles and get proper scores before filtering.
 
         try {
           const candidate = await prisma.candidate.create({
@@ -657,7 +655,7 @@ export async function POST(
       }
     }
 
-    console.log(`[search] done — scored ${scored}, saved ${saved.length} (${fromPool} from pool), skipped ${skippedScore} below ${minScore}%`);
+    console.log(`[search] done — scored ${scored}, saved ${saved.length} (${fromPool} from pool), skipped ${skippedScore} below location threshold`);
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 

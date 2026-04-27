@@ -4,7 +4,13 @@ const aiMocks = vi.hoisted(() => ({
   parseJobDescription: vi.fn(),
 }));
 
+const sessionMocks = vi.hoisted(() => ({
+  getAuth: vi.fn().mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false }),
+  unauthorized: vi.fn(() => new Response(null, { status: 401 })),
+}));
+
 vi.mock("@/lib/ai", () => aiMocks);
+vi.mock("@/lib/session", () => sessionMocks);
 
 import { POST } from "./route";
 
