@@ -11,46 +11,6 @@
   }
 }
 
-.recruitme-radius-map,
-.recruitme-radius-map .leaflet-container {
-  position: relative;
-  z-index: 0;
-}
-
-.recruitme-radius-map .leaflet-pane {
-  z-index: 10;
-}
-
-.recruitme-radius-map .leaflet-tile-pane {
-  z-index: 10;
-}
-
-.recruitme-radius-map .leaflet-overlay-pane {
-  z-index: 20;
-}
-
-.recruitme-radius-map .leaflet-shadow-pane {
-  z-index: 25;
-}
-
-.recruitme-radius-map .leaflet-marker-pane {
-  z-index: 30;
-}
-
-.recruitme-radius-map .leaflet-tooltip-pane {
-  z-index: 40;
-}
-
-.recruitme-radius-map .leaflet-popup-pane {
-  z-index: 50;
-}
-
-.recruitme-radius-map .leaflet-control,
-.recruitme-radius-map .leaflet-top,
-.recruitme-radius-map .leaflet-bottom {
-  z-index: 60;
-}
-
 @layer utilities {
   .line-clamp-1 {
     overflow: hidden;

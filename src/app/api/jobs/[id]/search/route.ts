@@ -727,8 +727,11 @@ async function runSearchBackground(args: {
         // so the recruiter can fetch profiles and get proper scores before filtering.
 
         try {
-          const candidate = await prisma.candidate.create({
-            data: {
+          // upsert guards against the race where two concurrent searches
+          // import the same LinkedIn URL into the same job simultaneously.
+          const candidate = await prisma.candidate.upsert({
+            where: { jobId_linkedinUrl: { jobId: jobId, linkedinUrl: normUrl } },
+            create: {
               jobId: jobId,
               name: poolEntry?.name ?? r.name,
               headline: poolEntry?.headline ?? r.headline ?? null,
@@ -742,6 +745,7 @@ async function runSearchBackground(args: {
                 : {}),
               ...scoreData,
             },
+            update: scoreData, // refresh score if already exists
           });
           saved.push(candidate as SavedCandidate);
           if (isFromPool) fromPool++;

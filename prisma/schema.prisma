@@ -85,6 +85,8 @@ model Candidate {
   references    ReferenceCheck[]
   files         CandidateFile[]
   fetchSessions FetchSession[]
+
+  @@unique([jobId, linkedinUrl])
 }
 
 model CandidateFile {

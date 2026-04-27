@@ -7,6 +7,7 @@ const dbMocks = vi.hoisted(() => ({
     candidate: {
       findMany: vi.fn(),
       create: vi.fn(),
+      upsert: vi.fn(),
       findFirst: vi.fn(),
     },
     searchSession: {
@@ -102,10 +103,10 @@ describe("search import route", () => {
     dbMocks.prisma.candidate.findMany
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
-    dbMocks.prisma.candidate.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
       id: "cand-1",
       createdAt: new Date(),
-      ...data,
+      ...create,
     }));
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
     searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
@@ -142,8 +143,8 @@ describe("search import route", () => {
     // Let the background task complete
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(dbMocks.prisma.candidate.create).toHaveBeenCalledTimes(1);
-    expect(dbMocks.prisma.candidate.create.mock.calls[0][0].data.source).toBe("serpapi");
-    expect(dbMocks.prisma.candidate.create.mock.calls[0][0].data.scoreBreakdown).toContain("\"version\":2");
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
+    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("serpapi");
+    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.scoreBreakdown).toContain("\"version\":2");
   });
 });
