@@ -228,7 +228,6 @@ export default function JobDetailPage({
   // Stable fn-refs so setInterval callbacks always call the latest version.
   const pollCandidateFetchRef = useRef<(candidateId: string) => Promise<void>>(async () => {});
   const finishFetchRef = useRef<(candidateId: string, state: "done" | "error", message: string) => void>(() => {});
-  const mapAutoOpenedRef = useRef(false);
 
   const fetchJob = useCallback(async () => {
     const res = await fetch(`/api/jobs/${id}`);
@@ -314,15 +313,6 @@ export default function JobDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldParse, job]);
 
-  // Auto-open the map the first time a job location with known coords loads.
-  useEffect(() => {
-    if (!job || mapAutoOpenedRef.current) return;
-    const pr = safeParseJson<ParsedRole | null>(job.parsedRole, null);
-    if (pr?.location && getCityCoords(pr.location)) {
-      setShowMap(true);
-      mapAutoOpenedRef.current = true;
-    }
-  }, [job]);
 
   const handleParse = async () => {
     if (!job) return;

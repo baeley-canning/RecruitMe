@@ -17,6 +17,7 @@ import { POST } from "./route";
 describe("upload route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
