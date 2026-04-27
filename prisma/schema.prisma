@@ -65,7 +65,7 @@ model Candidate {
   location     String?
   linkedinUrl  String?
   profileText     String?  // Raw pasted/captured profile text
-  profileTextHash String?  // SHA-256 prefix of profileText — skip re-score if unchanged
+  profileTextHash String?  // Score-context cache key; skip re-score only if profile and job inputs are unchanged
   matchScore       Int?
   matchReason      String?  // AI JSON: { summary, strengths, gaps }
   acceptanceScore  Int?

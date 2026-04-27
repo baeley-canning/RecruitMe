@@ -33,6 +33,7 @@ import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueueToast } from "@/components/fetch-queue-toast";
 import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
+import { getSearchResultDisplay, type SearchResultSummary } from "@/lib/search-result-display";
 import type { ParsedRole } from "@/lib/ai";
 
 
@@ -160,7 +161,7 @@ export default function JobDetailPage({
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState("");
   const [searching, setSearching] = useState(false);
-  const [searchResult, setSearchResult] = useState<{ count: number; message?: string; fromPool?: number } | null>(null);
+  const [searchResult, setSearchResult] = useState<SearchResultSummary | null>(null);
   const [searchError, setSearchError] = useState("");
   const [searchingPool, setSearchingPool] = useState(false);
   const [poolResult, setPoolResult] = useState<{ count: number; message?: string } | null>(null);
@@ -178,6 +179,7 @@ export default function JobDetailPage({
     message: string;
   }>>({});
   const [filter, setFilter] = useState<string>("all");
+  const searchResultDisplay = searchResult ? getSearchResultDisplay(searchResult) : null;
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
   const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number } | null>(null);
@@ -371,11 +373,11 @@ export default function JobDetailPage({
         }
         try {
           const pollRes = await fetch(`/api/jobs/${id}/search?sessionId=${sessionId}`);
-          const pollData = await pollRes.json() as { status?: string; count?: number; message?: string; fromPool?: number };
+          const pollData = await pollRes.json() as { status?: "running" | "complete" | "rate_limited"; count?: number; message?: string; fromPool?: number };
           if (pollData.status === "running") {
             setTimeout(poll, 3000);
           } else {
-            setSearchResult({ count: pollData.count ?? 0, message: pollData.message, fromPool: pollData.fromPool });
+            setSearchResult({ status: pollData.status, count: pollData.count ?? 0, message: pollData.message, fromPool: pollData.fromPool });
             await fetchJob();
             setSearching(false);
           }
@@ -1424,15 +1426,12 @@ export default function JobDetailPage({
                           : "Searches configured sources, imports likely LinkedIn profiles, and uses full scoring for captured profiles."
                         }
                       </p>
-                      {searchResult && (
-                        <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          {searchResult.count > 0
-                            ? searchResult.fromPool && searchResult.fromPool > 0
-                              ? `Found ${searchResult.count} candidates — ${searchResult.fromPool} from talent pool, ${searchResult.count - searchResult.fromPool} from LinkedIn`
-                              : `Found and imported ${searchResult.count} candidates — scroll down to see them`
-                            : (searchResult.message ?? "No new candidates found. Try re-analysing with a broader job description.")
-                          }
+                      {searchResultDisplay && (
+                        <p className={`text-xs mt-1 flex items-center gap-1 ${searchResultDisplay.tone === "warning" ? "text-amber-600" : "text-emerald-600"}`}>
+                          {searchResultDisplay.tone === "warning"
+                            ? <AlertCircle className="w-3 h-3" />
+                            : <CheckCircle2 className="w-3 h-3" />}
+                          {searchResultDisplay.message}
                         </p>
                       )}
                       {searchError && (

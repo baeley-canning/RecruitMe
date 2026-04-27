@@ -2,9 +2,45 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { createHash } from "crypto";
 
-/** Short SHA-256 fingerprint of profile text — used to skip re-scoring unchanged profiles. */
+/** Short SHA-256 fingerprint of profile text. */
 export function hashProfileText(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+const SCORE_CACHE_VERSION = "score-context-v1";
+
+type ScoreCacheKeyInput = {
+  profileText: string;
+  parsedRole: unknown;
+  salary: { min: number; max: number } | null;
+  jobLocation?: string | null;
+  isRemote?: boolean | null;
+};
+
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  return `{${entries
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
+    .join(",")}}`;
+}
+
+export function buildScoreCacheKey(input: ScoreCacheKeyInput): string {
+  const payload = stableStringify({
+    version: SCORE_CACHE_VERSION,
+    profileTextHash: hashProfileText(input.profileText),
+    parsedRole: input.parsedRole,
+    salary: input.salary,
+    jobLocation: input.jobLocation ?? null,
+    isRemote: input.isRemote ?? false,
+  });
+
+  return createHash("sha256").update(payload).digest("hex").slice(0, 24);
 }
 
 export function cn(...inputs: ClassValue[]) {

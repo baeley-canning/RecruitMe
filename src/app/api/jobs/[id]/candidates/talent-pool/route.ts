@@ -15,7 +15,7 @@ import { prisma } from "@/lib/db";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
-import { safeParseJson } from "@/lib/utils";
+import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { locationMatches, expandLocationKeywords } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
@@ -160,6 +160,13 @@ export async function POST(
       matchScore = breakdown.overall;
       locationFitScore = breakdown.categories.location_fit.score;
       Object.assign(scoreData, deriveUpdateData(breakdown));
+      scoreData.profileTextHash = buildScoreCacheKey({
+        profileText,
+        parsedRole,
+        salary,
+        jobLocation: job.location,
+        isRemote: job.isRemote,
+      });
     } catch (err) {
       console.error(`[talent-pool] score failed for "${row.name}":`, err);
       if (minScore > 0) { skippedScore++; continue; }

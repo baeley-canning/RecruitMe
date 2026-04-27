@@ -5,6 +5,7 @@ import { extractCandidateInfo, predictAcceptance, scoreCandidateStructured } fro
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { buildScoreCacheKey } from "@/lib/utils";
 
 export async function GET(
   _req: Request,
@@ -92,6 +93,13 @@ export async function POST(
       );
       const updateData: Record<string, unknown> = {
         ...deriveUpdateData(breakdown),
+        profileTextHash: buildScoreCacheKey({
+          profileText: body.profileText,
+          parsedRole,
+          salary,
+          jobLocation: job.location,
+          isRemote: job.isRemote,
+        }),
       };
       if (body.profileText.length >= 250) {
         const acceptance = await predictAcceptance(body.profileText, parsedRole, salary);

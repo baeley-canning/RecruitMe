@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { scoreCandidateStructured, predictAcceptance, extractCandidateInfo, cleanCvText } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
-import { safeParseJson } from "@/lib/utils";
+import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
@@ -198,7 +198,14 @@ export async function POST(
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
 
-  const scoreData: Record<string, unknown> = {};
+  const scoreData: Record<string, unknown> = {
+    profileTextHash: null,
+    matchScore: null,
+    matchReason: null,
+    scoreBreakdown: null,
+    acceptanceScore: null,
+    acceptanceReason: null,
+  };
   if (parsedRole) {
     try {
       const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
@@ -210,8 +217,15 @@ export async function POST(
         job.isRemote,
       );
       Object.assign(scoreData, deriveUpdateData(breakdown));
+      scoreData.profileTextHash = buildScoreCacheKey({
+        profileText,
+        parsedRole,
+        salary,
+        jobLocation: job.location,
+        isRemote: job.isRemote,
+      });
     } catch {
-      /* keep existing scores */
+      /* profile text changed; leave stale score fields cleared */
     }
 
     if (profileText.length >= 250) {

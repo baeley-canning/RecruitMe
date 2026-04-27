@@ -15,8 +15,6 @@ import {
   CheckCircle2,
   XCircle,
   Send,
-  Copy,
-  Check,
   RefreshCw,
   FileText,
   Mail,

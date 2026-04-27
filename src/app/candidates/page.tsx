@@ -22,6 +22,7 @@ export default async function CandidatesPage() {
       headline: true,
       location: true,
       linkedinUrl: true,
+      profileText: true,
       matchScore: true,
       source: true,
       status: true,
@@ -36,12 +37,16 @@ export default async function CandidatesPage() {
     },
   });
 
+  const withProfile = rows.filter(
+    (row) => row.profileCapturedAt || (row.profileText?.trim().length ?? 0) >= 500
+  );
+
   // Deduplicate by LinkedIn URL, keep freshest profile per person.
-  type Row = typeof rows[number];
+  type Row = typeof withProfile[number];
   const byUrl = new Map<string, Row>();
   const noUrl: Row[] = [];
 
-  for (const row of rows) {
+  for (const row of withProfile) {
     if (!row.linkedinUrl) { noUrl.push(row); continue; }
     let norm: string;
     try { norm = normaliseLinkedInUrl(row.linkedinUrl); } catch { noUrl.push(row); continue; }
@@ -59,15 +64,19 @@ export default async function CandidatesPage() {
     return bDate > aDate ? 1 : -1;
   });
 
-  const serializedCandidates = candidates.map((candidate) => ({
-    ...candidate,
-    profileCapturedAt: candidate.profileCapturedAt?.toISOString() ?? null,
-    createdAt: candidate.createdAt.toISOString(),
-    files: candidate.files.map((file) => ({
-      ...file,
-      createdAt: file.createdAt.toISOString(),
-    })),
-  }));
+  const serializedCandidates = candidates.map((candidate) => {
+    const rest: Omit<typeof candidate, "profileText"> & { profileText?: string | null } = { ...candidate };
+    delete rest.profileText;
+    return {
+      ...rest,
+      profileCapturedAt: candidate.profileCapturedAt?.toISOString() ?? null,
+      createdAt: candidate.createdAt.toISOString(),
+      files: candidate.files.map((file) => ({
+        ...file,
+        createdAt: file.createdAt.toISOString(),
+      })),
+    };
+  });
 
   return <CandidatesLibraryClient candidates={serializedCandidates} />;
 }

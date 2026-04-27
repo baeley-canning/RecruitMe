@@ -20,7 +20,7 @@ import {
 } from "@/lib/scoring";
 import { isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
-import { safeParseJson } from "@/lib/utils";
+import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
@@ -53,6 +53,10 @@ function looksLikePersonName(s: string): boolean {
   if (ORG_PATTERNS.some((p) => p.test(s))) return false;
   const words = s.trim().split(/\s+/).filter(Boolean);
   return words.length >= 2 && words.length <= 6;
+}
+
+function hasFullProfile(profileText: string | null | undefined, profileCapturedAt?: Date | null) {
+  return Boolean(profileCapturedAt || (profileText && profileText.trim().length >= 500));
 }
 
 function cleanQuery(q: string): string {
@@ -456,6 +460,7 @@ export async function GET(
     collected: session.collected,
     message: session.message,
     count: candidates.length,
+    fromPool: candidates.filter((candidate) => candidate.source === "talent_pool").length,
     candidates,
   });
 }
@@ -465,7 +470,7 @@ export async function GET(
 async function runSearchBackground(args: {
   sessionId: string;
   jobId: string;
-  job: { parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean };
+  job: { parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null };
   parsedRole: ParsedRole;
   salary: { min: number; max: number } | null;
   maxResults: number;
@@ -607,30 +612,52 @@ async function runSearchBackground(args: {
         return true;
       });
 
-    const existingUrls = new Set(
-      (await prisma.candidate.findMany({
-        where: { jobId: jobId, linkedinUrl: { in: allNormed.map((r) => r.linkedinUrl) } },
-        select: { linkedinUrl: true },
-      })).map((c) => c.linkedinUrl)
-    );
-
-    const allNew = allNormed.filter((r) => !existingUrls.has(r.linkedinUrl));
-    console.log(`[search] ${allNew.length} new (${allNormed.length - allNew.length} already imported)`);
-
-    if (allNew.length === 0) {
-      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
-      return;
+    const existingCandidates = await prisma.candidate.findMany({
+      where: { jobId: jobId, linkedinUrl: { in: allNormed.map((r) => r.linkedinUrl) } },
+      select: {
+        id: true,
+        name: true,
+        headline: true,
+        location: true,
+        linkedinUrl: true,
+        profileText: true,
+        profileCapturedAt: true,
+      },
+    });
+    const existingByUrl = new Map<string, typeof existingCandidates[number]>();
+    for (const candidate of existingCandidates) {
+      if (!candidate.linkedinUrl) continue;
+      existingByUrl.set(normaliseLinkedInUrl(candidate.linkedinUrl), candidate);
     }
 
     // ── Phase 2b: Talent pool lookup ─────────────────────────────────────────
-    // For any new result whose LinkedIn URL already has a full profile in our
-    // DB (from a different job), reuse that profile instead of fetching again.
-    // We still score them fresh against this job's requirements.
+    // For any search result whose LinkedIn URL already has a full profile in our
+    // DB (usually from a different job), reuse that profile instead of fetching
+    // again. Existing snippet rows in this job are upgraded in-place.
     const poolMap = await buildTalentPoolMap(
-      allNew.map((r) => r.linkedinUrl),
+      allNormed.map((r) => r.linkedinUrl),
       isOwner ? null : orgId,
     );
-    console.log(`[search] talent pool: ${poolMap.size} of ${allNew.length} have existing full profiles`);
+    const allNew = allNormed.filter((r) => !existingByUrl.has(r.linkedinUrl));
+    const upgradeExisting = allNormed.filter((r) => {
+      const existing = existingByUrl.get(r.linkedinUrl);
+      return Boolean(existing && poolMap.has(r.linkedinUrl) && !hasFullProfile(existing.profileText, existing.profileCapturedAt));
+    });
+    type SearchWorkItem = { result: SearchResult; existingCandidate?: typeof existingCandidates[number] };
+    const workItems: SearchWorkItem[] = [
+      ...upgradeExisting.map((result) => ({
+        result,
+        existingCandidate: existingByUrl.get(result.linkedinUrl),
+      })),
+      ...allNew.map((result) => ({ result })),
+    ];
+    console.log(`[search] ${allNew.length} new, ${upgradeExisting.length} existing snippets to upgrade (${allNormed.length - allNew.length - upgradeExisting.length} already imported)`);
+    console.log(`[search] talent pool: ${poolMap.size} of ${allNormed.length} found URLs have existing full profiles`);
+
+    if (workItems.length === 0) {
+      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
+      return;
+    }
 
     type SavedCandidate = NonNullable<Awaited<ReturnType<typeof prisma.candidate.findFirst>>>;
     const saved: SavedCandidate[] = [];
@@ -641,8 +668,8 @@ async function runSearchBackground(args: {
     // Pre-filter: drop confirmed overseas candidates and non-person names before scoring.
     // NZ candidates with any location (including generic "New Zealand") pass through —
     // applyLocationFitOverride handles fine-grained location scoring after fetch.
-    const toScore = allNew
-      .filter((r) => {
+    const toScore = workItems
+      .filter(({ result: r }) => {
         if (!looksLikePersonName(r.name)) return false;
         const poolLoc = poolMap.get(r.linkedinUrl)?.location ?? "";
         const loc = poolLoc || r.location || "";
@@ -661,7 +688,9 @@ async function runSearchBackground(args: {
       const batch = toScore.slice(i, i + BATCH);
 
       const results = await Promise.all(
-        batch.map(async (r) => {
+        batch.map(async (workItem) => {
+          const r = workItem.result;
+          const existingCandidate = workItem.existingCandidate;
           const normUrl     = normaliseLinkedInUrl(r.linkedinUrl);
           const poolEntry   = poolMap.get(normUrl);
           const candidateLocation = poolEntry?.location ?? r.location ?? null;
@@ -695,6 +724,15 @@ async function runSearchBackground(args: {
             matchScore = breakdown.overall;
             locationFitScore = breakdown.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(breakdown));
+            if (hasFullProfile) {
+              scoreData.profileTextHash = buildScoreCacheKey({
+                profileText,
+                parsedRole,
+                salary,
+                jobLocation: job.location,
+                isRemote: job.isRemote,
+              });
+            }
           } catch (err) {
             console.error(`[search] score failed for "${r.name}":`, err);
             const fallback = buildProvisionalSearchScore(
@@ -709,7 +747,7 @@ async function runSearchBackground(args: {
             locationFitScore = fallback.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(fallback));
           }
-          return { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore };
+          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore };
         })
       );
 
@@ -717,7 +755,7 @@ async function runSearchBackground(args: {
 
       for (const item of results) {
         if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, candidateLocation, profileText, isFromPool, scoreData, locationFitScore } = item;
+        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, locationFitScore } = item;
 
         // Hard location cutoff: drop candidates we KNOW are far out-of-area.
         // Only applies when candidateLocation is set — if it's empty, the AI had no location
@@ -732,6 +770,28 @@ async function runSearchBackground(args: {
         // so the recruiter can fetch profiles and get proper scores before filtering.
 
         try {
+          if (existingCandidate) {
+            const candidate = await prisma.candidate.update({
+              where: { id: existingCandidate.id },
+              data: {
+                name: poolEntry?.name ?? existingCandidate.name,
+                headline: poolEntry?.headline ?? r.headline ?? existingCandidate.headline ?? null,
+                location: candidateLocation,
+                linkedinUrl: normUrl,
+                profileText: profileText || null,
+                profileTextHash: null,
+                source: isFromPool ? "talent_pool" : r.source,
+                ...(isFromPool && poolEntry?.profileCapturedAt
+                  ? { profileCapturedAt: poolEntry.profileCapturedAt }
+                  : {}),
+                ...scoreData,
+              },
+            });
+            saved.push(candidate as SavedCandidate);
+            if (isFromPool) fromPool++;
+            continue;
+          }
+
           // upsert guards against the race where two concurrent searches
           // import the same LinkedIn URL into the same job simultaneously.
           const candidate = await prisma.candidate.upsert({
@@ -743,6 +803,7 @@ async function runSearchBackground(args: {
               location: candidateLocation,
               linkedinUrl: normUrl,
               profileText: profileText || null,
+              profileTextHash: null,
               source: isFromPool ? "talent_pool" : r.source,
               status: "new",
               ...(isFromPool && poolEntry?.profileCapturedAt

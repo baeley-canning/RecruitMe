@@ -8,6 +8,7 @@ const dbMocks = vi.hoisted(() => ({
       findMany: vi.fn(),
       create: vi.fn(),
       upsert: vi.fn(),
+      update: vi.fn(),
       findFirst: vi.fn(),
     },
     searchSession: {
@@ -108,6 +109,11 @@ describe("search import route", () => {
       createdAt: new Date(),
       ...create,
     }));
+    dbMocks.prisma.candidate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "cand-existing",
+      createdAt: new Date(),
+      ...data,
+    }));
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
     searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
       items: [
@@ -146,5 +152,55 @@ describe("search import route", () => {
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("serpapi");
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.scoreBreakdown).toContain("\"version\":2");
+  });
+
+  it("upgrades an existing snippet candidate when a full talent-pool profile exists", async () => {
+    dbMocks.prisma.candidate.findMany.mockReset();
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
+      {
+        id: "cand-existing",
+        name: "Taylor Morgan",
+        headline: "Full-stack Engineer",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/taylor-morgan/",
+        profileText: "Short search snippet",
+        profileCapturedAt: null,
+      },
+    ]);
+    const fullProfile = "Taylor Morgan\nFull-stack Engineer\nWellington, New Zealand\nAbout\nExperienced React and Ruby on Rails engineer. ".repeat(30);
+    const poolEntry = {
+        candidateId: "pool-1",
+        name: "Taylor Morgan",
+        headline: "Full-stack Engineer",
+        location: "Wellington, New Zealand",
+        profileText: fullProfile,
+        profileCapturedAt: new Date("2026-01-01T00:00:00.000Z"),
+        isFresh: true,
+      };
+    talentPoolMocks.buildTalentPoolMap.mockResolvedValue(new Map([
+      ["https://www.linkedin.com/in/taylor-morgan", poolEntry],
+      ["https://www.linkedin.com/in/taylor-morgan/", poolEntry],
+    ]));
+
+    const req = new Request("http://localhost/api/jobs/job-1/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 1 }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(res.status).toBe(200);
+    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "cand-existing" },
+      data: expect.objectContaining({
+        profileText: fullProfile,
+        source: "talent_pool",
+        scoreBreakdown: expect.stringContaining("\"version\":2"),
+        profileTextHash: expect.any(String),
+      }),
+    }));
   });
 });

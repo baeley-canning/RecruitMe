@@ -28,6 +28,7 @@ export async function GET() {
       headline: true,
       location: true,
       linkedinUrl: true,
+      profileText: true,
       matchScore: true,
       source: true,
       status: true,
@@ -42,8 +43,9 @@ export async function GET() {
     },
   });
 
-  // Filter out short profiles
-  const withProfile = rows.filter(() => true);
+  const withProfile = rows.filter(
+    (row) => row.profileCapturedAt || (row.profileText?.trim().length ?? 0) >= 500
+  );
 
   // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.
   // Candidates without a LinkedIn URL are included individually (distinct people).
@@ -70,5 +72,9 @@ export async function GET() {
     (a, b) => (b.profileCapturedAt ?? b.createdAt) > (a.profileCapturedAt ?? a.createdAt) ? 1 : -1
   );
 
-  return NextResponse.json(people);
+  return NextResponse.json(people.map((row) => {
+    const person: Omit<typeof row, "profileText"> & { profileText?: string | null } = { ...row };
+    delete person.profileText;
+    return person;
+  }));
 }

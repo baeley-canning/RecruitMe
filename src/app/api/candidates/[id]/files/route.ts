@@ -3,10 +3,9 @@ import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
 import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
-import { hashProfileText } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
-import { safeParseJson } from "@/lib/utils";
+import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_TYPES = [
@@ -139,7 +138,12 @@ export async function POST(
       const text = profileText.trim();
       const updates: Record<string, unknown> = {
         profileText: text,
-        profileTextHash: hashProfileText(text),
+        profileTextHash: null,
+        matchScore: null,
+        matchReason: null,
+        scoreBreakdown: null,
+        acceptanceScore: null,
+        acceptanceReason: null,
         profileCapturedAt: new Date(),
         source: candidate.source === "manual" ? "manual" : candidate.source,
       };
@@ -164,6 +168,13 @@ export async function POST(
               candidate.job.isRemote,
             );
             Object.assign(updates, deriveUpdateData(breakdown));
+            updates.profileTextHash = buildScoreCacheKey({
+              profileText: text,
+              parsedRole,
+              salary,
+              jobLocation: candidate.job.location,
+              isRemote: candidate.job.isRemote,
+            });
             if (acceptanceResult.status === "fulfilled") {
               updates.acceptanceScore = acceptanceResult.value.score;
               updates.acceptanceReason = JSON.stringify(acceptanceResult.value);

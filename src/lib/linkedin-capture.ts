@@ -6,15 +6,13 @@ import {
   scoreCandidateStructured,
   type ParsedRole,
 } from "./ai";
-import { safeParseJson, hashProfileText } from "./utils";
+import { buildScoreCacheKey, safeParseJson } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isExplicitlyOverseasLocation, isNzLocation } from "./location";
 
 export { normaliseLinkedInUrl } from "./linkedin";
 
-// Legacy single-session key (kept for reference only; new code uses the queue key).
-export const LINKEDIN_EXTENSION_SESSION_KEY = "LINKEDIN_EXTENSION_PENDING_CAPTURE_V1";
 // Multi-session queue — stores ExtensionCaptureSession[] as JSON.
 export const LINKEDIN_EXTENSION_QUEUE_KEY = "LINKEDIN_EXTENSION_QUEUE_V1";
 
@@ -37,10 +35,6 @@ export interface ExtensionCaptureSession {
   completedAt?: string;
   error?: string;
   candidate?: unknown;
-}
-
-function nowIso() {
-  return new Date().toISOString();
 }
 
 const CAPTURE_STOP_LINE_PATTERNS = [
@@ -346,7 +340,16 @@ async function buildCapturedCandidateData(args: {
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
 
-  const scoreData: Record<string, unknown> = {};
+  const scoreData: Record<string, unknown> = profileUnchanged
+    ? {}
+    : {
+        profileTextHash: null,
+        matchScore: null,
+        matchReason: null,
+        scoreBreakdown: null,
+        acceptanceScore: null,
+        acceptanceReason: null,
+      };
   if (parsedRole) {
     // Always re-score — role requirements may have changed even if profile hasn't.
     try {
@@ -359,6 +362,13 @@ async function buildCapturedCandidateData(args: {
         job.isRemote,
       );
       Object.assign(scoreData, deriveUpdateData(breakdown));
+      scoreData.profileTextHash = buildScoreCacheKey({
+        profileText: cleanedProfileText,
+        parsedRole,
+        salary,
+        jobLocation: job.location,
+        isRemote: job.isRemote,
+      });
     } catch {
       // Keep candidate unscored if the model call fails.
     }
@@ -378,7 +388,6 @@ async function buildCapturedCandidateData(args: {
     location,
     linkedinUrl: normaliseLinkedInUrl(linkedinUrl),
     profileText: cleanedProfileText,
-    profileTextHash: hashProfileText(cleanedProfileText),
     profileCapturedAt: new Date(),
     ...scoreData,
   };
@@ -466,57 +475,4 @@ export async function importCapturedLinkedInProfile(args: {
       ...data,
     },
   });
-}
-
-// ---------------------------------------------------------------------------
-// Legacy single-session helpers (kept for backward compatibility during migration)
-// ---------------------------------------------------------------------------
-
-export async function getPendingExtensionCaptureSession(): Promise<ExtensionCaptureSession | null> {
-  const row = await prisma.setting.findUnique({
-    where: { key: LINKEDIN_EXTENSION_SESSION_KEY },
-  });
-  if (!row?.value) return null;
-
-  try {
-    const session = JSON.parse(row.value) as ExtensionCaptureSession;
-    if (!session?.sessionId || !session?.candidateId || !session?.linkedinUrl) return null;
-
-    const ageMs = Date.now() - new Date(session.updatedAt || session.createdAt).getTime();
-    if (ageMs > SESSION_TTL_MS) {
-      await clearPendingExtensionCaptureSession();
-      return null;
-    }
-
-    return session;
-  } catch {
-    return null;
-  }
-}
-
-export async function setPendingExtensionCaptureSession(session: ExtensionCaptureSession) {
-  await prisma.setting.upsert({
-    where: { key: LINKEDIN_EXTENSION_SESSION_KEY },
-    update: { value: JSON.stringify(session) },
-    create: { key: LINKEDIN_EXTENSION_SESSION_KEY, value: JSON.stringify(session) },
-  });
-}
-
-export async function updatePendingExtensionCaptureSession(
-  patch: Partial<ExtensionCaptureSession> & Pick<ExtensionCaptureSession, "sessionId">
-) {
-  const session = await getPendingExtensionCaptureSession();
-  if (!session || session.sessionId !== patch.sessionId) return null;
-
-  const next: ExtensionCaptureSession = {
-    ...session,
-    ...patch,
-    updatedAt: nowIso(),
-  };
-  await setPendingExtensionCaptureSession(next);
-  return next;
-}
-
-export async function clearPendingExtensionCaptureSession() {
-  await prisma.setting.delete({ where: { key: LINKEDIN_EXTENSION_SESSION_KEY } }).catch(() => {});
 }
