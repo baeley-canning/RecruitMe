@@ -317,22 +317,30 @@ async function buildCapturedCandidateData(args: {
   const hasDirectHeadline = Boolean(extracted.headline);
   const hasDirectLocation = Boolean(extracted.location);
 
-  if (!profileUnchanged) {
-    try {
-      const info = await extractCandidateInfo(cleanedProfileText);
-      if (!hasDirectName && info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
-      if (!hasDirectHeadline && info.headline && info.headline.length > 2) headline = info.headline;
-      if (!hasDirectLocation && info.location && info.location.length > 2) location = info.location;
-    } catch {
-      // Keep existing identity fields on parse failures.
-    }
-  }
-
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   const salary =
     job.salaryMin || job.salaryMax
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
+
+  // Run all three AI calls concurrently — they are independent of each other.
+  const [info, rawBreakdown, acceptance] = await Promise.all([
+    !profileUnchanged
+      ? extractCandidateInfo(cleanedProfileText).catch(() => null)
+      : Promise.resolve(null),
+    parsedRole
+      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary).catch(() => null)
+      : Promise.resolve(null),
+    !profileUnchanged && cleanedProfileText.length >= 250 && parsedRole
+      ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  if (info) {
+    if (!hasDirectName && info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
+    if (!hasDirectHeadline && info.headline && info.headline.length > 2) headline = info.headline;
+    if (!hasDirectLocation && info.location && info.location.length > 2) location = info.location;
+  }
 
   const scoreData: Record<string, unknown> = profileUnchanged
     ? {}
@@ -344,10 +352,10 @@ async function buildCapturedCandidateData(args: {
         acceptanceScore: null,
         acceptanceReason: null,
       };
+
   if (parsedRole) {
-    // Always re-score — role requirements may have changed even if profile hasn't.
-    try {
-      const rawBreakdown = await scoreCandidateStructured(cleanedProfileText, parsedRole, salary);
+    if (rawBreakdown) {
+      // location is finalised above before applyLocationFitOverride runs.
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         location,
@@ -363,18 +371,11 @@ async function buildCapturedCandidateData(args: {
         jobLocation: job.location,
         isRemote: job.isRemote,
       });
-    } catch {
-      // Scoring failed — clear any stale cache key so score-all re-scores this
-      // candidate on the next run rather than treating the old key as valid.
+    } else {
       scoreData.profileTextHash = null;
     }
-
-    if (!profileUnchanged && cleanedProfileText.length >= 250) {
-      try {
-        Object.assign(scoreData, buildAcceptanceData(await predictAcceptance(cleanedProfileText, parsedRole, salary)));
-      } catch {
-        // Acceptance is optional; leave existing fields untouched on failure.
-      }
+    if (acceptance) {
+      Object.assign(scoreData, buildAcceptanceData(acceptance));
     }
   }
 

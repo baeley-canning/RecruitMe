@@ -345,7 +345,7 @@ export default function JobDetailPage({
       finishFetchRef.current(
         candidateId,
         "error",
-        "Capture timed out - try again. If it keeps failing, reload the Opera extension and check the extension popup for the real error."
+        "Capture timed out - try again. If it keeps failing, reload the extension and check the extension popup for the real error."
       );
       return;
     }
