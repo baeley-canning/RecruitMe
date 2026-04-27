@@ -44,10 +44,15 @@ const prismaBin = process.platform === "win32"
   ? "node_modules/.bin/prisma.cmd"
   : "node_modules/.bin/prisma";
 
+// Step 1: Apply schema changes that db push can't do safely on its own
+// (candidate dedup, adding lastScoredAt + UsageEvent). Idempotent raw SQL.
+await runRequiredWithRetry("apply schema changes", process.execPath, ["scripts/apply-schema-changes.mjs"]);
+
+// Step 2: Sync any remaining schema drift (safe now that unique constraints are clean)
 if (existsSync(prismaBin)) {
-  await runRequiredWithRetry("run database migrations", prismaBin, ["migrate", "deploy"]);
+  await runRequiredWithRetry("sync database schema", prismaBin, ["db", "push", "--skip-generate"]);
 } else {
-  console.error("[startup] Prisma CLI not found; cannot run database migrations");
+  console.error("[startup] Prisma CLI not found; cannot sync database schema");
   process.exit(1);
 }
 
