@@ -32,7 +32,7 @@ async function processCaptureCompletion(args: {
   const { sessionId, session, linkedinUrl, profileText } = args;
 
   try {
-    const candidate = await saveCapturedProfileToCandidate({
+    await saveCapturedProfileToCandidate({
       jobId: session.jobId,
       candidateId: session.candidateId,
       linkedinUrl,
