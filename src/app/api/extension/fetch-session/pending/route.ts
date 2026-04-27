@@ -24,16 +24,22 @@ export async function GET(req: Request) {
 
   const normUrl = normaliseLinkedInUrl(linkedinUrl);
   const session = await findSessionInQueue(
-    (s) => s.status === "pending" && normaliseLinkedInUrl(s.linkedinUrl) === normUrl
+    (s) =>
+      normaliseLinkedInUrl(s.linkedinUrl) === normUrl &&
+      (s.status === "pending" ||
+        s.status === "processing" ||
+        s.status === "completed" ||
+        s.status === "error")
   );
 
   if (!session) {
-    return NextResponse.json({ pending: false, status: "idle" }, { headers: CORS });
+    return NextResponse.json({ pending: false, active: false, status: "idle" }, { headers: CORS });
   }
 
   return NextResponse.json(
     {
-      pending: true,
+      pending: session.status === "pending",
+      active: true,
       status: session.status,
       sessionId: session.sessionId,
       candidateName: session.candidateName,

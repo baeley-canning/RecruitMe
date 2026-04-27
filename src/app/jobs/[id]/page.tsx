@@ -223,6 +223,8 @@ export default function JobDetailPage({
     candidateId: string;
     tab: Window | null;
     startedAt: number;
+    processingStartedAt: number | null;
+    lastKnownStatus: "pending" | "processing";
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
   }
@@ -457,7 +459,18 @@ export default function JobDetailPage({
   const pollCandidateFetch = async (candidateId: string) => {
     const entry = activeFetchesRef.current.get(candidateId);
     if (!entry || entry.done) return;
-    if (Date.now() - entry.startedAt > 90_000) {
+    const now = Date.now();
+    if (entry.lastKnownStatus === "processing") {
+      const processingStartedAt = entry.processingStartedAt ?? now;
+      if (now - processingStartedAt > 300_000) {
+        finishFetchRef.current(
+          candidateId,
+          "error",
+          "Profile reached RecruitMe but AI scoring took too long - refresh the job and re-score if needed."
+        );
+        return;
+      }
+    } else if (now - entry.startedAt > 120_000) {
       finishFetchRef.current(
         candidateId,
         "error",
@@ -494,6 +507,8 @@ export default function JobDetailPage({
         error?: string;
       };
       if (data.status === "processing") {
+        entry.lastKnownStatus = "processing";
+        entry.processingStartedAt ??= Date.now();
         setFetchStatuses((prev) => ({
           ...prev,
           [candidateId]: { state: "fetching", message: data.message ?? "Scoring with AI..." },
@@ -606,6 +621,8 @@ export default function JobDetailPage({
           candidateId,
           tab,
           startedAt: Date.now(),
+          processingStartedAt: null,
+          lastKnownStatus: "pending",
           done: false,
           pollInterval: null,
         };

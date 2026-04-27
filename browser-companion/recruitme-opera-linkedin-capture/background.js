@@ -302,7 +302,8 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
 
 async function maybeAutoCapture(tabId, linkedinUrl) {
   const pending = await checkPendingCapture(linkedinUrl);
-  if (!pending.data?.pending || !pending.data?.sessionId) return;
+  if (!pending.data?.active || !pending.data?.sessionId) return;
+  if (pending.data.status !== "pending") return;
   await capturePendingSessionInTab(tabId, pending.data, pending.base);
 }
 
@@ -427,6 +428,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           pending: Boolean(data?.pending),
+          active: Boolean(data?.active),
           status: data?.status || "idle",
           sessionId: data?.sessionId || "",
           candidateName: data?.candidateName || "",
@@ -443,7 +445,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void (async () => {
       const tab = await getActiveLinkedInTab();
       const pending = await checkPendingCapture(tab.url);
-      if (!pending.data?.pending || !pending.data?.sessionId) {
+      if (!pending.data?.active || !pending.data?.sessionId) {
+        throw new Error("No pending RecruitMe fetch matches this LinkedIn profile");
+      }
+      if (pending.data.status === "processing") {
+        throw new Error(pending.data.message || "RecruitMe is already scoring this profile");
+      }
+      if (pending.data.status === "completed") {
+        throw new Error(pending.data.message || "RecruitMe already captured this profile");
+      }
+      if (pending.data.status === "error") {
+        throw new Error(pending.data.error || pending.data.message || "Last RecruitMe capture failed");
+      }
+      if (!pending.data.pending) {
         throw new Error("No pending RecruitMe fetch matches this LinkedIn profile");
       }
       try {
