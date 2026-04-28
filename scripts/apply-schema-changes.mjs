@@ -1,43 +1,54 @@
 /**
  * Runs before `prisma db push` on production startup.
- * Applies schema changes that db push can't do safely by itself:
- *   1. Deduplicates candidates so the unique (jobId, linkedinUrl) index can be created
- *   2. Adds Job.lastScoredAt if missing
- *   3. Creates UsageEvent table + index if missing
- *   4. Makes Candidate.jobId nullable (candidate persistence after job deletion)
- *   5. Adds Candidate.orgId, archivedJobTitle, archivedJobCompany
- *   6. Rewires Candidate→Job FK to ON DELETE SET NULL
- *
- * Uses Prisma $executeRaw — idempotent, no migration history required.
+ * Each step is independently wrapped so one failure doesn't block the rest.
+ * All steps are idempotent — safe to run on every startup.
  */
 
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-try {
-  // 1. Remove duplicate (jobId, linkedinUrl) candidates.
+let anyFailed = false;
+
+async function step(label, fn) {
+  try {
+    await fn();
+    console.log(`[apply-schema] ✓ ${label}`);
+  } catch (err) {
+    console.error(`[apply-schema] ✗ ${label}: ${err.message}`);
+    anyFailed = true;
+  }
+}
+
+// 1. Deduplicate candidates on (jobId, linkedinUrl) so the unique index can exist.
+//    Only deduplicates rows where BOTH jobId and linkedinUrl are non-null.
+await step("deduplicate candidates", async () => {
   const deleted = await prisma.$executeRaw`
     DELETE FROM "Candidate"
     WHERE "linkedinUrl" IS NOT NULL
+      AND "jobId" IS NOT NULL
       AND id NOT IN (
         SELECT DISTINCT ON ("jobId", "linkedinUrl") id
         FROM "Candidate"
         WHERE "linkedinUrl" IS NOT NULL
+          AND "jobId" IS NOT NULL
         ORDER BY "jobId", "linkedinUrl",
                  COALESCE("matchScore", -1) DESC,
                  "updatedAt" DESC
       )
   `;
-  console.log(`[apply-schema] Removed ${deleted} duplicate candidate(s)`);
+  console.log(`  removed ${deleted} duplicate(s)`);
+});
 
-  // 2. Job.lastScoredAt
+// 2. Job.lastScoredAt
+await step("Job.lastScoredAt", async () => {
   await prisma.$executeRaw`
     ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "lastScoredAt" TIMESTAMP(3)
   `;
-  console.log("[apply-schema] Job.lastScoredAt ensured");
+});
 
-  // 3. UsageEvent table
+// 3. UsageEvent table
+await step("UsageEvent table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "UsageEvent" (
       "id"        TEXT         NOT NULL,
@@ -53,44 +64,48 @@ try {
     CREATE INDEX IF NOT EXISTS "UsageEvent_orgId_type_createdAt_idx"
     ON "UsageEvent"("orgId", "type", "createdAt")
   `;
-  console.log("[apply-schema] UsageEvent table ensured");
+});
 
-  // 4. Make Candidate.jobId nullable (candidates persist after job deletion)
+// 4. Make Candidate.jobId nullable (candidates persist after job deletion)
+await step("Candidate.jobId nullable", async () => {
   await prisma.$executeRaw`
     ALTER TABLE "Candidate" ALTER COLUMN "jobId" DROP NOT NULL
   `;
-  console.log("[apply-schema] Candidate.jobId nullable ensured");
+});
 
-  // 5. Add Candidate library fields (all nullable, idempotent)
+// 5. Add Candidate library fields
+await step("Candidate library columns", async () => {
   await prisma.$executeRaw`
     ALTER TABLE "Candidate"
       ADD COLUMN IF NOT EXISTS "orgId"              TEXT,
       ADD COLUMN IF NOT EXISTS "archivedJobTitle"   TEXT,
       ADD COLUMN IF NOT EXISTS "archivedJobCompany" TEXT
   `;
-  console.log("[apply-schema] Candidate library columns ensured");
+});
 
-  // 6. Rewire Candidate→Job FK to ON DELETE SET NULL
-  //    Drops any existing Candidate→Job FK that isn't already SET NULL, then adds the correct one.
+// 6. Rewire Candidate→Job FK to ON DELETE SET NULL
+//    Checks the current delete rule; only rewires if it isn't already SET NULL.
+await step("Candidate→Job FK ON DELETE SET NULL", async () => {
   await prisma.$executeRaw`
     DO $$
     DECLARE
-      fk_name TEXT;
+      fk_name       TEXT;
       fk_confdeltype CHAR;
     BEGIN
       SELECT conname, confdeltype INTO fk_name, fk_confdeltype
       FROM pg_constraint
-      WHERE conrelid = 'public."Candidate"'::regclass
-        AND contype = 'f'
-        AND confrelid = 'public."Job"'::regclass
+      WHERE conrelid = '"Candidate"'::regclass
+        AND contype   = 'f'
+        AND confrelid = '"Job"'::regclass
       LIMIT 1;
 
-      -- confdeltype 'a' = NO ACTION, 'r' = RESTRICT, 'c' = CASCADE, 'n' = SET NULL, 'd' = SET DEFAULT
+      -- confdeltype: 'a'=NO ACTION, 'r'=RESTRICT, 'c'=CASCADE, 'n'=SET NULL
       IF fk_name IS NOT NULL AND fk_confdeltype != 'n' THEN
         EXECUTE format('ALTER TABLE "Candidate" DROP CONSTRAINT %I', fk_name);
+        fk_name := NULL;
       END IF;
 
-      IF fk_name IS NULL OR fk_confdeltype != 'n' THEN
+      IF fk_name IS NULL THEN
         ALTER TABLE "Candidate"
           ADD CONSTRAINT "Candidate_jobId_fkey"
           FOREIGN KEY ("jobId") REFERENCES "Job"("id")
@@ -98,11 +113,11 @@ try {
       END IF;
     END $$
   `;
-  console.log("[apply-schema] Candidate→Job FK ON DELETE SET NULL ensured");
+});
 
-} catch (err) {
-  console.error("[apply-schema] Failed:", err.message);
+await prisma.$disconnect();
+
+if (anyFailed) {
+  console.error("[apply-schema] One or more steps failed — check logs above.");
   process.exit(1);
-} finally {
-  await prisma.$disconnect();
 }

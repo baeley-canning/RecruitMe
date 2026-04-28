@@ -67,25 +67,31 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await getAuth();
-  if (!auth) return unauthorized();
-  const { id } = await params;
+  try {
+    const auth = await getAuth();
+    if (!auth) return unauthorized();
+    const { id } = await params;
 
-  const candidate = await requireAccess(id, auth);
-  if (!candidate) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const candidate = await requireAccess(id, auth);
+    if (!candidate) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const files = await prisma.candidateFile.findMany({
-    where: { candidateId: id },
-    select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },
-    orderBy: { createdAt: "desc" },
-  });
-  return NextResponse.json(files);
+    const files = await prisma.candidateFile.findMany({
+      where: { candidateId: id },
+      select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json(files);
+  } catch (err) {
+    console.error("[files/get] unhandled error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
 }
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  try {
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
@@ -196,4 +202,8 @@ export async function POST(
 
   const scored = false;
   return NextResponse.json({ ...created, scored }, { status: 201 });
+  } catch (err) {
+    console.error("[files/post] unhandled error:", err);
+    return NextResponse.json({ error: "Server error — please try again" }, { status: 500 });
+  }
 }
