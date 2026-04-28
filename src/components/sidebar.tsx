@@ -165,7 +165,48 @@ export function Sidebar({ jobs }: SidebarProps) {
     <>
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
-      <aside className="w-64 flex-shrink-0 bg-slate-900 flex flex-col h-screen sticky top-0">
+      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-3 shadow-sm backdrop-blur md:hidden">
+        <Link href="/jobs" className="flex items-center gap-2 min-w-0">
+          <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
+            <Users className="w-4 h-4 text-white" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-slate-900 font-semibold text-sm leading-tight">RecruitMe</div>
+            <div className="text-slate-500 text-xs leading-tight">Talent Manager</div>
+          </div>
+        </Link>
+        <div className="flex items-center gap-1">
+          <Link
+            href="/jobs"
+            className={cn(
+              "p-2 rounded-lg transition-colors",
+              pathname === "/jobs" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
+            )}
+            title="Dashboard"
+          >
+            <LayoutDashboard className="w-4 h-4" />
+          </Link>
+          <Link
+            href="/candidates"
+            className={cn(
+              "p-2 rounded-lg transition-colors",
+              pathname.startsWith("/candidates") ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
+            )}
+            title="Candidates"
+          >
+            <Library className="w-4 h-4" />
+          </Link>
+          <Link
+            href="/jobs/new"
+            className="p-2 rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-500"
+            title="New job"
+          >
+            <Plus className="w-4 h-4" />
+          </Link>
+        </div>
+      </div>
+
+      <aside className="hidden w-64 flex-shrink-0 bg-slate-900 md:flex flex-col h-screen sticky top-0">
         {/* Logo */}
         <div className="px-5 py-5 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -368,7 +409,7 @@ export function Sidebar({ jobs }: SidebarProps) {
 
 export function SidebarWrapper({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-slate-50 pt-14 md:pt-0">
       {children}
     </div>
   );
