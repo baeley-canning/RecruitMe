@@ -7,7 +7,7 @@ export function hashProfileText(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
-const SCORE_CACHE_VERSION = "score-context-v1";
+const SCORE_CACHE_VERSION = "score-context-v2";
 
 type ScoreCacheKeyInput = {
   profileText: string;

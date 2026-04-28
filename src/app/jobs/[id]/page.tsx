@@ -167,7 +167,7 @@ export default function JobDetailPage({
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
-  const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number } | null>(null);
+  const [rescoreResult, setRescoreResult] = useState<{ scored: number; skipped: number; total: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
@@ -294,7 +294,20 @@ export default function JobDetailPage({
     setScoringId(candidateId);
     try {
       const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}/score`, { method: "POST" });
-      if (res.ok) await fetchJob();
+      if (res.ok) {
+        await fetchJob();
+      } else {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setFetchStatuses((prev) => ({
+          ...prev,
+          [candidateId]: { state: "error", message: body.error ?? "Scoring failed — try again" },
+        }));
+        setTimeout(() => setFetchStatuses((prev) => {
+          const next = { ...prev };
+          delete next[candidateId];
+          return next;
+        }), 5000);
+      }
     } finally {
       setScoringId(null);
     }
@@ -560,9 +573,9 @@ export default function JobDetailPage({
     setRescoreResult(null);
     try {
       const res = await fetch(`/api/jobs/${id}/candidates/score-all`, { method: "POST" });
-      const data = await res.json() as { scored?: number; total?: number; error?: string };
+      const data = await res.json() as { scored?: number; skipped?: number; total?: number; error?: string };
       if (res.ok) {
-        setRescoreResult({ scored: data.scored ?? 0, total: data.total ?? 0 });
+        setRescoreResult({ scored: data.scored ?? 0, skipped: data.skipped ?? 0, total: data.total ?? 0 });
         await fetchJob();
       }
     } finally {
@@ -1170,9 +1183,11 @@ export default function JobDetailPage({
 
         {/* Re-score result */}
         {rescoreResult && !rescoringAll && (
-          <div className="mb-3 flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+          <div className={`mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border ${rescoreResult.scored === 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-emerald-700 bg-emerald-50 border-emerald-200"}`}>
             <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-            Re-scored {rescoreResult.scored} of {rescoreResult.total} candidates
+            {rescoreResult.scored === 0
+              ? `All ${rescoreResult.total} candidates already up to date — no re-score needed`
+              : `Re-scored ${rescoreResult.scored} of ${rescoreResult.total} candidates${rescoreResult.skipped > 0 ? ` (${rescoreResult.skipped} unchanged)` : ""}`}
           </div>
         )}
 
