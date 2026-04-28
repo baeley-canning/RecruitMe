@@ -208,4 +208,73 @@ describe("search import route", () => {
       }),
     }));
   });
+
+  it("filters broad junior/no-signal results for specialist roles before importing", async () => {
+    const specialistJob = {
+      id: "job-1",
+      parsedRole: JSON.stringify({
+        title: "Software Developer",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        search_queries: ["software developer sybase c++"],
+        google_queries: [],
+        synonym_titles: ["Full Stack Developer"],
+        seniority_band: "Mid-level",
+        must_haves: ["C++ programming experience", "Sybase database experience", "Linux scripting", "Azure cloud platform experience"],
+        nice_to_haves: [],
+        knockout_criteria: [],
+        skills_required: ["C++", "Sybase", "Linux", "Azure"],
+        skills_preferred: [],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+      isRemote: false,
+      location: "Wellington",
+      orgId: "org-1",
+    };
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: specialistJob, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(specialistJob);
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [
+        {
+          name: "Junior Candidate",
+          headline: "Full-Stack Developer | Dev Academy | Seeking Entry-Level Programming Position",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/junior-candidate/",
+          snippet: "Bootcamp graduate with React and Node.js.",
+          source: "serpapi",
+        },
+        {
+          name: "Generic Developer",
+          headline: "Senior Software Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/generic-developer/",
+          snippet: "React, TypeScript, AWS and web applications.",
+          source: "serpapi",
+        },
+        {
+          name: "Relevant Developer",
+          headline: "Software Developer | C++ | Sybase | Linux | Azure",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/relevant-developer/",
+          snippet: "C++ developer with Sybase database, Linux scripting and Azure platform experience.",
+          source: "serpapi",
+        },
+      ],
+      sawRetryableFailure: false,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-1/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(res.status).toBe(200);
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
+    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.name).toBe("Relevant Developer");
+  });
 });

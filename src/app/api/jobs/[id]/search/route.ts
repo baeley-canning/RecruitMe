@@ -133,6 +133,38 @@ function hasSignal(text: string, signal: string): boolean {
   return Boolean(normalisedSignal) && text.includes(normalisedSignal);
 }
 
+function textHasTerm(value: string, term: string): boolean {
+  if (!value) return false;
+  if (term === "C++") return /\bc\+\+/i.test(value);
+  return value.toLowerCase().includes(term.toLowerCase());
+}
+
+function candidateSearchText(result: SearchResult, profileText?: string | null, candidateLocation?: string | null) {
+  return [
+    result.name,
+    result.headline,
+    candidateLocation ?? result.location,
+    result.snippet,
+    profileText ?? result.fullText,
+  ].filter(Boolean).join("\n");
+}
+
+function looksUnderqualifiedForRole(result: SearchResult, parsedRole: ParsedRole): boolean {
+  const wantedSeniority = (parsedRole.seniority_band ?? "").toLowerCase();
+  if (!/(mid|senior|lead|principal|manager|director|executive)/.test(wantedSeniority)) return false;
+
+  const text = normaliseText(`${result.headline} ${result.snippet}`);
+  return /\b(junior|graduate|intern|internship|trainee|student|entry level|entry-level|bootcamp|academy|dev academy|in training|seeking entry level|seeking entry-level)\b/.test(text);
+}
+
+function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole, profileText?: string | null, candidateLocation?: string | null) {
+  const terms = extractDistinctiveRequirementTerms(parsedRole);
+  if (terms.length === 0) return true;
+
+  const text = candidateSearchText(result, profileText, candidateLocation);
+  return terms.some((term) => textHasTerm(text, term));
+}
+
 function buildProvisionalSearchScore(
   result: SearchResult,
   parsedRole: ParsedRole,
@@ -263,12 +295,6 @@ function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
       if (pattern.test(requirement)) aliases.forEach((alias) => terms.add(alias));
     }
 
-    const tokens = requirement.match(/\b[A-Za-z][A-Za-z0-9+#.]{2,}\b/g) ?? [];
-    for (const token of tokens) {
-      if (!/[A-Z+#.]/.test(token)) continue;
-      if (/^(ICT|API|APIs|SQL|DBA)$/.test(token)) continue;
-      terms.add(/^psybase$/i.test(token) ? "Sybase" : token);
-    }
   }
 
   return [...terms].slice(0, 5);
@@ -737,17 +763,31 @@ async function runSearchBackground(args: {
     const saved: SavedCandidate[] = [];
     let scored = 0;
     let skippedScore = 0;
+    let skippedSourceGate = 0;
+    let skippedSeniorityGate = 0;
     let fromPool = 0;
 
-    // Pre-filter: drop confirmed overseas candidates and non-person names before scoring.
+    // Pre-filter: drop confirmed overseas candidates, non-person names, obvious
+    // junior mismatches, and broad-search results with no specialist stack signal.
     // NZ candidates with any location (including generic "New Zealand") pass through —
     // applyLocationFitOverride handles fine-grained location scoring after fetch.
     const toScore = workItems
       .filter(({ result: r }) => {
         if (!looksLikePersonName(r.name)) return false;
+        const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+        const poolEntry = poolMap.get(normUrl);
         const poolLoc = poolMap.get(r.linkedinUrl)?.location ?? "";
-        const loc = poolLoc || r.location || "";
+        const loc = poolLoc || poolEntry?.location || r.location || "";
         if (loc && isExplicitlyOverseasLocation(loc)) return false;
+        if (looksUnderqualifiedForRole(r, parsedRole)) {
+          skippedSeniorityGate++;
+          return false;
+        }
+        const profileText = poolEntry?.profileText ?? r.fullText ?? null;
+        if (!hasSpecialistSourceSignal(r, parsedRole, profileText, loc || null)) {
+          skippedSourceGate++;
+          return false;
+        }
         return true;
       })
       .slice(0, Math.min(Math.max(maxResults * 3, maxResults + 15), 100));
@@ -829,7 +869,7 @@ async function runSearchBackground(args: {
 
       for (const item of results) {
         if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, locationFitScore } = item;
+        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore } = item;
 
         // Hard location cutoff: drop candidates we KNOW are far out-of-area.
         // Only applies when candidateLocation is set — if it's empty, the AI had no location
@@ -840,8 +880,13 @@ async function runSearchBackground(args: {
           continue;
         }
 
-        // Score filter is not applied during search — all snippet results surface
-        // so the recruiter can fetch profiles and get proper scores before filtering.
+        // Specialist searches should not import low-probability broad matches.
+        // If the result survives source gating but scores very low, keep it out
+        // of the job pipeline; the recruiter wants likely candidates, not cleanup.
+        if (extractDistinctiveRequirementTerms(parsedRole).length > 0 && matchScore !== null && matchScore < 45) {
+          skippedScore++;
+          continue;
+        }
 
         try {
           if (existingCandidate) {
@@ -896,7 +941,7 @@ async function runSearchBackground(args: {
       }
     }
 
-    console.log(`[search] done — scored ${scored}, saved ${saved.length} (${fromPool} from pool), skipped ${skippedScore} below location threshold`);
+    console.log(`[search] done — scored ${scored}, saved ${saved.length} (${fromPool} from pool), skipped ${skippedScore} below score/location threshold, ${skippedSourceGate} source-gated, ${skippedSeniorityGate} seniority-gated`);
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
