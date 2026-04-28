@@ -30,6 +30,8 @@ export default async function CandidatesPage() {
       notes: true,
       profileCapturedAt: true,
       createdAt: true,
+      archivedJobTitle: true,
+      archivedJobCompany: true,
       job: { select: { id: true, title: true, company: true } },
       files: {
         select: { id: true, type: true, filename: true, size: true, createdAt: true },

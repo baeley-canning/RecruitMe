@@ -25,7 +25,9 @@ interface LibraryCandidate {
   notes: string | null;
   profileCapturedAt: string | null;
   createdAt: string;
-  job: { id: string; title: string; company: string | null };
+  job: { id: string; title: string; company: string | null } | null;
+  archivedJobTitle: string | null;
+  archivedJobCompany: string | null;
   files: CandidateFile[];
 }
 
@@ -92,7 +94,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
             {/* Job context */}
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">
               <Briefcase className="w-2.5 h-2.5" />
-              <span className="line-clamp-1 max-w-[100px]">{c.job.title}</span>
+              <span className="line-clamp-1 max-w-[100px]">{c.job?.title ?? c.archivedJobTitle ?? "Archived role"}</span>
             </span>
 
             {/* Profile captured */}
@@ -145,8 +147,8 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
       c.name.toLowerCase().includes(q) ||
       c.headline?.toLowerCase().includes(q) ||
       c.location?.toLowerCase().includes(q) ||
-      c.job.title.toLowerCase().includes(q) ||
-      c.job.company?.toLowerCase().includes(q)
+      (c.job?.title ?? c.archivedJobTitle ?? "").toLowerCase().includes(q) ||
+      (c.job?.company ?? c.archivedJobCompany ?? "").toLowerCase().includes(q)
     );
   }, [candidates, deferred]);
 

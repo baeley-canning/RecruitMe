@@ -49,7 +49,9 @@ interface CandidateDetail {
   status: string;
   profileCapturedAt: string | null;
   createdAt: string;
-  job: { id: string; title: string; company: string | null };
+  job: { id: string; title: string; company: string | null } | null;
+  archivedJobTitle: string | null;
+  archivedJobCompany: string | null;
   files: CandidateFile[];
   otherJobs: OtherJob[];
 }
@@ -299,7 +301,7 @@ export default function CandidateDetailPage({
   const initials = candidate.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const scoreInfo = candidate.matchScore !== null ? scoreRing(candidate.matchScore) : null;
   const allJobs = [
-    { id: candidate.job.id, title: candidate.job.title, company: candidate.job.company, matchScore: candidate.matchScore, status: candidate.status },
+    ...(candidate.job ? [{ id: candidate.job.id, title: candidate.job.title, company: candidate.job.company, matchScore: candidate.matchScore, status: candidate.status }] : []),
     ...candidate.otherJobs,
   ];
 
