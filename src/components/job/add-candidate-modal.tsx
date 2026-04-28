@@ -79,11 +79,11 @@ export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: Ad
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1.5">Upload CV / PDF</label>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">Upload CV (PDF, DOCX, TXT)</label>
             <label className={`flex items-center gap-3 px-4 py-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
               pdfUploading ? "border-blue-300 bg-blue-50" : pdfFileName ? "border-emerald-300 bg-emerald-50" : "border-slate-200 hover:border-blue-300 hover:bg-blue-50"
             }`}>
-              <input type="file" accept=".pdf,.txt" className="sr-only" disabled={pdfUploading || adding}
+              <input type="file" accept=".pdf,.docx,.doc,.txt" className="sr-only" disabled={pdfUploading || adding}
                 onChange={(e) => { const file = e.target.files?.[0]; if (file) handlePdfUpload(file); e.target.value = ""; }} />
               {pdfUploading ? (
                 <><Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" /><span className="text-sm text-blue-600">Extracting and cleaning with AI…</span></>
@@ -95,7 +95,7 @@ export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: Ad
                   </button></>
               ) : (
                 <><Paperclip className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <span className="text-sm text-slate-500">Click to upload <span className="font-medium text-slate-700">PDF or TXT</span></span></>
+                  <span className="text-sm text-slate-500">Click to upload <span className="font-medium text-slate-700">PDF, DOCX or TXT</span></span></>
               )}
             </label>
           </div>
