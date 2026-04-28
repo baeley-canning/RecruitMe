@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, FileText, X, Loader2, DollarSign, Wifi, Sparkles, Copy, Check, ChevronRight } from "lucide-react";
+import { Upload, FileText, X, Loader2, DollarSign, Wifi, Sparkles, Copy, Check, ChevronRight, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SALARY_OPTIONS = [
@@ -106,6 +106,62 @@ export default function ListingBuilderPage() {
     } finally {
       setDrafting(false);
     }
+  };
+
+  const handleExportPDF = () => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const toHtml = (text: string) => {
+      const lines = text.split("\n");
+      const out: string[] = [];
+      let inList = false;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (/^#{1,3}\s/.test(trimmed)) {
+          if (inList) { out.push("</ul>"); inList = false; }
+          const level = trimmed.match(/^(#{1,3})/)?.[1].length ?? 2;
+          const content = esc(trimmed.replace(/^#{1,3}\s*/, "")).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+          out.push(`<h${level + 1}>${content}</h${level + 1}>`);
+        } else if (/^[-*]\s/.test(trimmed)) {
+          if (!inList) { out.push("<ul>"); inList = true; }
+          const content = esc(trimmed.replace(/^[-*]\s*/, "")).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+          out.push(`<li>${content}</li>`);
+        } else if (trimmed === "") {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push("<br>");
+        } else {
+          if (inList) { out.push("</ul>"); inList = false; }
+          const content = esc(trimmed).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+          out.push(`<p>${content}</p>`);
+        }
+      }
+      if (inList) out.push("</ul>");
+      return out.join("\n");
+    };
+
+    const meta = [company, location, salaryEnabled ? `$${Math.round(salaryMin / 1000)}k–$${Math.round(salaryMax / 1000)}k NZD` : ""].filter(Boolean).join(" · ");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${esc(listingHeadline || title)}</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:680px;margin:48px auto;padding:0 24px;color:#1e293b;line-height:1.65;font-size:15px}
+  h1{font-size:26px;font-weight:700;margin:0 0 6px}
+  .meta{color:#64748b;font-size:13px;margin-bottom:36px}
+  h2,h3,h4{font-size:16px;font-weight:600;margin:24px 0 8px;color:#0f172a}
+  p{margin:0 0 12px}
+  ul{margin:0 0 12px;padding-left:20px}
+  li{margin-bottom:4px}
+  @media print{body{margin:0;padding:24px}}
+</style></head><body>
+<h1>${esc(listingHeadline || title)}</h1>
+${meta ? `<p class="meta">${esc(meta)}</p>` : ""}
+${toHtml(listingBody)}
+</body></html>`;
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 400);
   };
 
   const handleUseInNewJob = () => {
@@ -389,6 +445,14 @@ export default function ListingBuilderPage() {
               >
                 {listingCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                 {listingCopied ? "Copied!" : "Copy All"}
+              </button>
+              <button
+                type="button"
+                onClick={handleExportPDF}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export PDF
               </button>
               <button
                 type="button"

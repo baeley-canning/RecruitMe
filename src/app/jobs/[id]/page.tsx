@@ -621,6 +621,67 @@ export default function JobDetailPage({
     await fetchJob();
   };
 
+  const handleExportJdPdf = () => {
+    if (!job) return;
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const toHtml = (text: string) => {
+      const lines = text.split("\n");
+      const out: string[] = [];
+      let inList = false;
+      for (const line of lines) {
+        const t = line.trim();
+        if (/^#{1,3}\s/.test(t)) {
+          if (inList) { out.push("</ul>"); inList = false; }
+          const lv = (t.match(/^(#{1,3})/)?.[1].length ?? 2) + 1;
+          out.push(`<h${lv}>${esc(t.replace(/^#{1,3}\s*/, "")).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</h${lv}>`);
+        } else if (/^[-*]\s/.test(t)) {
+          if (!inList) { out.push("<ul>"); inList = true; }
+          out.push(`<li>${esc(t.replace(/^[-*]\s*/, "")).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`);
+        } else if (t === "") {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push("<br>");
+        } else {
+          if (inList) { out.push("</ul>"); inList = false; }
+          out.push(`<p>${esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</p>`);
+        }
+      }
+      if (inList) out.push("</ul>");
+      return out.join("\n");
+    };
+
+    const meta = [
+      job.company,
+      job.location,
+      (job.salaryMin || job.salaryMax)
+        ? `$${Math.round((job.salaryMin ?? 0) / 1000)}k–$${Math.round((job.salaryMax ?? 0) / 1000)}k NZD`
+        : "",
+    ].filter(Boolean).join(" · ");
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${esc(job.title)}</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:680px;margin:48px auto;padding:0 24px;color:#1e293b;line-height:1.65;font-size:15px}
+  h1{font-size:26px;font-weight:700;margin:0 0 6px}
+  .meta{color:#64748b;font-size:13px;margin-bottom:36px}
+  h2,h3,h4{font-size:16px;font-weight:600;margin:24px 0 8px;color:#0f172a}
+  p{margin:0 0 12px}
+  ul{margin:0 0 12px;padding-left:20px}
+  li{margin-bottom:4px}
+  @media print{body{margin:0;padding:24px}}
+</style></head><body>
+<h1>${esc(job.title)}</h1>
+${meta ? `<p class="meta">${esc(meta)}</p>` : ""}
+${toHtml(job.rawJd)}
+</body></html>`;
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 400);
+  };
+
   const handleExportCsv = () => {
     if (!job) return;
     const headers = ["Name", "Headline", "Location", "Match Score", "Acceptance Score", "LinkedIn URL", "Status", "Notes", "Source"];
@@ -751,6 +812,14 @@ export default function JobDetailPage({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportJdPdf}
+            title="Export job description as PDF"
+            className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export JD
+          </button>
           {shortlistCount > 0 && (
             <>
               <ClientReportButton shortlistCount={shortlistCount} onClick={() => setShowReport(true)} />
