@@ -115,6 +115,19 @@ await step("Candidate→Job FK ON DELETE SET NULL", async () => {
   `;
 });
 
+// 7. Backfill Candidate.orgId from their job (one-time, idempotent)
+await step("backfill Candidate.orgId", async () => {
+  const updated = await prisma.$executeRaw`
+    UPDATE "Candidate" c
+    SET "orgId" = j."orgId"
+    FROM "Job" j
+    WHERE c."jobId" = j."id"
+      AND c."orgId" IS NULL
+      AND j."orgId" IS NOT NULL
+  `;
+  console.log(`  backfilled ${updated} candidate(s)`);
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {
