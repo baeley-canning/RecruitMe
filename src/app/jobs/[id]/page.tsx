@@ -19,6 +19,7 @@ import {
   Trash2,
   Download,
   Upload,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
@@ -179,6 +180,9 @@ export default function JobDetailPage({
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showJobAd, setShowJobAd] = useState(false);
+  const [editingJd, setEditingJd] = useState(false);
+  const [jdDraft, setJdDraft] = useState("");
+  const [savingJd, setSavingJd] = useState(false);
 
   // Per-candidate fetch tracking.
   interface FetchEntry {
@@ -245,6 +249,26 @@ export default function JobDetailPage({
       setEditingSalary(false);
     }
     setSavingSalary(false);
+  };
+
+  const handleSaveJd = async () => {
+    if (!job) return;
+    setSavingJd(true);
+    try {
+      const res = await fetch(`/api/jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rawJd: jdDraft }),
+      });
+      if (res.ok) {
+        await fetchJob();
+        setEditingJd(false);
+        // Re-analyse automatically so scoring criteria reflect the updated JD
+        handleParse();
+      }
+    } finally {
+      setSavingJd(false);
+    }
   };
 
   const handleToggleStatus = async () => {
@@ -911,6 +935,15 @@ ${toHtml(job.rawJd)}
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold text-slate-900 text-sm">Hiring Brief</h2>
                 <div className="flex items-center gap-3">
+                  {!editingJd && (
+                    <button
+                      onClick={() => { setJdDraft(job.rawJd); setEditingJd(true); }}
+                      className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      Edit JD
+                    </button>
+                  )}
                   <button
                     onClick={handleParse}
                     disabled={parsing}
@@ -923,6 +956,34 @@ ${toHtml(job.rawJd)}
               </div>
             </CardHeader>
             <CardBody className="space-y-4">
+
+              {/* Inline JD editor */}
+              {editingJd && (
+                <div className="space-y-2">
+                  <textarea
+                    value={jdDraft}
+                    onChange={(e) => setJdDraft(e.target.value)}
+                    rows={16}
+                    className="w-full px-3 py-2.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono leading-relaxed resize-y"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => setEditingJd(false)}
+                      className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveJd}
+                      disabled={savingJd || !jdDraft.trim()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                    >
+                      {savingJd ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                      {savingJd ? "Saving…" : "Save & Re-analyse"}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Meta row — seniority, location, salary */}
               <div className="grid grid-cols-3 gap-3">
