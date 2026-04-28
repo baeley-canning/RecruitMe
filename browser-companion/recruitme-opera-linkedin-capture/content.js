@@ -589,7 +589,7 @@ async function captureProfile() {
 
   let capture = collectProfileText(startUrl);
   if (!needsDeeperCapture(capture)) {
-    return capture;
+    return enrichWithExperienceDetails(capture, startUrl);
   }
 
   const expanded = await expandInlineSections(clicked, { visibleOnly: false, passes: 6 });
@@ -604,7 +604,7 @@ async function captureProfile() {
 
   capture = collectProfileText(startUrl);
   if (!needsDeeperCapture(capture)) {
-    return capture;
+    return enrichWithExperienceDetails(capture, startUrl);
   }
 
   await sleep(600);

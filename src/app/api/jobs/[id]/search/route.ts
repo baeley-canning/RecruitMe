@@ -70,6 +70,18 @@ function cleanQuery(q: string): string {
     .trim();
 }
 
+function dedupeQueries(queries: string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const query of queries.map(cleanQuery).filter(Boolean)) {
+    const key = query.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(query);
+  }
+  return deduped;
+}
+
 const REQUIREMENT_STOP_WORDS = new Set([
   "ability", "across", "and", "any", "based", "build", "building", "candidate",
   "comfortable", "commitment", "development", "driven", "experience", "good",
@@ -224,6 +236,67 @@ const SERPAPI_DELAY_MS = 600;
 const BING_DELAY_MS = 150;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
+const DISTINCTIVE_REQUIREMENT_ALIASES: Array<[RegExp, string[]]> = [
+  [/\bpsybase\b/i, ["Sybase"]],
+  [/\bsybase\b/i, ["Sybase"]],
+  [/\bc\+\+/i, ["C++"]],
+  [/\blinux\b/i, ["Linux"]],
+  [/\bazure\b/i, ["Azure"]],
+  [/\bmicroservices?\b|\bminiservices?\b/i, ["microservices"]],
+  [/\bdb2\b/i, ["DB2"]],
+  [/\boracle\b/i, ["Oracle"]],
+  [/\bsql server\b/i, ["SQL Server"]],
+  [/\bmainframe\b/i, ["mainframe"]],
+];
+
+function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
+  const terms = new Set<string>();
+  const requirements = [
+    ...(parsedRole.must_haves ?? []),
+    ...(parsedRole.skills_required ?? []),
+    ...(parsedRole.nice_to_haves ?? []),
+    ...(parsedRole.skills_preferred ?? []),
+  ];
+
+  for (const requirement of requirements) {
+    for (const [pattern, aliases] of DISTINCTIVE_REQUIREMENT_ALIASES) {
+      if (pattern.test(requirement)) aliases.forEach((alias) => terms.add(alias));
+    }
+
+    const tokens = requirement.match(/\b[A-Za-z][A-Za-z0-9+#.]{2,}\b/g) ?? [];
+    for (const token of tokens) {
+      if (!/[A-Z+#.]/.test(token)) continue;
+      if (/^(ICT|API|APIs|SQL|DBA)$/.test(token)) continue;
+      terms.add(/^psybase$/i.test(token) ? "Sybase" : token);
+    }
+  }
+
+  return [...terms].slice(0, 5);
+}
+
+function buildSearchQueries(parsedRole: ParsedRole): string[] {
+  const baseTitle = cleanQuery(parsedRole.title);
+  const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
+  const aiQueries = [...parsedRole.search_queries, ...parsedRole.google_queries];
+  const distinctiveTerms = extractDistinctiveRequirementTerms(parsedRole);
+
+  const skillQueries: string[] = [];
+  if (distinctiveTerms.length > 0) {
+    skillQueries.push(`${baseTitle || "Software Developer"} ${distinctiveTerms.slice(0, 2).join(" ")}`);
+  }
+  if (distinctiveTerms.length > 2) {
+    skillQueries.push(distinctiveTerms.slice(0, 4).join(" "));
+  }
+
+  return dedupeQueries([
+    ...skillQueries,
+    ...aiQueries.slice(0, 2),
+    baseTitle,
+    ...synonymQueries,
+    ...aiQueries.slice(2),
+  ]).slice(0, MAX_QUERY_VARIANTS);
+}
+
 type SearchProvider = "serpapi" | "bing";
 
 interface SearchTaskOutcome extends SearchPageTaskResult<SearchResult> {
@@ -363,19 +436,9 @@ export async function POST(
   const searchLocation = locationOverride?.trim() || parsedSearchLocation;
   const targetLocation = locationOverride?.trim() || location || canonicalJobCity || locationSource;
 
-  // Build query pool: explicit search queries + synonym titles as standalone title searches
-  // Synonym titles are the key insight — recruiters search off real titles, not JD language
-  const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
-  const searchQueries = [
-    parsedRole.title,
-    ...synonymQueries,
-    ...parsedRole.search_queries,
-    ...parsedRole.google_queries,
-  ]
-    .map(cleanQuery)
-    .filter(Boolean)
-    .filter((q, i, arr) => arr.indexOf(q) === i)
-    .slice(0, MAX_QUERY_VARIANTS);
+  // Build query pool with reserved slots for rare hard-skill terms. For niche
+  // roles, terms like Sybase/C++ matter more than burning every slot on titles.
+  const searchQueries = buildSearchQueries(parsedRole);
   const targetRaw = Math.min(Math.max(maxResults * 3, maxResults + 15), 120);
 
   const session = await prisma.searchSession.create({

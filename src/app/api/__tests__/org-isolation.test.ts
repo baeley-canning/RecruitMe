@@ -289,7 +289,10 @@ describe("org isolation — candidates library", () => {
     expect(dbMocks.prisma.candidate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          job: expect.objectContaining({ orgId: "org-b" }),
+          OR: expect.arrayContaining([
+            expect.objectContaining({ job: expect.objectContaining({ orgId: "org-b" }) }),
+            expect.objectContaining({ jobId: null, orgId: "org-b" }),
+          ]),
         }),
       })
     );

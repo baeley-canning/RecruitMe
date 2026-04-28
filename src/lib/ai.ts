@@ -11,6 +11,7 @@ import {
 import {
   ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS,
   buildProfileExcerpt,
+  buildRequirementAwareProfileExcerpt,
   OUTREACH_PROFILE_EXCERPT_MAX_CHARS,
   SCORE_PROFILE_EXCERPT_MAX_CHARS,
 } from "./profile-excerpt";
@@ -502,7 +503,11 @@ export async function scoreCandidateStructured(
   const mustHavesList = mustHaves.map((m, i) => `${i + 1}. ${m}`).join("\n");
   const niceList      = niceToHaves.map((n, i) => `${i + 1}. ${n}`).join("\n");
 
-  const profileSlice = buildProfileExcerpt(profileText, SCORE_PROFILE_EXCERPT_MAX_CHARS);
+  const profileSlice = buildRequirementAwareProfileExcerpt(
+    profileText,
+    SCORE_PROFILE_EXCERPT_MAX_CHARS,
+    [...mustHaves, ...niceToHaves]
+  );
 
   const text = await chat(
     `You are a senior recruitment consultant scoring a candidate against a specific role. Return ONLY compact JSON — no markdown, no newlines inside string values.

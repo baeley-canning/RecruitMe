@@ -14,7 +14,12 @@ export default async function CandidatesPage() {
   const rows = await prisma.candidate.findMany({
     where: {
       profileText: { not: null },
-      ...(auth.isOwner ? {} : { job: { orgId: auth.orgId } }),
+      ...(auth.isOwner ? {} : {
+        OR: [
+          { job: { orgId: auth.orgId } },
+          { jobId: null, orgId: auth.orgId },
+        ],
+      }),
     },
     orderBy: { createdAt: "desc" },
     select: {

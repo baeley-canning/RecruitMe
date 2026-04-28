@@ -256,7 +256,7 @@ export function computeConfidence(
     // "missing" / "negative" = clear assessments; they affect the score but not confidence.
     const unknownFrac = unknownCount / total;
     if (unknownFrac > 0.5) {
-      score -= 20;
+      score -= 30;
       reasons.push(`${unknownCount} of ${total} must-haves unverified — insufficient data`);
     } else if (unknownFrac > 0.25) {
       score -= 10;
@@ -273,6 +273,11 @@ export function computeConfidence(
         score += bonus;
         reasons.push(`${supportedCount} of ${total} must-haves confirmed or likely`);
       }
+    }
+
+    if (negativeCount > 0) {
+      score -= negativeCount * 35;
+      reasons.push(`${negativeCount} must-have(s) contradicted by the profile`);
     }
   }
 
