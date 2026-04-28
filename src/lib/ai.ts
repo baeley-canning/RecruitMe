@@ -561,13 +561,15 @@ must_have_coverage rules:
 - Include EXACTLY one entry per must-have. Do not skip or merge any.${knockouts.length ? `
 - If any knockout criterion is failed, status must be "negative".` : ""}
 - Grouped requirement rule: if a must-have starts with "At least half of:" or similar partial-coverage phrasing, assess the candidate holistically against the whole list. "confirmed" = meets or exceeds the stated threshold; "likely" = one item short of the threshold or meets it via adjacent skills; "missing" = clearly below the threshold; "unknown" = cannot assess from available data.
+- Historical experience rule: scan the FULL work history, not just the current or recent role. A skill that appears in an older role (even 5–15 years ago) counts as "likely" for that skill — the candidate has demonstrably used it, even if rusty. Only mark "missing" if the skill appears nowhere in the entire profile. If the role explicitly requires RECENT experience (e.g. "currently working with X"), then recency matters — otherwise, historical evidence is valid. Never say "none of which are evident" if any skill appears anywhere in the profile.
+- Career-stage awareness: if a candidate has moved from a hands-on technical role to a management/leadership role, note this as a concern in reasons_against (e.g. "Has moved away from hands-on X development") rather than falsely stating the skill is absent. The skill history is real; the concern is recency and focus, not absence.
 
 nice_to_have_coverage rules:
 - "confirmed" = explicitly present; "likely" = implied; "absent" = not present or not mentioned
 - Include EXACTLY one entry per nice-to-have. If no nice-to-haves were listed, return empty array.
 
-reasons_for: 2–4 specific, evidenced positive signals. Not generic praise. Reference actual job titles, companies, skills from the profile.
-reasons_against: 2–4 specific concerns. Not speculation — only what the profile actually shows or fails to show.
+reasons_for: 2–4 specific, evidenced positive signals. Not generic praise. Reference actual job titles, companies, skills from the profile. Include historical experience where relevant.
+reasons_against: 2–4 specific concerns grounded in the profile. Do NOT claim a skill is absent if it appears anywhere in the work history — instead note recency concerns (e.g. "Sybase experience is from 2011; role may require current hands-on use"). Do not speculate beyond what the profile shows.
 missing_evidence: 2–4 specific facts that are NOT in the profile and would materially change the score (e.g. "Years in role not stated", "No mention of team leadership despite Senior title").
 
 Short snippet rule: if the profile is a short snippet (under ~500 chars), treat unmentioned skills as genuinely unknown — do NOT assume they are present. Mark them "missing" or "unknown" accordingly. A snippet that does not mention WordPress does not confirm WordPress. Score only what is explicitly evidenced. Location and title alone should not carry a weak profile into 60%+ territory.
