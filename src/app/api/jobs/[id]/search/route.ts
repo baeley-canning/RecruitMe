@@ -481,7 +481,7 @@ export async function GET(
 async function runSearchBackground(args: {
   sessionId: string;
   jobId: string;
-  job: { parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null };
+  job: { orgId: string | null; parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null };
   parsedRole: ParsedRole;
   salary: { min: number; max: number } | null;
   maxResults: number;
