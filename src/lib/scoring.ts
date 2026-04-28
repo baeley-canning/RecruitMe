@@ -231,34 +231,29 @@ export function computeConfidence(
   const reasons: string[] = [];
   const quality = classifyDataQuality(profileCharCount);
 
+  // Base reflects how much raw data is available to make an assessment.
   let score: number;
   if (quality === "full_profile") {
-    score = 60;
+    score = 70;
     reasons.push("Full profile text available");
   } else if (quality === "snippet") {
-    score = 35;
-    reasons.push("Short snippet only — score is provisional until full profile is fetched");
+    score = 48;
+    reasons.push("Partial profile — some must-haves may not be fully verifiable");
   } else {
     score = 15;
     reasons.push("Minimal data — score is largely speculative");
   }
 
-  const total        = mustHaveCoverage.length;
-  const supportedCount = mustHaveCoverage.filter((c) => c.status === "confirmed" || c.status === "equivalent" || c.status === "likely").length;
-  const unknownCount = mustHaveCoverage.filter((c) => c.status === "unknown").length;
-  const missingCount = mustHaveCoverage.filter((c) => c.status === "missing").length;
-  const negativeCount = mustHaveCoverage.filter((c) => c.status === "negative").length;
-
+  const total = mustHaveCoverage.length;
   if (total > 0) {
-    const supportedFrac = supportedCount / total;
-    if (supportedFrac >= 0.75 && negativeCount === 0 && unknownCount === 0 && missingCount === 0) {
-      const bonus = quality === "full_profile" ? 15 : quality === "snippet" ? 5 : 0;
-      if (bonus > 0) {
-        score += bonus;
-        reasons.push(`${supportedCount} of ${total} must-haves are supported by profile evidence`);
-      }
-    }
+    const supportedCount = mustHaveCoverage.filter(
+      (c) => c.status === "confirmed" || c.status === "equivalent" || c.status === "likely"
+    ).length;
+    const unknownCount  = mustHaveCoverage.filter((c) => c.status === "unknown").length;
+    const negativeCount = mustHaveCoverage.filter((c) => c.status === "negative").length;
 
+    // "unknown" = genuine uncertainty — we cannot assess this at all.
+    // "missing" / "negative" = clear assessments; they affect the score but not confidence.
     const unknownFrac = unknownCount / total;
     if (unknownFrac > 0.5) {
       score -= 20;
@@ -266,16 +261,18 @@ export function computeConfidence(
     } else if (unknownFrac > 0.25) {
       score -= 10;
       reasons.push(`${unknownCount} must-have(s) not confirmable from profile`);
+    } else if (unknownCount > 0) {
+      score -= 5;
     }
 
-    if (missingCount > 0) {
-      score -= missingCount * 8;
-      reasons.push(`${missingCount} must-have(s) not mentioned`);
-    }
-
-    if (negativeCount > 0) {
-      score -= negativeCount * 15;
-      reasons.push(`${negativeCount} must-have(s) actively contradicted`);
+    // Bonus for strong, low-uncertainty coverage.
+    const supportedFrac = supportedCount / total;
+    if (supportedFrac >= 0.75 && unknownCount <= 1 && negativeCount === 0) {
+      const bonus = quality === "full_profile" ? 15 : quality === "snippet" ? 8 : 0;
+      if (bonus > 0) {
+        score += bonus;
+        reasons.push(`${supportedCount} of ${total} must-haves confirmed or likely`);
+      }
     }
   }
 
