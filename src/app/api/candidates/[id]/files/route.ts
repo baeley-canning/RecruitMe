@@ -34,7 +34,8 @@ async function requireAccess(candidateId: string, auth: NonNullable<Awaited<Retu
     },
   });
   if (!candidate) return null;
-  if (!auth.isOwner && candidate.job.orgId !== auth.orgId) return null;
+  const orgId = candidate.job?.orgId ?? candidate.orgId;
+  if (!auth.isOwner && orgId !== auth.orgId) return null;
   return candidate;
 }
 
@@ -148,9 +149,9 @@ export async function POST(
         source: candidate.source === "manual" ? "manual" : candidate.source,
       };
 
-      const parsedRole = safeParseJson<ParsedRole | null>(candidate.job.parsedRole, null);
+      const parsedRole = safeParseJson<ParsedRole | null>(candidate.job?.parsedRole ?? null, null);
       let scored = false;
-      if (parsedRole) {
+      if (parsedRole && candidate.job) {
         try {
           const salary = (candidate.job.salaryMin || candidate.job.salaryMax)
             ? { min: candidate.job.salaryMin ?? 0, max: candidate.job.salaryMax ?? 0 }

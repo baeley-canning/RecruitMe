@@ -23,7 +23,8 @@ async function requireCandidateLibraryAccess(
   if (!candidate) {
     return { candidate: null, error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
-  if (!auth.isOwner && candidate.job.orgId !== auth.orgId) {
+  const orgId = candidate.job?.orgId ?? candidate.orgId;
+  if (!auth.isOwner && orgId !== auth.orgId) {
     return { candidate: null, error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
   return { candidate, error: null };
@@ -46,7 +47,7 @@ export async function GET(
       where: {
         linkedinUrl: candidate!.linkedinUrl,
         id: { not: id },
-        ...(auth.isOwner ? {} : { job: { orgId: auth.orgId } }),
+        ...(auth.isOwner ? {} : { OR: [{ job: { orgId: auth.orgId } }, { jobId: null, orgId: auth.orgId }] }),
       },
       select: {
         matchScore: true,
@@ -54,13 +55,13 @@ export async function GET(
         job: { select: { id: true, title: true, company: true } },
       },
     });
-    otherJobs = others.map((o) => ({
+    otherJobs = others.flatMap((o) => o.job ? [{
       id: o.job.id,
       title: o.job.title,
       company: o.job.company,
       matchScore: o.matchScore,
       status: o.status,
-    }));
+    }] : []);
   }
 
   return NextResponse.json({ ...candidate, otherJobs });

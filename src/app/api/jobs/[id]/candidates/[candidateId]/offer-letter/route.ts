@@ -21,7 +21,7 @@ export async function POST(
     },
   });
 
-  if (!candidate) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
+  if (!candidate || !candidate.job) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
 
   const salary = (candidate.job.salaryMin || candidate.job.salaryMax)
     ? { min: candidate.job.salaryMin ?? undefined, max: candidate.job.salaryMax ?? undefined }

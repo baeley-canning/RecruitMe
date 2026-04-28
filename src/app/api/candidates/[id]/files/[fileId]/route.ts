@@ -9,10 +9,12 @@ async function requireFileAccess(
 ) {
   const file = await prisma.candidateFile.findFirst({
     where: { id: fileId, candidateId },
-    include: { candidate: { include: { job: { select: { orgId: true } } } } },
+    include: { candidate: { select: { orgId: true, job: { select: { orgId: true } } } } },
   });
   if (!file) return null;
-  if (!auth.isOwner && file.candidate.job.orgId !== auth.orgId) return null;
+  // Auth: check via job.orgId if job exists, otherwise fall back to candidate.orgId
+  const orgId = file.candidate.job?.orgId ?? file.candidate.orgId;
+  if (!auth.isOwner && orgId !== auth.orgId) return null;
   return file;
 }
 

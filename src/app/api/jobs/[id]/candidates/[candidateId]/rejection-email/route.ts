@@ -18,7 +18,7 @@ export async function POST(
     select: { name: true, notes: true, job: { select: { title: true, company: true } } },
   });
 
-  if (!candidate) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
+  if (!candidate || !candidate.job) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
 
   const email = await generateRejectionEmail(
     candidate.name,
