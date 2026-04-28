@@ -313,6 +313,7 @@ Rules:
 - search_queries and google_queries: KEYWORD TERMS ONLY. Location and site:linkedin.com/in are added automatically. No years of experience. Never copy the exact job title verbatim.
 - synonym_titles is the most important field for search coverage — a "Digital Solutions Analyst" might be "Business Analyst", "Systems Analyst", "Product Analyst", "IT Analyst", "Digital Analyst" on LinkedIn. Think about what 10 different people doing this job would call themselves. Banned terms that no one uses on LinkedIn: "Application Developer", "Technical Developer", "IT Developer", "Mid-level Developer", "Junior Developer", "Graduate Developer" — use the actual technology stack or domain in the title instead.
 - must_haves vs nice_to_haves: if the JD says "required" or "must have" it's a must-have. If it says "preferred", "advantageous", "desirable", "bonus" it's nice-to-have.
+- Grouped/partial skill lists: when a JD says "experience across at least half of the following", "one or more of", "familiarity with any of", or similar partial-coverage language, compress those items into ONE single must-have string that preserves the threshold — e.g. "At least half of: Java, Node.js, React, GitLab CI, Jenkins, Terraform, Jira, Ansible". Do NOT expand a partial list into separate individual must-haves — that would over-penalise candidates who meet the actual threshold.
 - knockout_criteria: STRICT — only legal/compliance binary gates a recruiter asks on a phone screen before looking at the CV. Work rights, mandatory licences, security clearances. Skills and experience are NOT knockouts — they go in must_haves. Most roles have one knockout or none. When in doubt, leave it out.
 - application_requirements: use this for portfolio / CV / cover letter asks and application questions. These are not knockout criteria unless the ad clearly says mandatory.
 - salary_band: if the JD states a range, use it. If not, use your knowledge of NZ market rates for this role and seniority.`, 0.1, 2048, {
@@ -559,6 +560,7 @@ must_have_coverage rules:
 - "unknown" = insufficient data to make any assessment
 - Include EXACTLY one entry per must-have. Do not skip or merge any.${knockouts.length ? `
 - If any knockout criterion is failed, status must be "negative".` : ""}
+- Grouped requirement rule: if a must-have starts with "At least half of:" or similar partial-coverage phrasing, assess the candidate holistically against the whole list. "confirmed" = meets or exceeds the stated threshold; "likely" = one item short of the threshold or meets it via adjacent skills; "missing" = clearly below the threshold; "unknown" = cannot assess from available data.
 
 nice_to_have_coverage rules:
 - "confirmed" = explicitly present; "likely" = implied; "absent" = not present or not mentioned
