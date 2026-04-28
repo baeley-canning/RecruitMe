@@ -188,7 +188,7 @@ function shouldExpand(element) {
       ""
   );
   if (!label) return false;
-  if (!/^see more$|^show more$/i.test(label)) return false;
+  if (!/^see more$|^show more$|^show \d+ more/i.test(label)) return false;
 
   const heading = parentSectionHeading(element);
   if (!heading || BLOCKED_SECTION_HEADING_RE.test(heading)) return false;
