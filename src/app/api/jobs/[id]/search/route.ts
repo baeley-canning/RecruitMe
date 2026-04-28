@@ -809,6 +809,7 @@ async function runSearchBackground(args: {
             where: { jobId_linkedinUrl: { jobId: jobId, linkedinUrl: normUrl } },
             create: {
               jobId: jobId,
+              orgId: job.orgId ?? null,
               name: poolEntry?.name ?? r.name,
               headline: poolEntry?.headline ?? r.headline ?? null,
               location: candidateLocation,

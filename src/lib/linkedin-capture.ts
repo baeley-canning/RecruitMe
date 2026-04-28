@@ -383,6 +383,7 @@ async function buildCapturedCandidateData(args: {
     name,
     headline,
     location,
+    orgId: job.orgId ?? null,
     linkedinUrl: normaliseLinkedInUrl(linkedinUrl),
     profileText: cleanedProfileText,
     profileCapturedAt: new Date(),

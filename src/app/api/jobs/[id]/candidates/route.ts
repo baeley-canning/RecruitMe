@@ -66,6 +66,7 @@ export async function POST(
   const candidate = await prisma.candidate.create({
     data: {
       jobId: id,
+      orgId: job.orgId ?? null,
       name: name || "Unknown",
       headline: headline || null,
       location: location || null,

@@ -20,7 +20,12 @@ export async function GET() {
   const rows = await prisma.candidate.findMany({
     where: {
       profileText: { not: null },
-      ...(auth.isOwner ? {} : { job: { orgId: auth.orgId } }),
+      ...(auth.isOwner ? {} : {
+        OR: [
+          { job: { orgId: auth.orgId } },        // candidate still linked to a job
+          { jobId: null, orgId: auth.orgId },     // candidate preserved after job deletion
+        ],
+      }),
     },
     orderBy: { createdAt: "desc" },
     select: {
@@ -36,6 +41,8 @@ export async function GET() {
       profileCapturedAt: true,
       createdAt: true,
       jobId: true,
+      archivedJobTitle: true,
+      archivedJobCompany: true,
       job: { select: { id: true, title: true, company: true } },
       files: {
         select: { id: true, type: true, filename: true, size: true, createdAt: true },

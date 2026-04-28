@@ -71,8 +71,16 @@ export async function DELETE(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-  const { error } = await requireJobAccess(id, auth);
-  if (error) return error;
+  const { job, error } = await requireJobAccess(id, auth);
+  if (error || !job) return error;
+
+  // Stamp job context on candidates before deletion so library display is preserved
+  // after the SetNull cascade nulls out jobId.
+  await prisma.candidate.updateMany({
+    where: { jobId: id },
+    data: { archivedJobTitle: job.title, archivedJobCompany: job.company ?? null },
+  });
+
   await prisma.job.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

@@ -58,8 +58,11 @@ model User {
 
 model Candidate {
   id           String   @id @default(cuid())
-  jobId        String
-  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId        String?
+  job          Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  orgId        String?  // copied from job.orgId on create; preserved after job deletion for auth scoping
+  archivedJobTitle   String?  // job title at time of deletion, for library display
+  archivedJobCompany String?  // job company at time of deletion, for library display
 
   name         String
   headline     String?
