@@ -471,6 +471,102 @@ function needsDeeperCapture(capture) {
   );
 }
 
+function isLinkedInExperienceDetailsPage() {
+  return /linkedin\.com\/in\/[^/?#]+\/details\/experience/i.test(location.href);
+}
+
+async function captureExperienceDetailsPage() {
+  await waitForMain();
+  await sleep(1000);
+
+  const clicked = new Set();
+  await scrollProfile(clicked);
+  await expandInlineSections(clicked, { visibleOnly: false, passes: 4 });
+  const rescrolled = await scrollProfile(clicked);
+  if (!rescrolled) return null;
+
+  const main = document.querySelector("main");
+  if (!(main instanceof HTMLElement)) return null;
+
+  const lines = filterProfileLines(splitIntoLines(main.innerText || ""));
+  // Drop any leading "Experience" heading — added back by mergeExperienceSection
+  while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
+  if (lines.length < 3) return null;
+
+  return "Experience\n" + lines.join("\n");
+}
+
+function mergeExperienceSection(mainCapture, fullExperienceText) {
+  const profileText = mainCapture.profileText;
+
+  const expIdx = profileText.search(/\nExperience\n/i);
+  if (expIdx === -1) {
+    return {
+      ...mainCapture,
+      profileText: cleanText(profileText + "\n\n" + fullExperienceText).slice(0, 100000),
+    };
+  }
+
+  const afterExp = profileText.slice(expIdx + 1);
+  const nextMatch = afterExp.search(/\n(Education|Skills|Top skills|Licenses|Certifications)\n/i);
+
+  let merged;
+  if (nextMatch !== -1) {
+    const nextIdx = expIdx + 1 + nextMatch;
+    merged = profileText.slice(0, expIdx + 1) + fullExperienceText + "\n\n" + profileText.slice(nextIdx + 1);
+  } else {
+    merged = profileText.slice(0, expIdx + 1) + fullExperienceText;
+  }
+
+  return {
+    ...mainCapture,
+    profileText: cleanText(merged).slice(0, 100000),
+  };
+}
+
+async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
+  if (!mainCapture.sectionKeys.includes("experience")) return mainCapture;
+
+  const detailsLink = Array.from(document.querySelectorAll("a[href]")).find((a) =>
+    /\/details\/experience/.test(a.getAttribute("href") || "")
+  );
+  if (!detailsLink) return mainCapture;
+
+  try {
+    detailsLink.click();
+
+    // Wait for SPA navigation to the details page (up to 6 seconds)
+    for (let i = 0; i < 30; i++) {
+      await sleep(200);
+      if (isLinkedInExperienceDetailsPage()) break;
+    }
+    if (!isLinkedInExperienceDetailsPage()) return mainCapture;
+
+    const fullExperienceText = await captureExperienceDetailsPage();
+
+    // Navigate back to the main profile
+    history.back();
+
+    // Wait for main profile URL to restore (up to 6 seconds)
+    for (let i = 0; i < 30; i++) {
+      await sleep(200);
+      if (location.href.replace(/[?#].*$/, "") === profileBaseUrl) break;
+    }
+
+    if (!fullExperienceText) return mainCapture;
+    return mergeExperienceSection(mainCapture, fullExperienceText);
+
+  } catch {
+    try {
+      if (location.href.replace(/[?#].*$/, "") !== profileBaseUrl) {
+        history.back();
+        await sleep(1500);
+      }
+    } catch {}
+    return mainCapture;
+  }
+}
+
 async function captureProfile() {
   const startUrl = location.href.replace(/[?#].*$/, "");
   if (!isLinkedInProfilePage()) {
@@ -512,7 +608,11 @@ async function captureProfile() {
   }
 
   await sleep(600);
-  return collectProfileText(startUrl);
+  capture = collectProfileText(startUrl);
+
+  // Enrich with full work history from the /details/experience sub-page
+  capture = await enrichWithExperienceDetails(capture, startUrl);
+  return capture;
 }
 
 function notifyBackground() {
