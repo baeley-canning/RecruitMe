@@ -75,13 +75,21 @@ export async function GET(req: Request) {
   const sessionId = url.searchParams.get("sessionId");
 
   if (sessionId) {
-    // Polling by sessionId from the web UI — requires auth so only the session owner can poll.
-    const auth = await verifyAnyAuth(req);
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
-
     const session = await findSessionInQueue((s) => s.sessionId === sessionId);
     if (!session) {
       return NextResponse.json({ session: null }, { status: 404, headers: CORS });
+    }
+
+    // The web UI polls by an unguessable UUID it just created. Allow that token
+    // to keep working even if the browser drops auth cookies while LinkedIn is
+    // open; if auth is present, still enforce ownership/org visibility.
+    const auth = await verifyAnyAuth(req).catch(() => null);
+    if (auth) {
+      const sameUser = !session.userId || session.userId === auth.userId;
+      const sameOrg = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
+      if (!auth.isOwner && !sameUser && !sameOrg) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: CORS });
+      }
     }
 
     // When completed, embed the updated candidate so the web UI can update

@@ -227,6 +227,7 @@ export default function JobDetailPage({
         if (entry.pollInterval) clearInterval(entry.pollInterval);
         void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
           method: "DELETE",
+          credentials: "include",
         }).catch(() => {});
       }
       ref.clear();
@@ -359,6 +360,7 @@ export default function JobDetailPage({
     activeFetchesRef.current.delete(candidateId);
     void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
       method: "DELETE",
+      credentials: "include",
     }).catch(() => {});
     setFetchStatuses((prev) => ({ ...prev, [candidateId]: { state, message } }));
     clearCandidateStatus(candidateId, state === "done" ? 4000 : 6000, state);
@@ -388,7 +390,8 @@ export default function JobDetailPage({
     }
     try {
       const res = await fetch(
-        `/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`
+        `/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`,
+        { credentials: "include" }
       );
       if (!res.ok) {
         if (res.status === 404) {
@@ -475,6 +478,7 @@ export default function JobDetailPage({
       try {
         const start = await fetch("/api/extension/fetch-session", {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ jobId: id, candidateId }),
         });
@@ -495,6 +499,7 @@ export default function JobDetailPage({
           if (!opened) {
             await fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(session.sessionId)}`, {
               method: "DELETE",
+              credentials: "include",
             }).catch(() => {});
             setFetchStatuses((prev) => ({
               ...prev,

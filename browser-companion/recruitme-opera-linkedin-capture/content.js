@@ -475,6 +475,45 @@ function isLinkedInExperienceDetailsPage() {
   return /linkedin\.com\/in\/[^/?#]+\/details\/experience/i.test(location.href);
 }
 
+function buildExperienceDetailsUrl(profileBaseUrl) {
+  try {
+    const url = new URL(profileBaseUrl);
+    const match = url.pathname.match(/^(\/in\/[^/]+)\/?/i);
+    if (!match) return null;
+    url.pathname = `${match[1]}/details/experience/`;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function waitForExperienceDetailsPage() {
+  for (let i = 0; i < 50; i += 1) {
+    await sleep(200);
+    if (isLinkedInExperienceDetailsPage()) return true;
+  }
+  return false;
+}
+
+async function restoreProfilePage(profileBaseUrl) {
+  const currentUrl = location.href.replace(/[?#].*$/, "");
+  if (currentUrl === profileBaseUrl) return;
+
+  try {
+    history.back();
+    for (let i = 0; i < 30; i += 1) {
+      await sleep(200);
+      if (location.href.replace(/[?#].*$/, "") === profileBaseUrl) return;
+    }
+  } catch {}
+
+  try {
+    location.assign(profileBaseUrl);
+  } catch {}
+}
+
 async function captureExperienceDetailsPage() {
   await waitForMain();
   await sleep(1000);
@@ -530,39 +569,31 @@ async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
   const detailsLink = Array.from(document.querySelectorAll("a[href]")).find((a) =>
     /\/details\/experience/.test(a.getAttribute("href") || "")
   );
-  if (!detailsLink) return mainCapture;
+  const detailsUrl = buildExperienceDetailsUrl(profileBaseUrl);
+  if (!detailsLink && !detailsUrl) return mainCapture;
 
   try {
-    detailsLink.click();
+    if (detailsLink) {
+      detailsLink.click();
+    } else if (detailsUrl) {
+      location.assign(detailsUrl);
+    }
 
-    // Wait for SPA navigation to the details page (up to 6 seconds)
-    for (let i = 0; i < 30; i++) {
-      await sleep(200);
-      if (isLinkedInExperienceDetailsPage()) break;
+    if (!(await waitForExperienceDetailsPage()) && detailsUrl) {
+      location.assign(detailsUrl);
+      await waitForExperienceDetailsPage();
     }
     if (!isLinkedInExperienceDetailsPage()) return mainCapture;
 
     const fullExperienceText = await captureExperienceDetailsPage();
 
-    // Navigate back to the main profile
-    history.back();
-
-    // Wait for main profile URL to restore (up to 6 seconds)
-    for (let i = 0; i < 30; i++) {
-      await sleep(200);
-      if (location.href.replace(/[?#].*$/, "") === profileBaseUrl) break;
-    }
+    await restoreProfilePage(profileBaseUrl);
 
     if (!fullExperienceText) return mainCapture;
     return mergeExperienceSection(mainCapture, fullExperienceText);
 
   } catch {
-    try {
-      if (location.href.replace(/[?#].*$/, "") !== profileBaseUrl) {
-        history.back();
-        await sleep(1500);
-      }
-    } catch {}
+    await restoreProfilePage(profileBaseUrl);
     return mainCapture;
   }
 }
