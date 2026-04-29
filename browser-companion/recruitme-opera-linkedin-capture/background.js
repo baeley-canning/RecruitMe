@@ -11,6 +11,21 @@ const activeAutoCaptures = new Set();
 const pendingSessionEnsures = new Set();
 const ERROR_BADGE_COLOR = "#b91c1c";
 
+// Keeps the MV3 service worker alive on Mac while a capture is in progress.
+// Chrome aggressively suspends idle service workers; holding an open port prevents that.
+let keepAlivePort = null;
+function keepAlive() {
+  if (keepAlivePort) return;
+  try {
+    keepAlivePort = chrome.runtime.connect({ name: "keepalive" });
+    keepAlivePort.onDisconnect.addListener(() => { keepAlivePort = null; });
+  } catch { keepAlivePort = null; }
+}
+function releaseKeepAlive() {
+  try { keepAlivePort?.disconnect(); } catch {}
+  keepAlivePort = null;
+}
+
 async function setExtensionError(message) {
   const error = message || "RecruitMe extension error";
   await chrome.storage.local.set({ lastError: error });
@@ -40,8 +55,6 @@ async function getStoredSettings() {
   return chrome.storage.local.get({
     serverBase: "",
     lastWorkingServerBase: "",
-    authUser: "",
-    authPass: "",
     lastError: "",
   });
 }
@@ -72,14 +85,9 @@ function withTimeout(url, options = {}, timeoutMs = 4000) {
 }
 
 async function requestRecruitMe(path, options = {}, preferredBase = "", overrides = {}) {
-  const settings = await getStoredSettings();
   const bases = preferredBase
     ? [preferredBase, ...(await getServerBases()).filter((base) => base !== preferredBase)]
     : await getServerBases();
-  const authUser =
-    typeof overrides.authUser === "string" ? overrides.authUser.trim() : settings.authUser || "";
-  const authPass =
-    typeof overrides.authPass === "string" ? overrides.authPass : settings.authPass || "";
   const rememberFailure = overrides.rememberFailure !== false;
   const timeoutMs =
     typeof overrides.timeoutMs === "number"
@@ -94,15 +102,10 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
     try {
       const headers = new Headers(options.headers || {});
       const requestOptions = { ...options };
-      delete requestOptions.authUser;
-      delete requestOptions.authPass;
       delete requestOptions.timeoutMs;
 
       if (requestOptions.body && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
-      }
-      if (authUser || authPass) {
-        headers.set("Authorization", `Basic ${btoa(`${authUser}:${authPass}`)}`);
       }
 
       const response = await withTimeout(`${base}${path}`, { ...requestOptions, headers }, timeoutMs);
@@ -117,13 +120,7 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
       }
 
       if (!response.ok) {
-        if (response.status === 401) {
-          lastError = new Error(
-            "RecruitMe extension auth failed. Enter the same username and password you use to sign into RecruitMe, then click Save and test connection."
-          );
-        } else {
-          lastError = new Error(data?.error || `RecruitMe request failed (${response.status})`);
-        }
+        lastError = new Error(data?.error || `RecruitMe request failed (${response.status})`);
         continue;
       }
 
@@ -149,9 +146,6 @@ function toUserFacingCaptureError(error) {
   }
   if (/Request timed out/i.test(message)) {
     return "RecruitMe took too long to respond. Check the app is running and the server URL in the popup.";
-  }
-  if (/401 Unauthorized|extension auth failed/i.test(message)) {
-    return "RecruitMe login for manual import is invalid. Auto-capture can still run, but update the popup credentials if you need job list access.";
   }
   if (/LinkedIn URL mismatch/i.test(message)) {
     return "The open LinkedIn profile did not match the queued candidate.";
@@ -283,13 +277,19 @@ async function completePendingCaptureWithRetry(tabId, pending, preferredBase = "
 
 async function notifyCaptureDone(candidateName) {
   const name = candidateName || "Profile";
-  chrome.notifications.create({
-    type: "basic",
-    iconUrl: "https://www.linkedin.com/favicon.ico",
-    title: "RecruitMe — Profile captured",
-    message: `${name} has been captured and scored. You can switch back to RecruitMe.`,
-    priority: 2,
-  });
+  // MV3 service workers cannot load remote URLs for iconUrl — must use a data URI.
+  try {
+    await chrome.notifications.create(`recruitme-done-${Date.now()}`, {
+      type: "basic",
+      iconUrl:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAA7AAAAOwBeShxvQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAHpSURBVFiF7ZaxbtswEIa/o2zHhiEjQAYDHQIkQ4cCHQIUKFC0Q4c+QR8gj9CXyFP0EfoEfYU+Q5cgQ4ECBQoUCIokJMWS2CEt2ZItWxIlWxIlkSSboqoqVdX9cM/x7o47AgCO4zgOgJQSwB4ASinlnHMAOI7jOE8ppZQCAHgAIgB4AKICeAAgAnhRSnkDIOecAwDgnHMOAAB6AJ4BeALwBEAPwBMAD0AppdwB4A4AW2ttbQCklFJKKaWUUkoppZRSSilmAGCttbW2tpQCAIAQQgghhBBCCCGEEEIIIYQQQgghhBBCCCEAQAghgBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQggh5H8HYIwxxhhjjDHGGGOMMcYYY4wxxhhjjDHGGAAAgAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQyY7QAAAAASUVORK5CYII=",
+      title: "RecruitMe — Profile captured",
+      message: `${name} has been captured and scored.`,
+      priority: 2,
+    });
+  } catch {
+    console.info("[RecruitMe] Notification skipped — grant notification permission to Chrome in System Preferences");
+  }
 }
 
 async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
@@ -297,6 +297,7 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
   if (activeAutoCaptures.has(lockKey)) return;
 
   activeAutoCaptures.add(lockKey);
+  keepAlive();
   try {
     await sleep(600);
     await completePendingCaptureWithRetry(tabId, pending, preferredBase);
@@ -306,6 +307,7 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
     throw error;
   } finally {
     activeAutoCaptures.delete(lockKey);
+    if (activeAutoCaptures.size === 0) releaseKeepAlive();
   }
 }
 
@@ -377,8 +379,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           serverBase: settings.serverBase || settings.lastWorkingServerBase || DEFAULT_SERVER_BASES[0],
-          authUser: settings.authUser || "",
-          authPass: settings.authPass || "",
           lastError: settings.lastError || "",
         })
       )
@@ -389,42 +389,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "set-config") {
     void (async () => {
       const serverBase = normaliseServerBase(message.serverBase || "") || DEFAULT_SERVER_BASES[0];
-      const authUser = (message.authUser || "").trim();
-      const authPass = message.authPass || "";
-
-      const hasAuth = Boolean(authUser && authPass);
       const { base } = await requestRecruitMe(
-        hasAuth ? "/api/extension/jobs" : "/api/extension/fetch-session",
+        "/api/extension/fetch-session",
         {},
         serverBase,
-        hasAuth ? { authUser, authPass } : { rememberFailure: false }
+        { rememberFailure: false }
       );
-
-      await chrome.storage.local.set({
-        serverBase,
-        lastWorkingServerBase: base,
-        authUser,
-        authPass,
-        lastError: "",
-      });
+      await chrome.storage.local.set({ serverBase, lastWorkingServerBase: base, lastError: "" });
       await ensurePendingCaptureAlarm();
       await ensurePendingSessionTabs().catch(() => {});
-      return { base, hasAuth };
+      return base;
     })()
-      .then(({ base, hasAuth }) => sendResponse({ ok: true, serverBase: base, hasAuth }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
-
-  if (message?.type === "get-jobs") {
-    void requestRecruitMe("/api/extension/jobs", {}, "", { rememberFailure: false })
-      .then(({ base, data }) => sendResponse({ ok: true, jobs: data, serverBase: base }))
+      .then((base) => sendResponse({ ok: true, serverBase: base }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
   if (message?.type === "get-session") {
-    // Returns the current session (any URL) or null — used by popup for status display.
     void requestRecruitMe("/api/extension/fetch-session")
       .then(({ base, data }) => sendResponse({ ok: true, session: data, serverBase: base }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -480,26 +461,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return candidateName;
     })()
       .then((candidateName) => sendResponse({ ok: true, candidateName }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
-
-  if (message?.type === "manual-import") {
-    void (async () => {
-      const tab = await getActiveLinkedInTab();
-      const capture = await sendMessageToTab(tab.id, { type: "capture-profile" });
-      const imported = await requestRecruitMe("/api/extension/import", {
-        method: "POST",
-        timeoutMs: 120000,
-        body: JSON.stringify({
-          jobId: message.jobId,
-          linkedinUrl: capture.linkedinUrl,
-          profileText: capture.profileText,
-        }),
-      });
-      return imported.data;
-    })()
-      .then((candidate) => sendResponse({ ok: true, candidate }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
