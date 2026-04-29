@@ -141,6 +141,7 @@ export function getMustHaveImportance(requirement: string): number {
   // Critical — cannot be compensated for by location or title alone
   if (/wordpress|content management system|\bcms\b/i.test(r))                return 1.5;
   if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(r)) return 1.5;
+  if (/security clearance|clearance eligibility|security vetting|nzsis|national security clearance|baseline clearance|secret clearance/i.test(r)) return 1.5;
   // Regulated-profession qualifications: degree is a legal/professional prerequisite
   if (/\b(chartered accountant|cpa|ca qualification|cfa)\b/i.test(r))        return 1.5;
   if (/\b(registered nurse|nursing registration|nzrn|nursing council)\b/i.test(r)) return 1.5;

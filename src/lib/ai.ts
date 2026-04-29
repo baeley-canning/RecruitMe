@@ -15,6 +15,7 @@ import {
   OUTREACH_PROFILE_EXCERPT_MAX_CHARS,
   SCORE_PROFILE_EXCERPT_MAX_CHARS,
 } from "./profile-excerpt";
+import { enrichRoleWithSecurityClearance, inferSecurityClearanceContext } from "./security-clearance";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude, OpenAI, and Ollama so all AI functions stay clean.
@@ -315,7 +316,8 @@ Rules:
 - synonym_titles is the most important field for search coverage — a "Digital Solutions Analyst" might be "Business Analyst", "Systems Analyst", "Product Analyst", "IT Analyst", "Digital Analyst" on LinkedIn. Think about what 10 different people doing this job would call themselves. Banned terms that no one uses on LinkedIn: "Application Developer", "Technical Developer", "IT Developer", "Mid-level Developer", "Junior Developer", "Graduate Developer" — use the actual technology stack or domain in the title instead.
 - must_haves vs nice_to_haves: if the JD says "required" or "must have" it's a must-have. If it says "preferred", "advantageous", "desirable", "bonus" it's nice-to-have.
 - Grouped/partial skill lists: when a JD says "experience across at least half of the following", "one or more of", "familiarity with any of", or similar partial-coverage language, compress those items into ONE single must-have string that preserves the threshold — e.g. "At least half of: Java, Node.js, React, GitLab CI, Jenkins, Terraform, Jira, Ansible". Do NOT expand a partial list into separate individual must-haves — that would over-penalise candidates who meet the actual threshold.
-- knockout_criteria: STRICT — only legal/compliance binary gates a recruiter asks on a phone screen before looking at the CV. Work rights, mandatory licences, security clearances. Skills and experience are NOT knockouts — they go in must_haves. Most roles have one knockout or none. When in doubt, leave it out.
+- Security clearance: if the ad explicitly says a clearance is required, must be held, or must be obtainable, add it to knockout_criteria and must_haves. If the ad only implies sensitive government/security context through the employer or product area, do NOT make it a knockout; put it in strongly_inferred/search_expansion instead.
+- knockout_criteria: STRICT — only legal/compliance binary gates a recruiter asks on a phone screen before looking at the CV. Work rights, mandatory licences, explicit security clearances. Skills and experience are NOT knockouts — they go in must_haves. Most roles have one knockout or none. When in doubt, leave it out.
 - application_requirements: use this for portfolio / CV / cover letter asks and application questions. These are not knockout criteria unless the ad clearly says mandatory.
 - salary_band: if the JD states a range, use it. If not, use your knowledge of NZ market rates for this role and seniority.`, 0.1, 2048, {
     provider: getJobParsingProvider(),
@@ -323,7 +325,7 @@ Rules:
 
   const parsed = parseJson<Partial<ParsedRole>>(text);
 
-  return {
+  const normalizedRole = {
     title: ensureString(parsed.title),
     title_source: normalizeSource(parsed.title_source),
     company: ensureString(parsed.company),
@@ -352,6 +354,8 @@ Rules:
     skills_required: ensureStringArray(parsed.skills_required),
     skills_preferred: ensureStringArray(parsed.skills_preferred),
   };
+
+  return enrichRoleWithSecurityClearance(jd, normalizedRole);
 }
 
 export async function predictAcceptance(
@@ -487,6 +491,13 @@ export async function scoreCandidateStructured(
   const baseMustHaves = (parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required);
   const niceToHaves   = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
   const knockouts     = parsedRole.knockout_criteria ?? [];
+  const clearanceContext = inferSecurityClearanceContext({
+    title: parsedRole.title,
+    company: parsedRole.company,
+    responsibilities: parsedRole.responsibilities,
+    explicitlyStated: parsedRole.explicitly_stated,
+    stronglyInferred: parsedRole.strongly_inferred,
+  });
 
   // Ensure knockout criteria appear in must_have_coverage. They're binary gates but often
   // land only in knockout_criteria (not must_haves) when parsed. Merge any that aren't
@@ -500,6 +511,13 @@ export async function scoreCandidateStructured(
     ? `Budget: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD` : "";
   const seniorityLine = parsedRole.seniority_band ? `Seniority: ${parsedRole.seniority_band}` : "";
   const knockoutLine  = knockouts.length ? `Knockout criteria (instant fail if clearly absent): ${knockouts.join("; ")}` : "";
+  const clearanceLine = clearanceContext.explicit || clearanceContext.inferred
+    ? `Security clearance context: ${
+        clearanceContext.explicit
+          ? "The role explicitly requires security clearance or clearance eligibility. Assess only from evidence; absence is missing/unknown, not confirmed."
+          : "The role is likely clearance-sensitive based on employer/title, but clearance is not explicit. Treat prior government, defence, border, justice, police, intelligence, or security-vetted supplier work as a positive signal; do not fail candidates solely for no clearance evidence."
+      }`
+    : "";
   const mustHavesList = mustHaves.map((m, i) => `${i + 1}. ${m}`).join("\n");
   const niceList      = niceToHaves.map((n, i) => `${i + 1}. ${n}`).join("\n");
 
@@ -520,6 +538,7 @@ ${mustHavesList}
 Nice-to-haves (numbered — include ALL in nice_to_have_coverage):
 ${niceList || "(none listed)"}
 ${knockoutLine}
+${clearanceLine}
 
 Candidate profile:
 ${profileSlice}
@@ -568,6 +587,7 @@ must_have_coverage rules:
 - Grouped requirement rule: if a must-have starts with "At least half of:" or similar partial-coverage phrasing, assess the candidate holistically against the whole list. "confirmed" = meets or exceeds the stated threshold; "likely" = one item short of the threshold or meets it via adjacent skills; "missing" = clearly below the threshold; "unknown" = cannot assess from available data.
 - Historical experience rule: scan the FULL work history, not just the current or recent role. A skill that appears in an older role (even 5–15 years ago) counts as "likely" for that skill — the candidate has demonstrably used it, even if rusty. Only mark "missing" if the skill appears nowhere in the entire profile. If the role explicitly requires RECENT experience (e.g. "currently working with X"), then recency matters — otherwise, historical evidence is valid. Never say "none of which are evident" if any skill appears anywhere in the profile.
 - Career-stage awareness: if a candidate has moved from a hands-on technical role to a management/leadership role, note this as a concern in reasons_against (e.g. "Has moved away from hands-on X development") rather than falsely stating the skill is absent. The skill history is real; the concern is recency and focus, not absence.
+- Security clearance inference: do not invent an active clearance. If clearance is explicit, "confirmed" requires direct profile evidence of clearance or a role/employer where clearance is normally mandatory; "likely" can be used for recent NZ defence, intelligence, police, corrections, customs, border, justice, or vetted government supplier work; otherwise use "unknown" or "missing". If clearance is only inferred from the role context, mention this under nice-to-have/industry fit and missing_evidence rather than treating it as an automatic fail.
 
 nice_to_have_coverage rules:
 - "confirmed" = explicitly present; "likely" = implied; "absent" = not present or not mentioned
