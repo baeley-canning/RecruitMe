@@ -11,6 +11,21 @@ const activeAutoCaptures = new Set();
 const pendingSessionEnsures = new Set();
 const ERROR_BADGE_COLOR = "#b91c1c";
 
+// MV3 service workers can be suspended by Chrome (especially on Mac, to save battery).
+// Keeping an open chrome.runtime port prevents suspension during long captures.
+let keepAlivePort = null;
+function keepAlive() {
+  if (keepAlivePort) return;
+  try {
+    keepAlivePort = chrome.runtime.connect({ name: "keepalive" });
+    keepAlivePort.onDisconnect.addListener(() => { keepAlivePort = null; });
+  } catch { keepAlivePort = null; }
+}
+function releaseKeepAlive() {
+  try { keepAlivePort?.disconnect(); } catch {}
+  keepAlivePort = null;
+}
+
 async function setExtensionError(message) {
   const error = message || "RecruitMe extension error";
   await chrome.storage.local.set({ lastError: error });
@@ -283,13 +298,18 @@ async function completePendingCaptureWithRetry(tabId, pending, preferredBase = "
 
 async function notifyCaptureDone(candidateName) {
   const name = candidateName || "Profile";
-  chrome.notifications.create({
-    type: "basic",
-    iconUrl: "https://www.linkedin.com/favicon.ico",
-    title: "RecruitMe — Profile captured",
-    message: `${name} has been captured and scored. You can switch back to RecruitMe.`,
-    priority: 2,
-  });
+  try {
+    await chrome.notifications.create(`recruitme-done-${Date.now()}`, {
+      type: "basic",
+      iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABqSURBVFhH7ZaxCgAgCER7/v/P7dDSEqpTuHcQiXRFggzQgBgREREREREREREREREREWlFRAEAAAAAAAAAAAAAAAAAgCsiUl4HAAAAAAAAAAAAAAAAAACAMhHRR5EAAAAASUVORK5CYII=",
+      title: "RecruitMe — Profile captured",
+      message: `${name} has been captured and scored.`,
+      priority: 2,
+    });
+  } catch {
+    // Notifications require OS permission — check System Preferences > Notifications on Mac
+    console.info("[RecruitMe] Notification failed — grant notification permission to Chrome/Opera in system settings");
+  }
 }
 
 async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
@@ -297,6 +317,7 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
   if (activeAutoCaptures.has(lockKey)) return;
 
   activeAutoCaptures.add(lockKey);
+  keepAlive(); // prevent Chrome from suspending the service worker mid-capture
   try {
     await sleep(600);
     await completePendingCaptureWithRetry(tabId, pending, preferredBase);
@@ -306,6 +327,7 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
     throw error;
   } finally {
     activeAutoCaptures.delete(lockKey);
+    if (activeAutoCaptures.size === 0) releaseKeepAlive();
   }
 }
 
