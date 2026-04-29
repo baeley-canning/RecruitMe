@@ -313,7 +313,7 @@ export function buildScoreBreakdown(params: {
   // Base cap by data quality: snippets/partial captures are leads, not confirmed matches.
   let cap =
     dataQuality === "snippet"
-      ? params.profileCharCount < 500 ? 55 : 65
+      ? params.profileCharCount < 500 ? 54 : 65
       : dataQuality === "minimal" ? 40 : 100;
 
   // Critical gate: if any 1.5× importance must-have is unconfirmed on a non-full profile,

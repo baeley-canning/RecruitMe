@@ -564,8 +564,6 @@ function mergeExperienceSection(mainCapture, fullExperienceText) {
 }
 
 async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
-  if (!mainCapture.sectionKeys.includes("experience")) return mainCapture;
-
   const detailsLink = Array.from(document.querySelectorAll("a[href]")).find((a) =>
     /\/details\/experience/.test(a.getAttribute("href") || "")
   );

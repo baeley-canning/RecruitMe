@@ -11,11 +11,12 @@ import type { ParsedRole } from "@/lib/ai";
 interface SearchCardProps {
   jobId: string;
   parsedRole: ParsedRole;
+  jobLocation?: string | null;
   jobStatus: string;
   onComplete: () => void;
 }
 
-export function SearchCard({ jobId, parsedRole, jobStatus, onComplete }: SearchCardProps) {
+export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComplete }: SearchCardProps) {
   const [searching, setSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<SearchResultSummary | null>(null);
   const [searchError, setSearchError] = useState("");
@@ -31,6 +32,12 @@ export function SearchCard({ jobId, parsedRole, jobStatus, onComplete }: SearchC
   const [editingLocation, setEditingLocation] = useState(false);
 
   const searchResultDisplay = searchResult ? getSearchResultDisplay(searchResult) : null;
+  const defaultSearchLocation =
+    parsedRole.location?.trim() ||
+    jobLocation?.trim() ||
+    searchHistory.find((session) => session.location?.trim())?.location.trim() ||
+    "New Zealand";
+  const activeSearchLocation = locationOverride?.trim() || defaultSearchLocation;
 
   useEffect(() => {
     fetch("/api/search/status")
@@ -248,13 +255,13 @@ export function SearchCard({ jobId, parsedRole, jobStatus, onComplete }: SearchC
                 </select>
               </div>
             </div>
-            {parsedRole.location && (
+            {defaultSearchLocation && (
               <div className="flex items-center gap-1.5">
                 <MapPin className="w-3 h-3 text-slate-400 flex-shrink-0" />
                 <span className="text-xs text-slate-500">Searching in</span>
                 {editingLocation ? (
                   <>
-                    <input autoFocus type="text" value={locationOverride ?? parsedRole.location}
+                    <input autoFocus type="text" value={locationOverride ?? defaultSearchLocation}
                       onChange={(e) => setLocationOverride(e.target.value)}
                       onBlur={() => setEditingLocation(false)}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingLocation(false); }}
@@ -264,7 +271,7 @@ export function SearchCard({ jobId, parsedRole, jobStatus, onComplete }: SearchC
                   </>
                 ) : (
                   <>
-                    <span className="font-medium text-slate-700 text-xs">{locationOverride?.trim() || parsedRole.location}</span>
+                    <span className="font-medium text-slate-700 text-xs">{activeSearchLocation}</span>
                     <button onClick={() => setEditingLocation(true)} className="text-[10px] text-blue-400 hover:text-blue-600 underline">change</button>
                     {locationOverride?.trim() && (
                       <button onClick={() => setLocationOverride(null)} className="text-[10px] text-slate-400 hover:text-slate-600 underline">reset</button>

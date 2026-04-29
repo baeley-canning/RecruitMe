@@ -1157,6 +1157,7 @@ ${toHtml(job.rawJd)}
         <SearchCard
           jobId={id}
           parsedRole={parsedRole}
+          jobLocation={job.location}
           jobStatus={job.status}
           onComplete={fetchJob}
         />

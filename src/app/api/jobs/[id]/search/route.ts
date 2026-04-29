@@ -162,6 +162,11 @@ function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole,
   if (terms.length === 0) return true;
 
   const text = candidateSearchText(result, profileText, candidateLocation);
+  const anchorTerms = extractAnchorRequirementTerms(parsedRole);
+  if (anchorTerms.length > 0) {
+    const requiredAnchorTerms = anchorTerms.includes("Sybase") ? ["Sybase"] : anchorTerms;
+    return requiredAnchorTerms.some((term) => textHasTerm(text, term));
+  }
   return terms.some((term) => textHasTerm(text, term));
 }
 
@@ -262,6 +267,7 @@ const MAX_PAGES = 8;
 const MAX_PAGE_RETRIES = 2;
 const EMPTY_ROUNDS_BEFORE_STOP = 2;
 const MAX_QUERY_VARIANTS = 4;
+const MAX_SPECIALIST_QUERY_VARIANTS = 8;
 const SERPAPI_CONCURRENCY = 1;
 const BING_CONCURRENCY = 2;
 const SERPAPI_DELAY_MS = 600;
@@ -306,13 +312,36 @@ function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
   return [...terms].slice(0, 5);
 }
 
+function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {
+  const terms = new Set<string>();
+  const hardRequirements = [
+    ...(parsedRole.must_haves ?? []),
+    ...(parsedRole.skills_required ?? []),
+    ...(parsedRole.knockout_criteria ?? []),
+  ].join("\n");
+
+  if (/\bpsybase\b|\bsybase\b/i.test(hardRequirements)) terms.add("Sybase");
+  if (/\bc\+\+/i.test(hardRequirements)) terms.add("C++");
+
+  return [...terms];
+}
+
 function buildSearchQueries(parsedRole: ParsedRole): string[] {
   const baseTitle = cleanQuery(parsedRole.title);
   const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
   const aiQueries = [...parsedRole.search_queries, ...parsedRole.google_queries];
   const distinctiveTerms = extractDistinctiveRequirementTerms(parsedRole);
+  const anchorTerms = extractAnchorRequirementTerms(parsedRole);
 
   const skillQueries: string[] = [];
+  if (anchorTerms.length > 0) {
+    skillQueries.push(anchorTerms.join(" "));
+    skillQueries.push(`${baseTitle || "Software Developer"} ${anchorTerms.join(" ")}`);
+    for (const term of anchorTerms) {
+      skillQueries.push(`${term} developer`);
+      skillQueries.push(`${term} dba`);
+    }
+  }
   if (distinctiveTerms.length > 0) {
     skillQueries.push(`${baseTitle || "Software Developer"} ${distinctiveTerms.slice(0, 2).join(" ")}`);
   }
@@ -326,7 +355,7 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
     baseTitle,
     ...synonymQueries,
     ...aiQueries.slice(2),
-  ]).slice(0, MAX_QUERY_VARIANTS);
+  ]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
 }
 
 type SearchProvider = "serpapi" | "bing";
@@ -652,7 +681,38 @@ async function runSearchBackground(args: {
             delayMs: BING_DELAY_MS,
           });
           const primaryOutcomes = [...serpOutcomes, ...bingOutcomes];
-          const primaryItems = primaryOutcomes.flatMap((outcome) => outcome.items);
+          const anchorTerms = extractAnchorRequirementTerms(parsedRole);
+          const shouldRunSpecialistNzSweep =
+            page === 0 &&
+            attempt === 0 &&
+            anchorTerms.length > 0 &&
+            normalizeLocationText(searchLocation) !== "new zealand";
+
+          const specialistNzOutcomes = shouldRunSpecialistNzSweep
+            ? [
+                ...(await executeSearchTaskQueue(
+                  hasSerpApi
+                    ? buildTasks("serpapi", "New Zealand", dedupeQueries([
+                        anchorTerms.join(" "),
+                        `${parsedRole.title || "Software Developer"} ${anchorTerms.join(" ")}`,
+                        ...anchorTerms.flatMap((term) => [`${term} developer`, `${term} dba`]),
+                      ]).slice(0, 4))
+                    : [],
+                  { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+                )),
+                ...(await executeSearchTaskQueue(
+                  hasBing
+                    ? buildTasks("bing", "New Zealand", dedupeQueries([
+                        anchorTerms.join(" "),
+                        `${parsedRole.title || "Software Developer"} ${anchorTerms.join(" ")}`,
+                        ...anchorTerms.flatMap((term) => [`${term} developer`, `${term} dba`]),
+                      ]).slice(0, 4))
+                    : [],
+                  { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS },
+                )),
+              ]
+            : [];
+          const primaryItems = [...primaryOutcomes, ...specialistNzOutcomes].flatMap((outcome) => outcome.items);
           const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
           const shouldTryNzFallback =
             page === 0 &&
@@ -660,7 +720,7 @@ async function runSearchBackground(args: {
             !primaryRetryable &&
             normalizeLocationText(searchLocation) !== "new zealand";
 
-          if (!shouldTryNzFallback) return primaryOutcomes;
+          if (!shouldTryNzFallback) return [...primaryOutcomes, ...specialistNzOutcomes];
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
           const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
@@ -675,7 +735,7 @@ async function runSearchBackground(args: {
               delayMs: BING_DELAY_MS,
             })),
           ];
-          return [...primaryOutcomes, ...fallbackOutcomes];
+          return [...primaryOutcomes, ...specialistNzOutcomes, ...fallbackOutcomes];
         },
         sleep,
         onPage: ({ page, attempt, added, total, retryableFailures, hardFailures }) => {

@@ -253,6 +253,14 @@ describe("search import route", () => {
           source: "serpapi",
         },
         {
+          name: "Cloud Developer",
+          headline: "Azure Microservices Developer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/cloud-developer/",
+          snippet: "Azure, Linux scripting, Kubernetes and microservices, but no legacy database stack.",
+          source: "serpapi",
+        },
+        {
           name: "Relevant Developer",
           headline: "Software Developer | C++ | Sybase | Linux | Azure",
           location: "Wellington, New Zealand",
@@ -276,5 +284,6 @@ describe("search import route", () => {
     expect(res.status).toBe(200);
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.name).toBe("Relevant Developer");
+    expect(dbMocks.prisma.searchSession.create.mock.calls[0][0].data.queries).toContain("Sybase dba");
   });
 });
