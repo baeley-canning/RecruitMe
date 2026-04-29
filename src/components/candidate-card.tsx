@@ -54,6 +54,7 @@ import { CopyButton } from "./copy-button";
 import { OutreachModal } from "./outreach-modal";
 import { RejectionEmailModal } from "./rejection-email-modal";
 import { OfferLetterModal } from "./offer-letter-modal";
+import { isPlausibleLocation } from "@/lib/location";
 
 interface AcceptanceSignal {
   label: string;
@@ -203,7 +204,7 @@ function LocationFitPill({
   score: number | null | undefined;
   compact?: boolean;
 }) {
-  if (!location) return null;
+  if (!location || !isPlausibleLocation(location)) return null;
 
   const cfg = locationFitBadge(score);
 

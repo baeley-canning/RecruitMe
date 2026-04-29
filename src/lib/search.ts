@@ -1,4 +1,5 @@
 import { normaliseLinkedInUrl } from "./linkedin";
+import { isPlausibleLocation } from "./location";
 import { getCityCoords, NZ_CITIES } from "./nz-cities";
 
 export interface SearchResult {
@@ -67,6 +68,7 @@ function buildLinkedInSearchQuery(query: string, location: string): string {
 function looksLikeLocationFragment(fragment: string): boolean {
   const lower = fragment.toLowerCase();
   if (!lower || lower.length < 2 || lower.length > 80) return false;
+  if (!isPlausibleLocation(fragment)) return false;
   if (
     /\b(contact info|connections|followers|message|follow|connect|linkedin|skills|experience|education|recommendations|company|full-time|part-time|present)\b/i.test(
       fragment

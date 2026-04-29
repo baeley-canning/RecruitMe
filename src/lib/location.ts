@@ -39,6 +39,33 @@ const OVERSEAS_MARKERS = [
   "dubai",
 ];
 
+const NON_LOCATION_TERMS = [
+  "specialist",
+  "training",
+  "design",
+  "development",
+  "delivery",
+  "clients",
+  "client",
+  "manager",
+  "director",
+  "engineer",
+  "developer",
+  "consultant",
+  "analyst",
+  "coordinator",
+  "officer",
+  "lead",
+  "senior",
+  "junior",
+  "principal",
+  "multiple",
+  "at",
+  "for",
+  "with",
+  "across",
+];
+
 export interface LocationFitAssessment {
   score: number;
   evidence: string;
@@ -74,6 +101,36 @@ export function isExplicitlyOverseasLocation(location: string): boolean {
   if (!normalized) return false;
   if (NZ_MARKERS.some((marker) => normalized.includes(marker))) return false;
   return OVERSEAS_MARKERS.some((marker) => normalized.includes(normalizeLocationText(marker)));
+}
+
+export function isPlausibleLocation(value: string | null | undefined): boolean {
+  const raw = value?.trim() ?? "";
+  if (!raw || raw.length > 120) return false;
+
+  if (isNzLocation(raw) || isExplicitlyOverseasLocation(raw)) return true;
+
+  const normalized = normalizeLocationText(raw);
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 8) return false;
+
+  const hasTitleLanguage = NON_LOCATION_TERMS.some((term) =>
+    words.includes(normalizeLocationText(term))
+  );
+  if (hasTitleLanguage) return false;
+
+  if (raw.includes(",")) {
+    const segments = raw.split(",").map((part) => normalizeLocationText(part)).filter(Boolean);
+    return (
+      segments.length >= 2 &&
+      segments.length <= 3 &&
+      segments.every((segment) => {
+        const segmentWords = segment.split(/\s+/).filter(Boolean);
+        return segmentWords.length > 0 && segmentWords.length <= 4;
+      })
+    );
+  }
+
+  return words.length <= 3;
 }
 
 function isRemoteFriendlyLocationRule(locationRules?: string | null): boolean {
@@ -146,7 +203,7 @@ export function assessLocationFit(
   const candidateRaw = candidateLocation?.trim() ?? "";
   const remoteFriendly = isRemoteFriendlyLocationRule(locationRules);
 
-  if (!candidateRaw) {
+  if (!candidateRaw || !isPlausibleLocation(candidateRaw)) {
     return {
       score: remoteFriendly ? 55 : 45,
       evidence: "Candidate location is not clearly stated in the available profile data.",

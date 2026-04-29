@@ -9,7 +9,7 @@ import {
 import { buildScoreCacheKey, safeParseJson } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
-import { isExplicitlyOverseasLocation, isNzLocation } from "./location";
+import { isExplicitlyOverseasLocation, isNzLocation, isPlausibleLocation } from "./location";
 
 export { normaliseLinkedInUrl } from "./linkedin";
 
@@ -126,6 +126,7 @@ function looksLikeCapturedName(value: string): boolean {
 
 function looksLikeCapturedLocation(value: string): boolean {
   if (!value || value.length < 3) return false;
+  if (!isPlausibleLocation(value)) return false;
   if (isNzLocation(value) || isExplicitlyOverseasLocation(value)) return true;
   return /^[A-Za-z .'-]+,\s*[A-Za-z .'-]+(?:,\s*[A-Za-z .'-]+)?$/.test(value);
 }
