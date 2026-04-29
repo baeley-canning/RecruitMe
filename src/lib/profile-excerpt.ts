@@ -32,7 +32,7 @@ const PROFILE_SECTION_PRIORITY = [
 
 const PROFILE_SECTION_LIMITS: Record<string, number> = {
   "About": 1100,
-  "Experience": 2200,
+  "Experience": 3800,
   "Education": 700,
   "Top skills": 500,
   "Skills": 500,
@@ -46,7 +46,7 @@ const PROFILE_SECTION_LIMITS: Record<string, number> = {
   "Summary": 500,
 };
 
-export const SCORE_PROFILE_EXCERPT_MAX_CHARS = 4500;
+export const SCORE_PROFILE_EXCERPT_MAX_CHARS = 6500;
 export const OUTREACH_PROFILE_EXCERPT_MAX_CHARS = 3500;
 export const ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS = 3500;
 
