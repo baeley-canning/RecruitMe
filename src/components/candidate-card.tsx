@@ -112,7 +112,12 @@ interface CandidateCardProps {
 type LegacyRadarDimensions = Partial<RadarDimensions>;
 
 function candidateSourceLabel(candidate: Candidate) {
-  if (candidate.source === "extension") return "LinkedIn extension";
+  const profileChars = candidate.profileText?.trim().length ?? 0;
+  if (candidate.source === "extension") {
+    if (profileChars > 0 && profileChars < 500) return "LinkedIn partial capture";
+    if (profileChars >= 500 && profileChars < 2000) return "LinkedIn partial profile";
+    return "LinkedIn extension";
+  }
   if (candidate.source === "talent_pool") return "Talent pool";
   if (candidate.source === "bookmarklet") return "LinkedIn capture";
   if (candidate.source === "pdl") return "People Data Labs";
@@ -123,7 +128,14 @@ function candidateSourceLabel(candidate: Candidate) {
 }
 
 function profileSourceSummary(candidate: Candidate) {
+  const profileChars = candidate.profileText?.trim().length ?? 0;
   if (candidate.source === "extension") {
+    if (profileChars > 0 && profileChars < 500) {
+      return "The extension captured only a short partial profile. Fetch again before trusting the score.";
+    }
+    if (profileChars >= 500 && profileChars < 2000) {
+      return "The extension captured a partial profile. Treat the score as provisional.";
+    }
     return "Captured from the RecruitMe LinkedIn extension.";
   }
   if (candidate.source === "pdl") {
@@ -809,7 +821,7 @@ function ProfileDrawer({
   }, [candidate.id, linkedInInput, onLinkedInChange]);
 
   const hasGoodProfile = !!(
-    candidate.profileText && (candidate.profileText.length >= 500 || candidate.profileCapturedAt)
+    candidate.profileText && candidate.profileText.trim().length >= 500
   );
 
   return (
@@ -1691,12 +1703,8 @@ export const CandidateCard = memo(function CandidateCard({
         {/* Right side */}
         <div className="flex items-center gap-1">
           {(() => {
-            // profileCapturedAt means we've already done a deliberate fetch — treat as done
-            // regardless of char count (some profiles are genuinely short)
             const hasGoodProfile = !!(
-              candidate.profileText && (
-                candidate.profileText.length >= 500 || candidate.profileCapturedAt
-              )
+              candidate.profileText && candidate.profileText.trim().length >= 500
             );
             return (
               <>

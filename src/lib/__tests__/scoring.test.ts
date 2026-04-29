@@ -190,6 +190,11 @@ describe("getMustHaveImportance — degree requirements", () => {
     expect(getMustHaveImportance("NZ citizenship or permanent residency required")).toBe(1.5);
     expect(getMustHaveImportance("Right to work in New Zealand")).toBe(1.5);
   });
+
+  it("returns 1.5 for security clearance and vetting requirements", () => {
+    expect(getMustHaveImportance("Eligibility for Secret Vetting (SV) security clearance")).toBe(1.5);
+    expect(getMustHaveImportance("Current Confidential Vetting (CV) with upgrade pathway")).toBe(1.5);
+  });
 });
 
 // ─── computeNiceToHavePct ──────────────────────────────────────────────────────
@@ -533,10 +538,10 @@ describe("buildScoreBreakdown", () => {
     // Snippets give unknowns partial credit (30pts) vs full profiles (0pts) —
     // absence of evidence is not evidence of absence.
     expect(snippetBreakdown.must_have_pct).toBeGreaterThan(fullProfileBreakdown.must_have_pct);
-    // Snippet cap is 70% — prevents snippets from looking like confirmed strong matches.
-    expect(snippetBreakdown.overall).toBeLessThanOrEqual(70);
-    // Snippet with sparse must-have evidence should not reach 70% cap.
-    expect(snippetBreakdown.overall).toBeLessThan(70);
+    // Short snippets stay below match territory even when the available evidence is positive.
+    expect(snippetBreakdown.overall).toBeLessThanOrEqual(55);
+    // Sparse snippet evidence should not reach the short-snippet cap.
+    expect(snippetBreakdown.overall).toBeLessThan(55);
     expect(snippetBreakdown.confidence.level).toBe("low");
     expect(snippetBreakdown.data_quality).toBe("snippet");
   });
@@ -572,8 +577,24 @@ describe("buildScoreBreakdown", () => {
     });
 
     // When all must-haves are confirmed, full profile should always outscore a snippet
-    // because snippet cap (70%) is below where a fully-confirmed full profile lands.
+    // because the short-snippet cap is below where a fully-confirmed full profile lands.
     expect(fullProfileBreakdown.overall).toBeGreaterThan(snippetBreakdown.overall);
-    expect(snippetBreakdown.overall).toBeLessThanOrEqual(70);
+    expect(snippetBreakdown.overall).toBeLessThanOrEqual(55);
+  });
+
+  it("caps longer partial profiles below confirmed full-profile territory", () => {
+    const bd = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    allConfirmed,
+      nice_to_have_coverage: [],
+      reasons_for:           [],
+      reasons_against:       [],
+      missing_evidence:      [],
+      recruiter_summary:     "",
+      profileCharCount:      1200,
+    });
+
+    expect(bd.overall).toBeLessThanOrEqual(65);
+    expect(bd.data_quality).toBe("snippet");
   });
 });

@@ -141,7 +141,7 @@ export function getMustHaveImportance(requirement: string): number {
   // Critical — cannot be compensated for by location or title alone
   if (/wordpress|content management system|\bcms\b/i.test(r))                return 1.5;
   if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(r)) return 1.5;
-  if (/security clearance|clearance eligibility|security vetting|nzsis|national security clearance|baseline clearance|secret clearance/i.test(r)) return 1.5;
+  if (/security clearance|clearance eligibility|security vetting|secret vetting|confidential vetting|\bsv\b|\bcv\b|nzsis|national security clearance|baseline clearance|secret clearance/i.test(r)) return 1.5;
   // Regulated-profession qualifications: degree is a legal/professional prerequisite
   if (/\b(chartered accountant|cpa|ca qualification|cfa)\b/i.test(r))        return 1.5;
   if (/\b(registered nurse|nursing registration|nzrn|nursing council)\b/i.test(r)) return 1.5;
@@ -156,6 +156,9 @@ export function getMustHaveImportance(requirement: string): number {
   if (/\bdegree\b|\bdiploma\b/i.test(r) && !/equivalent|or equivalent|preferred/i.test(r)) return 1.1;
   // Very important technical requirements
   if (/\bux\b|user experience|design principle|web design|ux.{0,10}design|design.{0,10}develop/i.test(r)) return 1.3;
+  if (/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i.test(r)) return 1.3;
+  if (/\bangular\b|\.net|asp\.net|c#|c\+\+|sybase|azure|kubernetes|aks|api design|ci\/cd|pipeline/i.test(r)) return 1.3;
+  if (/\bitil\b|\bitsm\b|service management|incident management|change management|problem management|requirements|process mapping|business analysis/i.test(r)) return 1.2;
   if (/concept to launch|full.{0,5}site|full.{0,5}build|full website|ownership|end.to.end/i.test(r)) return 1.2;
   if (/shopify|squarespace|woocommerce/i.test(r))                            return 1.2;
   if (/front.?end|back.?end|full.?stack/i.test(r))                          return 1.1;
@@ -307,8 +310,11 @@ export function buildScoreBreakdown(params: {
   const niceToHavePct = computeNiceToHavePct(params.nice_to_have_coverage);
   const rawOverall    = computeOverallScore(params.categories, mustHavePct);
 
-  // Base cap by data quality — snippets are informative enough to score to 70%
-  let cap = dataQuality === "snippet" ? 70 : dataQuality === "minimal" ? 40 : 100;
+  // Base cap by data quality: snippets/partial captures are leads, not confirmed matches.
+  let cap =
+    dataQuality === "snippet"
+      ? params.profileCharCount < 500 ? 55 : 65
+      : dataQuality === "minimal" ? 40 : 100;
 
   // Critical gate: if any 1.5× importance must-have is unconfirmed on a non-full profile,
   // the candidate cannot be presented as a real match until fetch proves otherwise.

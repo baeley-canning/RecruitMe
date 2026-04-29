@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { assessLocationFit, expandLocationKeywords, isPlausibleLocation, locationMatches } from "../location";
+import {
+  assessLocationFit,
+  buildTargetLocationLabel,
+  expandLocationKeywords,
+  extractKnownLocationTargets,
+  isPlausibleLocation,
+  locationMatches,
+} from "../location";
 
 describe("locationMatches", () => {
   it("rejects explicit overseas lookalikes even when the city name overlaps", () => {
@@ -39,6 +46,32 @@ describe("assessLocationFit", () => {
     );
     expect(fit?.score).toBe(45);
     expect(fit?.evidence).toContain("not clearly stated");
+  });
+
+  it("scores against the best valid target for multi-location roles", () => {
+    const fit = assessLocationFit(
+      "Wellington, Wellington, New Zealand",
+      "Primary: Devonport, Auckland. Secondary option: Petone, Wellington. Full-time, on-site role."
+    );
+
+    expect(fit?.score).toBe(100);
+    expect(fit?.evidence).toContain("Acceptable role locations");
+  });
+});
+
+describe("extractKnownLocationTargets", () => {
+  it("extracts all named NZ city targets in order", () => {
+    expect(
+      extractKnownLocationTargets(
+        "Primary: Devonport, Auckland (on-site). Secondary option: Petone, Wellington."
+      )
+    ).toEqual(["North Shore", "Auckland", "Petone", "Wellington"]);
+  });
+
+  it("builds a readable target label for scoring and search fallback", () => {
+    expect(buildTargetLocationLabel("Wellington", "Primary: Auckland. Secondary: Petone")).toBe(
+      "Wellington OR Auckland OR Petone"
+    );
   });
 });
 

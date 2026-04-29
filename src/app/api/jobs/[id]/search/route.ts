@@ -18,7 +18,7 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
+import { buildTargetLocationLabel, extractKnownLocationTargets, isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
@@ -272,6 +272,12 @@ const DISTINCTIVE_REQUIREMENT_ALIASES: Array<[RegExp, string[]]> = [
   [/\bpsybase\b/i, ["Sybase"]],
   [/\bsybase\b/i, ["Sybase"]],
   [/\bc\+\+/i, ["C++"]],
+  [/\.net|asp\.net|c#/i, [".NET", "C#"]],
+  [/\bangular\b/i, ["Angular"]],
+  [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["performance testing", "JMeter", "LoadRunner"]],
+  [/\bitil\b|\bitsm\b|service management|incident management|change management|problem management/i, ["ITIL", "ITSM"]],
+  [/security clearance|secret vetting|confidential vetting|\bsv\b|\bcv\b|nzsis|defence|defense/i, ["security clearance", "Secret Vetting"]],
+  [/\bbanking\b|payments?|lending|core banking|financial services|fintech/i, ["banking", "payments", "financial services"]],
   [/\blinux\b/i, ["Linux"]],
   [/\bazure\b/i, ["Azure"]],
   [/\bmicroservices?\b|\bminiservices?\b/i, ["microservices"]],
@@ -452,15 +458,16 @@ export async function POST(
   }
 
   const location = parsedRole.location ?? "";
-  const locationSource = location || parsedRole.location_rules || "";
+  const locationSource = [job.location, location, parsedRole.location_rules].filter(Boolean).join(" ");
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
 
-  const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
+  const knownTargets = extractKnownLocationTargets(job.location, location, parsedRole.location_rules);
+  const canonicalJobCity = knownTargets[0] ?? getCityCoords(locationSource)?.name ?? "";
   const parsedSearchLocation = canonicalJobCity || locationSource;
   const searchLocation = locationOverride?.trim() || parsedSearchLocation;
-  const targetLocation = locationOverride?.trim() || location || canonicalJobCity || locationSource;
+  const targetLocation = locationOverride?.trim() || buildTargetLocationLabel(job.location, location, parsedRole.location_rules) || location || canonicalJobCity || locationSource;
 
   // Build query pool with reserved slots for rare hard-skill terms. For niche
   // roles, terms like Sybase/C++ matter more than burning every slot on titles.

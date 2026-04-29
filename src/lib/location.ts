@@ -175,6 +175,43 @@ export function expandLocationKeywords(location: string): string[] {
   return [...expanded];
 }
 
+export function extractKnownLocationTargets(...values: Array<string | null | undefined>): string[] {
+  const targets: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    const normalized = normalizeLocationText(value ?? "");
+    if (!normalized) continue;
+
+    const matches = NZ_CITIES.flatMap((city) => {
+      const indexes = city.keywords
+        .map((keyword) => {
+          const normalizedKeyword = normalizeLocationText(keyword);
+          const match = new RegExp(`(^| )${normalizedKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |$)`).exec(normalized);
+          return match?.index ?? -1;
+        })
+        .filter((index) => index >= 0);
+      const firstIndex = indexes.length > 0 ? Math.min(...indexes) : -1;
+      return firstIndex >= 0 ? [{ city, index: firstIndex }] : [];
+    }).sort((a, b) => a.index - b.index);
+
+    for (const { city } of matches) {
+      const key = normalizeLocationText(city.name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push(city.name);
+    }
+  }
+
+  return targets;
+}
+
+export function buildTargetLocationLabel(...values: Array<string | null | undefined>): string {
+  const targets = extractKnownLocationTargets(...values);
+  if (targets.length > 0) return targets.join(" OR ");
+  return values.map((value) => value?.trim()).find(Boolean) ?? "";
+}
+
 /**
  * Returns true if the candidate location is compatible with any of the
  * expanded job location keywords. When a candidate location explicitly names
@@ -235,9 +272,26 @@ export function assessLocationFit(
     };
   }
 
-  const targetKeywords = expandLocationKeywords(targetRaw);
+  const explicitTargets = extractKnownLocationTargets(targetRaw, locationRules);
+  if (explicitTargets.length > 1) {
+    const assessments = explicitTargets
+      .map((target) => assessLocationFit(candidateRaw, target, null))
+      .filter((assessment): assessment is LocationFitAssessment => Boolean(assessment));
+    if (assessments.length > 0) {
+      const best = assessments.reduce((currentBest, assessment) =>
+        assessment.score > currentBest.score ? assessment : currentBest
+      );
+      return {
+        ...best,
+        evidence: `${best.evidence} Acceptable role locations: ${explicitTargets.join(", ")}.`,
+      };
+    }
+  }
+
+  const effectiveTarget = explicitTargets[0] ?? targetRaw;
+  const targetKeywords = expandLocationKeywords(effectiveTarget);
   const normalizedCandidate = normalizeLocationText(candidateRaw);
-  const normalizedTarget = normalizeLocationText(targetRaw);
+  const normalizedTarget = normalizeLocationText(effectiveTarget);
 
   if (
     normalizedCandidate === normalizedTarget ||
@@ -246,12 +300,12 @@ export function assessLocationFit(
   ) {
     return {
       score: 100,
-      evidence: `Based in ${candidateRaw}, matching the required ${targetRaw} location.`,
+      evidence: `Based in ${candidateRaw}, matching the required ${effectiveTarget} location.`,
     };
   }
 
   const candidateCoords = getCityCoords(candidateRaw);
-  const targetCoords = getCityCoords(targetRaw);
+  const targetCoords = getCityCoords(effectiveTarget);
 
   if (candidateCoords && targetCoords) {
     const distance = Math.round(
