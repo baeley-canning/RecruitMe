@@ -55,8 +55,6 @@ async function getStoredSettings() {
   return chrome.storage.local.get({
     serverBase: "",
     lastWorkingServerBase: "",
-    authUser: "",
-    authPass: "",
     lastError: "",
   });
 }
@@ -87,14 +85,9 @@ function withTimeout(url, options = {}, timeoutMs = 4000) {
 }
 
 async function requestRecruitMe(path, options = {}, preferredBase = "", overrides = {}) {
-  const settings = await getStoredSettings();
   const bases = preferredBase
     ? [preferredBase, ...(await getServerBases()).filter((base) => base !== preferredBase)]
     : await getServerBases();
-  const authUser =
-    typeof overrides.authUser === "string" ? overrides.authUser.trim() : settings.authUser || "";
-  const authPass =
-    typeof overrides.authPass === "string" ? overrides.authPass : settings.authPass || "";
   const rememberFailure = overrides.rememberFailure !== false;
   const timeoutMs =
     typeof overrides.timeoutMs === "number"
@@ -109,15 +102,10 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
     try {
       const headers = new Headers(options.headers || {});
       const requestOptions = { ...options };
-      delete requestOptions.authUser;
-      delete requestOptions.authPass;
       delete requestOptions.timeoutMs;
 
       if (requestOptions.body && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
-      }
-      if (authUser || authPass) {
-        headers.set("Authorization", `Basic ${btoa(`${authUser}:${authPass}`)}`);
       }
 
       const response = await withTimeout(`${base}${path}`, { ...requestOptions, headers }, timeoutMs);
@@ -399,8 +387,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           serverBase: settings.serverBase || settings.lastWorkingServerBase || DEFAULT_SERVER_BASES[0],
-          authUser: settings.authUser || "",
-          authPass: settings.authPass || "",
           lastError: settings.lastError || "",
         })
       )
@@ -411,36 +397,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "set-config") {
     void (async () => {
       const serverBase = normaliseServerBase(message.serverBase || "") || DEFAULT_SERVER_BASES[0];
-      const authUser = (message.authUser || "").trim();
-      const authPass = message.authPass || "";
-
-      const hasAuth = Boolean(authUser && authPass);
-      const { base } = await requestRecruitMe(
-        hasAuth ? "/api/extension/jobs" : "/api/extension/fetch-session",
-        {},
-        serverBase,
-        hasAuth ? { authUser, authPass } : { rememberFailure: false }
-      );
-
-      await chrome.storage.local.set({
-        serverBase,
-        lastWorkingServerBase: base,
-        authUser,
-        authPass,
-        lastError: "",
-      });
+      const { base } = await requestRecruitMe("/api/extension/fetch-session", {}, serverBase, { rememberFailure: false });
+      await chrome.storage.local.set({ serverBase, lastWorkingServerBase: base, lastError: "" });
       await ensurePendingCaptureAlarm();
       await ensurePendingSessionTabs().catch(() => {});
-      return { base, hasAuth };
+      return base;
     })()
-      .then(({ base, hasAuth }) => sendResponse({ ok: true, serverBase: base, hasAuth }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
-
-  if (message?.type === "get-jobs") {
-    void requestRecruitMe("/api/extension/jobs", {}, "", { rememberFailure: false })
-      .then(({ base, data }) => sendResponse({ ok: true, jobs: data, serverBase: base }))
+      .then((base) => sendResponse({ ok: true, serverBase: base }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -506,25 +469,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message?.type === "manual-import") {
-    void (async () => {
-      const tab = await getActiveLinkedInTab();
-      const capture = await sendMessageToTab(tab.id, { type: "capture-profile" });
-      const imported = await requestRecruitMe("/api/extension/import", {
-        method: "POST",
-        timeoutMs: 120000,
-        body: JSON.stringify({
-          jobId: message.jobId,
-          linkedinUrl: capture.linkedinUrl,
-          profileText: capture.profileText,
-        }),
-      });
-      return imported.data;
-    })()
-      .then((candidate) => sendResponse({ ok: true, candidate }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
 });
 
 chrome.runtime.onInstalled.addListener(() => {

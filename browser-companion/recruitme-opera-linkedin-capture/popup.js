@@ -1,14 +1,9 @@
 const serverBaseInput = document.getElementById("serverBase");
-const authUserInput = document.getElementById("authUser");
-const authPassInput = document.getElementById("authPass");
 const saveServerButton = document.getElementById("saveServer");
 const serverStatus = document.getElementById("serverStatus");
 const pageStatus = document.getElementById("pageStatus");
 const capturePendingButton = document.getElementById("capturePending");
 const pendingStatus = document.getElementById("pendingStatus");
-const jobSelect = document.getElementById("jobSelect");
-const importProfileButton = document.getElementById("importProfile");
-const importStatus = document.getElementById("importStatus");
 
 function setStatus(element, message, kind = "") {
   element.textContent = message;
@@ -31,74 +26,15 @@ function sendMessage(message) {
   });
 }
 
-async function getActiveLinkedInProfileUrl() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url || !tab.url.includes("linkedin.com/in/")) {
-    throw new Error("Open a LinkedIn profile in the current tab first");
-  }
-  return tab.url.replace(/[?#].*$/, "");
-}
-
 async function loadConfig() {
   try {
     const response = await sendMessage({ type: "get-config" });
-    serverBaseInput.value = response.serverBase || "http://localhost:3000";
-    authUserInput.value = response.authUser || "";
-    authPassInput.value = response.authPass || "";
+    serverBaseInput.value = response.serverBase || "";
     if (response.lastError) {
       setStatus(serverStatus, response.lastError, "error");
-    } else if (!response.authUser || !response.authPass) {
-      setStatus(
-        serverStatus,
-        "Save the app URL first. Username/password are only needed for manual import and the job list."
-      );
     }
   } catch (error) {
     setStatus(serverStatus, error.message, "error");
-  }
-}
-
-async function loadJobs() {
-  jobSelect.innerHTML = "";
-  importProfileButton.disabled = false;
-
-  if (!authUserInput.value.trim() || !authPassInput.value) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "Add RecruitMe login to load jobs";
-    jobSelect.appendChild(option);
-    importProfileButton.disabled = true;
-    setStatus(importStatus, "Manual import needs your RecruitMe username/password in the popup.");
-    return;
-  }
-
-  try {
-    const response = await sendMessage({ type: "get-jobs" });
-    response.jobs.forEach((job) => {
-      const option = document.createElement("option");
-      option.value = job.id;
-      option.textContent = `${job.title} - ${job.company || "Unknown"} (${job.candidateCount})`;
-      jobSelect.appendChild(option);
-    });
-
-    if (!response.jobs.length) {
-      const option = document.createElement("option");
-      option.value = "";
-      option.textContent = "No active jobs";
-      jobSelect.appendChild(option);
-      importProfileButton.disabled = true;
-    }
-  } catch (error) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "Could not load jobs";
-    jobSelect.appendChild(option);
-    importProfileButton.disabled = true;
-    if (/401 Unauthorized|auth failed/i.test(error.message)) {
-      setStatus(importStatus, "Add RecruitMe username/password in the popup to load jobs for manual import.", "error");
-    } else {
-      setStatus(importStatus, error.message, "error");
-    }
   }
 }
 
@@ -108,7 +44,6 @@ function normaliseLinkedInSlug(url) {
 }
 
 async function refreshPendingStatus() {
-  // 1. Check current tab (non-fatal if not LinkedIn)
   let currentTabUrl = "";
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -122,19 +57,12 @@ async function refreshPendingStatus() {
     pageStatus.textContent = "Could not read current tab";
   }
 
-  // 2. Fetch current sessions (GET returns null or an array when the multi-session queue is active).
   let session = null;
   try {
     const response = await sendMessage({ type: "get-session" });
     const sessionData = response.session;
-    // Normalise: could be a single object (legacy) or an array (queue).
-    const sessions = Array.isArray(sessionData)
-      ? sessionData
-      : sessionData
-      ? [sessionData]
-      : [];
+    const sessions = Array.isArray(sessionData) ? sessionData : sessionData ? [sessionData] : [];
 
-    // Prefer the session matching the current tab URL; fall back to first pending one.
     const tabSlugNow = normaliseLinkedInSlug(currentTabUrl);
     session =
       sessions.find((s) => normaliseLinkedInSlug(s.linkedinUrl) === tabSlugNow) ||
@@ -199,17 +127,8 @@ saveServerButton.addEventListener("click", async () => {
     const response = await sendMessage({
       type: "set-config",
       serverBase: serverBaseInput.value,
-      authUser: authUserInput.value,
-      authPass: authPassInput.value,
     });
-    setStatus(
-      serverStatus,
-      response.hasAuth
-        ? "Connection verified and saved."
-        : "Connection saved. Add RecruitMe username/password only if you want manual import and job list access.",
-      "ok"
-    );
-    await loadJobs();
+    setStatus(serverStatus, `Connected to ${response.serverBase}`, "ok");
     await refreshPendingStatus();
   } catch (error) {
     setStatus(serverStatus, error.message, "error");
@@ -233,23 +152,7 @@ capturePendingButton.addEventListener("click", async () => {
   }
 });
 
-importProfileButton.addEventListener("click", async () => {
-  if (!jobSelect.value) return;
-
-  importProfileButton.disabled = true;
-  setStatus(importStatus, "Capturing current LinkedIn profile...");
-  try {
-    const response = await sendMessage({ type: "manual-import", jobId: jobSelect.value });
-    setStatus(importStatus, `Imported ${response.candidate.name} into RecruitMe.`, "ok");
-  } catch (error) {
-    setStatus(importStatus, error.message, "error");
-  } finally {
-    importProfileButton.disabled = false;
-  }
-});
-
 void loadConfig();
-void loadJobs();
 void refreshPendingStatus();
 setInterval(() => {
   void refreshPendingStatus();

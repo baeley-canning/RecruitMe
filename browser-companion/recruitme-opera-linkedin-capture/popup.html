@@ -39,15 +39,13 @@
         margin-bottom: 6px;
       }
       input,
-      select,
       button {
         width: 100%;
         box-sizing: border-box;
         border-radius: 10px;
         font-size: 14px;
       }
-      input,
-      select {
+      input {
         border: 1px solid #cbd5e1;
         padding: 10px 12px;
         background: #fff;
@@ -97,16 +95,8 @@
 
       <div class="card stack">
         <div>
-          <label for="serverBase">RecruitMe server</label>
-          <input id="serverBase" type="text" placeholder="Use the exact RecruitMe URL, including port, e.g. http://localhost:3000" />
-        </div>
-        <div>
-          <label for="authUser">RecruitMe username</label>
-          <input id="authUser" type="text" placeholder="Optional - only needed for manual import and job list" />
-        </div>
-        <div>
-          <label for="authPass">RecruitMe password</label>
-          <input id="authPass" type="password" placeholder="Optional - only needed for manual import and job list" />
+          <label for="serverBase">RecruitMe server URL</label>
+          <input id="serverBase" type="text" placeholder="https://your-app.up.railway.app" />
         </div>
         <button id="saveServer" class="secondary">Save and test connection</button>
         <div id="serverStatus" class="status"></div>
@@ -116,15 +106,6 @@
         <p id="pageStatus" class="tiny">Checking current tab…</p>
         <button id="capturePending" class="primary">Capture pending fetch</button>
         <div id="pendingStatus" class="status"></div>
-      </div>
-
-      <div class="card stack">
-        <div>
-          <label for="jobSelect">Import current profile to job</label>
-          <select id="jobSelect"></select>
-        </div>
-        <button id="importProfile" class="secondary">Import current LinkedIn profile</button>
-        <div id="importStatus" class="status"></div>
       </div>
     </div>
 
