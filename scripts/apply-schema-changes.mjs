@@ -128,6 +128,41 @@ await step("backfill Candidate.orgId", async () => {
   console.log(`  backfilled ${updated} candidate(s)`);
 });
 
+// 8. CandidateFile table (CV / file attachments)
+await step("CandidateFile table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateFile" (
+      "id"          TEXT         NOT NULL,
+      "candidateId" TEXT         NOT NULL,
+      "type"        TEXT         NOT NULL,
+      "filename"    TEXT         NOT NULL,
+      "mimeType"    TEXT         NOT NULL,
+      "data"        TEXT         NOT NULL,
+      "size"        INTEGER      NOT NULL,
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateFile_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateFile_candidateId_idx"
+    ON "CandidateFile"("candidateId")
+  `;
+  await prisma.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'CandidateFile_candidateId_fkey'
+      ) THEN
+        ALTER TABLE "CandidateFile"
+          ADD CONSTRAINT "CandidateFile_candidateId_fkey"
+          FOREIGN KEY ("candidateId") REFERENCES "Candidate"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {
