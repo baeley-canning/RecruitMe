@@ -65,7 +65,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       const res = await fetch(`/api/jobs/${jobId}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxResults, ...(locationOverride?.trim() ? { locationOverride: locationOverride.trim() } : {}) }),
+        body: JSON.stringify({ maxResults, locationOverride: activeSearchLocation }),
       });
       const data = await res.json() as { sessionId?: string; error?: string };
       if (!res.ok || data.error) { setSearchError(data.error ?? "Search failed"); setSearching(false); return; }

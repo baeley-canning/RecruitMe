@@ -148,7 +148,7 @@ export async function buildTalentPoolMap(
   const result = new Map<string, TalentPoolEntry>();
 
   for (const row of rows) {
-    if (!row.linkedinUrl || !row.profileText || row.profileText.length < 500) continue;
+    if (!row.linkedinUrl || !row.profileText || row.profileText.length < 2000) continue;
 
     const normUrl = normaliseLinkedInUrl(row.linkedinUrl);
     if (!normMap.has(normUrl)) continue; // Not in the requested set

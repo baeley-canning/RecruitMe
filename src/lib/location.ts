@@ -100,7 +100,13 @@ export function isExplicitlyOverseasLocation(location: string): boolean {
   const normalized = normalizeLocationText(location);
   if (!normalized) return false;
   if (NZ_MARKERS.some((marker) => normalized.includes(marker))) return false;
-  return OVERSEAS_MARKERS.some((marker) => normalized.includes(normalizeLocationText(marker)));
+  return OVERSEAS_MARKERS.some((marker) => {
+    const normalizedMarker = normalizeLocationText(marker);
+    if (normalizedMarker.length <= 3) {
+      return new RegExp(`(^| )${normalizedMarker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |$)`).test(normalized);
+    }
+    return normalized.includes(normalizedMarker);
+  });
 }
 
 export function isPlausibleLocation(value: string | null | undefined): boolean {
@@ -249,10 +255,10 @@ export function assessLocationFit(
 
   // Detect when the stored "location" is actually a person's full name — a data
   // extraction error (e.g. "Wellington Gomes Graciani" parsed as Wellington NZ).
-  // Heuristic: 3+ titlecase words, no comma, no digits, no overseas markers.
+  // Heuristic: 2+ titlecase words, no comma, no digits, no known location markers.
   const nameWords = candidateRaw.trim().split(/\s+/);
   const looksLikeName =
-    nameWords.length >= 3 &&
+    nameWords.length >= 2 &&
     !candidateRaw.includes(",") &&
     !/\d/.test(candidateRaw) &&
     nameWords.every((w) => /^[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÜÇ]/u.test(w)) &&

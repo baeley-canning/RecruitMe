@@ -49,7 +49,7 @@ describe("candidates library API", () => {
         headline: "Developer",
         location: "Wellington",
         linkedinUrl: "https://www.linkedin.com/in/full/",
-        profileText: "Full profile text. ".repeat(40),
+        profileText: "Full profile text. ".repeat(140),
         matchScore: 80,
         source: "extension",
         status: "new",
@@ -81,8 +81,7 @@ describe("candidates library API", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.map((row: { id: string }) => row.id).sort()).toEqual(["captured-short", "full-1"]);
+    expect(body.map((row: { id: string }) => row.id).sort()).toEqual(["full-1"]);
     expect(body[0]).not.toHaveProperty("profileText");
-    expect(body[1]).not.toHaveProperty("profileText");
   });
 });

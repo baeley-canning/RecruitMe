@@ -121,9 +121,7 @@ function candidateSourceLabel(candidate: Candidate) {
   if (candidate.source === "talent_pool") return "Talent pool";
   if (candidate.source === "bookmarklet") return "LinkedIn capture";
   if (candidate.source === "pdl") return "People Data Labs";
-  if (candidate.source === "serpapi") {
-    return candidate.profileText && candidate.profileText.length >= 500 ? "LinkedIn profile text" : "SerpAPI snippet";
-  }
+  if (candidate.source === "serpapi") return "SerpAPI snippet";
   return candidate.source ? candidate.source.replace(/_/g, " ") : "Manual";
 }
 
@@ -798,6 +796,9 @@ function ProfileDrawer({
   const captureLabel = candidateSourceLabel(candidate);
   const capturedAt = candidate.profileCapturedAt ? new Date(candidate.profileCapturedAt) : null;
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
+  const profileChars = candidate.profileText?.trim().length ?? 0;
+  const hasViewableProfile = profileChars >= 500;
+  const hasGoodProfile = profileChars >= 2000;
 
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
@@ -819,10 +820,6 @@ function ProfileDrawer({
     onLinkedInChange?.(candidate.id, linkedInInput.trim());
     setEditingLinkedIn(false);
   }, [candidate.id, linkedInInput, onLinkedInChange]);
-
-  const hasGoodProfile = !!(
-    candidate.profileText && candidate.profileText.trim().length >= 500
-  );
 
   return (
     <>
@@ -1125,6 +1122,9 @@ export const CandidateCard = memo(function CandidateCard({
   const hasExtensionCapture = candidate.source === "extension" && !!candidate.profileText;
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
   const radarDimensions = getRadarDimensions(breakdown, matchReason?.dimensions);
+  const profileChars = candidate.profileText?.trim().length ?? 0;
+  const hasViewableProfile = profileChars >= 500;
+  const hasGoodProfile = profileChars >= 2000;
 
   // Use breakdown's recruiter_summary as the primary display summary when available
   const displaySummary = breakdown?.recruiter_summary ?? matchReason?.summary ?? null;
@@ -1703,13 +1703,10 @@ export const CandidateCard = memo(function CandidateCard({
         {/* Right side */}
         <div className="flex items-center gap-1">
           {(() => {
-            const hasGoodProfile = !!(
-              candidate.profileText && candidate.profileText.trim().length >= 500
-            );
             return (
               <>
-                {/* View: only when there's a meaningful profile */}
-                {hasGoodProfile && (
+                {/* View: only when there's enough stored text to inspect */}
+                {hasViewableProfile && (
                   <Button
                     size="sm"
                     variant="ghost"

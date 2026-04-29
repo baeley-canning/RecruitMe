@@ -48,6 +48,12 @@ describe("assessLocationFit", () => {
     expect(fit?.evidence).toContain("not clearly stated");
   });
 
+  it("treats two-word person names stored as location as unknown", () => {
+    const fit = assessLocationFit("Denuka Kumarage", "Wellington");
+    expect(fit?.score).toBe(45);
+    expect(fit?.evidence).toContain("not clearly stated");
+  });
+
   it("scores against the best valid target for multi-location roles", () => {
     const fit = assessLocationFit(
       "Wellington, Wellington, New Zealand",

@@ -1294,7 +1294,7 @@ ${toHtml(job.rawJd)}
         {/* Needs-profile notice — computed from live candidate list */}
         {(() => {
           const needsFetch = job.candidates.filter(
-            (c) => c.linkedinUrl && !c.profileCapturedAt && (!c.profileText || c.profileText.length < 500)
+            (c) => c.linkedinUrl && (!c.profileText || c.profileText.trim().length < 2000)
           );
           const n = needsFetch.length;
           if (n === 0) return null;

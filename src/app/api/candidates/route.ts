@@ -7,8 +7,8 @@ import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 /**
  * GET /api/candidates
  *
- * Returns the candidates library: all unique people with a captured profile
- * (profileText ≥500 chars), org-scoped, deduplicated by LinkedIn URL.
+ * Returns the candidates library: all unique people with a full captured profile
+ * (profileText >= 2000 chars), org-scoped, deduplicated by LinkedIn URL.
  *
  * For each unique person we return the most recently captured Candidate row
  * plus file metadata (no file data payload).

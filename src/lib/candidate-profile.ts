@@ -3,5 +3,5 @@ export function hasFullCandidateProfile(row: {
   profileCapturedAt: Date | string | null | undefined;
   profileText: string | null | undefined;
 }): boolean {
-  return Boolean(row.profileCapturedAt || (row.profileText?.trim().length ?? 0) >= 500);
+  return (row.profileText?.trim().length ?? 0) >= 2000;
 }

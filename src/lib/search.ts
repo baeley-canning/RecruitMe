@@ -9,6 +9,7 @@ export interface SearchResult {
   linkedinUrl: string;
   snippet: string;
   fullText?: string; // full profile text for sources that return it (PDL)
+  matchedQuery?: string;
   source: "serpapi" | "bing" | "pdl";
 }
 

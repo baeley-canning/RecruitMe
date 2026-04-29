@@ -58,7 +58,7 @@ function looksLikePersonName(s: string): boolean {
 }
 
 function hasFullProfile(profileText: string | null | undefined, profileCapturedAt?: Date | null) {
-  return Boolean(profileCapturedAt || (profileText && profileText.trim().length >= 500));
+  return (profileText?.trim().length ?? 0) >= 2000;
 }
 
 function cleanQuery(q: string): string {
@@ -145,6 +145,7 @@ function candidateSearchText(result: SearchResult, profileText?: string | null, 
     result.headline,
     candidateLocation ?? result.location,
     result.snippet,
+    result.matchedQuery,
     profileText ?? result.fullText,
   ].filter(Boolean).join("\n");
 }
@@ -164,8 +165,7 @@ function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole,
   const text = candidateSearchText(result, profileText, candidateLocation);
   const anchorTerms = extractAnchorRequirementTerms(parsedRole);
   if (anchorTerms.length > 0) {
-    const requiredAnchorTerms = anchorTerms.includes("Sybase") ? ["Sybase"] : anchorTerms;
-    return requiredAnchorTerms.some((term) => textHasTerm(text, term));
+    return anchorTerms.every((term) => textHasTerm(text, term));
   }
   return terms.some((term) => textHasTerm(text, term));
 }
@@ -185,7 +185,7 @@ function buildProvisionalSearchScore(
     ...knockouts.filter((ko) => !baseMustHaves.some((mh) => mh.toLowerCase().includes(ko.toLowerCase().slice(0, 25)))),
   ].slice(0, 14);
   const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
-  const profileText = [result.name, result.headline, candidateLocation, result.snippet].filter(Boolean).join("\n");
+  const profileText = [result.name, result.headline, candidateLocation, result.snippet, result.matchedQuery].filter(Boolean).join("\n");
   const haystack = normaliseText(profileText);
 
   const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
@@ -425,7 +425,7 @@ async function executeSearchTask(
     const items = provider === "serpapi"
       ? await searchLinkedInProfiles(query, location, offset, resolvedKey)
       : await searchBingLinkedInProfiles(query, location, offset, resolvedKey);
-    return { provider, query, items, retryable: false };
+    return { provider, query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -652,7 +652,7 @@ async function runSearchBackground(args: {
         maxPages: MAX_PAGES,
         maxPageRetries: MAX_PAGE_RETRIES,
         emptyRoundsBeforeStop: EMPTY_ROUNDS_BEFORE_STOP,
-        keyFn: (candidate) => candidate.linkedinUrl,
+        keyFn: (candidate) => `${candidate.linkedinUrl}|${candidate.matchedQuery ?? ""}`,
         getPage: async (page, attempt) => {
           const offset = page * PAGE_SIZE;
           const queriesForAttempt = limitQueriesForAttempt(searchQueries, page, attempt);
@@ -770,14 +770,28 @@ async function runSearchBackground(args: {
     // regional subdomains (nz.linkedin.com), tracking params (?trk=…), and
     // trailing slashes that won't match the canonical form we store.
     // Also deduplicate: two queries can return the same person under different raw URLs.
-    const normSeen = new Set<string>();
-    const allNormed = allRaw
-      .map((r) => ({ ...r, linkedinUrl: normaliseLinkedInUrl(r.linkedinUrl) }))
-      .filter((r) => {
-        if (normSeen.has(r.linkedinUrl)) return false;
-        normSeen.add(r.linkedinUrl);
-        return true;
+    const byUrl = new Map<string, SearchResult>();
+    for (const raw of allRaw) {
+      const result = { ...raw, linkedinUrl: normaliseLinkedInUrl(raw.linkedinUrl) };
+      const existing = byUrl.get(result.linkedinUrl);
+      if (!existing) {
+        byUrl.set(result.linkedinUrl, result);
+        continue;
+      }
+
+      const matchedQueries = new Set(
+        [existing.matchedQuery, result.matchedQuery].filter(Boolean) as string[]
+      );
+      byUrl.set(result.linkedinUrl, {
+        ...existing,
+        headline: existing.headline || result.headline,
+        location: existing.location || result.location,
+        snippet: [existing.snippet, result.snippet].filter(Boolean).join("\n"),
+        fullText: existing.fullText || result.fullText,
+        matchedQuery: [...matchedQueries].join("\n"),
       });
+    }
+    const allNormed = [...byUrl.values()];
 
     const existingCandidates = await prisma.candidate.findMany({
       where: { jobId: jobId, linkedinUrl: { in: allNormed.map((r) => r.linkedinUrl) } },

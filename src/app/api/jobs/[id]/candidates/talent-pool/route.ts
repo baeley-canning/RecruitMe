@@ -103,7 +103,7 @@ export async function POST(
   // 3. Deduplicate by normalised LinkedIn URL, keep the freshest profile per URL.
   const bestByUrl = new Map<string, typeof poolRows[number]>();
   for (const row of poolRows) {
-    if (!row.linkedinUrl || !row.profileText || row.profileText.length < 500) continue;
+    if (!row.linkedinUrl || !row.profileText || row.profileText.length < 2000) continue;
     let normUrl: string;
     try { normUrl = normaliseLinkedInUrl(row.linkedinUrl); } catch { continue; }
     if (existingUrls.has(normUrl) || existingUrls.has(row.linkedinUrl)) continue;

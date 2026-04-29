@@ -258,6 +258,16 @@ describe("search import route", () => {
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/cloud-developer/",
           snippet: "Azure, Linux scripting, Kubernetes and microservices, but no legacy database stack.",
+          matchedQuery: "Azure microservices",
+          source: "serpapi",
+        },
+        {
+          name: "Query Matched",
+          headline: "Enterprise Software Developer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/query-matched/",
+          snippet: "Experienced enterprise software developer with government systems background.",
+          matchedQuery: "C++ Sybase",
           source: "serpapi",
         },
         {
@@ -282,8 +292,9 @@ describe("search import route", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(res.status).toBe(200);
-    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
-    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.name).toBe("Relevant Developer");
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(2);
+    const importedNames = dbMocks.prisma.candidate.upsert.mock.calls.map((call) => call[0].create.name);
+    expect(importedNames).toEqual(expect.arrayContaining(["Relevant Developer", "Query Matched"]));
     expect(dbMocks.prisma.searchSession.create.mock.calls[0][0].data.queries).toContain("Sybase dba");
   });
 });
