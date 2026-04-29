@@ -7,6 +7,8 @@
  *   4. Makes Candidate.jobId nullable (candidate persistence after job deletion)
  *   5. Adds Candidate.orgId, archivedJobTitle, archivedJobCompany
  *   6. Rewires Candidate→Job FK to ON DELETE SET NULL
+ *   7. Backfills Candidate.orgId from Job
+ *   8. Creates CandidateFile table + index + FK if missing
  *
  * Uses Prisma $executeRaw — idempotent, no migration history required.
  */
@@ -99,6 +101,51 @@ try {
     END $$
   `;
   console.log("[apply-schema] Candidate→Job FK ON DELETE SET NULL ensured");
+
+  // 7. Backfill Candidate.orgId from Job (one-time, idempotent)
+  const backfilled = await prisma.$executeRaw`
+    UPDATE "Candidate" c
+    SET "orgId" = j."orgId"
+    FROM "Job" j
+    WHERE c."jobId" = j."id"
+      AND c."orgId" IS NULL
+      AND j."orgId" IS NOT NULL
+  `;
+  console.log(`[apply-schema] Backfilled orgId for ${backfilled} candidate(s)`);
+
+  // 8. CandidateFile table (CV / file attachments)
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateFile" (
+      "id"          TEXT         NOT NULL,
+      "candidateId" TEXT         NOT NULL,
+      "type"        TEXT         NOT NULL,
+      "filename"    TEXT         NOT NULL,
+      "mimeType"    TEXT         NOT NULL,
+      "data"        TEXT         NOT NULL,
+      "size"        INTEGER      NOT NULL,
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateFile_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateFile_candidateId_idx"
+    ON "CandidateFile"("candidateId")
+  `;
+  await prisma.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'CandidateFile_candidateId_fkey'
+      ) THEN
+        ALTER TABLE "CandidateFile"
+          ADD CONSTRAINT "CandidateFile_candidateId_fkey"
+          FOREIGN KEY ("candidateId") REFERENCES "Candidate"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+  console.log("[apply-schema] CandidateFile table ensured");
 
 } catch (err) {
   console.error("[apply-schema] Failed:", err.message);
