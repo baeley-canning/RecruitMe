@@ -2,14 +2,26 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Copy, Check, Download, Settings, Zap, ArrowRight } from "lucide-react";
+import { Copy, Check, Download, Settings, Zap, ArrowRight, FolderOpen } from "lucide-react";
+
+interface ElectronBridge {
+  prepareExtension?: () => Promise<{ ok: boolean; path?: string | null; browser?: string | null; error?: string }>;
+}
+
+function getElectronBridge(): ElectronBridge | null {
+  if (typeof window === "undefined") return null;
+  return (window as Window & { electron?: ElectronBridge }).electron ?? null;
+}
 
 export function LinkedInSetupPage() {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
+  const [desktopReady, setDesktopReady] = useState(false);
+  const [prepareStatus, setPrepareStatus] = useState<{ tone: "ok" | "error"; message: string } | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
+    setDesktopReady(typeof getElectronBridge()?.prepareExtension === "function");
   }, []);
 
   async function handleCopyOrigin() {
@@ -17,6 +29,26 @@ export function LinkedInSetupPage() {
     await navigator.clipboard.writeText(origin);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
+  }
+
+  async function handlePrepareExtension() {
+    setPrepareStatus(null);
+    const electron = getElectronBridge();
+    if (typeof electron?.prepareExtension !== "function") {
+      setPrepareStatus({ tone: "error", message: "This shortcut is only available in the desktop app." });
+      return;
+    }
+
+    const result = await electron.prepareExtension();
+    if (!result.ok) {
+      setPrepareStatus({ tone: "error", message: result.error || "Could not prepare the extension folder." });
+      return;
+    }
+
+    setPrepareStatus({
+      tone: "ok",
+      message: `Extension folder ready: ${result.path || "opened"}. Use Load unpacked once, then hit Reload here after future updates.`,
+    });
   }
 
   return (
@@ -41,21 +73,38 @@ export function LinkedInSetupPage() {
           </div>
         </div>
         <div className="px-5 py-5 space-y-4">
-          <a
-            href="/api/extension/download"
-            download="recruitme-extension.zip"
-            className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Download RecruitMe Extension (.zip)
-          </a>
+          {desktopReady ? (
+            <button
+              type="button"
+              onClick={handlePrepareExtension}
+              className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm transition-colors"
+            >
+              <FolderOpen className="w-4 h-4" />
+              Prepare Extension Folder
+            </button>
+          ) : (
+            <a
+              href="/api/extension/download"
+              download="recruitme-extension.zip"
+              className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Download RecruitMe Extension (.zip)
+            </a>
+          )}
+          {prepareStatus && (
+            <p className={`text-sm ${prepareStatus.tone === "ok" ? "text-emerald-700" : "text-red-700"}`}>
+              {prepareStatus.message}
+            </p>
+          )}
           <div className="space-y-2 text-sm text-slate-600">
             <p className="font-medium text-slate-700">Load it into Chrome, Opera, Edge, or another Chromium browser:</p>
             <ol className="space-y-1.5 list-decimal list-inside">
-              <li>Unzip the downloaded file</li>
+              <li>{desktopReady ? "Use the folder RecruitMe just opened" : "Unzip the downloaded file"}</li>
               <li>Go to <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">chrome://extensions</code> or your browser&apos;s extensions page</li>
               <li>Enable <strong>Developer mode</strong></li>
               <li>Click <strong>Load unpacked</strong> and select the unzipped folder</li>
+              {desktopReady && <li>After updates, click <strong>Prepare Extension Folder</strong> again, then click <strong>Reload</strong> on the extension card</li>}
             </ol>
           </div>
         </div>

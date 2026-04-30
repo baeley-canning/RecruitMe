@@ -11,6 +11,7 @@ files:
   - .next/standalone/**/*
   - "!.next/standalone/node_modules/.cache/**/*"
   - prisma/seed.db
+  - browser-companion/recruitme-opera-linkedin-capture/**/*
 
 # Copy static assets and public into the right places inside standalone
 extraFiles:
@@ -20,6 +21,8 @@ extraFiles:
     to: .next/standalone/public
   - from: prisma/seed.db
     to: prisma/seed.db
+  - from: browser-companion/recruitme-opera-linkedin-capture
+    to: browser-companion/recruitme-opera-linkedin-capture
 
 mac:
   target:

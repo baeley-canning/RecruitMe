@@ -19,6 +19,37 @@ const MAC_BROWSER_CANDIDATES = [
   { name: "Brave Browser", path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" },
 ];
 
+const EXTENSION_FILES = ["manifest.json", "background.js", "content.js", "popup.html", "popup.js", "README.md"];
+const EXTENSION_RELATIVE_DIR = path.join("browser-companion", "recruitme-opera-linkedin-capture");
+
+function getBundledExtensionDir() {
+  const candidates = [
+    path.join(__dirname, "..", EXTENSION_RELATIVE_DIR),
+    path.join(app.getAppPath(), EXTENSION_RELATIVE_DIR),
+    path.join(process.resourcesPath || "", EXTENSION_RELATIVE_DIR),
+  ];
+  return candidates.find((candidate) => candidate && fs.existsSync(path.join(candidate, "manifest.json"))) ?? null;
+}
+
+function prepareExtensionFolder() {
+  const sourceDir = getBundledExtensionDir();
+  if (!sourceDir) {
+    throw new Error("Bundled RecruitMe extension folder was not found.");
+  }
+
+  const targetDir = path.join(app.getPath("userData"), "RecruitMe LinkedIn Capture Extension");
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  for (const file of EXTENSION_FILES) {
+    const source = path.join(sourceDir, file);
+    if (fs.existsSync(source)) {
+      fs.copyFileSync(source, path.join(targetDir, file));
+    }
+  }
+
+  return targetDir;
+}
+
 function findSupportedBrowser() {
   if (process.platform === "darwin") {
     return MAC_BROWSER_CANDIDATES.find((browser) => fs.existsSync(browser.path)) ?? null;
@@ -95,6 +126,13 @@ function openInSupportedBrowser(url) {
     console.error("[browser] spawn failed:", err);
     return { ok: false, browser: browser.name };
   }
+}
+
+function openExtensionsPage() {
+  const result = openInSupportedBrowser("chrome://extensions");
+  if (result.ok) return result;
+  void shell.openExternal("chrome://extensions").catch(() => {});
+  return result;
 }
 
 // ── Port helpers ──────────────────────────────────────────────────────────────
@@ -279,4 +317,20 @@ ipcMain.handle("recruitme:open-external", (_event, url) => {
     return { ok: false, browser: null };
   }
   return openInSupportedBrowser(url);
+});
+
+ipcMain.handle("recruitme:prepare-extension", async () => {
+  try {
+    const extensionPath = prepareExtensionFolder();
+    await shell.openPath(extensionPath).catch(() => {});
+    const browser = openExtensionsPage();
+    return { ok: true, path: extensionPath, browser: browser.browser ?? null };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      path: null,
+      browser: null,
+    };
+  }
 });
