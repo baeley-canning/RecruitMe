@@ -437,6 +437,37 @@ function extractStructuredSections(main) {
   return { parts, sectionKeys };
 }
 
+function extractVisibleMainProfileText(main) {
+  const lines = filterProfileLines(splitIntoLines(main.innerText || ""));
+  if (lines.length === 0) return "";
+
+  const useful = [];
+  for (const line of lines) {
+    if (/^search$/i.test(line)) continue;
+    if (/^home$/i.test(line)) continue;
+    if (/^my network$/i.test(line)) continue;
+    if (/^jobs$/i.test(line)) continue;
+    if (/^messaging$/i.test(line)) continue;
+    if (/^notifications$/i.test(line)) continue;
+    useful.push(line);
+  }
+
+  return cleanText(useful.join("\n"));
+}
+
+function mergeCaptureText(primaryText, fallbackText) {
+  if (!fallbackText || fallbackText.length <= primaryText.length + 80) return primaryText;
+
+  const primaryKeys = new Set(splitIntoLines(primaryText).map(normalizeLineKey).filter(Boolean));
+  const additionalLines = splitIntoLines(fallbackText).filter((line) => {
+    const key = normalizeLineKey(line);
+    return key && !primaryKeys.has(key);
+  });
+
+  if (additionalLines.length === 0) return primaryText;
+  return cleanText([primaryText, "Visible LinkedIn profile text", ...additionalLines].filter(Boolean).join("\n"));
+}
+
 function collectProfileText(startUrl, options = {}) {
   const { allowShort = false } = options;
   verifyCaptureTarget(startUrl);
@@ -448,7 +479,9 @@ function collectProfileText(startUrl, options = {}) {
 
   const intro = extractIntroText(main);
   const { parts: sections, sectionKeys } = extractStructuredSections(main);
-  const profileText = cleanText([intro, ...sections].filter(Boolean).join("\n\n")).slice(0, 100000);
+  const structuredText = cleanText([intro, ...sections].filter(Boolean).join("\n\n"));
+  const fallbackText = extractVisibleMainProfileText(main);
+  const profileText = mergeCaptureText(structuredText, fallbackText).slice(0, 100000);
 
   if (!allowShort && profileText.length < 200) {
     throw new Error("Captured profile text was too short");

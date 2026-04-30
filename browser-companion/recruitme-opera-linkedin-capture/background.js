@@ -137,7 +137,7 @@ function toUserFacingCaptureError(error) {
     return "The open LinkedIn profile did not match the queued candidate.";
   }
   if (/not contain enough usable profile text|too short/i.test(message)) {
-    return "LinkedIn did not expose enough profile content to capture. Open the full profile and try again.";
+    return "RecruitMe only captured the profile header. Reload the LinkedIn tab, make sure you are signed in, then try Fetch profile again.";
   }
 
   return message || "LinkedIn capture failed";
