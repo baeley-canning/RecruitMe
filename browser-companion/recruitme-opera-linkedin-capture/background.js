@@ -223,7 +223,8 @@ async function findLinkedInProfileTab(linkedinUrl) {
   if (!targetUrl) return null;
 
   const tabs = await chrome.tabs.query({ url: ["https://www.linkedin.com/in/*"] });
-  return tabs.find((tab) => normaliseLinkedInUrl(tab.url) === targetUrl) || null;
+  const matchingTabs = tabs.filter((tab) => normaliseLinkedInUrl(tab.url) === targetUrl);
+  return matchingTabs.find((tab) => isRootLinkedInProfile(tab.url || "")) || matchingTabs[0] || null;
 }
 
 async function openPendingProfileTab(linkedinUrl) {
@@ -233,6 +234,37 @@ async function openPendingProfileTab(linkedinUrl) {
   const tabId = created?.id ?? null;
   if (tabId) autoOpenedTabs.add(tabId);
   return tabId;
+}
+
+async function waitForTabComplete(tabId, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) throw new Error("LinkedIn tab closed before capture could start");
+    if (tab.status === "complete" && tab.url) return tab;
+    await sleep(250);
+  }
+  throw new Error("LinkedIn tab did not finish loading in time");
+}
+
+async function prepareTabForCapture(tabId, linkedinUrl) {
+  let tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) throw new Error("LinkedIn tab is no longer available");
+
+  const currentUrl = tab.url || "";
+  const needsNavigation =
+    normaliseLinkedInUrl(currentUrl) !== normaliseLinkedInUrl(linkedinUrl) ||
+    !isRootLinkedInProfile(currentUrl);
+
+  if (needsNavigation) {
+    tab = await chrome.tabs.update(tabId, { url: linkedinUrl, active: true });
+    await waitForTabComplete(tabId);
+  } else if (!tab.active) {
+    tab = await chrome.tabs.update(tabId, { active: true });
+    await sleep(1200);
+  }
+
+  return tab;
 }
 
 async function notifyCaptureDone(candidateName) {
@@ -269,8 +301,21 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
 
   activeAutoCaptures.add(lockKey);
   try {
-    await sleep(600);
-    await initiateCapture(tabId, pending, preferredBase);
+    await prepareTabForCapture(tabId, pending.linkedinUrl);
+    await sleep(1400);
+    try {
+      await initiateCapture(tabId, pending, preferredBase);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
+        await chrome.tabs.reload(tabId).catch(() => {});
+        await waitForTabComplete(tabId);
+        await sleep(1800);
+        await initiateCapture(tabId, pending, preferredBase);
+      } else {
+        throw error;
+      }
+    }
   } catch (error) {
     await markPendingCaptureError(pending, error, preferredBase);
   } finally {

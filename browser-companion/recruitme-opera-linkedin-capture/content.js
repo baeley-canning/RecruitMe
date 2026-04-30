@@ -503,6 +503,16 @@ async function waitForExperienceDetailsPage() {
   return false;
 }
 
+async function waitForRootProfilePage(expectedUrl = "") {
+  const expectedSlug = normaliseLinkedInSlug(expectedUrl);
+  for (let i = 0; i < 60; i += 1) {
+    await sleep(200);
+    if (!isRootLinkedInProfile(location.href)) continue;
+    if (!expectedSlug || normaliseLinkedInSlug(location.href) === expectedSlug) return true;
+  }
+  return false;
+}
+
 async function restoreProfilePage(profileBaseUrl) {
   const currentUrl = location.href.replace(/[?#].*$/, "");
   if (currentUrl === profileBaseUrl) return;
@@ -656,6 +666,14 @@ async function captureProfile() {
   // Enrich with full work history from the /details/experience sub-page
   capture = await enrichWithExperienceDetails(capture, startUrl);
   if (capture.profileText.length < 200) {
+    await sleep(1200);
+    const finalRescrolled = await scrollProfile(clicked);
+    if (finalRescrolled) {
+      capture = collectProfileText(startUrl, { allowShort: true });
+      capture = await enrichWithExperienceDetails(capture, startUrl);
+    }
+  }
+  if (capture.profileText.length < 200) {
     throw new Error("Captured profile text did not contain enough usable profile text");
   }
   return capture;
@@ -702,9 +720,18 @@ async function tryPost(serverBase, path, body) {
 
 async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   try {
-    // Guard: must be on a root profile page, not a sub-page like /details/experience
+    // If we landed on a details sub-page or another LinkedIn sub-view for the same
+    // person, drive back to the root profile before capturing.
     if (!isRootLinkedInProfile(location.href)) {
-      return;
+      if (expectedUrl && normaliseLinkedInSlug(location.href) === normaliseLinkedInSlug(expectedUrl)) {
+        location.assign(expectedUrl);
+        const restored = await waitForRootProfilePage(expectedUrl);
+        if (!restored) {
+          throw new Error("LinkedIn profile did not return to the main profile page");
+        }
+      } else {
+        throw new Error("LinkedIn profile was not on the main profile page");
+      }
     }
 
     // Guard: only capture from the expected profile URL
