@@ -644,6 +644,81 @@ async function captureProfile() {
   return capture;
 }
 
+// Default server bases for content-script-side POSTs (no service worker involved).
+const CONTENT_DEFAULT_BASES = [
+  "https://recruitme-production-8cc6.up.railway.app",
+  "https://recruitme.railway.app",
+];
+
+let captureInProgress = false;
+
+function normaliseLinkedInSlug(url = "") {
+  const m = url.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  return m ? m[1].toLowerCase() : "";
+}
+
+async function postJson(base, path, body) {
+  const resp = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data?.error || `Server error (${resp.status})`);
+  }
+}
+
+async function tryPost(serverBase, path, body) {
+  const bases = [...new Set([serverBase, ...CONTENT_DEFAULT_BASES].filter(Boolean))];
+  let lastErr = new Error("Could not reach RecruitMe server");
+  for (const base of bases) {
+    try {
+      await postJson(base, path, body);
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
+  try {
+    // Guard: only capture from the expected profile URL (not from /details/experience sub-pages)
+    if (expectedUrl) {
+      const currentSlug = normaliseLinkedInSlug(location.href);
+      const expectedSlug = normaliseLinkedInSlug(expectedUrl);
+      if (!currentSlug || currentSlug !== expectedSlug) {
+        return;
+      }
+    }
+
+    const capture = await captureProfile();
+    await tryPost(serverBase, "/api/extension/fetch-session/complete", {
+      sessionId,
+      linkedinUrl: capture.linkedinUrl,
+      profileText: capture.profileText,
+    });
+    chrome.runtime.sendMessage(
+      { type: "capture-complete", candidateName: capture.title || "" },
+      () => void chrome.runtime.lastError
+    );
+  } catch (error) {
+    const msg = (error?.message || "Capture failed").slice(0, 500);
+    await tryPost(serverBase, "/api/extension/fetch-session/error", {
+      sessionId,
+      error: msg,
+    }).catch(() => {});
+    chrome.runtime.sendMessage(
+      { type: "capture-error", error: msg },
+      () => void chrome.runtime.lastError
+    );
+  } finally {
+    captureInProgress = false;
+  }
+}
+
 function notifyBackground() {
   if (!isLinkedInProfilePage()) return;
 
@@ -664,6 +739,20 @@ function notifyBackground() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // Auto-capture: content script owns the full capture + POST so the
+  // service worker doesn't need to stay alive for 30-60 seconds.
+  if (message?.type === "capture-and-post") {
+    if (captureInProgress) {
+      sendResponse({ ok: true, status: "in-progress" });
+      return false;
+    }
+    captureInProgress = true;
+    sendResponse({ ok: true, status: "started" });
+    void runCaptureAndPost(message.sessionId, message.serverBase, message.linkedinUrl);
+    return false;
+  }
+
+  // Manual capture (popup button): synchronous so popup gets real-time result.
   if (message?.type === "capture-profile") {
     void captureProfile()
       .then((data) => sendResponse({ ok: true, data }))

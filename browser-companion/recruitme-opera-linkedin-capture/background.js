@@ -11,21 +11,6 @@ const activeAutoCaptures = new Set();
 const pendingSessionEnsures = new Set();
 const ERROR_BADGE_COLOR = "#b91c1c";
 
-// MV3 service workers can be suspended by Chrome (especially on Mac, to save battery).
-// Keeping an open chrome.runtime port prevents suspension during long captures.
-let keepAlivePort = null;
-function keepAlive() {
-  if (keepAlivePort) return;
-  try {
-    keepAlivePort = chrome.runtime.connect({ name: "keepalive" });
-    keepAlivePort.onDisconnect.addListener(() => { keepAlivePort = null; });
-  } catch { keepAlivePort = null; }
-}
-function releaseKeepAlive() {
-  try { keepAlivePort?.disconnect(); } catch {}
-  keepAlivePort = null;
-}
-
 async function setExtensionError(message) {
   const error = message || "RecruitMe extension error";
   await chrome.storage.local.set({ lastError: error });
@@ -120,13 +105,7 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
       }
 
       if (!response.ok) {
-        if (response.status === 401) {
-          lastError = new Error(
-            "RecruitMe extension auth failed. Enter the same username and password you use to sign into RecruitMe, then click Save and test connection."
-          );
-        } else {
-          lastError = new Error(data?.error || `RecruitMe request failed (${response.status})`);
-        }
+        lastError = new Error(data?.error || `RecruitMe request failed (${response.status})`);
         continue;
       }
 
@@ -152,9 +131,6 @@ function toUserFacingCaptureError(error) {
   }
   if (/Request timed out/i.test(message)) {
     return "RecruitMe took too long to respond. Check the app is running and the server URL in the popup.";
-  }
-  if (/401 Unauthorized|extension auth failed/i.test(message)) {
-    return "RecruitMe login for manual import is invalid. Auto-capture can still run, but update the popup credentials if you need job list access.";
   }
   if (/LinkedIn URL mismatch/i.test(message)) {
     return "The open LinkedIn profile did not match the queued candidate.";
@@ -201,7 +177,7 @@ function sendMessageToTab(tabId, message) {
         reject(new Error(response?.error || "LinkedIn capture failed"));
         return;
       }
-      resolve(response.data);
+      resolve(response);
     });
   });
 }
@@ -249,55 +225,32 @@ async function openPendingProfileTab(linkedinUrl) {
   return created?.id ?? null;
 }
 
-async function completePendingCapture(tabId, pending, preferredBase = "") {
-  const capture = await sendMessageToTab(tabId, { type: "capture-profile" });
-  return requestRecruitMe(
-    "/api/extension/fetch-session/complete",
-    {
-      method: "POST",
-      timeoutMs: 15000,
-      body: JSON.stringify({
-        sessionId: pending.sessionId,
-        linkedinUrl: capture.linkedinUrl,
-        profileText: capture.profileText,
-      }),
-    },
-    preferredBase
-  );
-}
-
-async function completePendingCaptureWithRetry(tabId, pending, preferredBase = "") {
-  let lastError = null;
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      return await completePendingCapture(tabId, pending, preferredBase);
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (!/navigated during capture/i.test(lastError.message)) {
-        throw lastError;
-      }
-      await sleep(1400);
-    }
-  }
-
-  throw lastError || new Error("LinkedIn capture failed");
-}
-
 async function notifyCaptureDone(candidateName) {
   const name = candidateName || "Profile";
   try {
     await chrome.notifications.create(`recruitme-done-${Date.now()}`, {
       type: "basic",
-      iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABqSURBVFhH7ZaxCgAgCER7/v/P7dDSEqpTuHcQiXRFggzQgBgREREREREREREREREREWlFRAEAAAAAAAAAAAAAAAAAgCsiUl4HAAAAAAAAAAAAAAAAAACAMhHRR5EAAAAASUVORK5CYII=",
+      iconUrl:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAA7AAAAOwBeShxvQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAHpSURBVFiF7ZaxbtswEIa/o2zHhiEjQAYDHQIkQ4cCHQIUKFC0Q4c+QR8gj9CXyFP0EfoEfYU+Q5cgQ4ECBQoUCIokJMWS2CEt2ZItWxIlWxIlkSSboqoqVdX9cM/x7o47AgCO4zgOgJQSwB4ASinlnHMAOI7jOE8ppZQCAHgAIgB4AKICeAAgAnhRSnkDIOecAwDgnHMOAAB6AJ4BeALwBEAPwBMAD0AppdwB4A4AW2ttbQCklFJKKaWUUkoppZRSSilmAGCttbW2tpQCAIAQQgghhBBCCCGEEEIIIYQQQgghhBBCCCEAQAghgBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQggh5H8HYIwxxhhjjDHGGGOMMcYYY4wxxhhjjDHGGAAAgAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQyY7QAAAAASUVORK5CYII=",
       title: "RecruitMe — Profile captured",
       message: `${name} has been captured and scored.`,
       priority: 2,
     });
   } catch {
-    // Notifications require OS permission — check System Preferences > Notifications on Mac
-    console.info("[RecruitMe] Notification failed — grant notification permission to Chrome/Opera in system settings");
+    // Notification permission not granted — not critical
   }
+}
+
+// Initiates an auto-capture: sends capture-and-post to content script which handles
+// the full capture + POST to server independently of the service worker lifecycle.
+async function initiateCapture(tabId, pending, preferredBase = "") {
+  await sendMessageToTab(tabId, {
+    type: "capture-and-post",
+    sessionId: pending.sessionId,
+    linkedinUrl: pending.linkedinUrl,
+    serverBase: preferredBase,
+  });
+  // Content script has acked — it now handles capture + POST without the SW.
 }
 
 async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
@@ -305,17 +258,13 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
   if (activeAutoCaptures.has(lockKey)) return;
 
   activeAutoCaptures.add(lockKey);
-  keepAlive(); // prevent Chrome from suspending the service worker mid-capture
   try {
     await sleep(600);
-    await completePendingCaptureWithRetry(tabId, pending, preferredBase);
-    await notifyCaptureDone(pending.candidateName);
+    await initiateCapture(tabId, pending, preferredBase);
   } catch (error) {
     await markPendingCaptureError(pending, error, preferredBase);
-    throw error;
   } finally {
     activeAutoCaptures.delete(lockKey);
-    if (activeAutoCaptures.size === 0) releaseKeepAlive();
   }
 }
 
@@ -367,6 +316,24 @@ async function getActiveLinkedInTab() {
   return tab;
 }
 
+// Manual capture (from popup button) — synchronous flow so popup gets real-time result.
+async function doManualCapture(tabId, pending, preferredBase) {
+  const capture = await sendMessageToTab(tabId, { type: "capture-profile" });
+  return requestRecruitMe(
+    "/api/extension/fetch-session/complete",
+    {
+      method: "POST",
+      timeoutMs: 120000,
+      body: JSON.stringify({
+        sessionId: pending.sessionId,
+        linkedinUrl: capture.data.linkedinUrl,
+        profileText: capture.data.profileText,
+      }),
+    },
+    preferredBase
+  );
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "linkedin-page-observed") {
     const tabId = sender.tab?.id;
@@ -379,6 +346,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
+  }
+
+  if (message?.type === "capture-complete") {
+    void notifyCaptureDone(message.candidateName).catch(() => {});
+    void clearExtensionError().catch(() => {});
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (message?.type === "capture-error") {
+    void setExtensionError(message.error || "Capture failed").catch(() => {});
+    sendResponse({ ok: true });
+    return false;
   }
 
   if (message?.type === "get-config") {
@@ -397,7 +377,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "set-config") {
     void (async () => {
       const serverBase = normaliseServerBase(message.serverBase || "") || DEFAULT_SERVER_BASES[0];
-      const { base } = await requestRecruitMe("/api/extension/fetch-session", {}, serverBase, { rememberFailure: false });
+      const { base } = await requestRecruitMe(
+        "/api/extension/fetch-session",
+        {},
+        serverBase,
+        { rememberFailure: false }
+      );
       await chrome.storage.local.set({ serverBase, lastWorkingServerBase: base, lastError: "" });
       await ensurePendingCaptureAlarm();
       await ensurePendingSessionTabs().catch(() => {});
@@ -409,7 +394,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "get-session") {
-    // Returns the current session (any URL) or null — used by popup for status display.
     void requestRecruitMe("/api/extension/fetch-session")
       .then(({ base, data }) => sendResponse({ ok: true, session: data, serverBase: base }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -454,12 +438,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!pending.data.pending) {
         throw new Error("No pending RecruitMe fetch matches this LinkedIn profile");
       }
-      try {
-        await completePendingCaptureWithRetry(tab.id, pending.data, pending.base);
-      } catch (error) {
-        await markPendingCaptureError(pending.data, error, pending.base);
-        throw error;
-      }
+      await doManualCapture(tab.id, pending.data, pending.base);
       const candidateName = pending.data.candidateName || "Profile";
       await notifyCaptureDone(candidateName);
       return candidateName;
@@ -468,7 +447,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
-
 });
 
 chrome.runtime.onInstalled.addListener(() => {
