@@ -1,9 +1,11 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { MapPin, Search, Users, FileText, Briefcase, Star } from "lucide-react";
+import { MapPin, Search, Users, FileText, Briefcase, Star, UserPlus } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import { AddLibraryCandidateModal } from "@/components/add-library-candidate-modal";
 
 interface CandidateFile {
   id: string;
@@ -137,8 +139,10 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
 }
 
 export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCandidate[] }) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const deferred = useDeferredValue(search);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const filtered = useMemo(() => {
     const q = deferred.toLowerCase().trim();
@@ -158,11 +162,20 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
   return (
     <div className="p-8 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="mb-7">
-        <h1 className="text-2xl font-bold text-slate-900">Candidates Library</h1>
-        <p className="text-slate-500 text-sm mt-1">
-          All captured profiles — reused automatically in future job searches
-        </p>
+      <div className="flex items-start justify-between mb-7">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Candidates Library</h1>
+          <p className="text-slate-500 text-sm mt-1">
+            All captured profiles — reused automatically in future job searches
+          </p>
+        </div>
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors flex-shrink-0"
+        >
+          <UserPlus className="w-4 h-4" />
+          Add Candidate
+        </button>
       </div>
 
       {/* Stats */}
@@ -224,9 +237,16 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
             <Users className="w-7 h-7 text-blue-500" />
           </div>
           <h3 className="text-lg font-semibold text-slate-900 mb-2">No profiles yet</h3>
-          <p className="text-slate-500 text-sm max-w-xs mx-auto">
+          <p className="text-slate-500 text-sm max-w-xs mx-auto mb-4">
             Candidates appear here once their LinkedIn profile has been captured via the browser extension or a search.
           </p>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors"
+          >
+            <UserPlus className="w-4 h-4" />
+            Add Candidate via CV
+          </button>
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-12 text-slate-400 text-sm">
@@ -238,6 +258,16 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
             <CandidateCard key={c.id} c={c} />
           ))}
         </div>
+      )}
+
+      {showAddModal && (
+        <AddLibraryCandidateModal
+          onComplete={() => {
+            setShowAddModal(false);
+            router.refresh();
+          }}
+          onClose={() => setShowAddModal(false)}
+        />
       )}
     </div>
   );

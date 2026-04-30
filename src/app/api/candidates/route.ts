@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { extractCandidateInfo } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
@@ -83,4 +85,64 @@ export async function GET() {
     delete person.profileText;
     return person;
   }));
+}
+
+const CreateLibraryCandidateSchema = z.object({
+  name:        z.string().min(1).max(200).trim().optional(),
+  headline:    z.string().max(500).trim().optional(),
+  location:    z.string().max(200).trim().optional(),
+  linkedinUrl: z.string().url().max(500).optional().or(z.literal("")),
+  profileText: z.string().max(50_000).optional(),
+});
+
+/**
+ * POST /api/candidates
+ *
+ * Creates a library candidate not tied to any job.
+ * Extracts name/headline/location from profileText via AI if not supplied.
+ */
+export async function POST(req: Request) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+
+  const result = CreateLibraryCandidateSchema.safeParse(await req.json().catch(() => ({})));
+  if (!result.success) {
+    return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
+  }
+  const body = result.data;
+
+  if (!body.profileText && !body.name) {
+    return NextResponse.json({ error: "Provide profileText or a name." }, { status: 400 });
+  }
+
+  let name = body.name ?? "";
+  let headline = body.headline ?? "";
+  let location = body.location ?? "";
+
+  if (body.profileText && !name) {
+    try {
+      const info = await extractCandidateInfo(body.profileText);
+      name = info.name;
+      headline = headline || info.headline;
+      location = location || info.location;
+    } catch {
+      name = "Unknown";
+    }
+  }
+
+  const candidate = await prisma.candidate.create({
+    data: {
+      jobId:       null,
+      orgId:       auth.orgId ?? null,
+      name:        name || "Unknown",
+      headline:    headline || null,
+      location:    location || null,
+      linkedinUrl: body.linkedinUrl?.trim() || null,
+      profileText: body.profileText?.trim() || null,
+      source:      "manual",
+      status:      "new",
+    },
+  });
+
+  return NextResponse.json(candidate, { status: 201 });
 }
