@@ -71,10 +71,17 @@ function withTimeout(url, options = {}, timeoutMs = 10000) {
 }
 
 async function requestRecruitMe(path, options = {}, preferredBase = "", overrides = {}) {
-  const bases = preferredBase
-    ? [preferredBase, ...(await getServerBases()).filter((base) => base !== preferredBase)]
-    : await getServerBases();
+  const allowFallback = overrides.allowFallback !== false;
+  let bases;
+  if (preferredBase && !allowFallback) {
+    bases = [preferredBase];
+  } else if (preferredBase) {
+    bases = [preferredBase, ...(await getServerBases()).filter((base) => base !== preferredBase)];
+  } else {
+    bases = await getServerBases();
+  }
   const rememberFailure = overrides.rememberFailure !== false;
+  const acceptData = typeof overrides.acceptData === "function" ? overrides.acceptData : null;
   const timeoutMs =
     typeof overrides.timeoutMs === "number"
       ? overrides.timeoutMs
@@ -107,6 +114,11 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
 
       if (!response.ok) {
         lastError = new Error(data?.error || `RecruitMe request failed (${response.status})`);
+        continue;
+      }
+
+      if (acceptData && !acceptData(data)) {
+        lastError = new Error("RecruitMe server had no matching pending capture");
         continue;
       }
 
@@ -184,14 +196,38 @@ function sendMessageToTab(tabId, message) {
 }
 
 async function checkPendingCapture(linkedinUrl) {
-  const { base, data } = await requestRecruitMe(
-    `/api/extension/fetch-session/pending?linkedinUrl=${encodeURIComponent(linkedinUrl)}`
-  );
-  return { base, data };
+  try {
+    const { base, data } = await requestRecruitMe(
+      `/api/extension/fetch-session/pending?linkedinUrl=${encodeURIComponent(linkedinUrl)}`,
+      {},
+      "",
+      {
+        rememberFailure: false,
+        acceptData: (data) => Boolean(data?.active || data?.pending),
+      }
+    );
+    return { base, data };
+  } catch {
+    return { base: "", data: { pending: false, active: false, status: "idle" } };
+  }
 }
 
 async function getPendingSessions() {
-  const { base, data } = await requestRecruitMe("/api/extension/fetch-session");
+  let base = "";
+  let data = null;
+  try {
+    ({ base, data } = await requestRecruitMe(
+      "/api/extension/fetch-session",
+      {},
+      "",
+      {
+        rememberFailure: false,
+        acceptData: (data) => (Array.isArray(data) ? data.length > 0 : Boolean(data)),
+      }
+    ));
+  } catch {
+    data = null;
+  }
   const sessions = Array.isArray(data) ? data : data ? [data] : [];
   return {
     base,
@@ -451,7 +487,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "/api/extension/fetch-session",
         {},
         serverBase,
-        { rememberFailure: false }
+        { rememberFailure: false, allowFallback: false }
       );
       await chrome.storage.local.set({ serverBase, lastWorkingServerBase: base, lastError: "" });
       await ensurePendingCaptureAlarm();
