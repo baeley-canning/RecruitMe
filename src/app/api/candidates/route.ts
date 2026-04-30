@@ -53,7 +53,8 @@ export async function GET() {
     },
   });
 
-  const withProfile = rows.filter(hasFullCandidateProfile);
+  // Manual candidates (CV upload) bypass the 2000-char threshold — their CVs are often shorter
+  const withProfile = rows.filter((row) => row.source === "manual" || hasFullCandidateProfile(row));
 
   // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.
   // Candidates without a LinkedIn URL are included individually (distinct people).

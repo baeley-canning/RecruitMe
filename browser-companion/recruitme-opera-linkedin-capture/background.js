@@ -9,6 +9,7 @@ const DEFAULT_SERVER_BASES = [
 const PENDING_CAPTURE_ALARM = "recruitme-pending-capture-check";
 const activeAutoCaptures = new Set();
 const pendingSessionEnsures = new Set();
+const autoOpenedTabs = new Set(); // Tab IDs auto-opened by the extension for background capture
 const ERROR_BADGE_COLOR = "#b91c1c";
 
 async function setExtensionError(message) {
@@ -198,6 +199,11 @@ async function getPendingSessions() {
   };
 }
 
+function isRootLinkedInProfile(url = "") {
+  // Must be linkedin.com/in/<username> with no sub-path (e.g. not /details/experience)
+  return /linkedin\.com\/in\/[^/?#]+\/?([?#].*)?$/.test(url);
+}
+
 function normaliseLinkedInUrl(url = "") {
   if (!url) return "";
 
@@ -221,8 +227,12 @@ async function findLinkedInProfileTab(linkedinUrl) {
 }
 
 async function openPendingProfileTab(linkedinUrl) {
-  const created = await chrome.tabs.create({ url: linkedinUrl, active: false });
-  return created?.id ?? null;
+  // active: true ensures LinkedIn renders all sections via IntersectionObserver
+  // (background tabs have innerHeight=0 so lazy sections never load → "too short")
+  const created = await chrome.tabs.create({ url: linkedinUrl, active: true });
+  const tabId = created?.id ?? null;
+  if (tabId) autoOpenedTabs.add(tabId);
+  return tabId;
 }
 
 async function notifyCaptureDone(candidateName) {
@@ -341,6 +351,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: "Missing LinkedIn tab context" });
       return;
     }
+    // Skip sub-pages like /details/experience — only capture from root profile pages
+    if (!isRootLinkedInProfile(message.linkedinUrl)) {
+      sendResponse({ ok: true, skipped: true });
+      return false;
+    }
 
     void maybeAutoCapture(tabId, message.linkedinUrl)
       .then(() => sendResponse({ ok: true }))
@@ -349,6 +364,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "capture-complete") {
+    const tabId = sender.tab?.id;
+    if (tabId && autoOpenedTabs.has(tabId)) {
+      autoOpenedTabs.delete(tabId);
+      chrome.tabs.remove(tabId).catch(() => {});
+    }
     void notifyCaptureDone(message.candidateName).catch(() => {});
     void clearExtensionError().catch(() => {});
     sendResponse({ ok: true });
@@ -356,6 +376,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "capture-error") {
+    const tabId = sender.tab?.id;
+    if (tabId && autoOpenedTabs.has(tabId)) {
+      autoOpenedTabs.delete(tabId);
+      chrome.tabs.remove(tabId).catch(() => {});
+    }
     void setExtensionError(message.error || "Capture failed").catch(() => {});
     sendResponse({ ok: true });
     return false;
@@ -467,7 +492,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
-  if (!tab.url || !tab.url.includes("linkedin.com/in/")) return;
+  // Only trigger for root profile pages; sub-pages like /details/experience are skipped
+  if (!tab.url || !isRootLinkedInProfile(tab.url)) return;
 
   void maybeAutoCapture(tabId, tab.url.replace(/[?#].*$/, "")).catch((error) => {
     console.warn("RecruitMe auto-capture on tab update failed:", error);

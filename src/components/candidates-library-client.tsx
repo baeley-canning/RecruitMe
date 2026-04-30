@@ -96,7 +96,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
             {/* Job context */}
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">
               <Briefcase className="w-2.5 h-2.5" />
-              <span className="line-clamp-1 max-w-[100px]">{c.job?.title ?? c.archivedJobTitle ?? "Archived role"}</span>
+              <span className="line-clamp-1 max-w-[100px]">{c.job?.title ?? c.archivedJobTitle ?? (c.source === "manual" ? "Library" : "Archived role")}</span>
             </span>
 
             {/* Profile captured */}

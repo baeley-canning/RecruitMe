@@ -92,6 +92,11 @@ function isLinkedInProfilePage() {
   return /linkedin\.com\/in\//i.test(location.href);
 }
 
+function isRootLinkedInProfile(url = "") {
+  // Root profile only — excludes sub-pages like /details/experience
+  return /linkedin\.com\/in\/[^/?#]+\/?([?#].*)?$/.test(url);
+}
+
 function cleanText(value) {
   return value
     .replace(/\u00a0/g, " ")
@@ -685,7 +690,12 @@ async function tryPost(serverBase, path, body) {
 
 async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   try {
-    // Guard: only capture from the expected profile URL (not from /details/experience sub-pages)
+    // Guard: must be on a root profile page, not a sub-page like /details/experience
+    if (!isRootLinkedInProfile(location.href)) {
+      return;
+    }
+
+    // Guard: only capture from the expected profile URL
     if (expectedUrl) {
       const currentSlug = normaliseLinkedInSlug(location.href);
       const expectedSlug = normaliseLinkedInSlug(expectedUrl);
@@ -721,6 +731,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
 
 function notifyBackground() {
   if (!isLinkedInProfilePage()) return;
+  if (!isRootLinkedInProfile(location.href)) return; // Skip sub-pages like /details/experience
 
   const linkedinUrl = location.href.replace(/[?#].*$/, "");
   if (linkedinUrl === lastObservedUrl) return;
