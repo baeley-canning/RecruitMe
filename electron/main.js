@@ -11,75 +11,89 @@ let mainWindow = null;
 let serverProcess = null;
 let activePort = DEV_PORT;
 
-function findOperaExecutable() {
+const MAC_BROWSER_CANDIDATES = [
+  { name: "Google Chrome", path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" },
+  { name: "Opera", path: "/Applications/Opera.app/Contents/MacOS/Opera" },
+  { name: "Opera GX", path: "/Applications/Opera GX.app/Contents/MacOS/Opera GX" },
+  { name: "Microsoft Edge", path: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" },
+  { name: "Brave Browser", path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" },
+];
+
+function findSupportedBrowser() {
   if (process.platform === "darwin") {
-    const macPaths = [
-      "/Applications/Opera.app/Contents/MacOS/Opera",
-      "/Applications/Opera GX.app/Contents/MacOS/Opera GX",
-    ];
-    return macPaths.find((p) => fs.existsSync(p)) ?? null;
+    return MAC_BROWSER_CANDIDATES.find((browser) => fs.existsSync(browser.path)) ?? null;
   }
 
   if (process.platform !== "win32") return null;
 
-  // Use PowerShell — it has access to Windows env/registry regardless of how Electron was launched
   try {
     const ps = `
 $found = $null
+$foundName = $null
 $lad = [Environment]::GetFolderPath('LocalApplicationData')
 $pf  = [Environment]::GetFolderPath('ProgramFiles')
 $pf86= [Environment]::GetFolderPath('ProgramFilesX86')
-$paths = @(
-  "$lad\\Programs\\Opera\\launcher.exe",
-  "$lad\\Programs\\Opera\\opera.exe",
-  "$lad\\Programs\\Opera GX\\launcher.exe",
-  "$lad\\Programs\\Opera GX\\opera.exe",
-  "$pf\\Opera\\launcher.exe",
-  "$pf\\Opera GX\\launcher.exe",
-  "$pf86\\Opera\\launcher.exe",
-  "$pf86\\Opera GX\\launcher.exe"
+$candidates = @(
+  @{ Name = "Google Chrome"; Paths = @("$pf\\Google\\Chrome\\Application\\chrome.exe", "$pf86\\Google\\Chrome\\Application\\chrome.exe", "$lad\\Google\\Chrome\\Application\\chrome.exe") },
+  @{ Name = "Opera"; Paths = @("$lad\\Programs\\Opera\\launcher.exe", "$lad\\Programs\\Opera\\opera.exe", "$pf\\Opera\\launcher.exe", "$pf86\\Opera\\launcher.exe") },
+  @{ Name = "Opera GX"; Paths = @("$lad\\Programs\\Opera GX\\launcher.exe", "$lad\\Programs\\Opera GX\\opera.exe", "$pf\\Opera GX\\launcher.exe", "$pf86\\Opera GX\\launcher.exe") },
+  @{ Name = "Microsoft Edge"; Paths = @("$pf\\Microsoft\\Edge\\Application\\msedge.exe", "$pf86\\Microsoft\\Edge\\Application\\msedge.exe", "$lad\\Microsoft\\Edge\\Application\\msedge.exe") },
+  @{ Name = "Brave Browser"; Paths = @("$pf\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$pf86\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$lad\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") }
 )
-foreach ($p in $paths) { if (Test-Path $p) { $found = $p; break } }
-if (-not $found) {
-  $cmd = Get-Command opera.exe -ErrorAction SilentlyContinue
-  if ($cmd) { $found = $cmd.Source }
+foreach ($candidate in $candidates) {
+  foreach ($p in $candidate.Paths) {
+    if (Test-Path $p) {
+      $found = $p
+      $foundName = $candidate.Name
+      break
+    }
+  }
+  if ($found) { break }
 }
 if (-not $found) {
-  $regKey = 'HKCU:\\SOFTWARE\\Clients\\StartMenuInternet\\OperaStable\\shell\\open\\command'
-  try {
-    $val = (Get-ItemProperty -Path $regKey -ErrorAction Stop).'(Default)'
-    $exe = ($val -replace '"','') -replace ' .*',''
-    if (Test-Path $exe) { $found = $exe }
-  } catch {}
+  $commands = @(
+    @{ Name = "Google Chrome"; Command = "chrome.exe" },
+    @{ Name = "Microsoft Edge"; Command = "msedge.exe" },
+    @{ Name = "Brave Browser"; Command = "brave.exe" },
+    @{ Name = "Opera"; Command = "opera.exe" }
+  )
+  foreach ($entry in $commands) {
+    $cmd = Get-Command $entry.Command -ErrorAction SilentlyContinue
+    if ($cmd) {
+      $found = $cmd.Source
+      $foundName = $entry.Name
+      break
+    }
+  }
 }
-if ($found) { Write-Output $found }
+if ($found) { Write-Output ($foundName + "|" + $found) }
 `;
     const result = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], {
       encoding: "utf8", timeout: 8000,
     }).trim();
 
-    if (result && fs.existsSync(result)) {
-      console.log("[opera] found at:", result);
-      return result;
+    const [name, browserPath] = result.split("|");
+    if (name && browserPath && fs.existsSync(browserPath)) {
+      console.log("[browser] found at:", browserPath);
+      return { name, path: browserPath };
     }
-    console.warn("[opera] PowerShell search returned nothing");
+    console.warn("[browser] PowerShell search returned nothing");
   } catch (err) {
-    console.warn("[opera] PowerShell search failed:", err.message);
+    console.warn("[browser] PowerShell search failed:", err.message);
   }
   return null;
 }
 
-/** Open a URL in Opera. Returns true if Opera was found and launched, false otherwise. */
-function openInOpera(url) {
-  const exe = findOperaExecutable();
-  if (!exe) return false;
+function openInSupportedBrowser(url) {
+  const browser = findSupportedBrowser();
+  if (!browser) return { ok: false, browser: null };
   try {
-    const child = spawn(exe, [url], { detached: true, stdio: "ignore" });
+    const child = spawn(browser.path, [url], { detached: true, stdio: "ignore" });
     child.unref();
-    return true;
+    return { ok: true, browser: browser.name };
   } catch (err) {
-    console.error("[opera] spawn failed:", err);
-    return false;
+    console.error("[browser] spawn failed:", err);
+    return { ok: false, browser: browser.name };
   }
 }
 
@@ -259,9 +273,10 @@ app.on("before-quit", () => {
   if (serverProcess) { serverProcess.kill(); serverProcess = null; }
 });
 
-// Opens a LinkedIn URL specifically in Opera (required for the capture extension).
-// Returns true if Opera was found and launched, false if Opera isn't installed.
+// Opens a LinkedIn URL in a supported Chromium browser so the RecruitMe extension can capture it.
 ipcMain.handle("recruitme:open-external", (_event, url) => {
-  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
-  return openInOpera(url);
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+    return { ok: false, browser: null };
+  }
+  return openInSupportedBrowser(url);
 });

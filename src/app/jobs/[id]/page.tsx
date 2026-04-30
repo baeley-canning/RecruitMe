@@ -73,7 +73,7 @@ interface Job {
 
 interface ElectronBridge {
   platform?: string;
-  openExternal?: (url: string) => Promise<boolean>;
+  openExternal?: (url: string) => Promise<{ ok: boolean; browser?: string | null } | boolean>;
 }
 
 function getElectronBridge(): ElectronBridge | null {
@@ -495,7 +495,8 @@ export default function JobDetailPage({
         }
 
         if (useExternalBrowser) {
-          const opened = await electron?.openExternal?.(candidate.linkedinUrl!);
+          const launchResult = await electron?.openExternal?.(candidate.linkedinUrl!);
+          const opened = typeof launchResult === "boolean" ? launchResult : Boolean(launchResult?.ok);
           if (!opened) {
             await fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(session.sessionId)}`, {
               method: "DELETE",
@@ -503,7 +504,10 @@ export default function JobDetailPage({
             }).catch(() => {});
             setFetchStatuses((prev) => ({
               ...prev,
-              [candidateId]: { state: "error", message: "Opera not found — install Opera and the RecruitMe extension (see LinkedIn Setup)" },
+              [candidateId]: {
+                state: "error",
+                message: "No supported browser found — install Chrome, Opera, Edge, or Brave and load the RecruitMe extension (see LinkedIn Setup)",
+              },
             }));
             clearCandidateStatus(candidateId, 6000, "error");
             return;

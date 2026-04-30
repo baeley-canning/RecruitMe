@@ -437,7 +437,8 @@ function extractStructuredSections(main) {
   return { parts, sectionKeys };
 }
 
-function collectProfileText(startUrl) {
+function collectProfileText(startUrl, options = {}) {
+  const { allowShort = false } = options;
   verifyCaptureTarget(startUrl);
 
   const main = document.querySelector("main");
@@ -449,7 +450,7 @@ function collectProfileText(startUrl) {
   const { parts: sections, sectionKeys } = extractStructuredSections(main);
   const profileText = cleanText([intro, ...sections].filter(Boolean).join("\n\n")).slice(0, 100000);
 
-  if (profileText.length < 200) {
+  if (!allowShort && profileText.length < 200) {
     throw new Error("Captured profile text was too short");
   }
 
@@ -621,9 +622,13 @@ async function captureProfile() {
     throw new Error("Page navigated during capture - will retry automatically");
   }
 
-  let capture = collectProfileText(startUrl);
+  let capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
-    return enrichWithExperienceDetails(capture, startUrl);
+    const enriched = await enrichWithExperienceDetails(capture, startUrl);
+    if (enriched.profileText.length < 200) {
+      throw new Error("Captured profile text did not contain enough usable profile text");
+    }
+    return enriched;
   }
 
   const expanded = await expandInlineSections(clicked, { visibleOnly: false, passes: 6 });
@@ -636,16 +641,23 @@ async function captureProfile() {
     throw new Error("Page navigated during capture - will retry automatically");
   }
 
-  capture = collectProfileText(startUrl);
+  capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
-    return enrichWithExperienceDetails(capture, startUrl);
+    const enriched = await enrichWithExperienceDetails(capture, startUrl);
+    if (enriched.profileText.length < 200) {
+      throw new Error("Captured profile text did not contain enough usable profile text");
+    }
+    return enriched;
   }
 
   await sleep(600);
-  capture = collectProfileText(startUrl);
+  capture = collectProfileText(startUrl, { allowShort: true });
 
   // Enrich with full work history from the /details/experience sub-page
   capture = await enrichWithExperienceDetails(capture, startUrl);
+  if (capture.profileText.length < 200) {
+    throw new Error("Captured profile text did not contain enough usable profile text");
+  }
   return capture;
 }
 

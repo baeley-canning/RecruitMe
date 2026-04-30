@@ -55,7 +55,7 @@ async function getServerBases() {
   return [...new Set(bases)];
 }
 
-function withTimeout(url, options = {}, timeoutMs = 4000) {
+function withTimeout(url, options = {}, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Request timed out")), timeoutMs);
     fetch(url, options)
@@ -80,7 +80,7 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
       ? overrides.timeoutMs
       : typeof options.timeoutMs === "number"
       ? options.timeoutMs
-      : 4000;
+      : 10000;
 
   let lastError = new Error("Could not connect to RecruitMe");
 

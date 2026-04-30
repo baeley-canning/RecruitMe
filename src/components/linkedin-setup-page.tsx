@@ -50,10 +50,10 @@ export function LinkedInSetupPage() {
             Download RecruitMe Extension (.zip)
           </a>
           <div className="space-y-2 text-sm text-slate-600">
-            <p className="font-medium text-slate-700">Load it into Opera or Chrome:</p>
+            <p className="font-medium text-slate-700">Load it into Chrome, Opera, Edge, or another Chromium browser:</p>
             <ol className="space-y-1.5 list-decimal list-inside">
               <li>Unzip the downloaded file</li>
-              <li>Go to <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">opera://extensions</code> (or <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">chrome://extensions</code>)</li>
+              <li>Go to <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">chrome://extensions</code> or your browser&apos;s extensions page</li>
               <li>Enable <strong>Developer mode</strong></li>
               <li>Click <strong>Load unpacked</strong> and select the unzipped folder</li>
             </ol>
@@ -87,7 +87,7 @@ export function LinkedInSetupPage() {
             </button>
           </div>
           <p className="text-sm text-slate-500">
-            Enter your RecruitMe username and password in the popup too — this lets you pick a job for manual imports.
+            The popup only needs your RecruitMe server URL. Manual capture reads the pending job from RecruitMe automatically.
           </p>
         </div>
       </div>
@@ -121,7 +121,7 @@ export function LinkedInSetupPage() {
       <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
         <p className="text-sm font-semibold text-emerald-800">RecruitMe must be open in the same browser</p>
         <p className="text-sm text-emerald-700 mt-1">
-          The extension and the app talk to each other through the browser. Keep your RecruitMe tab open in Opera or Chrome while capturing profiles.
+          For desktop auto-fetch, keep the extension loaded in a supported browser. RecruitMe talks to the extension through your server URL, so the app does not need to be open in that browser tab.
         </p>
       </div>
     </div>

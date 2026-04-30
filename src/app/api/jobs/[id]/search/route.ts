@@ -145,7 +145,6 @@ function candidateSearchText(result: SearchResult, profileText?: string | null, 
     result.headline,
     candidateLocation ?? result.location,
     result.snippet,
-    result.matchedQuery,
     profileText ?? result.fullText,
   ].filter(Boolean).join("\n");
 }
@@ -185,7 +184,7 @@ function buildProvisionalSearchScore(
     ...knockouts.filter((ko) => !baseMustHaves.some((mh) => mh.toLowerCase().includes(ko.toLowerCase().slice(0, 25)))),
   ].slice(0, 14);
   const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
-  const profileText = [result.name, result.headline, candidateLocation, result.snippet, result.matchedQuery].filter(Boolean).join("\n");
+  const profileText = [result.name, result.headline, candidateLocation, result.snippet].filter(Boolean).join("\n");
   const haystack = normaliseText(profileText);
 
   const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {

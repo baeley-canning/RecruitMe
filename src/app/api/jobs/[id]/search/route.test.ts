@@ -292,9 +292,9 @@ describe("search import route", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(res.status).toBe(200);
-    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(2);
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     const importedNames = dbMocks.prisma.candidate.upsert.mock.calls.map((call) => call[0].create.name);
-    expect(importedNames).toEqual(expect.arrayContaining(["Relevant Developer", "Query Matched"]));
+    expect(importedNames).toEqual(["Relevant Developer"]);
     expect(dbMocks.prisma.searchSession.create.mock.calls[0][0].data.queries).toContain("Sybase dba");
   });
 });
