@@ -27,6 +27,7 @@ import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/sear
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
@@ -55,10 +56,6 @@ function looksLikePersonName(s: string): boolean {
   if (ORG_PATTERNS.some((p) => p.test(s))) return false;
   const words = s.trim().split(/\s+/).filter(Boolean);
   return words.length >= 2 && words.length <= 6;
-}
-
-function hasFullProfile(profileText: string | null | undefined, profileCapturedAt?: Date | null) {
-  return (profileText?.trim().length ?? 0) >= 2000;
 }
 
 function cleanQuery(q: string): string {
@@ -821,7 +818,7 @@ async function runSearchBackground(args: {
     const allNew = allNormed.filter((r) => !existingByUrl.has(r.linkedinUrl));
     const upgradeExisting = allNormed.filter((r) => {
       const existing = existingByUrl.get(r.linkedinUrl);
-      return Boolean(existing && poolMap.has(r.linkedinUrl) && !hasFullProfile(existing.profileText, existing.profileCapturedAt));
+      return Boolean(existing && poolMap.has(r.linkedinUrl) && !hasFullCandidateProfile(existing));
     });
     type SearchWorkItem = { result: SearchResult; existingCandidate?: typeof existingCandidates[number] };
     const workItems: SearchWorkItem[] = [

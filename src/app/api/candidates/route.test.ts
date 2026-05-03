@@ -24,8 +24,9 @@ describe("candidates library API", () => {
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
   });
 
-  it("excludes short snippets and omits profileText from the response", async () => {
+  it("excludes short snippets, keeps meaningful captured profiles, and omits profileText", async () => {
     const now = new Date();
+    const capturedProfile = "Captured profile text. ".repeat(35);
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
       {
         id: "short-1",
@@ -65,7 +66,7 @@ describe("candidates library API", () => {
         headline: "Designer",
         location: "Wellington",
         linkedinUrl: "https://www.linkedin.com/in/captured/",
-        profileText: "Manually captured profile",
+        profileText: capturedProfile,
         matchScore: 72,
         source: "extension",
         status: "new",
@@ -81,7 +82,7 @@ describe("candidates library API", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.map((row: { id: string }) => row.id).sort()).toEqual(["full-1"]);
+    expect(body.map((row: { id: string }) => row.id).sort()).toEqual(["captured-short", "full-1"]);
     expect(body[0]).not.toHaveProperty("profileText");
   });
 });

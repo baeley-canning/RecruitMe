@@ -9,8 +9,8 @@ import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 /**
  * GET /api/candidates
  *
- * Returns the candidates library: all unique people with a full captured profile
- * (profileText >= 2000 chars), org-scoped, deduplicated by LinkedIn URL.
+ * Returns the candidates library: all unique people with a meaningful reusable
+ * profile, org-scoped, deduplicated by LinkedIn URL.
  *
  * For each unique person we return the most recently captured Candidate row
  * plus file metadata (no file data payload).
@@ -53,7 +53,7 @@ export async function GET() {
     },
   });
 
-  // Manual candidates (CV upload) bypass the 2000-char threshold — their CVs are often shorter
+  // Manual candidates (CV upload) bypass captured-profile thresholds because their CVs are often shorter.
   const withProfile = rows.filter((row) => row.source === "manual" || hasFullCandidateProfile(row));
 
   // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.

@@ -16,6 +16,7 @@
  */
 
 import { prisma } from "./db";
+import { hasFullCandidateProfile } from "./candidate-profile";
 import { normaliseLinkedInUrl } from "./linkedin";
 
 // ---------------------------------------------------------------------------
@@ -98,7 +99,7 @@ export interface TalentPoolEntry {
  * orgId — when provided, only considers candidates whose job belongs to that
  * org (enforces org isolation). Pass null to search across all orgs (owner).
  *
- * "Full profile" = profileText with at least 500 characters.
+ * "Full profile" = enough captured text to be reusable for another job.
  * When multiple Candidate rows exist for the same URL, we prefer the one
  * with the most recent profileCapturedAt (or createdAt as fallback).
  */
@@ -148,7 +149,8 @@ export async function buildTalentPoolMap(
   const result = new Map<string, TalentPoolEntry>();
 
   for (const row of rows) {
-    if (!row.linkedinUrl || !row.profileText || row.profileText.length < 2000) continue;
+    const profileText = row.profileText;
+    if (!row.linkedinUrl || !profileText || !hasFullCandidateProfile(row)) continue;
 
     const normUrl = normaliseLinkedInUrl(row.linkedinUrl);
     if (!normMap.has(normUrl)) continue; // Not in the requested set
@@ -169,7 +171,7 @@ export async function buildTalentPoolMap(
       name: row.name,
       headline: row.headline,
       location: row.location,
-      profileText: row.profileText,
+      profileText,
       profileCapturedAt: capturedAt,
       isFresh: ageMs <= freshMs,
     });

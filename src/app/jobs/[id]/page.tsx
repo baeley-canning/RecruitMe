@@ -34,6 +34,7 @@ import { JobAdModal } from "@/components/job/job-ad-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
 import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
+import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 
 
 interface Candidate {
@@ -1298,7 +1299,7 @@ ${toHtml(job.rawJd)}
         {/* Needs-profile notice — computed from live candidate list */}
         {(() => {
           const needsFetch = job.candidates.filter(
-            (c) => c.linkedinUrl && (!c.profileText || c.profileText.trim().length < 2000)
+            (c) => c.linkedinUrl && !hasFullCandidateProfile(c)
           );
           const n = needsFetch.length;
           if (n === 0) return null;

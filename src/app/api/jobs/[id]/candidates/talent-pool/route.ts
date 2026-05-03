@@ -20,6 +20,7 @@ import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { locationMatches, expandLocationKeywords } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 
 const BodySchema = z.object({
   minScore:  z.number().int().min(0).max(100).default(0),
@@ -103,7 +104,7 @@ export async function POST(
   // 3. Deduplicate by normalised LinkedIn URL, keep the freshest profile per URL.
   const bestByUrl = new Map<string, typeof poolRows[number]>();
   for (const row of poolRows) {
-    if (!row.linkedinUrl || !row.profileText || row.profileText.length < 2000) continue;
+    if (!row.linkedinUrl || !hasFullCandidateProfile(row)) continue;
     let normUrl: string;
     try { normUrl = normaliseLinkedInUrl(row.linkedinUrl); } catch { continue; }
     if (existingUrls.has(normUrl) || existingUrls.has(row.linkedinUrl)) continue;
