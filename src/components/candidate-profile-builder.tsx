@@ -2,7 +2,7 @@
 
 import JSZip from "jszip";
 import { useEffect, useMemo, useState } from "react";
-import { Copy, FileDown, Plus, Printer, RotateCcw, Trash2, Wand2 } from "lucide-react";
+import { Copy, FileDown, Loader2, Plus, Printer, RotateCcw, Trash2, Upload, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +56,13 @@ interface ProfileDraft {
   workHistory: WorkItem[];
   educationTitle: "Qualifications" | "Certifications";
   education: EducationItem[];
+}
+
+type SourceSlot = "cv" | "interview";
+
+interface UploadedSource {
+  name: string;
+  charCount: number;
 }
 
 const STORAGE_KEY = "recruitme_candidate_profile_builder_v1";
@@ -356,6 +363,24 @@ function safeFileName(value: string) {
   return (value || "Candidate Profile").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function sourceSlotLabel(slot: SourceSlot) {
+  return slot === "cv" ? "CV" : "Interview Notes";
+}
+
+function sourceSectionPattern(slot: SourceSlot) {
+  return new RegExp(`\\n*--- RecruitMe Source: ${sourceSlotLabel(slot)} \\| [\\s\\S]*?--- End RecruitMe Source: ${sourceSlotLabel(slot)} ---\\n*`, "g");
+}
+
+function upsertSourceSection(current: string, slot: SourceSlot, filename: string, text: string) {
+  const cleaned = current.replace(sourceSectionPattern(slot), "\n\n").trim();
+  const section = `--- RecruitMe Source: ${sourceSlotLabel(slot)} | ${filename} ---\n${text.trim()}\n--- End RecruitMe Source: ${sourceSlotLabel(slot)} ---`;
+  return [cleaned, section].filter(Boolean).join("\n\n").trim();
+}
+
+function removeSourceSection(current: string, slot: SourceSlot) {
+  return current.replace(sourceSectionPattern(slot), "\n\n").trim();
+}
+
 function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <label className="block">
@@ -385,6 +410,61 @@ function TextArea({ label, value, onChange, rows = 5, placeholder }: { label: st
   );
 }
 
+function SourceUploadSlot({
+  slot,
+  source,
+  uploading,
+  disabled,
+  onUpload,
+  onRemove,
+}: {
+  slot: SourceSlot;
+  source?: UploadedSource;
+  uploading: boolean;
+  disabled: boolean;
+  onUpload: (slot: SourceSlot, file: File) => void;
+  onRemove: (slot: SourceSlot) => void;
+}) {
+  return (
+    <label className={cn(
+      "flex items-center gap-3 border border-dashed rounded-lg px-4 py-3 cursor-pointer transition-colors",
+      source ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50",
+      disabled && "opacity-60 cursor-not-allowed"
+    )}>
+      <input
+        type="file"
+        accept=".pdf,.doc,.docx,.txt"
+        className="sr-only"
+        disabled={disabled}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) onUpload(slot, file);
+        }}
+      />
+      {uploading ? <Loader2 className="w-4 h-4 text-blue-600 animate-spin" /> : <Upload className="w-4 h-4 text-slate-500" />}
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs font-semibold text-slate-700">{sourceSlotLabel(slot)}</span>
+        <span className="block text-xs text-slate-500 truncate">
+          {uploading ? "Extracting text..." : source ? `${source.name} (${source.charCount.toLocaleString()} chars)` : "Upload PDF, Word, or TXT"}
+        </span>
+      </span>
+      {source && (
+        <button
+          type="button"
+          className="text-slate-400 hover:text-slate-700"
+          onClick={(event) => {
+            event.preventDefault();
+            onRemove(slot);
+          }}
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+    </label>
+  );
+}
+
 export function CandidateProfileBuilder() {
   const [draft, setDraft] = useState<ProfileDraft>(initialDraft);
   const [settings, setSettings] = useState<ProfileSettings>(initialSettings);
@@ -393,6 +473,9 @@ export function CandidateProfileBuilder() {
   const [downloadStatus, setDownloadStatus] = useState<"idle" | "working" | "error">("idle");
   const [aiStatus, setAiStatus] = useState<"idle" | "working" | "error">("idle");
   const [discardedFacts, setDiscardedFacts] = useState(0);
+  const [uploadedSources, setUploadedSources] = useState<Partial<Record<SourceSlot, UploadedSource>>>({});
+  const [uploadingSlot, setUploadingSlot] = useState<SourceSlot | null>(null);
+  const [uploadError, setUploadError] = useState("");
 
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -499,6 +582,33 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
   const applySource = () => {
     const parsed = parsePopulatedProfile(sourceText);
     setDraft((prev) => ({ ...prev, ...parsed }));
+  };
+
+  const uploadSourceDocument = async (slot: SourceSlot, file: File) => {
+    setUploadingSlot(slot);
+    setUploadError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/upload", { method: "POST", body: form });
+      const data = await response.json() as { text?: string; error?: string };
+      if (!response.ok || !data.text?.trim()) throw new Error(data.error ?? "Could not extract text from this document");
+      setSourceText((prev) => upsertSourceSection(prev, slot, file.name, data.text ?? ""));
+      setUploadedSources((prev) => ({ ...prev, [slot]: { name: file.name, charCount: data.text?.trim().length ?? 0 } }));
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Could not extract text from this document");
+    } finally {
+      setUploadingSlot(null);
+    }
+  };
+
+  const removeSourceDocument = (slot: SourceSlot) => {
+    setSourceText((prev) => removeSourceSection(prev, slot));
+    setUploadedSources((prev) => {
+      const next = { ...prev };
+      delete next[slot];
+      return next;
+    });
   };
 
   const draftWithAi = async () => {
@@ -630,7 +740,26 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
               </div>
             </div>
             <div className="p-5 space-y-4">
-              <TextArea label="Paste completed profile text" value={sourceText} onChange={setSourceText} rows={4} placeholder="Paste a previous candidate profile to prefill the builder." />
+              <div className="grid grid-cols-2 gap-3">
+                <SourceUploadSlot
+                  slot="cv"
+                  source={uploadedSources.cv}
+                  uploading={uploadingSlot === "cv"}
+                  disabled={Boolean(uploadingSlot)}
+                  onUpload={uploadSourceDocument}
+                  onRemove={removeSourceDocument}
+                />
+                <SourceUploadSlot
+                  slot="interview"
+                  source={uploadedSources.interview}
+                  uploading={uploadingSlot === "interview"}
+                  disabled={Boolean(uploadingSlot)}
+                  onUpload={uploadSourceDocument}
+                  onRemove={removeSourceDocument}
+                />
+              </div>
+              {uploadError && <p className="text-xs font-medium text-red-600">{uploadError}</p>}
+              <TextArea label="Source text" value={sourceText} onChange={setSourceText} rows={6} placeholder="Upload CV/interview documents, paste notes, or paste a previous candidate profile. AI drafting only uses facts supported by this source text." />
               {aiStatus === "error" && <p className="text-xs font-medium text-red-600">AI drafting failed. The source text was not applied.</p>}
               {discardedFacts > 0 && <p className="text-xs font-medium text-amber-700">{discardedFacts} unsupported AI-generated fact{discardedFacts === 1 ? "" : "s"} discarded because the evidence quote was not found in the source.</p>}
               <div className="grid grid-cols-2 gap-3">
