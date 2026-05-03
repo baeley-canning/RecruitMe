@@ -797,8 +797,7 @@ function ProfileDrawer({
   const capturedAt = candidate.profileCapturedAt ? new Date(candidate.profileCapturedAt) : null;
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
   const profileChars = candidate.profileText?.trim().length ?? 0;
-  const hasViewableProfile = profileChars >= 500;
-  const hasGoodProfile = profileChars >= 2000;
+  const hasFetchedProfile = Boolean(candidate.profileCapturedAt || (candidate.source === "extension" && profileChars > 0));
 
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
@@ -912,7 +911,7 @@ function ProfileDrawer({
                 <span className="text-[11px] text-slate-400 flex items-center gap-1">
                   <Loader2 className="w-3 h-3 animate-spin" />Fetching…
                 </span>
-              ) : hasGoodProfile ? (
+              ) : hasFetchedProfile ? (
                 <button
                   onClick={() => onFetchProfile(candidate.id)}
                   className="text-[11px] text-slate-400 hover:text-slate-600 flex items-center gap-1 transition-colors"
@@ -1123,8 +1122,8 @@ export const CandidateCard = memo(function CandidateCard({
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
   const radarDimensions = getRadarDimensions(breakdown, matchReason?.dimensions);
   const profileChars = candidate.profileText?.trim().length ?? 0;
+  const hasFetchedProfile = Boolean(candidate.profileCapturedAt || hasExtensionCapture);
   const hasViewableProfile = profileChars >= 500;
-  const hasGoodProfile = profileChars >= 2000;
 
   // Use breakdown's recruiter_summary as the primary display summary when available
   const displaySummary = breakdown?.recruiter_summary ?? matchReason?.summary ?? null;
@@ -1719,13 +1718,13 @@ export const CandidateCard = memo(function CandidateCard({
                   </Button>
                 )}
 
-                {/* Fetch profile button — prominent when profile missing/thin, subtle icon when good */}
+                {/* Fetch profile button — prominent until first successful capture, subtle afterwards */}
                 {candidate.linkedinUrl && (
                   fetchingProfile ? (
                     <Button size="sm" variant="ghost" loading disabled className="text-slate-400">
                       Fetching…
                     </Button>
-                  ) : hasGoodProfile ? (
+                  ) : hasFetchedProfile ? (
                     <Button
                       size="sm"
                       variant="ghost"
