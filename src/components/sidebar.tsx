@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
@@ -197,6 +197,16 @@ export function Sidebar({ jobs }: SidebarProps) {
             <Library className="w-4 h-4" />
           </Link>
           <Link
+            href="/candidate-profiles"
+            className={cn(
+              "p-2 rounded-lg transition-colors",
+              pathname === "/candidate-profiles" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
+            )}
+            title="Candidate Profiles"
+          >
+            <ClipboardList className="w-4 h-4" />
+          </Link>
+          <Link
             href="/jobs/new"
             className="p-2 rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-500"
             title="New job"
@@ -257,6 +267,18 @@ export function Sidebar({ jobs }: SidebarProps) {
           >
             <Library className="w-4 h-4" />
             Candidates Library
+          </Link>
+          <Link
+            href="/candidate-profiles"
+            className={cn(
+              "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
+              pathname === "/candidate-profiles"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            )}
+          >
+            <ClipboardList className="w-4 h-4" />
+            Candidate Profiles
           </Link>
           <Link
             href="/linkedin-setup"
