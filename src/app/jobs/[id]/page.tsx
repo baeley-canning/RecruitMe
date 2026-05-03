@@ -47,6 +47,8 @@ interface Candidate {
   profileCapturedAt: string | null;
   matchScore: number | null;
   matchReason: string | null;
+  fetchPriorityScore: number | null;
+  fetchPriorityReason: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
   scoreBreakdown: string | null;
@@ -789,6 +791,12 @@ ${toHtml(job.rawJd)}
         );
       })
       .sort((a, b) => {
+        const aInitialLead = !a.profileCapturedAt && a.fetchPriorityScore != null;
+        const bInitialLead = !b.profileCapturedAt && b.fetchPriorityScore != null;
+        if (aInitialLead && bInitialLead) {
+          const priorityDiff = (b.fetchPriorityScore ?? -1) - (a.fetchPriorityScore ?? -1);
+          if (priorityDiff !== 0) return priorityDiff;
+        }
         const scoreDiff = (b.matchScore ?? -1) - (a.matchScore ?? -1);
         if (scoreDiff !== 0) return scoreDiff;
         return (b.acceptanceScore ?? -1) - (a.acceptanceScore ?? -1);

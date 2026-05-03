@@ -72,6 +72,8 @@ model Candidate {
   profileTextHash String?  // Score-context cache key; skip re-score only if profile and job inputs are unchanged
   matchScore       Int?
   matchReason      String?  // AI JSON: { summary, strengths, gaps }
+  fetchPriorityScore  Int?
+  fetchPriorityReason String?  // JSON: why this search hit is/isn't worth fetching before full scoring
   acceptanceScore  Int?
   acceptanceReason String?  // AI JSON: { likelihood, headline, signals, summary }
   scoreBreakdown   String?  // Structured scoring JSON: ScoreBreakdown type

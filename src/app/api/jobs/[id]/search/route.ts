@@ -28,6 +28,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
+import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
@@ -821,6 +822,10 @@ async function runSearchBackground(args: {
       return Boolean(existing && poolMap.has(r.linkedinUrl) && !hasFullCandidateProfile(existing));
     });
     type SearchWorkItem = { result: SearchResult; existingCandidate?: typeof existingCandidates[number] };
+    type PrioritisedSearchWorkItem = SearchWorkItem & {
+      fetchPriorityScore: number;
+      fetchPriorityReason: string;
+    };
     const workItems: SearchWorkItem[] = [
       ...upgradeExisting.map((result) => ({
         result,
@@ -848,8 +853,27 @@ async function runSearchBackground(args: {
     // junior mismatches, and broad-search results with no specialist stack signal.
     // NZ candidates with any location (including generic "New Zealand") pass through —
     // applyLocationFitOverride handles fine-grained location scoring after fetch.
-    const toScore = workItems
-      .filter(({ result: r }) => {
+    const toScore: PrioritisedSearchWorkItem[] = workItems
+      .map((workItem) => {
+        const r = workItem.result;
+        const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+        const poolEntry = poolMap.get(normUrl);
+        const candidateLocation = poolEntry?.location ?? r.location ?? null;
+        const profileText = poolEntry?.profileText ?? r.fullText ?? null;
+        const priority = computeFetchPriority({
+          result: r,
+          parsedRole,
+          candidateLocation,
+          profileText,
+          isFromTalentPool: Boolean(poolEntry),
+        });
+        return {
+          ...workItem,
+          fetchPriorityScore: priority.score,
+          fetchPriorityReason: serialiseFetchPriority(priority.reason),
+        };
+      })
+      .filter(({ result: r, fetchPriorityScore }) => {
         if (!looksLikePersonName(r.name)) return false;
         const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
         const poolEntry = poolMap.get(normUrl);
@@ -865,8 +889,13 @@ async function runSearchBackground(args: {
           skippedSourceGate++;
           return false;
         }
+        if (!poolEntry && !r.fullText && fetchPriorityScore < 45) {
+          skippedSourceGate++;
+          return false;
+        }
         return true;
       })
+      .sort((a, b) => b.fetchPriorityScore - a.fetchPriorityScore)
       .slice(0, Math.min(Math.max(maxResults * 3, maxResults + 15), 100));
 
     console.log(`[search] ${toScore.length} candidates to score`);
@@ -882,6 +911,8 @@ async function runSearchBackground(args: {
         batch.map(async (workItem) => {
           const r = workItem.result;
           const existingCandidate = workItem.existingCandidate;
+          const fetchPriorityScore = workItem.fetchPriorityScore;
+          const fetchPriorityReason = workItem.fetchPriorityReason;
           const normUrl     = normaliseLinkedInUrl(r.linkedinUrl);
           const poolEntry   = poolMap.get(normUrl);
           const candidateLocation = poolEntry?.location ?? r.location ?? null;
@@ -938,7 +969,7 @@ async function runSearchBackground(args: {
             locationFitScore = fallback.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(fallback));
           }
-          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore };
+          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason };
         })
       );
 
@@ -946,7 +977,7 @@ async function runSearchBackground(args: {
 
       for (const item of results) {
         if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore } = item;
+        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason } = item;
 
         // Hard location cutoff: drop candidates we KNOW are far out-of-area.
         // Only applies when candidateLocation is set — if it's empty, the AI had no location
@@ -976,6 +1007,8 @@ async function runSearchBackground(args: {
                 linkedinUrl: normUrl,
                 profileText: profileText || null,
                 profileTextHash: null,
+                fetchPriorityScore,
+                fetchPriorityReason,
                 source: isFromPool ? "talent_pool" : r.source,
                 ...(isFromPool && poolEntry?.profileCapturedAt
                   ? { profileCapturedAt: poolEntry.profileCapturedAt }
@@ -1001,6 +1034,8 @@ async function runSearchBackground(args: {
               linkedinUrl: normUrl,
               profileText: profileText || null,
               profileTextHash: null,
+              fetchPriorityScore,
+              fetchPriorityReason,
               source: isFromPool ? "talent_pool" : r.source,
               status: "new",
               ...(isFromPool && poolEntry?.profileCapturedAt
@@ -1008,7 +1043,11 @@ async function runSearchBackground(args: {
                 : {}),
               ...scoreData,
             },
-            update: scoreData, // refresh score if already exists
+            update: {
+              ...scoreData,
+              fetchPriorityScore,
+              fetchPriorityReason,
+            }, // refresh score if already exists
           });
           saved.push(candidate as SavedCandidate);
           if (isFromPool) fromPool++;

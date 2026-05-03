@@ -21,6 +21,7 @@ import {
   Upload,
   Download,
   Trash2,
+  Gauge,
 } from "lucide-react";
 
 function LinkedInIcon({ className }: { className?: string }) {
@@ -78,6 +79,8 @@ interface Candidate {
   profileCapturedAt?: string | null;
   matchScore: number | null;
   matchReason: string | null;
+  fetchPriorityScore?: number | null;
+  fetchPriorityReason?: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
   scoreBreakdown: string | null;
@@ -92,6 +95,14 @@ interface Candidate {
 interface StatusEvent {
   status: string;
   changedAt: string;
+}
+
+interface FetchPriorityReason {
+  label?: string;
+  summary?: string;
+  signals?: string[];
+  risks?: string[];
+  matchedTerms?: string[];
 }
 
 interface CandidateCardProps {
@@ -406,6 +417,84 @@ function ConfidenceBadge({ breakdown }: { breakdown: ScoreBreakdown }) {
               />
             </div>
           </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function FetchPriorityBadge({
+  score,
+  reason,
+}: {
+  score: number | null | undefined;
+  reason: FetchPriorityReason | null;
+}) {
+  const [show, setShow] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+
+  if (score == null) return null;
+
+  const cfg =
+    score >= 80
+      ? { pill: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Strong lead" }
+      : score >= 65
+        ? { pill: "bg-blue-50 text-blue-700 border-blue-200", label: "Worth fetching" }
+        : score >= 50
+          ? { pill: "bg-amber-50 text-amber-700 border-amber-200", label: "Possible lead" }
+          : { pill: "bg-slate-100 text-slate-500 border-slate-200", label: "Weak lead" };
+
+  return (
+    <>
+      <div
+        ref={ref}
+        onMouseEnter={() => {
+          if (ref.current) {
+            const rect = ref.current.getBoundingClientRect();
+            setPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+          }
+          setShow(true);
+        }}
+        onMouseLeave={() => setShow(false)}
+        className={cn(
+          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border font-medium leading-none cursor-default select-none",
+          cfg.pill
+        )}
+      >
+        <Gauge className="w-3 h-3" />
+        Fetch {score}%
+      </div>
+
+      {show && (
+        <div
+          className="w-72 bg-slate-900 text-white rounded-xl shadow-2xl overflow-hidden"
+          style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 9999 }}
+          onMouseEnter={() => setShow(true)}
+          onMouseLeave={() => setShow(false)}
+        >
+          <div className="px-4 pt-3 pb-2 border-b border-slate-700">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-0.5">Fetch Priority</p>
+            <p className="text-sm font-medium text-white">{reason?.label ?? cfg.label}</p>
+            <p className="text-xs text-slate-400 mt-1">
+              Lead quality from search evidence. This is not the candidate match score.
+            </p>
+          </div>
+          {reason?.summary && (
+            <div className="px-4 py-2 border-b border-slate-700">
+              <p className="text-xs text-slate-300 leading-relaxed">{reason.summary}</p>
+            </div>
+          )}
+          {(reason?.signals?.length || reason?.risks?.length) && (
+            <div className="px-4 py-2.5 space-y-2">
+              {reason?.signals?.slice(0, 4).map((signal, i) => (
+                <p key={`s-${i}`} className="text-xs text-slate-300 leading-snug">+ {signal}</p>
+              ))}
+              {reason?.risks?.slice(0, 3).map((risk, i) => (
+                <p key={`r-${i}`} className="text-xs text-amber-200 leading-snug">- {risk}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </>
@@ -792,6 +881,10 @@ function ProfileDrawer({
     () => safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null),
     [candidate.acceptanceReason]
   );
+  const fetchPriorityReason = useMemo(
+    () => safeParseJson<FetchPriorityReason | null>(candidate.fetchPriorityReason ?? null, null),
+    [candidate.fetchPriorityReason]
+  );
   const displaySummary = breakdown?.recruiter_summary ?? matchReason?.summary ?? null;
   const captureLabel = candidateSourceLabel(candidate);
   const capturedAt = candidate.profileCapturedAt ? new Date(candidate.profileCapturedAt) : null;
@@ -894,6 +987,9 @@ function ProfileDrawer({
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <ScoreBadge score={candidate.matchScore} size="sm" />
+              {!hasFetchedProfile && (
+                <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
+              )}
               {candidate.acceptanceScore != null && (
                 <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
               )}
@@ -1117,6 +1213,10 @@ export const CandidateCard = memo(function CandidateCard({
     () => safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null),
     [candidate.acceptanceReason]
   );
+  const fetchPriorityReason = useMemo(
+    () => safeParseJson<FetchPriorityReason | null>(candidate.fetchPriorityReason ?? null, null),
+    [candidate.fetchPriorityReason]
+  );
   const captureLabel = candidateSourceLabel(candidate);
   const hasExtensionCapture = candidate.source === "extension" && !!candidate.profileText;
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
@@ -1214,6 +1314,9 @@ export const CandidateCard = memo(function CandidateCard({
               <div className="flex items-center gap-2">
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
+                {!hasFetchedProfile && (
+                  <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
+                )}
                 {/* Score badge with radar tooltip on hover */}
                 <div
                   ref={scoreBadgeRef}

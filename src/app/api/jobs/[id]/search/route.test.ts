@@ -127,7 +127,7 @@ describe("search import route", () => {
           headline: "Full-stack Engineer",
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/taylor-morgan/",
-          snippet: "Taylor Morgan - Full-stack Engineer - Wellington, New Zealand",
+          snippet: "Taylor Morgan - Full-stack Engineer - Wellington, New Zealand. React and Ruby on Rails delivery experience.",
           source: "serpapi",
         },
       ],
@@ -157,6 +157,8 @@ describe("search import route", () => {
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("serpapi");
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.scoreBreakdown).toContain("\"version\":2");
+    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityScore).toBeGreaterThanOrEqual(45);
+    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityReason).toContain("fetch");
   });
 
   it("upgrades an existing snippet candidate when a full talent-pool profile exists", async () => {
@@ -203,6 +205,7 @@ describe("search import route", () => {
       data: expect.objectContaining({
         profileText: fullProfile,
         source: "talent_pool",
+        fetchPriorityScore: expect.any(Number),
         scoreBreakdown: expect.stringContaining("\"version\":2"),
         profileTextHash: expect.any(String),
       }),
