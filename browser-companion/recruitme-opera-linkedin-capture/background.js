@@ -303,19 +303,35 @@ async function prepareTabForCapture(tabId, linkedinUrl) {
   return tab;
 }
 
+// Green-tick badge on the extension icon — visible even with macOS notifications
+// silenced. Clears after 8 seconds unless an error overwrites it first.
+function showSuccessBadge() {
+  void (async () => {
+    await chrome.action.setBadgeText({ text: "✓" });
+    await chrome.action.setBadgeBackgroundColor({ color: "#16a34a" });
+    await chrome.action.setTitle({ title: "RecruitMe — Profile captured successfully" });
+    await sleep(8000);
+    const current = await chrome.action.getBadgeText({});
+    if (current === "✓") {
+      await chrome.action.setBadgeText({ text: "" });
+      await chrome.action.setTitle({ title: "RecruitMe LinkedIn Capture" });
+    }
+  })().catch(() => {});
+}
+
 async function notifyCaptureDone(candidateName) {
   const name = candidateName || "Profile";
+  showSuccessBadge();
   try {
     await chrome.notifications.create(`recruitme-done-${Date.now()}`, {
       type: "basic",
-      iconUrl:
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAA7AAAAOwBeShxvQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAHpSURBVFiF7ZaxbtswEIa/o2zHhiEjQAYDHQIkQ4cCHQIUKFC0Q4c+QR8gj9CXyFP0EfoEfYU+Q5cgQ4ECBQoUCIokJMWS2CEt2ZItWxIlWxIlkSSboqoqVdX9cM/x7o47AgCO4zgOgJQSwB4ASinlnHMAOI7jOE8ppZQCAHgAIgB4AKICeAAgAnhRSnkDIOecAwDgnHMOAAB6AJ4BeALwBEAPwBMAD0AppdwB4A4AW2ttbQCklFJKKaWUUkoppZRSSilmAGCttbW2tpQCAIAQQgghhBBCCCGEEEIIIYQQQgghhBBCCCEAQAghgBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQggh5H8HYIwxxhhjjDHGGGOMMcYYY4wxxhhjjDHGGAAAgAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQyY7QAAAAASUVORK5CYII=",
+      iconUrl: "icon48.png",
       title: "RecruitMe — Profile captured",
-      message: `${name} has been captured and scored.`,
+      message: `${name} saved. You can close the LinkedIn tab.`,
       priority: 2,
     });
   } catch {
-    // Notification permission not granted — not critical
+    // macOS notifications may be suppressed — badge is the fallback
   }
 }
 
