@@ -1,5 +1,6 @@
 "use client";
 
+import JSZip from "jszip";
 import { useEffect, useMemo, useState } from "react";
 import { Copy, FileDown, Plus, Printer, RotateCcw, Trash2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,16 @@ interface PersonBlock {
   name: string;
   email: string;
   mobile: string;
+}
+
+interface ClientManager extends PersonBlock {
+  id: string;
+  label: string;
+}
+
+interface ProfileSettings {
+  candidateManager: PersonBlock;
+  clientManagers: ClientManager[];
 }
 
 interface WorkItem {
@@ -37,8 +48,9 @@ interface ProfileDraft {
   role: string;
   dateReferred: string;
   dateAvailable: string;
-  consultant: PersonBlock;
-  candidateManager: PersonBlock;
+  clientManagerId: string;
+  consultant?: PersonBlock;
+  candidateManager?: PersonBlock;
   executiveSummary: string;
   skillGroups: SkillGroup[];
   workHistory: WorkItem[];
@@ -47,6 +59,7 @@ interface ProfileDraft {
 }
 
 const STORAGE_KEY = "recruitme_candidate_profile_builder_v1";
+const SETTINGS_KEY = "recruitme_candidate_profile_settings_v1";
 const TERMS_TEXT =
   "Interview of candidates referred by placeMe Recruitment Ltd. shall be deemed acceptance of our standard terms of business or agreed terms of business and agreement to pay the relevant agency fee for such candidates employed by the organisation to whom the referral was made or any other organisation or person associated with it.";
 
@@ -66,6 +79,14 @@ function blankSkillGroup(title = ""): SkillGroup {
   return { id: uid(), title, skills: "" };
 }
 
+function blankPerson(): PersonBlock {
+  return { name: "", email: "", mobile: "" };
+}
+
+function blankClientManager(label = "Client Manager"): ClientManager {
+  return { id: uid(), label, ...blankPerson() };
+}
+
 function todayLong() {
   return new Intl.DateTimeFormat("en-NZ", {
     weekday: "long",
@@ -80,8 +101,7 @@ const initialDraft: ProfileDraft = {
   role: "",
   dateReferred: todayLong(),
   dateAvailable: "",
-  consultant: { name: "", email: "", mobile: "" },
-  candidateManager: { name: "", email: "", mobile: "" },
+  clientManagerId: "",
   executiveSummary: "",
   skillGroups: [
     blankSkillGroup("Data Platforms & Warehousing"),
@@ -91,6 +111,11 @@ const initialDraft: ProfileDraft = {
   workHistory: [blankWork()],
   educationTitle: "Qualifications",
   education: [blankEducation()],
+};
+
+const initialSettings: ProfileSettings = {
+  candidateManager: blankPerson(),
+  clientManagers: [blankClientManager("Client Manager 1"), blankClientManager("Client Manager 2")],
 };
 
 function splitLines(value: string) {
@@ -144,7 +169,7 @@ function parsePopulatedProfile(text: string): Partial<ProfileDraft> {
   };
 }
 
-function plainText(draft: ProfileDraft) {
+function plainText(draft: ProfileDraft, clientManager: PersonBlock, candidateManager: PersonBlock) {
   const lines = [
     "Candidate Profile",
     "",
@@ -154,14 +179,14 @@ function plainText(draft: ProfileDraft) {
     `Date Available: ${draft.dateAvailable}`,
     "",
     "Your Consultant:",
-    draft.consultant.name,
-    draft.consultant.email,
-    draft.consultant.mobile,
+    clientManager.name,
+    clientManager.email,
+    clientManager.mobile,
     "",
     "Your Candidate Manager:",
-    draft.candidateManager.name,
-    draft.candidateManager.email,
-    draft.candidateManager.mobile,
+    candidateManager.name,
+    candidateManager.email,
+    candidateManager.mobile,
     "",
     TERMS_TEXT,
     "",
@@ -196,6 +221,141 @@ function htmlEscape(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function xmlEscape(value: string) {
+  return htmlEscape(value).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function textRun(value: string, options: { bold?: boolean } = {}) {
+  const safe = xmlEscape(value || " ");
+  const preserve = /^\s|\s$/.test(value) ? ' xml:space="preserve"' : "";
+  return `<w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/><w:szCs w:val="20"/>${options.bold ? "<w:b/><w:bCs/>" : ""}</w:rPr><w:t${preserve}>${safe}</w:t></w:r>`;
+}
+
+function paragraphXml(value = "", styleId = "BodyText2") {
+  return `<w:p><w:pPr><w:pStyle w:val="${styleId}"/></w:pPr>${textRun(value)}</w:p>`;
+}
+
+function blankParagraphXml() {
+  return "<w:p><w:pPr><w:pStyle w:val=\"BodyText2\"/></w:pPr></w:p>";
+}
+
+function pageBreakXml() {
+  return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+}
+
+function bulletParagraphXml(value: string) {
+  return `<w:p><w:pPr><w:pStyle w:val="StyleAchievement12ptBefore6ptAfter6pt"/><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr>${textRun(value)}</w:p>`;
+}
+
+function boldParagraphXml(value: string) {
+  return `<w:p><w:pPr><w:pStyle w:val="Institution"/></w:pPr>${textRun(value, { bold: true })}</w:p>`;
+}
+
+function replaceNthText(xml: string, target: string, replacement: string, nth: number) {
+  let seen = 0;
+  const targetXml = escapeRegExp(xmlEscape(target));
+  return xml.replace(new RegExp(`(<w:t(?:\\s+[^>]*)?>)${targetXml}(</w:t>)`, "g"), (match, open, close) => {
+    seen += 1;
+    return seen === nth ? `${open}${xmlEscape(replacement)}${close}` : match;
+  });
+}
+
+function replaceTextOnce(xml: string, target: string, replacement: string) {
+  return replaceNthText(xml, target, replacement, 1);
+}
+
+function replaceTextSequence(xml: string, target: string, replacements: string[]) {
+  let seen = 0;
+  const targetXml = escapeRegExp(xmlEscape(target));
+  return xml.replace(new RegExp(`(<w:t(?:\\s+[^>]*)?>)${targetXml}(</w:t>)`, "g"), (match, open, close) => {
+    const replacement = replacements[seen];
+    seen += 1;
+    return replacement === undefined ? match : `${open}${xmlEscape(replacement)}${close}`;
+  });
+}
+
+function textNodeIndex(xml: string, text: string) {
+  const re = new RegExp(`<w:t(?:\\s+[^>]*)?>${escapeRegExp(xmlEscape(text))}</w:t>`);
+  const match = xml.match(re);
+  return match?.index ?? -1;
+}
+
+function paragraphBounds(xml: string, text: string) {
+  const textIndex = textNodeIndex(xml, text);
+  if (textIndex < 0) return null;
+  const start = xml.lastIndexOf("<w:p", textIndex);
+  const end = xml.indexOf("</w:p>", textIndex);
+  if (start < 0 || end < 0) return null;
+  return { start, end: end + "</w:p>".length };
+}
+
+function replaceBetweenParagraphs(xml: string, fromText: string, toText: string, insertXml: string) {
+  const from = paragraphBounds(xml, fromText);
+  const to = paragraphBounds(xml, toText);
+  if (!from || !to || from.end > to.start) return xml;
+  return `${xml.slice(0, from.end)}${insertXml}${xml.slice(to.start)}`;
+}
+
+function replaceAfterParagraphUntilSectPr(xml: string, fromText: string, insertXml: string) {
+  const from = paragraphBounds(xml, fromText);
+  if (!from) return xml;
+  const sectStart = xml.indexOf("<w:sectPr", from.end);
+  if (sectStart < 0) return xml;
+  return `${xml.slice(0, from.end)}${insertXml}${xml.slice(sectStart)}`;
+}
+
+function textParagraphsXml(value: string) {
+  return value
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => paragraphXml(block.replace(/\s*\n\s*/g, " ")))
+    .join("");
+}
+
+function docxBodyXml(draft: ProfileDraft) {
+  const skills = draft.skillGroups.filter((group) => group.title.trim() || group.skills.trim());
+  const works = draft.workHistory.filter((work) => work.company.trim() || work.role.trim() || work.bullets.trim());
+  const education = draft.education.filter((edu) => edu.institution.trim() || edu.course.trim() || edu.year.trim());
+
+  const executiveXml = [
+    textParagraphsXml(draft.executiveSummary),
+    skills.length ? paragraphXml(`${draft.candidate || "The candidate"}'s key skills include the following:`) : "",
+    ...skills.flatMap((group) => [
+      group.title.trim() ? boldParagraphXml(group.title.trim()) : "",
+      ...bulletLines(group.skills).map(bulletParagraphXml),
+    ]),
+    pageBreakXml(),
+  ].join("");
+
+  const workXml = works
+    .flatMap((work) => [
+      blankParagraphXml(),
+      work.company.trim() ? boldParagraphXml(work.company.trim()) : "",
+      [work.role, work.dates].filter(Boolean).join(", ").trim() ? paragraphXml([work.role, work.dates].filter(Boolean).join(", ")) : "",
+      ...bulletLines(work.bullets).map(bulletParagraphXml),
+    ])
+    .join("");
+
+  const educationXml = education
+    .flatMap((edu) => [
+      blankParagraphXml(),
+      edu.institution.trim() ? boldParagraphXml(edu.institution.trim()) : "",
+      [edu.course, edu.year].filter(Boolean).join(" | ").trim() ? paragraphXml([edu.course, edu.year].filter(Boolean).join(" | ")) : "",
+    ])
+    .join("");
+
+  return { executiveXml, workXml, educationXml };
+}
+
+function safeFileName(value: string) {
+  return (value || "Candidate Profile").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <label className="block">
@@ -227,16 +387,33 @@ function TextArea({ label, value, onChange, rows = 5, placeholder }: { label: st
 
 export function CandidateProfileBuilder() {
   const [draft, setDraft] = useState<ProfileDraft>(initialDraft);
+  const [settings, setSettings] = useState<ProfileSettings>(initialSettings);
   const [sourceText, setSourceText] = useState("");
   const [copied, setCopied] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState<"idle" | "working" | "error">("idle");
 
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    const rawSettings = window.localStorage.getItem(SETTINGS_KEY);
     try {
-      setDraft({ ...initialDraft, ...JSON.parse(raw) });
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<ProfileDraft>;
+        setDraft({ ...initialDraft, ...saved });
+      }
+      if (rawSettings) {
+        const savedSettings = JSON.parse(rawSettings) as Partial<ProfileSettings>;
+        setSettings({
+          ...initialSettings,
+          ...savedSettings,
+          candidateManager: { ...blankPerson(), ...savedSettings.candidateManager },
+          clientManagers: savedSettings.clientManagers?.length
+            ? savedSettings.clientManagers.map((manager, index) => ({ ...blankClientManager(`Client Manager ${index + 1}`), ...manager }))
+            : initialSettings.clientManagers,
+        });
+      }
     } catch {
       window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(SETTINGS_KEY);
     }
   }, []);
 
@@ -244,10 +421,43 @@ export function CandidateProfileBuilder() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
   }, [draft]);
 
-  const profileText = useMemo(() => plainText(draft), [draft]);
+  useEffect(() => {
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    if (draft.clientManagerId || !settings.clientManagers[0]) return;
+    setDraft((prev) => ({ ...prev, clientManagerId: settings.clientManagers[0].id }));
+  }, [draft.clientManagerId, settings.clientManagers]);
+
+  const selectedClientManager = useMemo(
+    () => settings.clientManagers.find((manager) => manager.id === draft.clientManagerId) ?? settings.clientManagers[0] ?? blankClientManager("Client Manager"),
+    [draft.clientManagerId, settings.clientManagers],
+  );
+
+  const profileText = useMemo(() => plainText(draft, selectedClientManager, settings.candidateManager), [draft, selectedClientManager, settings.candidateManager]);
 
   const update = <K extends keyof ProfileDraft>(key: K, value: ProfileDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
+
+  const updateCandidateManager = (value: PersonBlock) => setSettings((prev) => ({ ...prev, candidateManager: value }));
+
+  const updateClientManager = (id: string, value: ClientManager) =>
+    setSettings((prev) => ({ ...prev, clientManagers: prev.clientManagers.map((manager) => (manager.id === id ? value : manager)) }));
+
+  const addClientManager = () => {
+    const next = blankClientManager(`Client Manager ${settings.clientManagers.length + 1}`);
+    setSettings((prev) => ({ ...prev, clientManagers: [...prev.clientManagers, next] }));
+    update("clientManagerId", next.id);
+  };
+
+  const removeClientManager = (id: string) => {
+    const nextManagers = settings.clientManagers.filter((manager) => manager.id !== id);
+    setSettings((prev) => ({ ...prev, clientManagers: nextManagers.length ? nextManagers : [blankClientManager("Client Manager 1")] }));
+    if (draft.clientManagerId === id) {
+      update("clientManagerId", nextManagers[0]?.id ?? "");
+    }
+  };
 
   const openPrintView = () => {
     const win = window.open("", "_blank");
@@ -270,8 +480,8 @@ ul{margin:6px 0 12px 18px;padding:0}.role{font-weight:700}.date{color:#64748b}.b
 <div class="label">Role:</div><div>${htmlEscape(draft.role)}</div>
 <div class="label">Date Referred:</div><div>${htmlEscape(draft.dateReferred)}</div>
 <div class="label">Date Available:</div><div>${htmlEscape(draft.dateAvailable)}</div>
-<div class="label">Your Consultant:</div><div>${[draft.consultant.name, draft.consultant.email, draft.consultant.mobile].filter(Boolean).map(htmlEscape).join("<br>")}</div>
-<div class="label">Candidate Manager:</div><div>${[draft.candidateManager.name, draft.candidateManager.email, draft.candidateManager.mobile].filter(Boolean).map(htmlEscape).join("<br>")}</div>
+<div class="label">Your Consultant:</div><div>${[selectedClientManager.name, selectedClientManager.email, selectedClientManager.mobile].filter(Boolean).map(htmlEscape).join("<br>")}</div>
+<div class="label">Candidate Manager:</div><div>${[settings.candidateManager.name, settings.candidateManager.email, settings.candidateManager.mobile].filter(Boolean).map(htmlEscape).join("<br>")}</div>
 </div>
 <div class="terms">${htmlEscape(TERMS_TEXT)}</div>
 <h2>Executive Summary</h2><p>${htmlEscape(draft.executiveSummary).replace(/\n/g, "<br>")}</p>
@@ -295,6 +505,54 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
     setTimeout(() => setCopied(false), 1800);
   };
 
+  const downloadWordProfile = async () => {
+    setDownloadStatus("working");
+    try {
+      const response = await fetch("/templates/CandidateProfile.dotx");
+      if (!response.ok) throw new Error("Template could not be loaded");
+      const zip = await JSZip.loadAsync(await response.arrayBuffer());
+      const documentFile = zip.file("word/document.xml");
+      if (!documentFile) throw new Error("Template document.xml is missing");
+
+      let xml = await documentFile.async("string");
+      xml = replaceTextSequence(xml, "XXXX", [draft.candidate || "XXXX", draft.role || "XXXX", draft.dateAvailable || "XXXX"]);
+      xml = replaceTextOnce(xml, "Tuesday, 30 January 2024", draft.dateReferred || todayLong());
+      xml = replaceTextSequence(xml, "Name", [selectedClientManager.name || "Name", settings.candidateManager.name || "Name"]);
+      xml = replaceTextSequence(xml, "Email", [selectedClientManager.email || "Email", settings.candidateManager.email || "Email"]);
+      xml = replaceTextSequence(xml, "Mobile number", [selectedClientManager.mobile || "Mobile number", settings.candidateManager.mobile || "Mobile number"]);
+      xml = replaceTextOnce(xml, "Qualifications", draft.educationTitle);
+
+      const { executiveXml, workXml, educationXml } = docxBodyXml(draft);
+      xml = replaceBetweenParagraphs(xml, "Executive Summary", "Work History", executiveXml || pageBreakXml());
+      xml = replaceBetweenParagraphs(xml, "Work History", draft.educationTitle, workXml || blankParagraphXml());
+      xml = replaceAfterParagraphUntilSectPr(xml, draft.educationTitle, educationXml || blankParagraphXml());
+      zip.file("word/document.xml", xml);
+
+      const contentTypes = zip.file("[Content_Types].xml");
+      if (contentTypes) {
+        const contentXml = (await contentTypes.async("string")).replace(
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        );
+        zip.file("[Content_Types].xml", contentXml);
+      }
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${safeFileName(`${draft.candidate || "Candidate"} - ${draft.role || "Candidate Profile"}`)}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setDownloadStatus("idle");
+    } catch (error) {
+      console.error(error);
+      setDownloadStatus("error");
+    }
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto">
       <div className="flex items-start justify-between gap-5 mb-6">
@@ -311,9 +569,13 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
             <Copy className="w-4 h-4" />
             {copied ? "Copied" : "Copy text"}
           </Button>
+          <Button onClick={downloadWordProfile} disabled={downloadStatus === "working"}>
+            <FileDown className="w-4 h-4" />
+            {downloadStatus === "working" ? "Building Word" : "Download Word"}
+          </Button>
           <Button onClick={openPrintView}>
             <Printer className="w-4 h-4" />
-            Print/PDF
+            Print
           </Button>
         </div>
       </div>
@@ -336,16 +598,58 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
                 <Field label="Date Referred" value={draft.dateReferred} onChange={(value) => update("dateReferred", value)} />
                 <Field label="Date Available" value={draft.dateAvailable} onChange={(value) => update("dateAvailable", value)} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                {(["consultant", "candidateManager"] as const).map((key) => (
-                  <div key={key} className="space-y-2">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{key === "consultant" ? "Consultant" : "Candidate Manager"}</p>
-                    <Field label="Name" value={draft[key].name} onChange={(value) => update(key, { ...draft[key], name: value })} />
-                    <Field label="Email" value={draft[key].email} onChange={(value) => update(key, { ...draft[key], email: value })} />
-                    <Field label="Mobile" value={draft[key].mobile} onChange={(value) => update(key, { ...draft[key], mobile: value })} />
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-500 mb-1">Client Manager</span>
+                <select
+                  value={draft.clientManagerId}
+                  onChange={(event) => update("clientManagerId", event.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {settings.clientManagers.map((manager) => (
+                    <option key={manager.id} value={manager.id}>
+                      {manager.label || manager.name || "Client Manager"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-900">People Settings</h2>
+              <Button size="sm" variant="outline" onClick={addClientManager}>
+                <Plus className="w-3.5 h-3.5" />
+                Manager
+              </Button>
+            </div>
+            <div className="p-5 space-y-5">
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Your Candidate Manager</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="Name" value={settings.candidateManager.name} onChange={(value) => updateCandidateManager({ ...settings.candidateManager, name: value })} />
+                  <Field label="Email" value={settings.candidateManager.email} onChange={(value) => updateCandidateManager({ ...settings.candidateManager, email: value })} />
+                  <Field label="Mobile" value={settings.candidateManager.mobile} onChange={(value) => updateCandidateManager({ ...settings.candidateManager, mobile: value })} />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client Managers</p>
+                {settings.clientManagers.map((manager) => (
+                  <div key={manager.id} className="border border-slate-200 rounded-lg p-4">
+                    <div className="grid grid-cols-[160px_1fr_1fr_150px_32px] gap-3">
+                      <Field label="Dropdown label" value={manager.label} onChange={(value) => updateClientManager(manager.id, { ...manager, label: value })} />
+                      <Field label="Name" value={manager.name} onChange={(value) => updateClientManager(manager.id, { ...manager, name: value })} />
+                      <Field label="Email" value={manager.email} onChange={(value) => updateClientManager(manager.id, { ...manager, email: value })} />
+                      <Field label="Mobile" value={manager.mobile} onChange={(value) => updateClientManager(manager.id, { ...manager, mobile: value })} />
+                      <button className="mt-6 text-slate-400 hover:text-red-600" onClick={() => removeClientManager(manager.id)}>
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
+              {downloadStatus === "error" && <p className="text-xs font-medium text-red-600">The Word template could not be generated. Check the template file and try again.</p>}
             </div>
           </section>
 
@@ -456,8 +760,8 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
                 <strong>Role:</strong><span>{draft.role || "XXXX"}</span>
                 <strong>Date Referred:</strong><span>{draft.dateReferred}</span>
                 <strong>Date Available:</strong><span>{draft.dateAvailable || "XXXX"}</span>
-                <strong>Consultant:</strong><span>{[draft.consultant.name, draft.consultant.email, draft.consultant.mobile].filter(Boolean).join(" | ") || "Name | Email | Mobile"}</span>
-                <strong>Manager:</strong><span>{[draft.candidateManager.name, draft.candidateManager.email, draft.candidateManager.mobile].filter(Boolean).join(" | ") || "Name | Email | Mobile"}</span>
+                <strong>Consultant:</strong><span>{[selectedClientManager.name, selectedClientManager.email, selectedClientManager.mobile].filter(Boolean).join(" | ") || "Name | Email | Mobile"}</span>
+                <strong>Manager:</strong><span>{[settings.candidateManager.name, settings.candidateManager.email, settings.candidateManager.mobile].filter(Boolean).join(" | ") || "Name | Email | Mobile"}</span>
               </div>
               <p className="my-5 py-3 border-y border-slate-200 text-[11px] leading-relaxed text-slate-500">{TERMS_TEXT}</p>
               <h2 className="text-lg font-semibold text-slate-900 mt-6">Executive Summary</h2>
