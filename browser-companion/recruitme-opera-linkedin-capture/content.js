@@ -510,32 +510,6 @@ function needsDeeperCapture(capture) {
   );
 }
 
-function isLinkedInExperienceDetailsPage() {
-  return /linkedin\.com\/in\/[^/?#]+\/details\/experience/i.test(location.href);
-}
-
-function buildExperienceDetailsUrl(profileBaseUrl) {
-  try {
-    const url = new URL(profileBaseUrl);
-    const match = url.pathname.match(/^(\/in\/[^/]+)\/?/i);
-    if (!match) return null;
-    url.pathname = `${match[1]}/details/experience/`;
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-async function waitForExperienceDetailsPage() {
-  for (let i = 0; i < 50; i += 1) {
-    await sleep(200);
-    if (isLinkedInExperienceDetailsPage()) return true;
-  }
-  return false;
-}
-
 async function waitForRootProfilePage(expectedUrl = "") {
   const expectedSlug = normaliseLinkedInSlug(expectedUrl);
   for (let i = 0; i < 60; i += 1) {
@@ -544,105 +518,6 @@ async function waitForRootProfilePage(expectedUrl = "") {
     if (!expectedSlug || normaliseLinkedInSlug(location.href) === expectedSlug) return true;
   }
   return false;
-}
-
-async function restoreProfilePage(profileBaseUrl) {
-  const currentUrl = location.href.replace(/[?#].*$/, "");
-  if (currentUrl === profileBaseUrl) return;
-
-  try {
-    history.back();
-    for (let i = 0; i < 30; i += 1) {
-      await sleep(200);
-      if (location.href.replace(/[?#].*$/, "") === profileBaseUrl) return;
-    }
-  } catch {}
-
-  try {
-    location.assign(profileBaseUrl);
-  } catch {}
-}
-
-async function captureExperienceDetailsPage() {
-  await waitForMain();
-  await sleep(1000);
-
-  const clicked = new Set();
-  await scrollProfile(clicked);
-  await expandInlineSections(clicked, { visibleOnly: false, passes: 4 });
-  const rescrolled = await scrollProfile(clicked);
-  if (!rescrolled) return null;
-
-  const main = document.querySelector("main");
-  if (!(main instanceof HTMLElement)) return null;
-
-  const lines = filterProfileLines(splitIntoLines(main.innerText || ""));
-  // Drop any leading "Experience" heading — added back by mergeExperienceSection
-  while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
-  if (lines.length < 3) return null;
-
-  return "Experience\n" + lines.join("\n");
-}
-
-function mergeExperienceSection(mainCapture, fullExperienceText) {
-  const profileText = mainCapture.profileText;
-
-  const expIdx = profileText.search(/\nExperience\n/i);
-  if (expIdx === -1) {
-    return {
-      ...mainCapture,
-      profileText: cleanText(profileText + "\n\n" + fullExperienceText).slice(0, 100000),
-    };
-  }
-
-  const afterExp = profileText.slice(expIdx + 1);
-  const nextMatch = afterExp.search(/\n(Education|Skills|Top skills|Licenses|Certifications)\n/i);
-
-  let merged;
-  if (nextMatch !== -1) {
-    const nextIdx = expIdx + 1 + nextMatch;
-    merged = profileText.slice(0, expIdx + 1) + fullExperienceText + "\n\n" + profileText.slice(nextIdx + 1);
-  } else {
-    merged = profileText.slice(0, expIdx + 1) + fullExperienceText;
-  }
-
-  return {
-    ...mainCapture,
-    profileText: cleanText(merged).slice(0, 100000),
-  };
-}
-
-async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
-  const detailsLink = Array.from(document.querySelectorAll("a[href]")).find((a) =>
-    /\/details\/experience/.test(a.getAttribute("href") || "")
-  );
-  const detailsUrl = buildExperienceDetailsUrl(profileBaseUrl);
-  if (!detailsLink && !detailsUrl) return mainCapture;
-
-  try {
-    if (detailsLink) {
-      detailsLink.click();
-    } else if (detailsUrl) {
-      location.assign(detailsUrl);
-    }
-
-    if (!(await waitForExperienceDetailsPage()) && detailsUrl) {
-      location.assign(detailsUrl);
-      await waitForExperienceDetailsPage();
-    }
-    if (!isLinkedInExperienceDetailsPage()) return mainCapture;
-
-    const fullExperienceText = await captureExperienceDetailsPage();
-
-    await restoreProfilePage(profileBaseUrl);
-
-    if (!fullExperienceText) return mainCapture;
-    return mergeExperienceSection(mainCapture, fullExperienceText);
-
-  } catch {
-    await restoreProfilePage(profileBaseUrl);
-    return mainCapture;
-  }
 }
 
 async function captureProfile() {
@@ -667,11 +542,10 @@ async function captureProfile() {
 
   let capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
-    const enriched = await enrichWithExperienceDetails(capture, startUrl);
-    if (enriched.profileText.length < 200) {
+    if (capture.profileText.length < 200) {
       throw new Error("Captured profile text did not contain enough usable profile text");
     }
-    return enriched;
+    return capture;
   }
 
   const expanded = await expandInlineSections(clicked, { visibleOnly: false, passes: 6 });
@@ -686,24 +560,20 @@ async function captureProfile() {
 
   capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
-    const enriched = await enrichWithExperienceDetails(capture, startUrl);
-    if (enriched.profileText.length < 200) {
+    if (capture.profileText.length < 200) {
       throw new Error("Captured profile text did not contain enough usable profile text");
     }
-    return enriched;
+    return capture;
   }
 
-  await sleep(600);
+  await sleep(800);
   capture = collectProfileText(startUrl, { allowShort: true });
 
-  // Enrich with full work history from the /details/experience sub-page
-  capture = await enrichWithExperienceDetails(capture, startUrl);
   if (capture.profileText.length < 200) {
     await sleep(1200);
     const finalRescrolled = await scrollProfile(clicked);
     if (finalRescrolled) {
       capture = collectProfileText(startUrl, { allowShort: true });
-      capture = await enrichWithExperienceDetails(capture, startUrl);
     }
   }
   if (capture.profileText.length < 200) {
@@ -753,9 +623,8 @@ async function tryPost(serverBase, path, body) {
 
 async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   console.log("[RecruitMe] runCaptureAndPost start", { sessionId, expectedUrl, currentUrl: location.href });
+  let captureTimer;
   try {
-    // If we landed on a details sub-page or another LinkedIn sub-view for the same
-    // person, drive back to the root profile before capturing.
     if (!isRootLinkedInProfile(location.href)) {
       if (expectedUrl && normaliseLinkedInSlug(location.href) === normaliseLinkedInSlug(expectedUrl)) {
         location.assign(expectedUrl);
@@ -768,7 +637,6 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
       }
     }
 
-    // Guard: only capture from the expected profile URL
     if (expectedUrl) {
       const currentSlug = normaliseLinkedInSlug(location.href);
       const expectedSlug = normaliseLinkedInSlug(expectedUrl);
@@ -777,7 +645,17 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
       }
     }
 
-    const capture = await captureProfile();
+    const capture = await Promise.race([
+      captureProfile(),
+      new Promise((_, reject) => {
+        captureTimer = setTimeout(
+          () => reject(new Error("Profile capture timed out — reload the LinkedIn tab and try again")),
+          70_000
+        );
+      }),
+    ]);
+    clearTimeout(captureTimer);
+
     console.log("[RecruitMe] capture done", { chars: capture.profileText.length, sections: capture.sectionKeys });
     await tryPost(serverBase, "/api/extension/fetch-session/complete", {
       sessionId,
@@ -789,6 +667,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
       () => void chrome.runtime.lastError
     );
   } catch (error) {
+    clearTimeout(captureTimer);
     const msg = (error?.message || "Capture failed").slice(0, 500);
     console.warn("[RecruitMe] capture failed:", msg);
     await tryPost(serverBase, "/api/extension/fetch-session/error", {
