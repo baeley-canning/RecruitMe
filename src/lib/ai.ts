@@ -16,6 +16,11 @@ import {
   SCORE_PROFILE_EXCERPT_MAX_CHARS,
 } from "./profile-excerpt";
 import { enrichRoleWithSecurityClearance, inferSecurityClearanceContext } from "./security-clearance";
+import {
+  sanitizeCandidateProfileDraft,
+  type EvidenceCandidateProfileDraft,
+  type SanitizedCandidateProfileDraft,
+} from "./candidate-profile";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude, OpenAI, and Ollama so all AI functions stay clean.
@@ -471,6 +476,63 @@ Return ONLY the cleaned CV text. No commentary, no preamble.`,
   );
   // If Claude returns something extremely short it probably failed — fall back to raw
   return text.trim().length > 100 ? text.trim() : rawText;
+}
+
+export async function draftCandidateProfileFromSource(sourceText: string): Promise<SanitizedCandidateProfileDraft> {
+  const source = sourceText.slice(0, 16000);
+  const text = await chat(
+    `You are drafting a client-facing candidate profile from recruiter notes, CV text, LinkedIn profile text, or an existing profile.
+
+Truthfulness is mandatory. You must not infer, embellish, estimate, or invent. Every output fact must have an evidence_quote copied exactly from the source text. If a fact is not clearly supported, leave it blank or omit it.
+
+Source text:
+${source}
+
+Return ONLY valid JSON with this exact shape:
+{
+  "candidate": {"value": "", "evidence_quote": ""},
+  "role": {"value": "", "evidence_quote": ""},
+  "dateAvailable": {"value": "", "evidence_quote": ""},
+  "executiveSummary": [
+    {"text": "One concise, client-ready sentence supported by the source.", "evidence_quote": "exact source quote"}
+  ],
+  "skillGroups": [
+    {
+      "title": {"value": "Skill group title copied or directly supported by source terms", "evidence_quote": "exact source quote"},
+      "skills": [{"text": "Specific skill from source", "evidence_quote": "exact source quote"}]
+    }
+  ],
+  "workHistory": [
+    {
+      "company": {"value": "", "evidence_quote": ""},
+      "role": {"value": "", "evidence_quote": ""},
+      "dates": {"value": "", "evidence_quote": ""},
+      "bullets": [{"text": "Specific responsibility or achievement from source", "evidence_quote": "exact source quote"}]
+    }
+  ],
+  "educationTitle": "Qualifications",
+  "education": [
+    {
+      "institution": {"value": "", "evidence_quote": ""},
+      "course": {"value": "", "evidence_quote": ""},
+      "year": {"value": "", "evidence_quote": ""}
+    }
+  ]
+}
+
+Rules:
+- Evidence quotes must be copied verbatim from the source text. Do not paraphrase evidence_quote.
+- The text/value may be lightly cleaned for client readability, but only if the evidence_quote proves it.
+- Do not create availability, education, dates, companies, titles, certifications, achievements, salary, location, or motivations unless the source says them.
+- Executive summary should be 3-6 short factual sentences, each with its own evidence quote.
+- Work bullets should be factual, specific, and source-backed. Avoid generic recruiter filler.
+- If the source is too thin, return fewer fields rather than guessing.`,
+    0,
+    4096,
+    { provider: getJobParsingProvider() }
+  );
+
+  return sanitizeCandidateProfileDraft(parseJson<EvidenceCandidateProfileDraft>(text), source);
 }
 
 // ── Structured scoring v2 ─────────────────────────────────────────────────────

@@ -391,6 +391,8 @@ export function CandidateProfileBuilder() {
   const [sourceText, setSourceText] = useState("");
   const [copied, setCopied] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState<"idle" | "working" | "error">("idle");
+  const [aiStatus, setAiStatus] = useState<"idle" | "working" | "error">("idle");
+  const [discardedFacts, setDiscardedFacts] = useState(0);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -499,6 +501,37 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
     setDraft((prev) => ({ ...prev, ...parsed }));
   };
 
+  const draftWithAi = async () => {
+    setAiStatus("working");
+    setDiscardedFacts(0);
+    try {
+      const response = await fetch("/api/candidate-profiles/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceText }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Candidate profile draft failed");
+      const aiDraft = data.draft as Partial<ProfileDraft> & { discardedUnsupportedFacts?: number };
+      setDraft((prev) => ({
+        ...prev,
+        candidate: aiDraft.candidate || prev.candidate,
+        role: aiDraft.role || prev.role,
+        dateAvailable: aiDraft.dateAvailable || prev.dateAvailable,
+        executiveSummary: aiDraft.executiveSummary || prev.executiveSummary,
+        skillGroups: aiDraft.skillGroups?.length ? aiDraft.skillGroups.map((group) => ({ ...group, id: uid() })) : prev.skillGroups,
+        workHistory: aiDraft.workHistory?.length ? aiDraft.workHistory.map((work) => ({ ...work, id: uid() })) : prev.workHistory,
+        educationTitle: aiDraft.educationTitle || prev.educationTitle,
+        education: aiDraft.education?.length ? aiDraft.education.map((edu) => ({ ...edu, id: uid() })) : prev.education,
+      }));
+      setDiscardedFacts(aiDraft.discardedUnsupportedFacts ?? 0);
+      setAiStatus("idle");
+    } catch (error) {
+      console.error(error);
+      setAiStatus("error");
+    }
+  };
+
   const copyProfile = async () => {
     await navigator.clipboard.writeText(profileText);
     setCopied(true);
@@ -585,13 +618,21 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
           <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-900">Profile Details</h2>
-              <button onClick={applySource} disabled={!sourceText.trim()} className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 disabled:text-slate-300">
-                <Wand2 className="w-3.5 h-3.5" />
-                Import text
-              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={applySource} disabled={!sourceText.trim()} className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 disabled:text-slate-300">
+                  <Wand2 className="w-3.5 h-3.5" />
+                  Import text
+                </button>
+                <button onClick={draftWithAi} disabled={sourceText.trim().length < 200 || aiStatus === "working"} className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 disabled:text-slate-300">
+                  <Wand2 className="w-3.5 h-3.5" />
+                  {aiStatus === "working" ? "Drafting" : "Draft with AI"}
+                </button>
+              </div>
             </div>
             <div className="p-5 space-y-4">
               <TextArea label="Paste completed profile text" value={sourceText} onChange={setSourceText} rows={4} placeholder="Paste a previous candidate profile to prefill the builder." />
+              {aiStatus === "error" && <p className="text-xs font-medium text-red-600">AI drafting failed. The source text was not applied.</p>}
+              {discardedFacts > 0 && <p className="text-xs font-medium text-amber-700">{discardedFacts} unsupported AI-generated fact{discardedFacts === 1 ? "" : "s"} discarded because the evidence quote was not found in the source.</p>}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Candidate" value={draft.candidate} onChange={(value) => update("candidate", value)} />
                 <Field label="Role" value={draft.role} onChange={(value) => update("role", value)} />
