@@ -322,6 +322,7 @@ async function notifyCaptureDone(candidateName) {
 // Initiates an auto-capture: sends capture-and-post to content script which handles
 // the full capture + POST to server independently of the service worker lifecycle.
 async function initiateCapture(tabId, pending, preferredBase = "") {
+  console.log("[RecruitMe] initiateCapture", { tabId, sessionId: pending.sessionId, url: pending.linkedinUrl });
   await sendMessageToTab(tabId, {
     type: "capture-and-post",
     sessionId: pending.sessionId,
@@ -361,6 +362,7 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
 
 async function maybeAutoCapture(tabId, linkedinUrl) {
   const pending = await checkPendingCapture(linkedinUrl);
+  console.log("[RecruitMe] maybeAutoCapture", { tabId, linkedinUrl, status: pending.data?.status, sessionId: pending.data?.sessionId });
   if (!pending.data?.active || !pending.data?.sessionId) return;
   if (pending.data.status !== "pending") return;
   await capturePendingSessionInTab(tabId, pending.data, pending.base);

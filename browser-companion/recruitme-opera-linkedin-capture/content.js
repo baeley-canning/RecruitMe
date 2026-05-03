@@ -94,7 +94,7 @@ function isLinkedInProfilePage() {
 
 function isRootLinkedInProfile(url = "") {
   // Root profile only — excludes sub-pages like /details/experience
-  return /linkedin\.com\/in\/[^/?#]+\/?([?#].*)?$/.test(url);
+  return /linkedin\.com\/in\/[^/?#]+\/?([?#].*)?$/i.test(url);
 }
 
 function cleanText(value) {
@@ -752,6 +752,7 @@ async function tryPost(serverBase, path, body) {
 }
 
 async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
+  console.log("[RecruitMe] runCaptureAndPost start", { sessionId, expectedUrl, currentUrl: location.href });
   try {
     // If we landed on a details sub-page or another LinkedIn sub-view for the same
     // person, drive back to the root profile before capturing.
@@ -772,11 +773,12 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
       const currentSlug = normaliseLinkedInSlug(location.href);
       const expectedSlug = normaliseLinkedInSlug(expectedUrl);
       if (!currentSlug || currentSlug !== expectedSlug) {
-        return;
+        throw new Error(`LinkedIn URL mismatch (expected ${expectedSlug || "?"}, got ${currentSlug || "?"})`);
       }
     }
 
     const capture = await captureProfile();
+    console.log("[RecruitMe] capture done", { chars: capture.profileText.length, sections: capture.sectionKeys });
     await tryPost(serverBase, "/api/extension/fetch-session/complete", {
       sessionId,
       linkedinUrl: capture.linkedinUrl,
@@ -788,10 +790,13 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
     );
   } catch (error) {
     const msg = (error?.message || "Capture failed").slice(0, 500);
+    console.warn("[RecruitMe] capture failed:", msg);
     await tryPost(serverBase, "/api/extension/fetch-session/error", {
       sessionId,
       error: msg,
-    }).catch(() => {});
+    }).catch((postErr) => {
+      console.warn("[RecruitMe] failed to post error to server:", postErr?.message || postErr);
+    });
     chrome.runtime.sendMessage(
       { type: "capture-error", error: msg },
       () => void chrome.runtime.lastError
