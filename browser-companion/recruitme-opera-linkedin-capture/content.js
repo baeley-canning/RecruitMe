@@ -785,7 +785,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
       profileText: capture.profileText,
     });
     chrome.runtime.sendMessage(
-      { type: "capture-complete", candidateName: capture.title || "" },
+      { type: "capture-complete", sessionId, candidateName: capture.title || "" },
       () => void chrome.runtime.lastError
     );
   } catch (error) {
@@ -798,7 +798,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
       console.warn("[RecruitMe] failed to post error to server:", postErr?.message || postErr);
     });
     chrome.runtime.sendMessage(
-      { type: "capture-error", error: msg },
+      { type: "capture-error", sessionId, error: msg },
       () => void chrome.runtime.lastError
     );
   } finally {

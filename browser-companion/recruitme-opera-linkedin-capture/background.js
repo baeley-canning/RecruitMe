@@ -7,7 +7,7 @@ const DEFAULT_SERVER_BASES = [
 ];
 
 const PENDING_CAPTURE_ALARM = "recruitme-pending-capture-check";
-const activeAutoCaptures = new Set();
+const activeAutoCaptures = new Map(); // sessionId -> startedAt timestamp
 const pendingSessionEnsures = new Set();
 const autoOpenedTabs = new Set(); // Tab IDs auto-opened by the extension for background capture
 const ERROR_BADGE_COLOR = "#b91c1c";
@@ -332,11 +332,26 @@ async function initiateCapture(tabId, pending, preferredBase = "") {
   // Content script has acked — it now handles capture + POST without the SW.
 }
 
-async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
-  const lockKey = `${pending.sessionId}:${tabId}`;
-  if (activeAutoCaptures.has(lockKey)) return;
+// Tracks sessions currently being captured. Key is sessionId (NOT sessionId:tabId)
+// so the same session can never trigger duplicate captures across two tabs. Value is
+// the timestamp the capture started — the lock auto-releases after 90s as a safety
+// net, in case the content script never sends capture-complete/error.
+const SESSION_LOCK_MAX_AGE_MS = 90_000;
 
-  activeAutoCaptures.add(lockKey);
+function isSessionLocked(sessionId) {
+  const startedAt = activeAutoCaptures.get(sessionId);
+  if (!startedAt) return false;
+  if (Date.now() - startedAt > SESSION_LOCK_MAX_AGE_MS) {
+    activeAutoCaptures.delete(sessionId);
+    return false;
+  }
+  return true;
+}
+
+async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
+  if (isSessionLocked(pending.sessionId)) return;
+  activeAutoCaptures.set(pending.sessionId, Date.now());
+
   try {
     await prepareTabForCapture(tabId, pending.linkedinUrl);
     await sleep(1400);
@@ -353,10 +368,11 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
         throw error;
       }
     }
+    // Lock stays held until capture-complete / capture-error message clears it,
+    // or until SESSION_LOCK_MAX_AGE_MS elapses (whichever comes first).
   } catch (error) {
+    activeAutoCaptures.delete(pending.sessionId);
     await markPendingCaptureError(pending, error, preferredBase);
-  } finally {
-    activeAutoCaptures.delete(lockKey);
   }
 }
 
@@ -447,6 +463,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "capture-complete") {
+    console.log("[RecruitMe] capture-complete", { sessionId: message.sessionId, candidateName: message.candidateName });
+    if (message.sessionId) activeAutoCaptures.delete(message.sessionId);
     const tabId = sender.tab?.id;
     if (tabId && autoOpenedTabs.has(tabId)) {
       autoOpenedTabs.delete(tabId);
@@ -459,6 +477,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "capture-error") {
+    console.log("[RecruitMe] capture-error", { sessionId: message.sessionId, error: message.error });
+    if (message.sessionId) activeAutoCaptures.delete(message.sessionId);
     const tabId = sender.tab?.id;
     if (tabId && autoOpenedTabs.has(tabId)) {
       autoOpenedTabs.delete(tabId);
