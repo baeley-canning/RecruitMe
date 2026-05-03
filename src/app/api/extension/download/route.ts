@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 
 const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-opera-linkedin-capture");
-const FILES = ["manifest.json", "background.js", "content.js", "popup.html", "popup.js", "icon48.png"];
+const FILES = ["manifest.json", "background.js", "content.js", "popup.html", "popup.js"];
 
 export const dynamic = "force-dynamic";
 
