@@ -48,6 +48,10 @@ interface ProfileDraft {
   role: string;
   dateReferred: string;
   dateAvailable: string;
+  emailClient: string;
+  linkedinUrl: string;
+  remuneration: string;
+  emailHighlights: string;
   clientManagerId: string;
   consultant?: PersonBlock;
   candidateManager?: PersonBlock;
@@ -108,6 +112,10 @@ const initialDraft: ProfileDraft = {
   role: "",
   dateReferred: todayLong(),
   dateAvailable: "",
+  emailClient: "",
+  linkedinUrl: "",
+  remuneration: "",
+  emailHighlights: "",
   clientManagerId: "",
   executiveSummary: "",
   skillGroups: [
@@ -222,6 +230,31 @@ function plainText(draft: ProfileDraft, clientManager: PersonBlock, candidateMan
   }
 
   return lines.filter((line, index, arr) => line || arr[index - 1] !== "").join("\n").trim();
+}
+
+function emailSubject(draft: ProfileDraft) {
+  return [draft.candidate || "Candidate", draft.role || "Role"].filter(Boolean).join(" | ") + (draft.emailClient ? ` @ ${draft.emailClient}` : "");
+}
+
+function defaultEmailHighlights(draft: ProfileDraft) {
+  const highlights = [
+    draft.role ? `${draft.role}${draft.executiveSummary.match(/\b(?:\+?\d+)\s*\+?\s*years?/i)?.[0] ? ` with ${draft.executiveSummary.match(/\b(?:\+?\d+)\s*\+?\s*years?/i)?.[0]} of experience` : ""}` : "",
+    bulletLines(draft.skillGroups.flatMap((group) => group.skills).join("\n")).slice(0, 5).join(", "),
+    bulletLines(draft.workHistory.flatMap((work) => work.bullets).join("\n"))[0] ?? "",
+    draft.education[0]?.course ?? "",
+  ];
+  return highlights.map((line) => line.trim()).filter(Boolean).slice(0, 4).join("\n");
+}
+
+function emailBody(draft: ProfileDraft) {
+  const lines = [
+    ...bulletLines(draft.emailHighlights || defaultEmailHighlights(draft)),
+    draft.linkedinUrl.trim(),
+    draft.remuneration.trim() ? `Remuneration: ${draft.remuneration.trim()}` : "",
+    draft.dateAvailable.trim() ? `Availability: ${draft.dateAvailable.trim()}` : "",
+  ].filter(Boolean);
+
+  return lines.map((line) => `• ${line}`).join("\n");
 }
 
 function htmlEscape(value: string) {
@@ -470,6 +503,7 @@ export function CandidateProfileBuilder() {
   const [settings, setSettings] = useState<ProfileSettings>(initialSettings);
   const [sourceText, setSourceText] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedEmail, setCopiedEmail] = useState<"subject" | "body" | null>(null);
   const [downloadStatus, setDownloadStatus] = useState<"idle" | "working" | "error">("idle");
   const [aiStatus, setAiStatus] = useState<"idle" | "working" | "error">("idle");
   const [discardedFacts, setDiscardedFacts] = useState(0);
@@ -521,6 +555,8 @@ export function CandidateProfileBuilder() {
   );
 
   const profileText = useMemo(() => plainText(draft, selectedClientManager, settings.candidateManager), [draft, selectedClientManager, settings.candidateManager]);
+  const clientEmailSubject = useMemo(() => emailSubject(draft), [draft]);
+  const clientEmailBody = useMemo(() => emailBody(draft), [draft]);
 
   const update = <K extends keyof ProfileDraft>(key: K, value: ProfileDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -646,6 +682,12 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
     await navigator.clipboard.writeText(profileText);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+  };
+
+  const copyClientEmail = async (part: "subject" | "body") => {
+    await navigator.clipboard.writeText(part === "subject" ? clientEmailSubject : clientEmailBody);
+    setCopiedEmail(part);
+    setTimeout(() => setCopiedEmail(null), 1800);
   };
 
   const downloadWordProfile = async () => {
@@ -825,6 +867,50 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
 
           <section className="bg-white border border-slate-200 rounded-lg shadow-sm p-5">
             <TextArea label="Executive Summary" value={draft.executiveSummary} onChange={(value) => update("executiveSummary", value)} rows={9} placeholder="Write the client-ready overview, motivations, relevant strengths, and role fit." />
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-900">Client Email</h2>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => copyClientEmail("subject")}>
+                  <Copy className="w-3.5 h-3.5" />
+                  {copiedEmail === "subject" ? "Copied" : "Subject"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => copyClientEmail("body")}>
+                  <Copy className="w-3.5 h-3.5" />
+                  {copiedEmail === "body" ? "Copied" : "Body"}
+                </Button>
+              </div>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Client / company for subject" value={draft.emailClient} onChange={(value) => update("emailClient", value)} placeholder="Co-operative Bank" />
+                <Field label="LinkedIn URL" value={draft.linkedinUrl} onChange={(value) => update("linkedinUrl", value)} placeholder="https://www.linkedin.com/in/..." />
+                <Field label="Remuneration" value={draft.remuneration} onChange={(value) => update("remuneration", value)} placeholder="$154,000 per annum" />
+                <Field label="Availability" value={draft.dateAvailable} onChange={(value) => update("dateAvailable", value)} placeholder="Four weeks from offer" />
+              </div>
+              <TextArea
+                label="Email highlights"
+                value={draft.emailHighlights}
+                onChange={(value) => update("emailHighlights", value)}
+                rows={5}
+                placeholder="One highlight per line. Leave blank to use a basic draft from the profile fields."
+              />
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
+                  <p className="text-xs font-medium text-slate-500">Subject</p>
+                  <p className="text-sm font-semibold text-slate-900">{clientEmailSubject}</p>
+                </div>
+                <div className="px-4 py-3">
+                  <ul className="list-disc pl-5 text-sm text-slate-800 leading-7">
+                    {clientEmailBody.split("\n").map((line) => line.replace(/^•\s*/, "")).filter(Boolean).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
