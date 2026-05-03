@@ -310,8 +310,8 @@ async function notifyCaptureDone(candidateName) {
       type: "basic",
       iconUrl:
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAA7AAAAOwBeShxvQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAHpSURBVFiF7ZaxbtswEIa/o2zHhiEjQAYDHQIkQ4cCHQIUKFC0Q4c+QR8gj9CXyFP0EfoEfYU+Q5cgQ4ECBQoUCIokJMWS2CEt2ZItWxIlWxIlkSSboqoqVdX9cM/x7o47AgCO4zgOgJQSwB4ASinlnHMAOI7jOE8ppZQCAHgAIgB4AKICeAAgAnhRSnkDIOecAwDgnHMOAAB6AJ4BeALwBEAPwBMAD0AppdwB4A4AW2ttbQCklFJKKaWUUkoppZRSSilmAGCttbW2tpQCAIAQQgghhBBCCCGEEEIIIYQQQgghhBBCCCEAQAghgBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQgghhBBCCCGEEEIIIYQQQggh5H8HYIwxxhhjjDHGGGOMMcYYY4wxxhhjjDHGGAAAgAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQyY7QAAAAASUVORK5CYII=",
-      title: "RecruitMe — Profile captured",
-      message: `${name} has been captured and scored.`,
+      title: "RecruitMe — Profile sent",
+      message: `${name} has been captured and sent to RecruitMe for scoring.`,
       priority: 2,
     });
   } catch {
@@ -323,7 +323,7 @@ async function notifyCaptureDone(candidateName) {
 // the full capture + POST to server independently of the service worker lifecycle.
 async function initiateCapture(tabId, pending, preferredBase = "") {
   console.log("[RecruitMe] initiateCapture", { tabId, sessionId: pending.sessionId, url: pending.linkedinUrl });
-  await sendMessageToTab(tabId, {
+  return sendMessageToTab(tabId, {
     type: "capture-and-post",
     sessionId: pending.sessionId,
     linkedinUrl: pending.linkedinUrl,
@@ -356,14 +356,20 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
     await prepareTabForCapture(tabId, pending.linkedinUrl);
     await sleep(1400);
     try {
-      await initiateCapture(tabId, pending, preferredBase);
+      const response = await initiateCapture(tabId, pending, preferredBase);
+      if (response?.status !== "started" && response?.status !== "in-progress") {
+        throw new Error("LinkedIn capture did not start");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
         await chrome.tabs.reload(tabId).catch(() => {});
         await waitForTabComplete(tabId);
         await sleep(1800);
-        await initiateCapture(tabId, pending, preferredBase);
+        const response = await initiateCapture(tabId, pending, preferredBase);
+        if (response?.status !== "started" && response?.status !== "in-progress") {
+          throw new Error("LinkedIn capture did not start after reload");
+        }
       } else {
         throw error;
       }

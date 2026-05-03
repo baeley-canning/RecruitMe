@@ -510,6 +510,130 @@ function needsDeeperCapture(capture) {
   );
 }
 
+function buildExperienceDetailsUrl(profileBaseUrl) {
+  try {
+    const url = new URL(profileBaseUrl);
+    const match = url.pathname.match(/^(\/in\/[^/]+)\/?/i);
+    if (!match) return "";
+    url.pathname = `${match[1]}/details/experience/`;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function extractLinesFromDetachedDocument(doc) {
+  const root = doc.querySelector("main") || doc.body;
+  if (!root) return [];
+
+  const selectors = [
+    "main h1",
+    "main h2",
+    "main h3",
+    "main li",
+    "main p",
+    "main span[aria-hidden='true']",
+    "main span.visually-hidden",
+    "main div[aria-label]",
+  ];
+  const raw = [];
+
+  for (const element of Array.from(root.querySelectorAll(selectors.join(", ")))) {
+    const value = cleanText(
+      element.getAttribute?.("aria-label") ||
+        element.textContent ||
+        ""
+    );
+    if (value) raw.push(value);
+  }
+
+  if (raw.length === 0) {
+    raw.push(cleanText(root.textContent || ""));
+  }
+
+  return filterProfileLines(raw.flatMap(splitIntoLines));
+}
+
+async function fetchExperienceDetailsText(profileBaseUrl) {
+  const detailsUrl = buildExperienceDetailsUrl(profileBaseUrl);
+  if (!detailsUrl) return "";
+
+  try {
+    const response = await fetch(detailsUrl, {
+      credentials: "include",
+      cache: "no-store",
+      redirect: "follow",
+    });
+    if (!response.ok) return "";
+
+    const html = await response.text();
+    if (!/\/details\/experience|Experience/i.test(html)) return "";
+
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const lines = extractLinesFromDetachedDocument(doc);
+    while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
+
+    const useful = [];
+    const seen = new Set();
+    for (const line of lines) {
+      if (/^(experience|profile|linkedin|search)$/i.test(line)) continue;
+      if (/^skip to main content$/i.test(line)) continue;
+      const key = normalizeLineKey(line);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      useful.push(line);
+    }
+
+    if (useful.length < 3 || useful.join("\n").length < 160) return "";
+    return `Experience\n${useful.join("\n")}`;
+  } catch (error) {
+    console.warn("[RecruitMe] failed to fetch full experience details:", error?.message || error);
+    return "";
+  }
+}
+
+function mergeExperienceSection(mainCapture, fullExperienceText) {
+  if (!fullExperienceText || fullExperienceText.length < 160) return mainCapture;
+
+  const profileText = mainCapture.profileText;
+  const expIdx = profileText.search(/\nExperience\n/i);
+  if (expIdx === -1) {
+    return {
+      ...mainCapture,
+      profileText: cleanText(`${profileText}\n\n${fullExperienceText}`).slice(0, 100000),
+      sectionKeys: [...new Set([...mainCapture.sectionKeys, "experience"])],
+    };
+  }
+
+  const afterExp = profileText.slice(expIdx + 1);
+  const nextMatch = afterExp.search(/\n(Education|Skills|Top skills|Licenses|Certifications)\n/i);
+
+  const merged =
+    nextMatch !== -1
+      ? profileText.slice(0, expIdx + 1) + fullExperienceText + "\n\n" + profileText.slice(expIdx + 1 + nextMatch + 1)
+      : profileText.slice(0, expIdx + 1) + fullExperienceText;
+
+  return {
+    ...mainCapture,
+    profileText: cleanText(merged).slice(0, 100000),
+    sectionKeys: [...new Set([...mainCapture.sectionKeys, "experience"])],
+  };
+}
+
+async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
+  const fullExperienceText = await fetchExperienceDetailsText(profileBaseUrl);
+  const enriched = mergeExperienceSection(mainCapture, fullExperienceText);
+  if (enriched.profileText.length > mainCapture.profileText.length + 120) {
+    console.log("[RecruitMe] merged full experience details", {
+      before: mainCapture.profileText.length,
+      after: enriched.profileText.length,
+    });
+  }
+  return enriched;
+}
+
 async function waitForRootProfilePage(expectedUrl = "") {
   const expectedSlug = normaliseLinkedInSlug(expectedUrl);
   for (let i = 0; i < 60; i += 1) {
@@ -542,6 +666,7 @@ async function captureProfile() {
 
   let capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
+    capture = await enrichWithExperienceDetails(capture, startUrl);
     if (capture.profileText.length < 200) {
       throw new Error("Captured profile text did not contain enough usable profile text");
     }
@@ -560,6 +685,7 @@ async function captureProfile() {
 
   capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
+    capture = await enrichWithExperienceDetails(capture, startUrl);
     if (capture.profileText.length < 200) {
       throw new Error("Captured profile text did not contain enough usable profile text");
     }
@@ -568,12 +694,14 @@ async function captureProfile() {
 
   await sleep(800);
   capture = collectProfileText(startUrl, { allowShort: true });
+  capture = await enrichWithExperienceDetails(capture, startUrl);
 
   if (capture.profileText.length < 200) {
     await sleep(1200);
     const finalRescrolled = await scrollProfile(clicked);
     if (finalRescrolled) {
       capture = collectProfileText(startUrl, { allowShort: true });
+      capture = await enrichWithExperienceDetails(capture, startUrl);
     }
   }
   if (capture.profileText.length < 200) {
@@ -589,6 +717,7 @@ const CONTENT_DEFAULT_BASES = [
 ];
 
 let captureInProgress = false;
+let captureInProgressSessionId = "";
 
 function normaliseLinkedInSlug(url = "") {
   const m = url.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
@@ -682,6 +811,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
     );
   } finally {
     captureInProgress = false;
+    captureInProgressSessionId = "";
   }
 }
 
@@ -710,10 +840,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // service worker doesn't need to stay alive for 30-60 seconds.
   if (message?.type === "capture-and-post") {
     if (captureInProgress) {
+      if (captureInProgressSessionId && captureInProgressSessionId !== message.sessionId) {
+        sendResponse({ ok: false, error: "Another RecruitMe capture is already running in this tab" });
+        return false;
+      }
       sendResponse({ ok: true, status: "in-progress" });
       return false;
     }
     captureInProgress = true;
+    captureInProgressSessionId = message.sessionId || "";
     sendResponse({ ok: true, status: "started" });
     void runCaptureAndPost(message.sessionId, message.serverBase, message.linkedinUrl);
     return false;
