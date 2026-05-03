@@ -43,6 +43,23 @@ function normaliseLinkedInSlug(url) {
   return m ? m[1].toLowerCase() : "";
 }
 
+function linkedInSlugAliasKey(url) {
+  return normaliseLinkedInSlug(url)
+    .replace(/-[a-z0-9]*\d[a-z0-9]{5,}$/i, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function linkedInProfileMatches(a, b) {
+  const aSlug = normaliseLinkedInSlug(a);
+  const bSlug = normaliseLinkedInSlug(b);
+  if (!aSlug || !bSlug) return false;
+  if (aSlug === bSlug) return true;
+
+  const aKey = linkedInSlugAliasKey(a);
+  const bKey = linkedInSlugAliasKey(b);
+  return aKey.length >= 6 && aKey === bKey;
+}
+
 async function refreshPendingStatus() {
   let currentTabUrl = "";
   try {
@@ -63,9 +80,8 @@ async function refreshPendingStatus() {
     const sessionData = response.session;
     const sessions = Array.isArray(sessionData) ? sessionData : sessionData ? [sessionData] : [];
 
-    const tabSlugNow = normaliseLinkedInSlug(currentTabUrl);
     session =
-      sessions.find((s) => normaliseLinkedInSlug(s.linkedinUrl) === tabSlugNow) ||
+      sessions.find((s) => linkedInProfileMatches(s.linkedinUrl, currentTabUrl)) ||
       sessions.find((s) => s.status === "pending") ||
       sessions[0] ||
       null;
@@ -83,7 +99,7 @@ async function refreshPendingStatus() {
 
   const sessionSlug = normaliseLinkedInSlug(session.linkedinUrl);
   const tabSlug = normaliseLinkedInSlug(currentTabUrl);
-  const urlMatches = sessionSlug && tabSlug && sessionSlug === tabSlug;
+  const urlMatches = linkedInProfileMatches(session.linkedinUrl, currentTabUrl);
 
   if (session.status === "pending") {
     if (urlMatches) {

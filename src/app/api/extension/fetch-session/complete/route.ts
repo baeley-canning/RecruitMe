@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   findSessionInQueue,
-  normaliseLinkedInUrl,
+  linkedInProfileMatches,
   saveCapturedProfileToCandidate,
   updateSessionInQueue,
 } from "@/lib/linkedin-capture";
@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No matching capture session" }, { status: 404, headers: CORS });
   }
 
-  if (normaliseLinkedInUrl(session.linkedinUrl) !== normaliseLinkedInUrl(linkedinUrl)) {
+  if (!linkedInProfileMatches(session.linkedinUrl, linkedinUrl)) {
     await updateSessionInQueue({
       sessionId,
       status: "error",

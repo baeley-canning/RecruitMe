@@ -44,6 +44,23 @@ describe("RecruitMe content script", () => {
     ).toBe("https://www.linkedin.com/in/jane-candidate/details/experience/");
   });
 
+  it("treats LinkedIn numeric-suffix redirects as the same profile", () => {
+    const { context } = loadContentScriptContext();
+
+    expect(
+      context.linkedInProfileMatches(
+        "https://www.linkedin.com/in/ranjana-tyagi-3755b615/",
+        "https://www.linkedin.com/in/ranjanatyagi/"
+      )
+    ).toBe(true);
+    expect(
+      context.linkedInProfileMatches(
+        "https://www.linkedin.com/in/ranjana-tyagi-3755b615/",
+        "https://www.linkedin.com/in/someone-else/"
+      )
+    ).toBe(false);
+  });
+
   it("replaces a short root Experience section with fetched full experience details", () => {
     const { context } = loadContentScriptContext();
     const capture = {

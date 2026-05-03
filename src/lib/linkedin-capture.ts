@@ -11,7 +11,7 @@ import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isExplicitlyOverseasLocation, isNzLocation, isPlausibleLocation } from "./location";
 
-export { normaliseLinkedInUrl } from "./linkedin";
+export { linkedInProfileMatches, linkedInSlugAliasKey, normaliseLinkedInUrl } from "./linkedin";
 
 // Multi-session queue — stores ExtensionCaptureSession[] as JSON.
 export const LINKEDIN_EXTENSION_QUEUE_KEY = "LINKEDIN_EXTENSION_QUEUE_V1";

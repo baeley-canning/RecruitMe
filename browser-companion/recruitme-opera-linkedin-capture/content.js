@@ -639,7 +639,7 @@ async function waitForRootProfilePage(expectedUrl = "") {
   for (let i = 0; i < 60; i += 1) {
     await sleep(200);
     if (!isRootLinkedInProfile(location.href)) continue;
-    if (!expectedSlug || normaliseLinkedInSlug(location.href) === expectedSlug) return true;
+    if (!expectedSlug || linkedInProfileMatches(location.href, expectedUrl)) return true;
   }
   return false;
 }
@@ -724,6 +724,23 @@ function normaliseLinkedInSlug(url = "") {
   return m ? m[1].toLowerCase() : "";
 }
 
+function linkedInSlugAliasKey(url = "") {
+  return normaliseLinkedInSlug(url)
+    .replace(/-[a-z0-9]*\d[a-z0-9]{5,}$/i, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function linkedInProfileMatches(a = "", b = "") {
+  const aSlug = normaliseLinkedInSlug(a);
+  const bSlug = normaliseLinkedInSlug(b);
+  if (!aSlug || !bSlug) return false;
+  if (aSlug === bSlug) return true;
+
+  const aKey = linkedInSlugAliasKey(a);
+  const bKey = linkedInSlugAliasKey(b);
+  return aKey.length >= 6 && aKey === bKey;
+}
+
 async function postJson(base, path, body) {
   const resp = await fetch(`${base}${path}`, {
     method: "POST",
@@ -755,7 +772,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   let captureTimer;
   try {
     if (!isRootLinkedInProfile(location.href)) {
-      if (expectedUrl && normaliseLinkedInSlug(location.href) === normaliseLinkedInSlug(expectedUrl)) {
+      if (expectedUrl && linkedInProfileMatches(location.href, expectedUrl)) {
         location.assign(expectedUrl);
         const restored = await waitForRootProfilePage(expectedUrl);
         if (!restored) {
@@ -769,7 +786,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
     if (expectedUrl) {
       const currentSlug = normaliseLinkedInSlug(location.href);
       const expectedSlug = normaliseLinkedInSlug(expectedUrl);
-      if (!currentSlug || currentSlug !== expectedSlug) {
+      if (!linkedInProfileMatches(location.href, expectedUrl)) {
         throw new Error(`LinkedIn URL mismatch (expected ${expectedSlug || "?"}, got ${currentSlug || "?"})`);
       }
     }

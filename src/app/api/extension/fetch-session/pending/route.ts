@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   findSessionInQueue,
-  normaliseLinkedInUrl,
+  linkedInProfileMatches,
 } from "@/lib/linkedin-capture";
 
 const CORS = {
@@ -22,10 +22,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ pending: false }, { status: 400, headers: CORS });
   }
 
-  const normUrl = normaliseLinkedInUrl(linkedinUrl);
   const session = await findSessionInQueue(
     (s) =>
-      normaliseLinkedInUrl(s.linkedinUrl) === normUrl &&
+      linkedInProfileMatches(s.linkedinUrl, linkedinUrl) &&
       (s.status === "pending" ||
         s.status === "processing" ||
         s.status === "completed" ||

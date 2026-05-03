@@ -254,12 +254,30 @@ function normaliseLinkedInUrl(url = "") {
   }
 }
 
+function linkedInSlugAliasKey(url = "") {
+  const match = url.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  const slug = match ? match[1] : "";
+  return slug
+    .toLowerCase()
+    .replace(/-[a-z0-9]*\d[a-z0-9]{5,}$/i, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function linkedInProfileMatches(a = "", b = "") {
+  if (!a || !b) return false;
+  if (normaliseLinkedInUrl(a) === normaliseLinkedInUrl(b)) return true;
+
+  const aKey = linkedInSlugAliasKey(a);
+  const bKey = linkedInSlugAliasKey(b);
+  return aKey.length >= 6 && aKey === bKey;
+}
+
 async function findLinkedInProfileTab(linkedinUrl) {
   const targetUrl = normaliseLinkedInUrl(linkedinUrl);
   if (!targetUrl) return null;
 
   const tabs = await chrome.tabs.query({ url: ["https://www.linkedin.com/in/*"] });
-  const matchingTabs = tabs.filter((tab) => normaliseLinkedInUrl(tab.url) === targetUrl);
+  const matchingTabs = tabs.filter((tab) => linkedInProfileMatches(tab.url || "", targetUrl));
   return matchingTabs.find((tab) => isRootLinkedInProfile(tab.url || "")) || matchingTabs[0] || null;
 }
 
@@ -289,7 +307,7 @@ async function prepareTabForCapture(tabId, linkedinUrl) {
 
   const currentUrl = tab.url || "";
   const needsNavigation =
-    normaliseLinkedInUrl(currentUrl) !== normaliseLinkedInUrl(linkedinUrl) ||
+    !linkedInProfileMatches(currentUrl, linkedinUrl) ||
     !isRootLinkedInProfile(currentUrl);
 
   if (needsNavigation) {
