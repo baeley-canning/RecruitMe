@@ -824,6 +824,49 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
                   ))}
                 </select>
               </label>
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-900">Client Email</h3>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => copyClientEmail("subject")}>
+                      <Copy className="w-3.5 h-3.5" />
+                      {copiedEmail === "subject" ? "Copied" : "Subject"}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => copyClientEmail("body")}>
+                      <Copy className="w-3.5 h-3.5" />
+                      {copiedEmail === "body" ? "Copied" : "Body"}
+                    </Button>
+                  </div>
+                </div>
+                <div className="p-4 space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Client / company for subject" value={draft.emailClient} onChange={(value) => update("emailClient", value)} placeholder="Co-operative Bank" />
+                    <Field label="LinkedIn URL" value={draft.linkedinUrl} onChange={(value) => update("linkedinUrl", value)} placeholder="https://www.linkedin.com/in/..." />
+                    <Field label="Remuneration" value={draft.remuneration} onChange={(value) => update("remuneration", value)} placeholder="$154,000 per annum" />
+                    <Field label="Availability" value={draft.dateAvailable} onChange={(value) => update("dateAvailable", value)} placeholder="Four weeks from offer" />
+                  </div>
+                  <TextArea
+                    label="Email highlights"
+                    value={draft.emailHighlights}
+                    onChange={(value) => update("emailHighlights", value)}
+                    rows={4}
+                    placeholder="One highlight per line. Leave blank to use a basic draft from the profile fields."
+                  />
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-100 bg-white">
+                      <p className="text-xs font-medium text-slate-500">Subject</p>
+                      <p className="text-sm font-semibold text-slate-900">{clientEmailSubject}</p>
+                    </div>
+                    <div className="px-4 py-3 bg-white">
+                      <ul className="list-disc pl-5 text-sm text-slate-800 leading-7">
+                        {clientEmailBody.split("\n").map((line) => line.replace(/^•\s*/, "")).filter(Boolean).map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -867,50 +910,6 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
 
           <section className="bg-white border border-slate-200 rounded-lg shadow-sm p-5">
             <TextArea label="Executive Summary" value={draft.executiveSummary} onChange={(value) => update("executiveSummary", value)} rows={9} placeholder="Write the client-ready overview, motivations, relevant strengths, and role fit." />
-          </section>
-
-          <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">Client Email</h2>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => copyClientEmail("subject")}>
-                  <Copy className="w-3.5 h-3.5" />
-                  {copiedEmail === "subject" ? "Copied" : "Subject"}
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => copyClientEmail("body")}>
-                  <Copy className="w-3.5 h-3.5" />
-                  {copiedEmail === "body" ? "Copied" : "Body"}
-                </Button>
-              </div>
-            </div>
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Client / company for subject" value={draft.emailClient} onChange={(value) => update("emailClient", value)} placeholder="Co-operative Bank" />
-                <Field label="LinkedIn URL" value={draft.linkedinUrl} onChange={(value) => update("linkedinUrl", value)} placeholder="https://www.linkedin.com/in/..." />
-                <Field label="Remuneration" value={draft.remuneration} onChange={(value) => update("remuneration", value)} placeholder="$154,000 per annum" />
-                <Field label="Availability" value={draft.dateAvailable} onChange={(value) => update("dateAvailable", value)} placeholder="Four weeks from offer" />
-              </div>
-              <TextArea
-                label="Email highlights"
-                value={draft.emailHighlights}
-                onChange={(value) => update("emailHighlights", value)}
-                rows={5}
-                placeholder="One highlight per line. Leave blank to use a basic draft from the profile fields."
-              />
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
-                  <p className="text-xs font-medium text-slate-500">Subject</p>
-                  <p className="text-sm font-semibold text-slate-900">{clientEmailSubject}</p>
-                </div>
-                <div className="px-4 py-3">
-                  <ul className="list-disc pl-5 text-sm text-slate-800 leading-7">
-                    {clientEmailBody.split("\n").map((line) => line.replace(/^•\s*/, "")).filter(Boolean).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </div>
           </section>
 
           <section className="bg-white border border-slate-200 rounded-lg shadow-sm">
