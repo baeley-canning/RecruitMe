@@ -29,6 +29,7 @@ import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueueToast } from "@/components/fetch-queue-toast";
 import { SearchCard } from "@/components/job/search-card";
 import { PipelineCard } from "@/components/job/pipeline-card";
+import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ClientReportModal, ClientReportButton } from "@/components/job/client-report-modal";
 import { JobAdModal } from "@/components/job/job-ad-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
@@ -188,6 +189,8 @@ export default function JobDetailPage({
   const [editingJd, setEditingJd] = useState(false);
   const [jdDraft, setJdDraft] = useState("");
   const [savingJd, setSavingJd] = useState(false);
+  const [pendingAccepted, setPendingAccepted] = useState<Set<string>>(new Set());
+  const [pendingDismissed, setPendingDismissed] = useState<Set<string>>(new Set());
 
   // Per-candidate fetch tracking.
   interface FetchEntry {
@@ -295,6 +298,35 @@ export default function JobDetailPage({
       }
     } finally {
       setSavingJd(false);
+    }
+  };
+
+  const handleAcceptAlternative = async (skill: string, alternative: string) => {
+    setPendingAccepted((prev) => new Set([...prev, alternative]));
+    try {
+      const res = await fetch(`/api/jobs/${id}/skill-note-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill, action: "accept", alternative }),
+      });
+      if (res.ok) await fetchJob();
+    } finally {
+      setPendingAccepted((prev) => { const next = new Set(prev); next.delete(alternative); return next; });
+    }
+  };
+
+  const handleDismissNote = async (skill: string) => {
+    setPendingDismissed((prev) => new Set([...prev, skill]));
+    const res = await fetch(`/api/jobs/${id}/skill-note-action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skill, action: "dismiss" }),
+    });
+    if (res.ok) {
+      await fetchJob();
+    } else {
+      // Revert optimistic hide on failure
+      setPendingDismissed((prev) => { const next = new Set(prev); next.delete(skill); return next; });
     }
   };
 
@@ -1161,6 +1193,19 @@ ${toHtml(job.rawJd)}
                 items={niceToHaves}
                 chipClassName="bg-slate-100 text-slate-600 border-slate-200"
               />
+
+              {/* AI search tips — legacy/rare tech with suggested modern alternatives */}
+              {parsedRole.skill_notes?.length > 0 && (
+                <SkillNotesSection
+                  notes={parsedRole.skill_notes}
+                  dismissedSkills={parsedRole.dismissed_skill_notes ?? []}
+                  niceToHaves={niceToHaves}
+                  pendingAccepted={pendingAccepted}
+                  pendingDismissed={pendingDismissed}
+                  onAccept={handleAcceptAlternative}
+                  onDismiss={handleDismissNote}
+                />
+              )}
 
               {/* Visa / work rights — only show if not already covered by knockout criteria */}
               <HiringBriefChipSection

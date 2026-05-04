@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { parseJobDescription } from "@/lib/ai";
+import type { ParsedRole } from "@/lib/ai";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { recordUsage } from "@/lib/usage";
+import { safeParseJson } from "@/lib/utils";
 
 export async function POST(
   _req: Request,
@@ -15,7 +17,13 @@ export async function POST(
   if (error || !job) return error;
 
   try {
+    const existing = safeParseJson<ParsedRole | null>(job.parsedRole, null);
     const parsedRole = await parseJobDescription(job.rawJd);
+
+    // Preserve dismissals the recruiter made on the previous analysis.
+    if (existing?.dismissed_skill_notes?.length) {
+      parsedRole.dismissed_skill_notes = existing.dismissed_skill_notes;
+    }
 
     // Save parsed role back to job
     await prisma.job.update({

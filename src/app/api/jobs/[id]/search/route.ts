@@ -162,7 +162,7 @@ function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole,
   const text = candidateSearchText(result, profileText, candidateLocation);
   const anchorTerms = extractAnchorRequirementTerms(parsedRole);
   if (anchorTerms.length > 0) {
-    return anchorTerms.every((term) => textHasTerm(text, term));
+    return anchorTerms.some((term) => textHasTerm(text, term));
   }
   return terms.some((term) => textHasTerm(text, term));
 }

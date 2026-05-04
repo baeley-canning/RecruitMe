@@ -215,7 +215,27 @@ function normalizeSource(value: unknown): "explicit" | "inferred" | "" {
   return value === "explicit" || value === "inferred" ? value : "";
 }
 
+function ensureSkillNotes(value: unknown): SkillNote[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => ({
+      skill: ensureString(item.skill),
+      type: item.type === "rare" ? "rare" as const : "legacy" as const,
+      note: ensureString(item.note),
+      alternatives: ensureStringArray(item.alternatives),
+    }))
+    .filter((note) => note.skill.length > 0 && note.alternatives.length > 0);
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
+
+export interface SkillNote {
+  skill: string;
+  type: "legacy" | "rare";
+  note: string;
+  alternatives: string[];
+}
 
 export interface ParsedRole {
   title: string;
@@ -247,6 +267,10 @@ export interface ParsedRole {
   // Legacy — kept populated for backward compat with older scored candidates
   skills_required: string[];
   skills_preferred: string[];
+  // Recruiter-facing search tips: AI-detected legacy/rare skills with suggested alternatives
+  skill_notes: SkillNote[];
+  // Skills whose tip the recruiter has dismissed — preserved across re-analyses
+  dismissed_skill_notes: string[];
 }
 
 export interface AcceptanceSignal {
@@ -310,7 +334,10 @@ Return ONLY valid JSON (no markdown, no explanation):
     "query 2: seniority + domain angle that appears in real LinkedIn headlines"
   ],
   "skills_required": ["technical and hard skills from must_haves — same content, skills only"],
-  "skills_preferred": ["technical and hard skills from nice_to_haves — same content, skills only"]
+  "skills_preferred": ["technical and hard skills from nice_to_haves — same content, skills only"],
+  "skill_notes": [
+    {"skill": "Sybase", "type": "legacy", "note": "Sybase (SAP ASE) is largely obsolete — candidates with SQL Server or SAP HANA may adapt quickly", "alternatives": ["SAP HANA", "SQL Server", "PostgreSQL"]}
+  ]
 }
 
 Rules:
@@ -324,6 +351,7 @@ Rules:
 - Grouped/partial skill lists: when a JD says "experience across at least half of the following", "one or more of", "familiarity with any of", or similar partial-coverage language, compress those items into ONE single must-have string that preserves the threshold — e.g. "At least half of: Java, Node.js, React, GitLab CI, Jenkins, Terraform, Jira, Ansible". Do NOT expand a partial list into separate individual must-haves — that would over-penalise candidates who meet the actual threshold.
 - Security clearance: if the ad explicitly says a clearance is required, must be held, or must be obtainable, add it to knockout_criteria and must_haves. If the ad only implies sensitive government/security context through the employer or product area, do NOT make it a knockout; put it in strongly_inferred/search_expansion instead.
 - knockout_criteria: STRICT — only legal/compliance binary gates a recruiter asks on a phone screen before looking at the CV. Work rights, mandatory licences, explicit security clearances. Skills and experience are NOT knockouts — they go in must_haves. Most roles have one knockout or none. When in doubt, leave it out.
+- skill_notes: identify at most 3 skills in the JD that are legacy/obsolete and where considering modern alternatives would genuinely widen the candidate pool. Use type "legacy". Classic examples: Sybase → SAP HANA/SQL Server, COBOL → Java/mainframe-IBM, VB6/Visual Basic → C#/.NET, ColdFusion → PHP/Node.js, Informix → PostgreSQL/Oracle, Delphi/Pascal → C#/Java, Flash/ActionScript → React/Vue, Lotus Notes → SharePoint/M365. Do NOT flag any mainstream modern technology (React, Python, AWS, Azure, Docker, Kubernetes, Java, C#, .NET, PostgreSQL, MySQL, SQL Server, MongoDB, C, C++, Go, Rust, etc.). Do NOT flag C or C++ — they are specific, legitimate modern requirements. Only flag skills whose alternatives are genuine replacements, not just related technologies. Return an empty array if nothing applies — most JDs should have no skill_notes at all.
 - application_requirements: use this for portfolio / CV / cover letter asks and application questions. These are not knockout criteria unless the ad clearly says mandatory.
 - salary_band: if the JD states a range, use it. If not, use your knowledge of NZ market rates for this role and seniority.`, 0.1, 2048, {
     provider: getJobParsingProvider(),
@@ -359,6 +387,8 @@ Rules:
     google_queries: ensureStringArray(parsed.google_queries),
     skills_required: ensureStringArray(parsed.skills_required),
     skills_preferred: ensureStringArray(parsed.skills_preferred),
+    skill_notes: ensureSkillNotes(parsed.skill_notes),
+    dismissed_skill_notes: ensureStringArray(parsed.dismissed_skill_notes),
   };
 
   return enrichRoleWithSecurityClearance(jd, normalizedRole);
