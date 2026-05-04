@@ -33,7 +33,11 @@ export default function LoginPage() {
     });
 
     if (result?.error) {
-      setError("Invalid username or password.");
+      setError(
+        result.error === "CredentialsSignin"
+          ? "Invalid username or password."
+          : result.error
+      );
       setLoading(false);
     } else {
       const target = result?.url && result.url.startsWith(window.location.origin)

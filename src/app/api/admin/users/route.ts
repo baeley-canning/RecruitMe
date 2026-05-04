@@ -33,7 +33,8 @@ export async function GET() {
 
 const CreateUserSchema = z.object({
   username: z.string().min(2).max(50).trim(),
-  password: z.string().min(6).max(100),
+  password: z.string().min(8, "Password must be at least 8 characters").max(100)
+    .regex(/[0-9!@#$%^&*()_\-+=[\]{};':"\\|,.<>/?]/, "Password must contain at least one number or special character"),
   role: z.enum(["user", "owner"]).default("user"),
   orgId: z.string().optional(),
 });

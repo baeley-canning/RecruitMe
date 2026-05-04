@@ -69,6 +69,7 @@ export async function DELETE(req: Request) {
   await prisma.$transaction([
     prisma.user.updateMany({ where: { orgId: id }, data: { orgId: null } }),
     prisma.job.updateMany({ where: { orgId: id }, data: { orgId: null } }),
+    prisma.candidate.updateMany({ where: { orgId: id }, data: { orgId: null } }),
     prisma.org.delete({ where: { id } }),
   ]);
 

@@ -160,6 +160,7 @@ export default function JobDetailPage({
 
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState("");
   const [showAddCandidate, setShowAddCandidate] = useState(false);
@@ -180,6 +181,7 @@ export default function JobDetailPage({
   const [salaryMax, setSalaryMax] = useState<string>("");
   const [editingSalary, setEditingSalary] = useState(false);
   const [savingSalary, setSavingSalary] = useState(false);
+  const [salaryError, setSalaryError] = useState("");
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showJobAd, setShowJobAd] = useState(false);
@@ -205,14 +207,22 @@ export default function JobDetailPage({
   const finishFetchRef = useRef<(candidateId: string, state: "done" | "error", message: string) => void>(() => {});
 
   const fetchJob = useCallback(async () => {
-    const res = await fetch(`/api/jobs/${id}`);
-    if (res.ok) {
-      const data = await res.json() as Job;
-      setJob(data);
-      setSalaryMin(data.salaryMin ? String(data.salaryMin / 1000) : "");
-      setSalaryMax(data.salaryMax ? String(data.salaryMax / 1000) : "");
+    try {
+      const res = await fetch(`/api/jobs/${id}`);
+      if (res.ok) {
+        const data = await res.json() as Job;
+        setJob(data);
+        setSalaryMin(data.salaryMin ? String(data.salaryMin / 1000) : "");
+        setSalaryMax(data.salaryMax ? String(data.salaryMax / 1000) : "");
+        setFetchError(false);
+      } else {
+        setFetchError(true);
+      }
+    } catch {
+      setFetchError(true);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [id]);
 
   useEffect(() => {
@@ -221,6 +231,14 @@ export default function JobDetailPage({
 
   // Keep jobRef in sync so poll callbacks can read the latest job without stale closures.
   useEffect(() => { jobRef.current = job; }, [job]);
+
+  // Warn before browser-level navigation (refresh/close tab) when JD has unsaved edits.
+  useEffect(() => {
+    if (!editingJd) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [editingJd]);
 
   useEffect(() => {
     const ref = activeFetchesRef.current;
@@ -239,9 +257,14 @@ export default function JobDetailPage({
 
   const handleSaveSalary = async () => {
     if (!job) return;
-    setSavingSalary(true);
     const min = salaryMin ? Math.round(parseFloat(salaryMin) * 1000) : null;
     const max = salaryMax ? Math.round(parseFloat(salaryMax) * 1000) : null;
+    if (min != null && max != null && min > max) {
+      setSalaryError("Minimum cannot exceed maximum");
+      return;
+    }
+    setSalaryError("");
+    setSavingSalary(true);
     const res = await fetch(`/api/jobs/${job.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -642,6 +665,7 @@ export default function JobDetailPage({
 
   const handleBulkStatusChange = async (status: string) => {
     if (selectedIds.size === 0) return;
+    if (!confirm(`Move ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""} to "${statusLabel(status)}"?`)) return;
     setBulkStatusChanging(true);
     await Promise.allSettled(
       [...selectedIds].map((candidateId) =>
@@ -819,6 +843,22 @@ ${toHtml(job.rawJd)}
     );
   }
 
+  if (fetchError) {
+    return (
+      <div className="p-8 text-center">
+        <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-3" />
+        <p className="text-slate-700 font-medium mb-1">Failed to load job</p>
+        <p className="text-slate-400 text-sm mb-4">Check your connection and try again.</p>
+        <button
+          onClick={() => { setLoading(true); setFetchError(false); fetchJob(); }}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   if (!job) {
     return <div className="p-8 text-center text-slate-500">Job not found.</div>;
   }
@@ -986,7 +1026,10 @@ ${toHtml(job.rawJd)}
                   />
                   <div className="flex items-center justify-end gap-2">
                     <button
-                      onClick={() => setEditingJd(false)}
+                      onClick={() => {
+                        if (jdDraft !== job.rawJd && !confirm("Discard unsaved changes to the job description?")) return;
+                        setEditingJd(false);
+                      }}
                       className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                     >
                       Cancel
@@ -1036,36 +1079,39 @@ ${toHtml(job.rawJd)}
                     )}
                   </div>
                   {editingSalary ? (
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative flex-1">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
-                        <input
-                          type="number"
-                          placeholder="Min (k)"
-                          value={salaryMin}
-                          onChange={(e) => setSalaryMin(e.target.value)}
-                          className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative flex-1">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
+                          <input
+                            type="number"
+                            placeholder="Min (k)"
+                            value={salaryMin}
+                            onChange={(e) => setSalaryMin(e.target.value)}
+                            className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                        <span className="text-slate-400 text-sm">–</span>
+                        <div className="relative flex-1">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
+                          <input
+                            type="number"
+                            placeholder="Max (k)"
+                            value={salaryMax}
+                            onChange={(e) => setSalaryMax(e.target.value)}
+                            className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                        <span className="text-slate-400 text-xs">k</span>
+                        <button onClick={handleSaveSalary} disabled={savingSalary} className="px-2 py-1 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50">
+                          {savingSalary ? "..." : "Save"}
+                        </button>
+                        <button onClick={() => { setEditingSalary(false); setSalaryError(""); }} className="text-slate-400 hover:text-slate-600">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <span className="text-slate-400 text-sm">–</span>
-                      <div className="relative flex-1">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
-                        <input
-                          type="number"
-                          placeholder="Max (k)"
-                          value={salaryMax}
-                          onChange={(e) => setSalaryMax(e.target.value)}
-                          className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      </div>
-                      <span className="text-slate-400 text-xs">k</span>
-                      <button onClick={handleSaveSalary} disabled={savingSalary} className="px-2 py-1 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50">
-                        {savingSalary ? "..." : "Save"}
-                      </button>
-                      <button onClick={() => setEditingSalary(false)} className="text-slate-400 hover:text-slate-600">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                      {salaryError && <p className="text-xs text-red-500 mt-1">{salaryError}</p>}
+                    </>
                   ) : (
                     <p className="text-sm text-slate-800">
                       {job.salaryMin && job.salaryMax

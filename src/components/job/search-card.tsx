@@ -20,6 +20,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [searching, setSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<SearchResultSummary | null>(null);
   const [searchError, setSearchError] = useState("");
+  const [searchTimedOut, setSearchTimedOut] = useState(false);
   const [searchingPool, setSearchingPool] = useState(false);
   const [poolResult, setPoolResult] = useState<{ count: number; message?: string } | null>(null);
   const [poolError, setPoolError] = useState("");
@@ -61,6 +62,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     setSearching(true);
     setSearchError("");
     setSearchResult(null);
+    setSearchTimedOut(false);
     try {
       const res = await fetch(`/api/jobs/${jobId}/search`, {
         method: "POST",
@@ -74,7 +76,8 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       const deadline = Date.now() + 8 * 60 * 1000;
       const poll = async () => {
         if (Date.now() > deadline) {
-          setSearchError("Search is taking too long. It may still be running — refresh the page in a minute.");
+          setSearchTimedOut(true);
+          setSearchError("Search is taking longer than expected. It may still be running in the background.");
           setSearching(false);
           return;
         }
@@ -199,9 +202,19 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   </p>
                 )}
                 {searchError && (
-                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />{searchError}
-                  </p>
+                  <div className="mt-1 flex items-center gap-2 flex-wrap">
+                    <p className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />{searchError}
+                    </p>
+                    {searchTimedOut && (
+                      <button
+                        onClick={handleSearch}
+                        className="text-xs text-blue-600 hover:text-blue-700 font-medium underline"
+                      >
+                        Retry search
+                      </button>
+                    )}
+                  </div>
                 )}
                 {!searching && searchHistory.length > 0 && (
                   <div className="mt-2 space-y-1">

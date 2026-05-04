@@ -31,6 +31,18 @@ export async function POST(req: Request) {
     if (key in body) {
       const val = body[key]?.trim() ?? "";
       if (val) {
+        if (/\s/.test(val)) {
+          return NextResponse.json(
+            { error: `${key}: API keys cannot contain spaces — check for accidental whitespace` },
+            { status: 422 }
+          );
+        }
+        if (val.length < 8) {
+          return NextResponse.json(
+            { error: `${key}: API key is too short — check you pasted the full key` },
+            { status: 422 }
+          );
+        }
         await setServerSetting(key, val);
       }
     }

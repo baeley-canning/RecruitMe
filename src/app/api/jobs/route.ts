@@ -38,6 +38,10 @@ export async function POST(req: Request) {
   }
   const { title, company, location, isRemote, rawJd, salaryMin, salaryMax } = result.data;
 
+  if (salaryMin != null && salaryMax != null && salaryMin > salaryMax) {
+    return NextResponse.json({ error: "Salary minimum cannot exceed maximum" }, { status: 422 });
+  }
+
   const job = await prisma.job.create({
     data: {
       title,

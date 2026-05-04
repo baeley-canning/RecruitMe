@@ -4,6 +4,12 @@ import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { ensureDefaultOrg } from "./org";
 
+// In-memory brute-force protection — keyed by lowercase username.
+// Resets on server restart; sufficient for a single-instance Railway deployment.
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const MAX_ATTEMPTS = 10;
+const WINDOW_MS = 15 * 60 * 1000;
+
 const authUrl =
   process.env.NEXTAUTH_URL ||
   process.env.NEXT_PUBLIC_APP_URL ||
@@ -27,14 +33,40 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.username || !credentials?.password) return null;
 
+        const key = credentials.username.toLowerCase().trim();
+        const now = Date.now();
+        const entry = loginAttempts.get(key);
+
+        if (entry && now < entry.resetAt && entry.count >= MAX_ATTEMPTS) {
+          const mins = Math.ceil((entry.resetAt - now) / 60000);
+          throw new Error(`Too many failed attempts — try again in ${mins} minute${mins !== 1 ? "s" : ""}.`);
+        }
+
         let user = await prisma.user.findUnique({
           where: { username: credentials.username },
         });
 
-        if (!user) return null;
+        if (!user) {
+          // Count failed attempt for non-existent usernames too (prevents enumeration timing)
+          if (!entry || now >= entry.resetAt) {
+            loginAttempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
+          } else {
+            entry.count++;
+          }
+          return null;
+        }
 
         const valid = await bcrypt.compare(credentials.password, user.password);
-        if (!valid) return null;
+        if (!valid) {
+          if (!entry || now >= entry.resetAt) {
+            loginAttempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
+          } else {
+            entry.count++;
+          }
+          return null;
+        }
+
+        loginAttempts.delete(key);
 
         if (user.role !== "owner" && !user.orgId) {
           const defaultOrg = await ensureDefaultOrg();
