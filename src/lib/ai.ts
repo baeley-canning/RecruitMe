@@ -920,21 +920,23 @@ Return ONLY valid JSON — no commentary:
     ? `\nRole this candidate is being put forward for:\n${jdText.slice(0, 2000)}\n\nAngle the summary toward this role. Lead with the facts most relevant to the hiring manager's needs. Do NOT mention requirements the candidate doesn't meet. The role context tells you what to emphasise — not what to invent.\n`
     : "";
 
-  const summaryPrompt = `Write a professional executive summary for a candidate profile document.
+  const summaryPrompt = `Write a concise executive summary for a candidate profile document.
 
-You are given verified facts only. You MUST NOT add, infer, or embellish anything beyond these facts.
-Write in third person. No first person. Polished recruitment consultant tone.
-If the facts are sparse, keep the summary short — do not pad it out.
-Do not use generic filler like "proven track record" or "strong communicator" unless the facts explicitly state it.
+Rules — strictly follow:
+- Under 150 words total. Brevity is quality.
+- Third person only. No first person.
+- Only facts from the verified list below. Do NOT infer, embellish, or invent.
+- No filler phrases: no "proven track record", "strong communicator", "passionate about", "results-driven".
+- This summary appears directly above the work history. Do NOT re-summarise the work history — write the pitch a hiring manager reads to decide whether to read on.
+- Every sentence must add something the others don't. Cut anything that could apply to any candidate.
 ${roleContext}
 Verified facts:
 ${factsForSummary}
 
-Write 3–4 paragraphs:
-1. Career overview — roles and domains from the facts${jdText ? ", emphasising what is most relevant to the role above" : ""}
-2. Most recent role — what they did, based on the key points
-3. Previous experience or notable skills — from the facts only
-4. What they are looking for — only if stated in the facts, otherwise omit this paragraph
+Write 2–3 short paragraphs, 2–3 sentences each:
+1. Career headline — who they are and their domain in one or two sentences${jdText ? ", leading with what is most relevant to the role" : ""}
+2. Most compelling experience — the 2–3 facts that matter most for this placement
+3. Closing pitch — one sentence on why they stand out, only if the facts clearly support it; otherwise omit
 
 Return ONLY the summary text. No JSON. No headings.`;
 
