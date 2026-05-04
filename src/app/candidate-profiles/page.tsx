@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, FileText, Loader2, Download, ChevronDown, ChevronUp, Upload, X, BookOpen, FolderOpen } from "lucide-react";
+import Link from "next/link";
+import { Search, FileText, Loader2, Download, ChevronDown, ChevronUp, Upload, X, BookOpen, FolderOpen, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Candidate {
@@ -281,6 +282,15 @@ export default function CandidateProfilesPage() {
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-3xl mx-auto px-6 py-10">
+
+        {/* Back */}
+        <Link
+          href="/jobs"
+          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors mb-6"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to app
+        </Link>
 
         {/* Header */}
         <div className="mb-8">
