@@ -86,7 +86,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Could not extract text from the uploaded files" }, { status: 422 });
     }
 
-    const jdText = ((form.get("jd") as string | null) ?? "").slice(0, 10000) || undefined;
+    const jdFileField = form.get("jdFile");
+    const jdText = jdFileField instanceof File
+      ? ((await extractFileText(jdFileField)).slice(0, 10000) || undefined)
+      : undefined;
 
     const sections = await generateCandidateProfileSections(combinedText, candidateName, jdText);
 

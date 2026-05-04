@@ -159,6 +159,53 @@ function FileDropZone({ files, onChange }: {
   );
 }
 
+function JdDropZone({ file, onChange }: { file: File | null; onChange: (f: File | null) => void }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const accept = ".pdf,.doc,.docx";
+  const ACCEPTED = ["application/pdf", "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+
+  const pick = useCallback((incoming: FileList | File[]) => {
+    const f = Array.from(incoming).find(
+      (f) => ACCEPTED.includes(f.type) || accept.split(",").some((ext) => f.name.toLowerCase().endsWith(ext))
+    );
+    if (f) onChange(f);
+  }, [onChange]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs font-medium text-slate-600">Job Description <span className="font-normal text-slate-400">(optional — focuses the summary on the role)</span></label>
+      {file ? (
+        <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
+          <FileText className="w-4 h-4 text-teal-600 flex-shrink-0" />
+          <span className="text-sm text-slate-700 flex-1 truncate">{file.name}</span>
+          <span className="text-xs text-slate-400 flex-shrink-0">{(file.size / 1024).toFixed(0)} KB</span>
+          <button type="button" onClick={() => onChange(null)} className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ) : (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); pick(e.dataTransfer.files); }}
+          onClick={() => inputRef.current?.click()}
+          className={cn(
+            "border-2 border-dashed rounded-xl px-6 py-5 text-center cursor-pointer transition-colors",
+            dragging ? "border-teal-400 bg-teal-50" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+          )}
+        >
+          <Upload className="w-5 h-5 text-slate-400 mx-auto mb-1.5" />
+          <p className="text-sm font-medium text-slate-700">Drop JD here or click to browse</p>
+          <p className="text-xs text-slate-400 mt-0.5">PDF or Word (.docx)</p>
+          <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={(e) => e.target.files && pick(e.target.files)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CandidateProfilesPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("library");
@@ -172,8 +219,7 @@ export default function CandidateProfilesPage() {
   // Documents mode state
   const [docName, setDocName]   = useState("");
   const [docFiles, setDocFiles] = useState<File[]>([]);
-  const [docJd, setDocJd]       = useState("");
-  const [jdOpen, setJdOpen]     = useState(false);
+  const [jdFile, setJdFile]     = useState<File | null>(null);
 
   // Shared fields
   const [role, setRole]               = useState("");
@@ -225,8 +271,7 @@ export default function CandidateProfilesPage() {
     setSelected(null);
     setDocName("");
     setDocFiles([]);
-    setDocJd("");
-    setJdOpen(false);
+    setJdFile(null);
     setRole("");
   };
 
@@ -260,7 +305,7 @@ export default function CandidateProfilesPage() {
         form.append("managerEmail",    manager.email);
         form.append("managerPhone",    manager.phone);
         docFiles.forEach((f) => form.append("files", f));
-        if (docJd.trim()) form.append("jd", docJd.trim());
+        if (jdFile) form.append("jdFile", jdFile);
         res = await fetch("/api/candidate-profiles/generate", { method: "POST", body: form });
       }
 
@@ -420,30 +465,7 @@ export default function CandidateProfilesPage() {
                   placeholder="e.g. Suzzanne Dobson"
                 />
                 <FileDropZone files={docFiles} onChange={setDocFiles} />
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => setJdOpen((o) => !o)}
-                    className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
-                  >
-                    <span>
-                      Job Description
-                      <span className="font-normal text-slate-400 ml-1.5">optional — focuses the summary on the role</span>
-                    </span>
-                    {jdOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                  </button>
-                  {jdOpen && (
-                    <div className="px-4 py-4">
-                      <textarea
-                        value={docJd}
-                        onChange={(e) => setDocJd(e.target.value)}
-                        placeholder="Paste the job description here…"
-                        rows={6}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 resize-y"
-                      />
-                    </div>
-                  )}
-                </div>
+                <JdDropZone file={jdFile} onChange={setJdFile} />
               </div>
             </div>
           )}
