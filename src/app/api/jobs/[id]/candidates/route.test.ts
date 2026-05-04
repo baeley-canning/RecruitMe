@@ -37,9 +37,8 @@ function makeBreakdown() {
       location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Wellington-based." },
       seniority_fit: { score: 76, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Right experience band." },
       title_fit: { score: 78, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Relevant title history." },
-      industry_fit: { score: 62, weight: CATEGORY_WEIGHTS_V2.industry_fit, evidence: "Good SaaS overlap." },
+      domain_fit: { score: 66, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Good SaaS overlap, aligned wording." },
       nice_to_have_fit: { score: 40, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some nice-to-haves." },
-      keyword_alignment: { score: 70, weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Aligned wording." },
     },
     must_have_coverage: [
       { requirement: "Ruby on Rails", status: "confirmed", evidence: "Listed explicitly." },

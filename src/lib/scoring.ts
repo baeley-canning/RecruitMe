@@ -51,13 +51,15 @@ export interface ScoreBreakdown {
   overall: number;
   evidence_coverage_score: number;
   categories: {
-    skill_fit:         CategoryScore;
-    location_fit:      CategoryScore;
-    seniority_fit:     CategoryScore;
-    title_fit:         CategoryScore;
-    industry_fit:      CategoryScore;
-    nice_to_have_fit:  CategoryScore;
-    keyword_alignment: CategoryScore;
+    skill_fit:          CategoryScore;
+    location_fit:       CategoryScore;
+    seniority_fit:      CategoryScore;
+    title_fit:          CategoryScore;
+    domain_fit:         CategoryScore;
+    nice_to_have_fit:   CategoryScore;
+    // Legacy fields — present on old DB records, absent on new ones
+    industry_fit?:      CategoryScore;
+    keyword_alignment?: CategoryScore;
   };
   must_have_coverage:   MustHaveStatus[];
   must_have_pct:        number;
@@ -80,16 +82,15 @@ export interface ScoreBreakdown {
 // Location cut to 8%: being nearby should not carry a weak profile.
 
 export const CATEGORY_WEIGHTS_V2 = {
-  skill_fit:         0.22,
-  location_fit:      0.08,
-  seniority_fit:     0.10,
-  title_fit:         0.08,
-  industry_fit:      0.04,
-  nice_to_have_fit:  0.06,
-  keyword_alignment: 0.06,
+  skill_fit:        0.22,
+  location_fit:     0.08,
+  seniority_fit:    0.10,
+  title_fit:        0.08,
+  domain_fit:       0.10, // replaces industry_fit(0.04) + keyword_alignment(0.06)
+  nice_to_have_fit: 0.06,
   // must_have_pct contributes 0.36
 } as const;
-// Check: 0.22+0.08+0.10+0.08+0.04+0.06+0.06 = 0.64; plus must_have_pct*0.36 = 1.00 ✓
+// Check: 0.22+0.08+0.10+0.08+0.10+0.06 = 0.64; plus must_have_pct*0.36 = 1.00 ✓
 
 export const MUST_HAVE_WEIGHT_V2 = 0.36;
 
@@ -215,15 +216,19 @@ export function computeOverallScore(
   categories: ScoreBreakdown["categories"],
   mustHavePct: number
 ): number {
+  // Backward compat: old records have industry_fit + keyword_alignment instead of domain_fit.
+  // Derive an equivalent domain score from the legacy fields so old records score correctly.
+  const domainScore = categories.domain_fit?.score ??
+    ((categories.industry_fit?.score ?? 50) * 0.04 + (categories.keyword_alignment?.score ?? 50) * 0.06) / 0.10;
+
   const weighted =
-    categories.skill_fit.score         * CATEGORY_WEIGHTS_V2.skill_fit +
-    categories.location_fit.score      * CATEGORY_WEIGHTS_V2.location_fit +
-    categories.seniority_fit.score     * CATEGORY_WEIGHTS_V2.seniority_fit +
-    categories.title_fit.score         * CATEGORY_WEIGHTS_V2.title_fit +
-    categories.industry_fit.score      * CATEGORY_WEIGHTS_V2.industry_fit +
-    categories.nice_to_have_fit.score  * CATEGORY_WEIGHTS_V2.nice_to_have_fit +
-    categories.keyword_alignment.score * CATEGORY_WEIGHTS_V2.keyword_alignment +
-    mustHavePct                        * MUST_HAVE_WEIGHT_V2;
+    categories.skill_fit.score        * CATEGORY_WEIGHTS_V2.skill_fit +
+    categories.location_fit.score     * CATEGORY_WEIGHTS_V2.location_fit +
+    categories.seniority_fit.score    * CATEGORY_WEIGHTS_V2.seniority_fit +
+    categories.title_fit.score        * CATEGORY_WEIGHTS_V2.title_fit +
+    domainScore                       * CATEGORY_WEIGHTS_V2.domain_fit +
+    categories.nice_to_have_fit.score * CATEGORY_WEIGHTS_V2.nice_to_have_fit +
+    mustHavePct                       * MUST_HAVE_WEIGHT_V2;
 
   return Math.min(100, Math.max(0, Math.round(weighted)));
 }

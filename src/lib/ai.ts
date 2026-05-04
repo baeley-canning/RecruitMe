@@ -273,7 +273,7 @@ export async function parseJobDescription(jd: string): Promise<ParsedRole> {
   const text = await chat(`You are a senior recruitment consultant with deep knowledge of the NZ market. You will receive either a formal job description (JD) or an informal hiring brief. Extract a structured hiring profile that powers candidate search and screening.
 
 Input (JD or hiring brief):
-${jd.slice(0, 5000)}
+${jd.slice(0, 8000)}
 
 Return ONLY valid JSON (no markdown, no explanation):
 {
@@ -390,7 +390,8 @@ Assess using only evidence in the profile. Consider: tenure in current role, car
 Return ONLY valid JSON (no markdown):
 {"score":68,"likelihood":"medium","headline":"3 years without visible promotion — likely open to the right move","signals":[{"label":"3 years in current role — within typical move window","positive":true}],"summary":"2-3 sentence recruiter assessment."}
 
-Score: 70-100 high, 40-69 medium, 0-39 low. Max 5 signals. Only include signals with actual evidence.`);
+Score: 70-100 high, 40-69 medium, 0-39 low. Max 5 signals. Only include signals with actual evidence.
+Only produce a salary signal if the profile explicitly mentions compensation expectations or a counter-offer situation — do not estimate salary fit from role title alone.`, 0.1, 2048, { model: SONNET });
 
   const parsed = parseJson<Partial<AcceptancePrediction>>(text);
   const clamp  = (v: unknown) => typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : 50;
@@ -469,7 +470,7 @@ Rules:
 - If the text is already clean and readable, return it unchanged
 
 Raw CV text:
-${rawText.slice(0, 6000)}
+${rawText.slice(0, 12000)}
 
 Return ONLY the cleaned CV text. No commentary, no preamble.`,
     0,
@@ -530,7 +531,7 @@ Rules:
 - If the source is too thin, return fewer fields rather than guessing.`,
     0,
     4096,
-    { provider: getJobParsingProvider() }
+    { provider: getJobParsingProvider(), model: SONNET }
   );
 
   return sanitizeCandidateProfileDraft(parseJson<EvidenceCandidateProfileDraft>(text), source);
@@ -609,13 +610,12 @@ ${profileSlice}
 Return EXACTLY this JSON structure:
 {
   "categories": {
-    "skill_fit":         {"score":0,"evidence":"one sentence grounding the score in actual profile text"},
-    "location_fit":      {"score":0,"evidence":"one sentence"},
-    "seniority_fit":     {"score":0,"evidence":"one sentence"},
-    "title_fit":         {"score":0,"evidence":"one sentence"},
-    "industry_fit":      {"score":0,"evidence":"one sentence"},
-    "nice_to_have_fit":  {"score":0,"evidence":"one sentence about how many nice-to-haves are present"},
-    "keyword_alignment": {"score":0,"evidence":"one sentence about vocabulary and terminology match"}
+    "skill_fit":        {"score":0,"evidence":"one sentence grounding the score in actual profile text"},
+    "location_fit":     {"score":0,"evidence":"one sentence"},
+    "seniority_fit":    {"score":0,"evidence":"one sentence"},
+    "title_fit":        {"score":0,"evidence":"one sentence"},
+    "domain_fit":       {"score":0,"evidence":"one sentence covering both sector/domain experience AND vocabulary alignment"},
+    "nice_to_have_fit": {"score":0,"evidence":"one sentence about how many nice-to-haves are present"}
   },
   "must_have_coverage": [
     {"requirement":"exact text from must-haves list","status":"confirmed|equivalent|likely|missing|negative|unknown","evidence":"direct quote or paraphrase from profile, or Not mentioned"}
@@ -626,7 +626,7 @@ Return EXACTLY this JSON structure:
   "reasons_for": ["specific positive signal from the profile","..."],
   "reasons_against": ["specific concern or gap from the profile","..."],
   "missing_evidence": ["specific fact that would change the score if known","..."],
-  "recruiter_summary": "1-2 sentences a recruiter would say to a client. Specific, no jargon, no superlatives."
+  "recruiter_summary": "One sentence only. The single most important fact about fit or gap — name something specific from this profile (a skill, job title, company, or year count). Must not repeat anything already listed in reasons_for or reasons_against. If a strong match, say why in one line. If there is a blocker, name it."
 }
 
 Category score rules:
@@ -634,9 +634,8 @@ Category score rules:
 - location_fit: 100 = same city/region; 80 = commutable; 50 = same country; 0 = overseas
 - seniority_fit: 100 = exact match; 70 = one level off; 40 = two levels off; 0 = completely wrong level
 - title_fit: do recent titles align with how people in this role describe themselves on LinkedIn?
-- industry_fit: relevant sector/domain experience matching the role's context?
+- domain_fit: assess BOTH sector/domain experience AND vocabulary alignment together. 80+ = candidate's sector matches the role AND their language aligns with how this industry describes itself; 60-79 = good on one dimension but not both; 40-59 = adjacent domain; 0-39 = unrelated field
 - nice_to_have_fit: 80+ = most nice-to-haves present; 50 = some; 20 = few; if none listed, score 50
-- keyword_alignment: 80+ = vocabulary strongly matches role language; 40-79 = partial; 0-39 = different domain
 
 must_have_coverage rules:
 - "confirmed" = clearly and explicitly stated in the profile
@@ -689,19 +688,19 @@ IMPORTANT CARVE-OUTS — do NOT apply experience equivalency to requirements inv
 For these, equivalency does not apply. If no formal qualification is stated, mark "unknown" or "missing" as appropriate.
 Do NOT let seniority in an unrelated domain satisfy the clause. A senior accountant's experience does not satisfy "engineering degree or equivalent experience." Domain must match.`,
     0.1,
-    3000
+    4096,
+    { model: SONNET }
   );
 
   type RawCat = { score?: number; evidence?: string };
   type RawAI = {
     categories?: {
-      skill_fit?:         RawCat;
-      location_fit?:      RawCat;
-      seniority_fit?:     RawCat;
-      title_fit?:         RawCat;
-      industry_fit?:      RawCat;
-      nice_to_have_fit?:  RawCat;
-      keyword_alignment?: RawCat;
+      skill_fit?:        RawCat;
+      location_fit?:     RawCat;
+      seniority_fit?:    RawCat;
+      title_fit?:        RawCat;
+      domain_fit?:       RawCat;
+      nice_to_have_fit?: RawCat;
     };
     must_have_coverage?:   Array<{ requirement?: string; status?: string; evidence?: string }>;
     nice_to_have_coverage?: Array<{ requirement?: string; status?: string; evidence?: string }>;
@@ -776,13 +775,12 @@ Do NOT let seniority in an unrelated domain satisfy the clause. A senior account
     Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
 
   const categories: ScoreBreakdown["categories"] = {
-    skill_fit:         parseCategory("skill_fit",         CATEGORY_WEIGHTS_V2.skill_fit),
-    location_fit:      parseCategory("location_fit",      CATEGORY_WEIGHTS_V2.location_fit),
-    seniority_fit:     parseCategory("seniority_fit",     CATEGORY_WEIGHTS_V2.seniority_fit),
-    title_fit:         parseCategory("title_fit",         CATEGORY_WEIGHTS_V2.title_fit),
-    industry_fit:      parseCategory("industry_fit",      CATEGORY_WEIGHTS_V2.industry_fit),
-    nice_to_have_fit:  parseCategory("nice_to_have_fit",  CATEGORY_WEIGHTS_V2.nice_to_have_fit),
-    keyword_alignment: parseCategory("keyword_alignment", CATEGORY_WEIGHTS_V2.keyword_alignment),
+    skill_fit:        parseCategory("skill_fit",        CATEGORY_WEIGHTS_V2.skill_fit),
+    location_fit:     parseCategory("location_fit",     CATEGORY_WEIGHTS_V2.location_fit),
+    seniority_fit:    parseCategory("seniority_fit",    CATEGORY_WEIGHTS_V2.seniority_fit),
+    title_fit:        parseCategory("title_fit",        CATEGORY_WEIGHTS_V2.title_fit),
+    domain_fit:       parseCategory("domain_fit",       CATEGORY_WEIGHTS_V2.domain_fit),
+    nice_to_have_fit: parseCategory("nice_to_have_fit", CATEGORY_WEIGHTS_V2.nice_to_have_fit),
   };
 
   return buildScoreBreakdown({
@@ -804,7 +802,7 @@ export async function extractCandidateInfo(
     const text = await chat(`Extract the candidate's name, job title/headline, and location from this LinkedIn profile text. Return actual values found in the text only.
 
 Profile text:
-${profileText.slice(0, 1500)}
+${profileText.slice(0, 2500)}
 
 Return ONLY valid JSON:
 {"name":"Sarah Johnson","headline":"Senior Recruiter at Acme Corp","location":"Auckland, New Zealand"}`, 0);
@@ -824,13 +822,13 @@ Return ONLY valid JSON:
 
 export interface ProfileDocSections {
   executiveSummary: string;
-  workHistory: Array<{ company: string; role: string; bullets: string[] }>;
+  workHistory: Array<{ company: string; role: string; dates: string; bullets: string[] }>;
   qualifications: Array<{ institution: string; courseYear: string }>;
 }
 
 // Internal type returned by Pass 1 (fact extraction)
 interface ExtractedFacts {
-  workHistory: Array<{ company: string; role: string; bullets: string[] }>;
+  workHistory: Array<{ company: string; role: string; dates: string; bullets: string[] }>;
   skills: string[];
   qualifications: Array<{ institution: string; courseYear: string }>;
   availability: string;
@@ -844,7 +842,7 @@ export async function generateCandidateProfileSections(
   candidateName: string,
   jdText?: string
 ): Promise<ProfileDocSections> {
-  const excerpt = profileText.slice(0, 10000);
+  const excerpt = profileText.slice(0, 16000);
 
   // ── Pass 1: Extract facts only (no prose writing) ─────────────────────────
   const extractionPrompt = `Extract factual information from the source material below for candidate ${candidateName}.
@@ -852,7 +850,7 @@ export async function generateCandidateProfileSections(
 RULES — strictly follow:
 - Extract ONLY what is explicitly stated. Do not infer, assume, or invent anything.
 - For bullets: restate the fact clearly but do not embellish. If the source uses dot points, restate them as short professional sentences using the same meaning.
-- If dates are missing, omit them — do not guess.
+- If dates are missing, use an empty string — do not guess.
 - If a field has no data in the source, use an empty string or empty array.
 
 Source material:
@@ -863,7 +861,8 @@ Return ONLY valid JSON — no commentary:
   "workHistory": [
     {
       "company": "Exact company name from source",
-      "role": "Exact job title, StartMonth Year – EndMonth Year (omit dates if not stated)",
+      "role": "Exact job title only — no dates in this field",
+      "dates": "StartMonth Year – EndMonth Year (empty string if not stated)",
       "bullets": ["Fact 1 from source", "Fact 2 from source"]
     }
   ],
@@ -889,6 +888,7 @@ Return ONLY valid JSON — no commentary:
           ? parsed.workHistory.map((j) => ({
               company: String(j.company ?? ""),
               role:    String(j.role ?? ""),
+              dates:   String(j.dates ?? ""),
               bullets: Array.isArray(j.bullets) ? j.bullets.map(String) : [],
             }))
           : [],
@@ -910,7 +910,7 @@ Return ONLY valid JSON — no commentary:
   // ── Pass 2: Write executive summary from verified facts only ──────────────
   const factsForSummary = JSON.stringify({
     name: candidateName,
-    workHistory: facts.workHistory.map((j) => ({ company: j.company, role: j.role, keyPoints: j.bullets })),
+    workHistory: facts.workHistory.map((j) => ({ company: j.company, role: j.role, dates: j.dates, keyPoints: j.bullets })),
     skills: facts.skills,
     availability: facts.availability,
     lookingFor: facts.lookingFor,
@@ -936,7 +936,7 @@ ${factsForSummary}
 Write 2–3 short paragraphs, 2–3 sentences each:
 1. Career headline — who they are and their domain in one or two sentences${jdText ? ", leading with what is most relevant to the role" : ""}
 2. Most compelling experience — the 2–3 facts that matter most for this placement
-3. Closing pitch — one sentence on why they stand out, only if the facts clearly support it; otherwise omit
+3. One closing sentence only if there is a concrete differentiating fact not yet covered in paragraphs 1 or 2 — something specific from the verified list (a metric, a rare skill, notable employer, or compelling availability). If no such uncovered fact exists, stop after paragraph 2. Do not write a generic closing sentence.
 
 Return ONLY the summary text. No JSON. No headings.`;
 
@@ -950,7 +950,7 @@ Return ONLY the summary text. No JSON. No headings.`;
 
   return {
     executiveSummary,
-    workHistory:    facts.workHistory,
+    workHistory:    facts.workHistory.map((j) => ({ company: j.company, role: j.role, dates: j.dates, bullets: j.bullets })),
     qualifications: facts.qualifications,
   };
 }
@@ -1082,7 +1082,7 @@ Keep it honest, direct, and compelling. No filler phrases like "dynamic" or "pas
 
 Return JSON: {"headline": "short compelling tagline under 10 words", "body": "full ad text with sections"}`;
 
-  const text = await chat(prompt, 0.4, 1500);
+  const text = await chat(prompt, 0.4, 2000);
   const match = text.match(/\{[\s\S]*\}/);
   if (match) {
     try {

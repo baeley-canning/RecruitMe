@@ -16,7 +16,7 @@ export function deriveUpdateData(breakdown: ScoreBreakdown): Record<string, unkn
       dimensions: {
         skills:    breakdown.categories.skill_fit.score,
         title:     breakdown.categories.title_fit.score,
-        industry:  breakdown.categories.industry_fit.score,
+        domain:    (breakdown.categories.domain_fit?.score ?? breakdown.categories.industry_fit?.score ?? 50),
         location:  breakdown.categories.location_fit.score,
         seniority: breakdown.categories.seniority_fit.score,
       },

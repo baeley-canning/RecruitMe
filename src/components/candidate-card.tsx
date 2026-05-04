@@ -167,7 +167,7 @@ function getRadarDimensions(
     return {
       skills: breakdown.categories.skill_fit.score,
       title: breakdown.categories.title_fit.score,
-      industry: breakdown.categories.industry_fit.score,
+      industry: breakdown.categories.domain_fit?.score ?? breakdown.categories.industry_fit?.score ?? 50,
       location: breakdown.categories.location_fit.score,
       seniority: breakdown.categories.seniority_fit.score,
     };
@@ -597,19 +597,14 @@ function ScoringDebugPanel({
       weight: CATEGORY_WEIGHTS_V2.title_fit,
     },
     {
-      label: "Industry fit",
-      score: breakdown.categories.industry_fit.score,
-      weight: CATEGORY_WEIGHTS_V2.industry_fit,
+      label: "Domain fit",
+      score: breakdown.categories.domain_fit?.score ?? breakdown.categories.industry_fit?.score ?? 50,
+      weight: CATEGORY_WEIGHTS_V2.domain_fit,
     },
     {
       label: "Nice-to-have fit",
       score: breakdown.categories.nice_to_have_fit.score,
       weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit,
-    },
-    {
-      label: "Keyword alignment",
-      score: breakdown.categories.keyword_alignment.score,
-      weight: CATEGORY_WEIGHTS_V2.keyword_alignment,
     },
     {
       label: "Must-have coverage",

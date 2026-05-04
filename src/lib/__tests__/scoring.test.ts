@@ -17,13 +17,12 @@ import {
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 const baseCategories: ScoreBreakdown["categories"] = {
-  skill_fit:         { score: 80, weight: CATEGORY_WEIGHTS_V2.skill_fit,         evidence: "Uses React and TypeScript" },
-  location_fit:      { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit,     evidence: "Based in Auckland" },
-  seniority_fit:     { score: 80, weight: CATEGORY_WEIGHTS_V2.seniority_fit,     evidence: "Senior Software Engineer title" },
-  title_fit:         { score: 70, weight: CATEGORY_WEIGHTS_V2.title_fit,         evidence: "Close synonym title" },
-  industry_fit:      { score: 90, weight: CATEGORY_WEIGHTS_V2.industry_fit,      evidence: "Fintech experience" },
-  nice_to_have_fit:  { score: 60, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit,  evidence: "Some nice-to-haves present" },
-  keyword_alignment: { score: 75, weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Vocabulary aligns well" },
+  skill_fit:        { score: 80,  weight: CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Uses React and TypeScript" },
+  location_fit:     { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit,     evidence: "Based in Auckland" },
+  seniority_fit:    { score: 80,  weight: CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Senior Software Engineer title" },
+  title_fit:        { score: 70,  weight: CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Close synonym title" },
+  domain_fit:       { score: 85,  weight: CATEGORY_WEIGHTS_V2.domain_fit,       evidence: "Fintech experience, vocabulary aligns" },
+  nice_to_have_fit: { score: 60,  weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some nice-to-haves present" },
 };
 
 const allConfirmed: MustHaveStatus[] = [

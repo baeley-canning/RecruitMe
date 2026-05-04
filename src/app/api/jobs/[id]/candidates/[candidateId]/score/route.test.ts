@@ -41,9 +41,8 @@ function makeBreakdown() {
       location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Wellington-based." },
       seniority_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Correct level." },
       title_fit: { score: 72, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Matching titles." },
-      industry_fit: { score: 58, weight: CATEGORY_WEIGHTS_V2.industry_fit, evidence: "Some domain overlap." },
+      domain_fit: { score: 62, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Some domain overlap, good keyword alignment." },
       nice_to_have_fit: { score: 35, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Limited nice-to-haves." },
-      keyword_alignment: { score: 66, weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Good keyword overlap." },
     },
     must_have_coverage: [
       { requirement: "React", status: "confirmed", evidence: "Explicitly listed." },

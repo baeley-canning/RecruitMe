@@ -236,13 +236,12 @@ function buildProvisionalSearchScore(
 
   const breakdown = buildScoreBreakdown({
     categories: {
-      skill_fit:         { score: skillScore,     weight: CATEGORY_WEIGHTS_V2.skill_fit,         evidence: "Provisional score from LinkedIn search snippet." },
-      location_fit:      { score: candidateLocation ? 75 : 50, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
-      seniority_fit:     { score: seniorityScore, weight: CATEGORY_WEIGHTS_V2.seniority_fit,     evidence: "Seniority inferred from headline only." },
-      title_fit:         { score: titleScore,     weight: CATEGORY_WEIGHTS_V2.title_fit,         evidence: "Title fit inferred from LinkedIn headline." },
-      industry_fit:      { score: 50,             weight: CATEGORY_WEIGHTS_V2.industry_fit,      evidence: "Industry cannot be reliably assessed from a search snippet." },
-      nice_to_have_fit:  { score: 45,             weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit,  evidence: "Nice-to-haves are provisional until the full profile is captured." },
-      keyword_alignment: { score: keywordScore,   weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Keyword alignment inferred from snippet and headline." },
+      skill_fit:        { score: skillScore,                    weight: CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Provisional score from LinkedIn search snippet." },
+      location_fit:     { score: candidateLocation ? 75 : 50,  weight: CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
+      seniority_fit:    { score: seniorityScore,                weight: CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Seniority inferred from headline only." },
+      title_fit:        { score: titleScore,                    weight: CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Title fit inferred from LinkedIn headline." },
+      domain_fit:       { score: Math.round((50 + keywordScore) / 2), weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Domain fit estimated provisionally from snippet keywords and title match." },
+      nice_to_have_fit: { score: 45,                           weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Nice-to-haves are provisional until the full profile is captured." },
     },
     must_have_coverage: mustHaveCoverage,
     nice_to_have_coverage: niceToHaveCoverage,
@@ -263,7 +262,7 @@ const PAGE_SIZE = 10;
 const MAX_PAGES = 8;
 const MAX_PAGE_RETRIES = 2;
 const EMPTY_ROUNDS_BEFORE_STOP = 2;
-const MAX_QUERY_VARIANTS = 4;
+const MAX_QUERY_VARIANTS = 6;
 const MAX_SPECIALIST_QUERY_VARIANTS = 8;
 const SERPAPI_CONCURRENCY = 1;
 const BING_CONCURRENCY = 2;
@@ -346,13 +345,20 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
     skillQueries.push(distinctiveTerms.slice(0, 4).join(" "));
   }
 
+  // Interleave synonyms between AI queries so they survive the slice limit.
+  // Pattern: top AI query → base title → 2 synonyms → second AI query → third synonym → rest
+  // This guarantees 2-3 synonyms make it into the query pool even at MAX_QUERY_VARIANTS=6.
   return dedupeQueries([
     ...skillQueries,
-    ...aiQueries.slice(0, 2),
+    aiQueries[0],
     baseTitle,
-    ...synonymQueries,
+    synonymQueries[0],
+    synonymQueries[1],
+    aiQueries[1],
+    synonymQueries[2],
     ...aiQueries.slice(2),
-  ]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
+    ...synonymQueries.slice(3),
+  ].filter(Boolean) as string[]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
 }
 
 type SearchProvider = "serpapi" | "bing";
@@ -631,7 +637,7 @@ async function runSearchBackground(args: {
     // ── Phase 1a: PDL bulk fetch (not paginated — returns full profiles) ──────
     if (hasPDL) {
       try {
-        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(maxResults, 25), pdlKey);
+        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(maxResults, 50), pdlKey);
         for (const r of pdl) {
           if (!seenUrls.has(r.linkedinUrl)) { seenUrls.add(r.linkedinUrl); allRaw.push(r); }
         }
