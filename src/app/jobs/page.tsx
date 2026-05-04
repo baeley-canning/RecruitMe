@@ -39,10 +39,7 @@ export default async function JobsPage() {
     0
   );
 
-  // Pick a random candidate to send the recruiter to when they click the indicator.
-  const fetchTarget = needsFetchRows.length > 0
-    ? needsFetchRows[Math.floor(Math.random() * needsFetchRows.length)]
-    : null;
+  const fetchTarget = needsFetchRows.length > 0 ? needsFetchRows[0] : null;
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -56,7 +53,7 @@ export default async function JobsPage() {
           {/* Fetch status indicator */}
           {fetchTarget ? (
             <Link
-              href={`/jobs/${fetchTarget.jobId}#candidate-${fetchTarget.id}`}
+              href={`/jobs/${fetchTarget.jobId}`}
               title={`${needsFetchRows.length} candidate${needsFetchRows.length !== 1 ? "s" : ""} need profile fetches — click to go to one`}
               className="flex items-center gap-2 px-3 py-2 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 transition-colors text-xs font-medium text-orange-700"
             >
