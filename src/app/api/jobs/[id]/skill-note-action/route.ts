@@ -37,7 +37,7 @@ export async function POST(
     return NextResponse.json({ error: "Job has not been analysed yet" }, { status: 400 });
   }
 
-  const updated: ParsedRole = {
+  let updated: ParsedRole = {
     ...parsedRole,
     nice_to_haves: [...parsedRole.nice_to_haves],
     skills_preferred: [...parsedRole.skills_preferred],
@@ -47,24 +47,19 @@ export async function POST(
   if (body.data.action === "accept") {
     const { alternative } = body.data;
     // Idempotent — don't add duplicates
-    const alreadyInNiceToHaves = updated.nice_to_haves.some(
-      (item) => item.toLowerCase() === alternative.toLowerCase()
-    );
-    if (!alreadyInNiceToHaves) {
-      updated.nice_to_haves.push(alternative);
+    if (!updated.nice_to_haves.some((item) => item.toLowerCase() === alternative.toLowerCase())) {
+      updated.nice_to_haves = [...updated.nice_to_haves, alternative];
     }
-    const alreadyInPreferred = updated.skills_preferred.some(
-      (item) => item.toLowerCase() === alternative.toLowerCase()
-    );
-    if (!alreadyInPreferred) {
-      updated.skills_preferred.push(alternative);
+    if (!updated.skills_preferred.some((item) => item.toLowerCase() === alternative.toLowerCase())) {
+      updated.skills_preferred = [...updated.skills_preferred, alternative];
     }
   }
 
   if (body.data.action === "dismiss") {
     const { skill } = body.data;
-    if (!updated.dismissed_skill_notes.includes(skill)) {
-      updated.dismissed_skill_notes.push(skill);
+    const dismissed = updated.dismissed_skill_notes ?? [];
+    if (!dismissed.includes(skill)) {
+      updated = { ...updated, dismissed_skill_notes: [...dismissed, skill] };
     }
   }
 

@@ -1195,9 +1195,9 @@ ${toHtml(job.rawJd)}
               />
 
               {/* AI search tips — legacy/rare tech with suggested modern alternatives */}
-              {parsedRole.skill_notes?.length > 0 && (
+              {(parsedRole.skill_notes?.length ?? 0) > 0 && (
                 <SkillNotesSection
-                  notes={parsedRole.skill_notes}
+                  notes={parsedRole.skill_notes ?? []}
                   dismissedSkills={parsedRole.dismissed_skill_notes ?? []}
                   niceToHaves={niceToHaves}
                   pendingAccepted={pendingAccepted}

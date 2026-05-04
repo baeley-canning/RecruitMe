@@ -268,9 +268,9 @@ export interface ParsedRole {
   skills_required: string[];
   skills_preferred: string[];
   // Recruiter-facing search tips: AI-detected legacy/rare skills with suggested alternatives
-  skill_notes: SkillNote[];
+  skill_notes?: SkillNote[];
   // Skills whose tip the recruiter has dismissed — preserved across re-analyses
-  dismissed_skill_notes: string[];
+  dismissed_skill_notes?: string[];
 }
 
 export interface AcceptanceSignal {

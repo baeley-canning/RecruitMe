@@ -11,15 +11,26 @@ export default async function JobsPage() {
   const auth = await getAuth();
   if (!auth) redirect("/login");
 
-  const jobs = await prisma.job.findMany({
-    where: jobsWhere(auth),
-    orderBy: { createdAt: "desc" },
-    include: {
-      candidates: {
-        select: { id: true, status: true, matchScore: true },
+  const [jobs, needsFetchRows] = await Promise.all([
+    prisma.job.findMany({
+      where: jobsWhere(auth),
+      orderBy: { createdAt: "desc" },
+      include: {
+        candidates: {
+          select: { id: true, status: true, matchScore: true },
+        },
       },
-    },
-  });
+    }),
+    // Candidates that have a LinkedIn URL but haven't had their profile captured yet.
+    prisma.candidate.findMany({
+      where: {
+        job: { ...jobsWhere(auth), status: "active" },
+        linkedinUrl: { not: null },
+        profileCapturedAt: null,
+      },
+      select: { id: true, jobId: true },
+    }),
+  ]);
 
   const activeJobs       = jobs.filter((j) => j.status === "active").length;
   const totalCandidates  = jobs.reduce((sum, j) => sum + j.candidates.length, 0);
@@ -27,6 +38,11 @@ export default async function JobsPage() {
     (sum, j) => sum + j.candidates.filter((c) => c.status === "shortlisted").length,
     0
   );
+
+  // Pick a random candidate to send the recruiter to when they click the indicator.
+  const fetchTarget = needsFetchRows.length > 0
+    ? needsFetchRows[Math.floor(Math.random() * needsFetchRows.length)]
+    : null;
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -36,13 +52,37 @@ export default async function JobsPage() {
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
           <p className="text-slate-500 text-sm mt-1">Manage your recruitment pipeline</p>
         </div>
-        <Link
-          href="/jobs/new"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          New Job
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* Fetch status indicator */}
+          {fetchTarget ? (
+            <Link
+              href={`/jobs/${fetchTarget.jobId}#candidate-${fetchTarget.id}`}
+              title={`${needsFetchRows.length} candidate${needsFetchRows.length !== 1 ? "s" : ""} need profile fetches — click to go to one`}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 transition-colors text-xs font-medium text-orange-700"
+            >
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500" />
+              </span>
+              {needsFetchRows.length} to fetch
+            </Link>
+          ) : (
+            <span
+              title="All captured profiles are up to date"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-medium text-emerald-700"
+            >
+              <span className="inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              Profiles up to date
+            </span>
+          )}
+          <Link
+            href="/jobs/new"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            New Job
+          </Link>
+        </div>
       </div>
 
       {/* Stats */}
