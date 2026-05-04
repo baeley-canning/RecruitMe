@@ -29,6 +29,7 @@ type ChatProvider = "claude" | "openai" | "ollama";
 
 interface ChatOptions {
   provider?: ChatProvider;
+  model?: string;
 }
 
 function resolveChatProvider(override?: ChatProvider): ChatProvider {
@@ -53,7 +54,7 @@ export async function chat(
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set in .env.local");
 
     const client = new Anthropic({ apiKey });
-    const model  = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+    const model  = options?.model ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
     const response = await client.messages.create({
       model,
@@ -823,70 +824,128 @@ Return ONLY valid JSON:
 
 export interface ProfileDocSections {
   executiveSummary: string;
-  workHistory: Array<{ company: string; role: string; dateRange: string; bullets: string[] }>;
+  workHistory: Array<{ company: string; role: string; bullets: string[] }>;
   qualifications: Array<{ institution: string; courseYear: string }>;
 }
+
+// Internal type returned by Pass 1 (fact extraction)
+interface ExtractedFacts {
+  workHistory: Array<{ company: string; role: string; bullets: string[] }>;
+  skills: string[];
+  qualifications: Array<{ institution: string; courseYear: string }>;
+  availability: string;
+  lookingFor: string;
+}
+
+const SONNET = "claude-sonnet-4-6";
 
 export async function generateCandidateProfileSections(
   profileText: string,
   candidateName: string
 ): Promise<ProfileDocSections> {
   const excerpt = profileText.slice(0, 10000);
-  const prompt = `You are a professional recruitment consultant at PlaceMe IT Recruitment writing a formal candidate profile document for ${candidateName}.
 
-Source material (CV, interview notes, or both):
+  // ── Pass 1: Extract facts only (no prose writing) ─────────────────────────
+  const extractionPrompt = `Extract factual information from the source material below for candidate ${candidateName}.
+
+RULES — strictly follow:
+- Extract ONLY what is explicitly stated. Do not infer, assume, or invent anything.
+- For bullets: restate the fact clearly but do not embellish. If the source uses dot points, restate them as short professional sentences using the same meaning.
+- If dates are missing, omit them — do not guess.
+- If a field has no data in the source, use an empty string or empty array.
+
+Source material:
 ${excerpt}
 
-CRITICAL — ACCURACY RULES (non-negotiable):
-- You may ONLY state facts that are explicitly present in the source material above.
-- Do NOT invent, assume, infer, or embellish anything. No fabricated achievements, skills, years of experience, technologies, or personality traits.
-- Do NOT use filler phrases like "proven track record", "demonstrated ability", "strong communication skills" unless the source material explicitly supports them.
-- If something is unclear or missing from the source, omit it — do not guess.
-- Reword dot-point notes into professional prose, but only using what the notes actually say.
-- If the source is sparse, the output should be sparse — short and accurate beats long and invented.
-
-Return ONLY valid JSON with this exact structure:
+Return ONLY valid JSON — no commentary:
 {
-  "executiveSummary": "3-4 paragraph professional third-person summary based strictly on the source material. Paragraph 1: career overview using only stated roles/domains. Paragraph 2: current/most recent role detail. Paragraph 3: previous role or skills explicitly mentioned. Paragraph 4: what they are looking for, if stated. No first person.",
   "workHistory": [
     {
-      "company": "Company Name",
-      "role": "Job Title (contract/permanent if known), Month Year – Month Year",
-      "bullets": [
-        "Bullet point reworded from source material only — no invented content"
-      ]
+      "company": "Exact company name from source",
+      "role": "Exact job title, StartMonth Year – EndMonth Year (omit dates if not stated)",
+      "bullets": ["Fact 1 from source", "Fact 2 from source"]
     }
   ],
+  "skills": ["only skills explicitly mentioned in source"],
   "qualifications": [
-    { "institution": "University or Institution Name", "courseYear": "Degree/Certification Name | Year" }
-  ]
-}
+    { "institution": "Institution name", "courseYear": "Qualification name | Year (if stated)" }
+  ],
+  "availability": "Availability as stated, or empty string",
+  "lookingFor": "What candidate said they are looking for, or empty string"
+}`;
 
-Additional rules:
-- workHistory: most recent first, 3–6 bullets per role drawn only from source material.
-- role field must include date range if known e.g. "Senior Business Analyst, Nov 2024 – Feb 2026".
-- qualifications: only include what is explicitly stated. Empty array if none found.`;
+  let facts: ExtractedFacts = {
+    workHistory: [], skills: [], qualifications: [], availability: "", lookingFor: "",
+  };
 
   try {
-    const text = await chat(prompt, 0.3, 2500);
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("No JSON found");
-    const parsed = JSON.parse(match[0]) as Partial<ProfileDocSections>;
-    return {
-      executiveSummary: parsed.executiveSummary ?? "",
-      workHistory: Array.isArray(parsed.workHistory)
-        ? parsed.workHistory.map((j) => ({
-            company:   String(j.company ?? ""),
-            role:      String(j.role ?? ""),
-            dateRange: String(j.dateRange ?? ""),
-            bullets:   Array.isArray(j.bullets) ? j.bullets.map(String) : [],
-          }))
-        : [],
-      qualifications: Array.isArray(parsed.qualifications) ? parsed.qualifications : [],
-    };
+    const raw = await chat(extractionPrompt, 0.1, 2000, { model: SONNET });
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]) as Partial<ExtractedFacts>;
+      facts = {
+        workHistory: Array.isArray(parsed.workHistory)
+          ? parsed.workHistory.map((j) => ({
+              company: String(j.company ?? ""),
+              role:    String(j.role ?? ""),
+              bullets: Array.isArray(j.bullets) ? j.bullets.map(String) : [],
+            }))
+          : [],
+        skills:         Array.isArray(parsed.skills) ? parsed.skills.map(String) : [],
+        qualifications: Array.isArray(parsed.qualifications) ? parsed.qualifications : [],
+        availability:   String(parsed.availability ?? ""),
+        lookingFor:     String(parsed.lookingFor ?? ""),
+      };
+    }
   } catch {
+    // Pass 1 failed — return empty rather than hallucinate
     return { executiveSummary: "", workHistory: [], qualifications: [] };
   }
+
+  if (facts.workHistory.length === 0) {
+    return { executiveSummary: "", workHistory: [], qualifications: [] };
+  }
+
+  // ── Pass 2: Write executive summary from verified facts only ──────────────
+  const factsForSummary = JSON.stringify({
+    name: candidateName,
+    workHistory: facts.workHistory.map((j) => ({ company: j.company, role: j.role, keyPoints: j.bullets })),
+    skills: facts.skills,
+    availability: facts.availability,
+    lookingFor: facts.lookingFor,
+  }, null, 2);
+
+  const summaryPrompt = `Write a professional executive summary for a candidate profile document.
+
+You are given verified facts only. You MUST NOT add, infer, or embellish anything beyond these facts.
+Write in third person. No first person. Polished recruitment consultant tone.
+If the facts are sparse, keep the summary short — do not pad it out.
+Do not use generic filler like "proven track record" or "strong communicator" unless the facts explicitly state it.
+
+Verified facts:
+${factsForSummary}
+
+Write 3–4 paragraphs:
+1. Career overview — roles and domains from the facts
+2. Most recent role — what they did, based on the key points
+3. Previous experience or notable skills — from the facts only
+4. What they are looking for — only if stated in the facts, otherwise omit this paragraph
+
+Return ONLY the summary text. No JSON. No headings.`;
+
+  let executiveSummary = "";
+  try {
+    executiveSummary = await chat(summaryPrompt, 0.2, 1000, { model: SONNET });
+    executiveSummary = executiveSummary.trim();
+  } catch {
+    executiveSummary = "";
+  }
+
+  return {
+    executiveSummary,
+    workHistory:    facts.workHistory,
+    qualifications: facts.qualifications,
+  };
 }
 
 // ── Reference check questions ─────────────────────────────────────────────────

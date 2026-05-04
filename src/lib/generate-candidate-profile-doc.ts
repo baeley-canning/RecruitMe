@@ -40,7 +40,7 @@ export interface ProfileDocData {
   consultant: { name: string; email: string; phone: string };
   manager: { name: string; email: string; phone: string };
   executiveSummary: string;
-  workHistory: Array<{ company: string; role: string; dateRange: string; bullets?: string[] }>;
+  workHistory: Array<{ company: string; role: string; bullets?: string[] }>;
   qualifications: Array<{ institution: string; courseYear: string }>;
 }
 
@@ -227,11 +227,7 @@ function buildWorkHistoryPage(data: ProfileDocData): Paragraph[] {
   for (const job of data.workHistory) {
     // Company name — Bold (own line, matches Sean's profile)
     children.push(bodyParagraph(job.company, { bold: true, spacing: 0 }));
-    // "Role, Date Range" — Bold italic (matches Sean's profile format)
-    const roleLine = job.dateRange && !job.role.includes(job.dateRange)
-      ? `${job.role}`
-      : job.role;
-    children.push(bodyParagraph(roleLine, { italic: true, spacing: PT(4) }));
+    children.push(bodyParagraph(job.role, { italic: true, spacing: PT(4) }));
     // Bullet points of responsibilities/achievements
     const bullets = job.bullets ?? [];
     for (const bullet of bullets) {
