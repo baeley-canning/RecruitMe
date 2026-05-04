@@ -837,16 +837,23 @@ export async function generateCandidateProfileSections(
 Source material (CV, interview notes, or both):
 ${excerpt}
 
+CRITICAL — ACCURACY RULES (non-negotiable):
+- You may ONLY state facts that are explicitly present in the source material above.
+- Do NOT invent, assume, infer, or embellish anything. No fabricated achievements, skills, years of experience, technologies, or personality traits.
+- Do NOT use filler phrases like "proven track record", "demonstrated ability", "strong communication skills" unless the source material explicitly supports them.
+- If something is unclear or missing from the source, omit it — do not guess.
+- Reword dot-point notes into professional prose, but only using what the notes actually say.
+- If the source is sparse, the output should be sparse — short and accurate beats long and invented.
+
 Return ONLY valid JSON with this exact structure:
 {
-  "executiveSummary": "3-4 paragraph professional third-person summary. Paragraph 1: overview of career, years of experience, key domains. Paragraph 2: current/most recent role detail. Paragraph 3: previous role or key skills. Paragraph 4: what they bring and what they are looking for. Write in polished recruitment consultant prose. No first person. Minimum 200 words.",
+  "executiveSummary": "3-4 paragraph professional third-person summary based strictly on the source material. Paragraph 1: career overview using only stated roles/domains. Paragraph 2: current/most recent role detail. Paragraph 3: previous role or skills explicitly mentioned. Paragraph 4: what they are looking for, if stated. No first person.",
   "workHistory": [
     {
       "company": "Company Name",
       "role": "Job Title (contract/permanent if known), Month Year – Month Year",
       "bullets": [
-        "Concise achievement or responsibility written as a professional bullet point",
-        "Another bullet point"
+        "Bullet point reworded from source material only — no invented content"
       ]
     }
   ],
@@ -855,11 +862,10 @@ Return ONLY valid JSON with this exact structure:
   ]
 }
 
-Rules:
-- workHistory: most recent first. For each role write 3–6 bullet points that describe responsibilities and achievements — use the source material, do not invent. If the source is interview notes with dot points, expand them into professional sentences.
-- role field must include date range e.g. "Senior Business Analyst, Nov 2024 – Feb 2026"
-- qualifications: degrees, diplomas, certifications. Empty array if none found.
-- executiveSummary: specific to this candidate, substantive, no generic filler.`;
+Additional rules:
+- workHistory: most recent first, 3–6 bullets per role drawn only from source material.
+- role field must include date range if known e.g. "Senior Business Analyst, Nov 2024 – Feb 2026".
+- qualifications: only include what is explicitly stated. Empty array if none found.`;
 
   try {
     const text = await chat(prompt, 0.3, 2500);
