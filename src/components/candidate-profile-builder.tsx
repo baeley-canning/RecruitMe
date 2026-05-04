@@ -237,13 +237,44 @@ function emailSubject(draft: ProfileDraft) {
 }
 
 function defaultEmailHighlights(draft: ProfileDraft) {
+  const firstSummarySentence = draft.executiveSummary
+    .split(/\n+|(?<=\.)\s+/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  const certification = draft.education.find((item) =>
+    /cert|associate|professional|foundation|practitioner/i.test(`${item.course} ${item.institution}`)
+  );
   const highlights = [
     draft.role ? `${draft.role}${draft.executiveSummary.match(/\b(?:\+?\d+)\s*\+?\s*years?/i)?.[0] ? ` with ${draft.executiveSummary.match(/\b(?:\+?\d+)\s*\+?\s*years?/i)?.[0]} of experience` : ""}` : "",
     bulletLines(draft.skillGroups.flatMap((group) => group.skills).join("\n")).slice(0, 5).join(", "),
     bulletLines(draft.workHistory.flatMap((work) => work.bullets).join("\n"))[0] ?? "",
-    draft.education[0]?.course ?? "",
+    certification?.course || firstSummarySentence || draft.education[0]?.course || "",
   ];
   return highlights.map((line) => line.trim()).filter(Boolean).slice(0, 4).join("\n");
+}
+
+function extractEmailFieldsFromSource(text: string) {
+  const linkedinUrl = text.match(/https?:\/\/(?:[\w-]+\.)?linkedin\.com\/in\/[^\s<>)"']+/i)?.[0]?.replace(/[.,;]+$/, "") ?? "";
+  const remuneration = text.match(/(?:remuneration|salary|rate|package)\s*[:\-]\s*([^\n\r]+)/i)?.[1]?.trim() ?? "";
+  const availability = text.match(/(?:availability|notice(?: period)?|available)\s*[:\-]\s*([^\n\r]+)/i)?.[1]?.trim() ?? "";
+
+  return { linkedinUrl, remuneration, availability };
+}
+
+function withEmailAutofill(prev: ProfileDraft, source: string, next: Partial<ProfileDraft> = {}) {
+  const merged = { ...prev, ...next };
+  const extracted = extractEmailFieldsFromSource(source);
+  const hydrated = {
+    ...merged,
+    linkedinUrl: merged.linkedinUrl || extracted.linkedinUrl,
+    remuneration: merged.remuneration || extracted.remuneration,
+    dateAvailable: merged.dateAvailable || extracted.availability,
+  };
+
+  return {
+    ...hydrated,
+    emailHighlights: hydrated.emailHighlights || defaultEmailHighlights(hydrated),
+  };
 }
 
 function emailBody(draft: ProfileDraft) {
@@ -617,7 +648,7 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
 
   const applySource = () => {
     const parsed = parsePopulatedProfile(sourceText);
-    setDraft((prev) => ({ ...prev, ...parsed }));
+    setDraft((prev) => withEmailAutofill(prev, sourceText, parsed));
   };
 
   const uploadSourceDocument = async (slot: SourceSlot, file: File) => {
@@ -629,8 +660,10 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
       const response = await fetch("/api/upload", { method: "POST", body: form });
       const data = await response.json() as { text?: string; error?: string };
       if (!response.ok || !data.text?.trim()) throw new Error(data.error ?? "Could not extract text from this document");
-      setSourceText((prev) => upsertSourceSection(prev, slot, file.name, data.text ?? ""));
+      const extractedText = data.text ?? "";
+      setSourceText((prev) => upsertSourceSection(prev, slot, file.name, extractedText));
       setUploadedSources((prev) => ({ ...prev, [slot]: { name: file.name, charCount: data.text?.trim().length ?? 0 } }));
+      setDraft((prev) => withEmailAutofill(prev, extractedText));
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : "Could not extract text from this document");
     } finally {
@@ -660,15 +693,16 @@ ${skills.length ? `<p><strong>${htmlEscape(draft.candidate || "The candidate")}'
       if (!response.ok) throw new Error(data.error ?? "Candidate profile draft failed");
       const aiDraft = data.draft as Partial<ProfileDraft> & { discardedUnsupportedFacts?: number };
       setDraft((prev) => ({
-        ...prev,
-        candidate: aiDraft.candidate || prev.candidate,
-        role: aiDraft.role || prev.role,
-        dateAvailable: aiDraft.dateAvailable || prev.dateAvailable,
-        executiveSummary: aiDraft.executiveSummary || prev.executiveSummary,
-        skillGroups: aiDraft.skillGroups?.length ? aiDraft.skillGroups.map((group) => ({ ...group, id: uid() })) : prev.skillGroups,
-        workHistory: aiDraft.workHistory?.length ? aiDraft.workHistory.map((work) => ({ ...work, id: uid() })) : prev.workHistory,
-        educationTitle: aiDraft.educationTitle || prev.educationTitle,
-        education: aiDraft.education?.length ? aiDraft.education.map((edu) => ({ ...edu, id: uid() })) : prev.education,
+        ...withEmailAutofill(prev, sourceText, {
+          candidate: aiDraft.candidate || prev.candidate,
+          role: aiDraft.role || prev.role,
+          dateAvailable: aiDraft.dateAvailable || prev.dateAvailable,
+          executiveSummary: aiDraft.executiveSummary || prev.executiveSummary,
+          skillGroups: aiDraft.skillGroups?.length ? aiDraft.skillGroups.map((group) => ({ ...group, id: uid() })) : prev.skillGroups,
+          workHistory: aiDraft.workHistory?.length ? aiDraft.workHistory.map((work) => ({ ...work, id: uid() })) : prev.workHistory,
+          educationTitle: aiDraft.educationTitle || prev.educationTitle,
+          education: aiDraft.education?.length ? aiDraft.education.map((edu) => ({ ...edu, id: uid() })) : prev.education,
+        }),
       }));
       setDiscardedFacts(aiDraft.discardedUnsupportedFacts ?? 0);
       setAiStatus("idle");
