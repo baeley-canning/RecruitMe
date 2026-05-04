@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { Prisma } from "@prisma/client";
 import { applyLocationFitOverride, deriveUpdateData } from "./score-utils";
 import {
   extractCandidateInfo,
@@ -415,13 +416,23 @@ export async function saveCapturedProfileToCandidate(args: {
     linkedinUrl,
   });
 
-  return prisma.candidate.update({
-    where: { id: candidateId },
-    data: {
-      ...data,
-      source: "extension",
-    },
-  });
+  try {
+    return await prisma.candidate.update({
+      where: { id: candidateId },
+      data: { ...data, source: "extension" },
+    });
+  } catch (err) {
+    // Another candidate in this job already has the same LinkedIn URL.
+    // Save everything except the URL — profile text and scores are still valuable.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const { linkedinUrl: _url, ...dataWithoutUrl } = data;
+      return await prisma.candidate.update({
+        where: { id: candidateId },
+        data: { ...dataWithoutUrl, source: "extension" },
+      });
+    }
+    throw err;
+  }
 }
 
 export async function importCapturedLinkedInProfile(args: {
