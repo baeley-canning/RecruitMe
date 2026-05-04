@@ -17,9 +17,17 @@ import {
 import fs from "fs";
 import path from "path";
 
-const TEAL = "1A8A82";
-const FONT = "Times New Roman";
-const PT = (pt: number) => pt * 2; // half-points
+// Exact values from the .dotx template
+const TEAL = "006976";
+const FONT = "Calibri";
+const LEGAL_FONT = "Arial";
+const PT = (pt: number) => pt * 2; // OOXML sz is in half-points
+
+// A4 dimensions and margins copied directly from template sectPr (twips)
+const PAGE = {
+  size: { width: 11901, height: 16840 },
+  margin: { top: 720, right: 720, bottom: 302, left: 720, header: 734, footer: 1210 },
+};
 
 const LEGAL_TEXT =
   "Interview of candidates referred by placeMe Recruitment Ltd. shall be deemed acceptance of our standard terms of business or agreed terms of business and agreement to pay the relevant agency fee for such candidates employed by the organisation to whom the referral was made or any other organisation or person associated with it.";
@@ -40,14 +48,19 @@ function noBorder() {
   return { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
 }
 
-function tealHeading(text: string): Paragraph {
+// Section heading: Calibri Bold 14pt #006976 (sz=28 in template)
+function sectionHeading(text: string): Paragraph {
   return new Paragraph({
-    children: [new TextRun({ text, bold: true, color: TEAL, size: PT(13), font: FONT })],
+    children: [new TextRun({ text, bold: true, color: TEAL, size: PT(14), font: FONT })],
     spacing: { before: PT(10), after: PT(6) },
   });
 }
 
-function bodyParagraph(text: string, opts: { bold?: boolean; italic?: boolean; spacing?: number } = {}): Paragraph {
+// Body paragraph: Calibri 12pt (sz=24 = Normal in template)
+function bodyParagraph(
+  text: string,
+  opts: { bold?: boolean; italic?: boolean; spacing?: number } = {},
+): Paragraph {
   return new Paragraph({
     children: [new TextRun({ text, bold: opts.bold, italics: opts.italic, size: PT(12), font: FONT })],
     spacing: { after: opts.spacing ?? PT(4) },
@@ -55,19 +68,24 @@ function bodyParagraph(text: string, opts: { bold?: boolean; italic?: boolean; s
 }
 
 function emptyLine(): Paragraph {
-  return new Paragraph({ children: [new TextRun({ text: "", size: PT(12), font: FONT })], spacing: { after: 0 } });
+  return new Paragraph({
+    children: [new TextRun({ text: "", size: PT(12), font: FONT })],
+    spacing: { after: 0 },
+  });
 }
 
 function coverLabelCell(text: string): TableCell {
   return new TableCell({
-    width: { size: 35, type: WidthType.PERCENTAGE },
-    borders: { top: noBorder(), bottom: noBorder(), left: noBorder(), right: noBorder() },
+    width: { size: 38, type: WidthType.PERCENTAGE },
+    borders: {
+      top: noBorder(), bottom: noBorder(), left: noBorder(), right: noBorder(),
+    },
     verticalAlign: VerticalAlign.TOP,
     children: [
       new Paragraph({
         alignment: AlignmentType.RIGHT,
-        children: [new TextRun({ text, bold: true, size: PT(12), font: FONT })],
-        spacing: { after: PT(8) },
+        children: [new TextRun({ text, size: PT(12), font: FONT })],
+        spacing: { after: PT(4) },
       }),
     ],
   });
@@ -75,17 +93,25 @@ function coverLabelCell(text: string): TableCell {
 
 function coverValueCell(paragraphs: Paragraph[]): TableCell {
   return new TableCell({
-    width: { size: 65, type: WidthType.PERCENTAGE },
-    borders: { top: noBorder(), bottom: noBorder(), left: noBorder(), right: noBorder() },
+    width: { size: 62, type: WidthType.PERCENTAGE },
+    borders: {
+      top: noBorder(), bottom: noBorder(), left: noBorder(), right: noBorder(),
+    },
     verticalAlign: VerticalAlign.TOP,
     children: paragraphs,
   });
 }
 
-function valueText(text: string, opts: { color?: string } = {}): Paragraph {
+function valueText(text: string): Paragraph {
   return new Paragraph({
-    children: [new TextRun({ text, size: PT(12), font: FONT, color: opts.color })],
-    spacing: { after: PT(4) },
+    children: [new TextRun({ text, size: PT(12), font: FONT })],
+    spacing: { after: PT(2) },
+  });
+}
+
+function emptyRow(): TableRow {
+  return new TableRow({
+    children: [coverLabelCell(""), coverValueCell([emptyLine()])],
   });
 }
 
@@ -95,72 +121,88 @@ function coverRow(label: string, valueParagraphs: Paragraph[]): TableRow {
   });
 }
 
-function consultantCell(name: string, email: string, phone: string): Paragraph[] {
+// Consultant/manager block: Name, email (blue hyperlink style), phone
+function consultantBlock(name: string, email: string, phone: string): Paragraph[] {
   return [
     valueText(name),
     new Paragraph({
       children: [new TextRun({ text: email, size: PT(12), font: FONT, color: "0563C1" })],
-      spacing: { after: PT(4) },
+      spacing: { after: PT(2) },
     }),
     valueText(phone),
-    emptyLine(),
   ];
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildCoverPage(data: ProfileDocData): any[] {
-  const logoPath = path.join(process.cwd(), "public", "placeme-logo.png");
-  const hasLogo = fs.existsSync(logoPath);
+function buildCoverPage(data: ProfileDocData): (Paragraph | Table)[] {
+  // Prefer jpg (extracted from template), fall back to png if user supplied one
+  const logoJpg = path.join(process.cwd(), "public", "placeme-logo.jpg");
+  const logoPng = path.join(process.cwd(), "public", "placeme-logo.png");
+  const logoPath = fs.existsSync(logoJpg) ? logoJpg : fs.existsSync(logoPng) ? logoPng : null;
+  const logoType = logoPath?.endsWith(".jpg") ? "jpg" : "png";
 
-  const logoBlock = hasLogo
+  // Logo dimensions from template: 6528151 × 2163723 EMU → ~685 × 227px at 96dpi
+  const logoBlock = logoPath
     ? new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [
           new ImageRun({
             data: fs.readFileSync(logoPath),
-            transformation: { width: 220, height: 110 },
-            type: "png",
+            transformation: { width: 685, height: 227 },
+            type: logoType,
           }),
         ],
-        spacing: { after: PT(24) },
+        spacing: { after: 0 },
       })
     : new Paragraph({
         alignment: AlignmentType.CENTER,
         children: [
-          new TextRun({ text: "PlaceMe", bold: true, size: PT(28), font: FONT, color: "808080" }),
-          new TextRun({ text: " IT Recruitment", size: PT(18), font: FONT, color: "1A8A82" }),
+          new TextRun({ text: "place", bold: true, size: PT(28), font: FONT, color: "808080" }),
+          new TextRun({ text: "me.", bold: true, size: PT(28), font: FONT, color: TEAL }),
+          new TextRun({ text: "  IT RECRUITMENT", size: PT(11), font: FONT, color: "808080" }),
         ],
-        spacing: { after: PT(24) },
+        spacing: { after: PT(12) },
       });
 
+  // "Candidate Profile" title: Calibri Bold 16pt (sz=32 in template), centered
   const title = new Paragraph({
     alignment: AlignmentType.CENTER,
-    children: [new TextRun({ text: "Candidate Profile", bold: true, size: PT(18), font: FONT })],
-    spacing: { before: PT(24), after: PT(36) },
+    children: [new TextRun({ text: "Candidate Profile", bold: true, size: PT(16), font: FONT })],
+    spacing: { before: PT(6), after: PT(20) },
   });
 
+  const spacer = new Paragraph({ children: [], spacing: { before: 0, after: PT(6) } });
+
+  // Details table (matches template's right-tab layout for label/value pairs)
   const table = new Table({
-    width: { size: 90, type: WidthType.PERCENTAGE },
-    borders: { top: noBorder(), bottom: noBorder(), left: noBorder(), right: noBorder(), insideHorizontal: noBorder(), insideVertical: noBorder() },
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: noBorder(), bottom: noBorder(), left: noBorder(),
+      right: noBorder(), insideHorizontal: noBorder(), insideVertical: noBorder(),
+    },
     rows: [
       coverRow("Candidate:", [valueText(data.candidateName)]),
+      emptyRow(),
       coverRow("Role:", [valueText(data.role)]),
+      emptyRow(),
       coverRow("Date Referred:", [valueText(data.dateReferred)]),
+      emptyRow(),
       coverRow("Date Available:", [valueText(data.dateAvailable)]),
-      coverRow("Your Consultant:", consultantCell(data.consultant.name, data.consultant.email, data.consultant.phone)),
-      coverRow("Your Candidate Manager:", consultantCell(data.manager.name, data.manager.email, data.manager.phone)),
+      emptyRow(),
+      coverRow("Your Consultant:", consultantBlock(data.consultant.name, data.consultant.email, data.consultant.phone)),
+      emptyRow(),
+      coverRow("Your Candidate Manager:", consultantBlock(data.manager.name, data.manager.email, data.manager.phone)),
     ],
   });
 
-  const spacer = new Paragraph({ children: [], spacing: { before: PT(60) } });
-
+  // Legal text: Arial 8pt (sz=16 in template), justified
+  const legalSpacer = new Paragraph({ children: [], spacing: { before: PT(48), after: 0 } });
   const legal = new Paragraph({
-    alignment: AlignmentType.LEFT,
-    children: [new TextRun({ text: LEGAL_TEXT, size: PT(8), font: FONT, color: "404040" })],
-    spacing: { before: PT(60) },
+    alignment: AlignmentType.BOTH,
+    children: [new TextRun({ text: LEGAL_TEXT, size: PT(8), font: LEGAL_FONT })],
+    spacing: { before: 0, after: 0 },
   });
 
-  return [logoBlock, title, table, spacer, legal];
+  return [logoBlock, title, spacer, table, legalSpacer, legal];
 }
 
 function buildExecutiveSummaryPage(data: ProfileDocData): Paragraph[] {
@@ -169,24 +211,28 @@ function buildExecutiveSummaryPage(data: ProfileDocData): Paragraph[] {
     .filter(Boolean)
     .map((p) => bodyParagraph(p.trim(), { spacing: PT(10) }));
 
-  return [tealHeading("Executive Summary"), emptyLine(), ...paragraphs];
+  return [sectionHeading("Executive Summary"), emptyLine(), ...paragraphs];
 }
 
 function buildWorkHistoryPage(data: ProfileDocData): Paragraph[] {
-  const children: Paragraph[] = [tealHeading("Work History"), emptyLine()];
+  const children: Paragraph[] = [sectionHeading("Work History"), emptyLine()];
 
   for (const job of data.workHistory) {
+    // "Company name | Role" — Bold (matches template)
     children.push(bodyParagraph(`${job.company} | ${job.role}`, { bold: true, spacing: 0 }));
-    children.push(bodyParagraph(job.dateRange, { spacing: PT(10) }));
+    // Date line — Bold (matches template)
+    children.push(bodyParagraph(job.dateRange, { bold: true, spacing: PT(10) }));
   }
 
-  children.push(emptyLine(), tealHeading("Qualifications"), emptyLine());
+  children.push(emptyLine(), sectionHeading("Qualifications"), emptyLine());
 
   if (data.qualifications.length === 0) {
     children.push(bodyParagraph("No formal qualifications listed."));
   } else {
     for (const qual of data.qualifications) {
-      children.push(bodyParagraph(qual.institution, { spacing: 0 }));
+      // Institution — Bold (matches template)
+      children.push(bodyParagraph(qual.institution, { bold: true, spacing: 0 }));
+      // "Course | Year" — Italic (matches template)
       children.push(bodyParagraph(qual.courseYear, { italic: true, spacing: PT(10) }));
     }
   }
@@ -194,12 +240,13 @@ function buildWorkHistoryPage(data: ProfileDocData): Paragraph[] {
   return children;
 }
 
-function candidateNameHeader(name: string): Header {
+// Header used on pages 2+: candidate name, Calibri Bold 16pt, right-aligned
+function candidateHeader(name: string): Header {
   return new Header({
     children: [
       new Paragraph({
         alignment: AlignmentType.RIGHT,
-        children: [new TextRun({ text: name, size: PT(12), font: FONT })],
+        children: [new TextRun({ text: name, bold: true, size: PT(16), font: FONT })],
         spacing: { after: 0 },
       }),
     ],
@@ -207,22 +254,23 @@ function candidateNameHeader(name: string): Header {
 }
 
 export async function generateProfileDocx(data: ProfileDocData): Promise<Buffer> {
-  const header = candidateNameHeader(data.candidateName);
+  const header = candidateHeader(data.candidateName);
 
   const doc = new Document({
     sections: [
       {
-        properties: { type: SectionType.NEXT_PAGE },
+        // Cover page — no header (separate section = no inherited header)
+        properties: { page: PAGE, type: SectionType.NEXT_PAGE },
         children: buildCoverPage(data),
       },
       {
-        properties: { type: SectionType.NEXT_PAGE },
+        properties: { page: PAGE, type: SectionType.NEXT_PAGE },
         headers: { default: header },
         children: buildExecutiveSummaryPage(data),
       },
       {
-        properties: {},
-        headers: { default: candidateNameHeader(data.candidateName) },
+        properties: { page: PAGE },
+        headers: { default: header },
         children: buildWorkHistoryPage(data),
       },
     ],
