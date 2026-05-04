@@ -819,6 +819,56 @@ Return ONLY valid JSON:
   }
 }
 
+// ── Candidate profile document sections ───────────────────────────────────────
+
+export interface ProfileDocSections {
+  executiveSummary: string;
+  workHistory: Array<{ company: string; role: string; dateRange: string }>;
+  qualifications: Array<{ institution: string; courseYear: string }>;
+}
+
+export async function generateCandidateProfileSections(
+  profileText: string,
+  candidateName: string
+): Promise<ProfileDocSections> {
+  const excerpt = profileText.slice(0, 8000);
+  const prompt = `You are a professional recruitment consultant at PlaceMe IT Recruitment. Extract and write structured content for a formal candidate profile document for ${candidateName}.
+
+Profile text:
+${excerpt}
+
+Return ONLY valid JSON with this exact structure:
+{
+  "executiveSummary": "2-3 paragraph professional third-person summary of the candidate, highlighting their key strengths, experience, and what makes them a strong candidate. Write in a polished recruitment style. Do not use first person.",
+  "workHistory": [
+    { "company": "Company Name", "role": "Job Title", "dateRange": "Month Year – Month Year (or Present)" }
+  ],
+  "qualifications": [
+    { "institution": "University or Institution Name", "courseYear": "Degree/Diploma Name | Year" }
+  ]
+}
+
+Rules:
+- workHistory: list all roles found, most recent first, company and role separate
+- qualifications: include degrees, diplomas, certifications — institution and course+year separate
+- If no qualifications found, return empty array
+- executiveSummary must be substantive (minimum 150 words), professional, and specific to this candidate`;
+
+  try {
+    const text = await chat(prompt, 0.3, 1500);
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("No JSON found");
+    const parsed = JSON.parse(match[0]) as Partial<ProfileDocSections>;
+    return {
+      executiveSummary: parsed.executiveSummary ?? "",
+      workHistory: Array.isArray(parsed.workHistory) ? parsed.workHistory : [],
+      qualifications: Array.isArray(parsed.qualifications) ? parsed.qualifications : [],
+    };
+  } catch {
+    return { executiveSummary: "", workHistory: [], qualifications: [] };
+  }
+}
+
 // ── Reference check questions ─────────────────────────────────────────────────
 
 export interface ReferenceQuestion {
