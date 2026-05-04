@@ -26,12 +26,18 @@ type Mode = "library" | "documents";
 
 const STORAGE_KEY = "recruitme:profile-consultant";
 
+function str(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
 function loadSaved(): { consultant: ConsultantFields; manager: ConsultantFields } {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    const c = parsed.consultant ?? {};
+    const m = parsed.manager ?? {};
     return {
-      consultant: parsed.consultant ?? { name: "", email: "", phone: "" },
-      manager:    parsed.manager    ?? { name: "", email: "", phone: "" },
+      consultant: { name: str(c.name), email: str(c.email), phone: str(c.phone) },
+      manager:    { name: str(m.name), email: str(m.email), phone: str(m.phone) },
     };
   } catch {
     return {

@@ -40,7 +40,7 @@ export interface ProfileDocData {
   consultant: { name: string; email: string; phone: string };
   manager: { name: string; email: string; phone: string };
   executiveSummary: string;
-  workHistory: Array<{ company: string; role: string; dateRange: string }>;
+  workHistory: Array<{ company: string; role: string; dateRange: string; bullets?: string[] }>;
   qualifications: Array<{ institution: string; courseYear: string }>;
 }
 
@@ -123,14 +123,13 @@ function coverRow(label: string, valueParagraphs: Paragraph[]): TableRow {
 
 // Consultant/manager block: Name, email (blue hyperlink style), phone
 function consultantBlock(name: string, email: string, phone: string): Paragraph[] {
-  return [
-    valueText(name),
-    new Paragraph({
-      children: [new TextRun({ text: email, size: PT(12), font: FONT, color: "0563C1" })],
-      spacing: { after: PT(2) },
-    }),
-    valueText(phone),
-  ];
+  const rows: Paragraph[] = [valueText(name)];
+  if (email) rows.push(new Paragraph({
+    children: [new TextRun({ text: email, size: PT(12), font: FONT, color: "0563C1" })],
+    spacing: { after: PT(2) },
+  }));
+  if (phone) rows.push(valueText(phone));
+  return rows;
 }
 
 function buildCoverPage(data: ProfileDocData): (Paragraph | Table)[] {
@@ -214,14 +213,31 @@ function buildExecutiveSummaryPage(data: ProfileDocData): Paragraph[] {
   return [sectionHeading("Executive Summary"), emptyLine(), ...paragraphs];
 }
 
+function bulletPoint(text: string): Paragraph {
+  return new Paragraph({
+    bullet: { level: 0 },
+    children: [new TextRun({ text, size: PT(12), font: FONT })],
+    spacing: { after: PT(3) },
+  });
+}
+
 function buildWorkHistoryPage(data: ProfileDocData): Paragraph[] {
   const children: Paragraph[] = [sectionHeading("Work History"), emptyLine()];
 
   for (const job of data.workHistory) {
-    // "Company name | Role" — Bold (matches template)
-    children.push(bodyParagraph(`${job.company} | ${job.role}`, { bold: true, spacing: 0 }));
-    // Date line — Bold (matches template)
-    children.push(bodyParagraph(job.dateRange, { bold: true, spacing: PT(10) }));
+    // Company name — Bold (own line, matches Sean's profile)
+    children.push(bodyParagraph(job.company, { bold: true, spacing: 0 }));
+    // "Role, Date Range" — Bold italic (matches Sean's profile format)
+    const roleLine = job.dateRange && !job.role.includes(job.dateRange)
+      ? `${job.role}`
+      : job.role;
+    children.push(bodyParagraph(roleLine, { italic: true, spacing: PT(4) }));
+    // Bullet points of responsibilities/achievements
+    const bullets = job.bullets ?? [];
+    for (const bullet of bullets) {
+      children.push(bulletPoint(bullet));
+    }
+    children.push(emptyLine());
   }
 
   children.push(emptyLine(), sectionHeading("Qualifications"), emptyLine());

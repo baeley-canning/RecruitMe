@@ -823,7 +823,7 @@ Return ONLY valid JSON:
 
 export interface ProfileDocSections {
   executiveSummary: string;
-  workHistory: Array<{ company: string; role: string; dateRange: string }>;
+  workHistory: Array<{ company: string; role: string; dateRange: string; bullets: string[] }>;
   qualifications: Array<{ institution: string; courseYear: string }>;
 }
 
@@ -831,37 +831,51 @@ export async function generateCandidateProfileSections(
   profileText: string,
   candidateName: string
 ): Promise<ProfileDocSections> {
-  const excerpt = profileText.slice(0, 8000);
-  const prompt = `You are a professional recruitment consultant at PlaceMe IT Recruitment. Extract and write structured content for a formal candidate profile document for ${candidateName}.
+  const excerpt = profileText.slice(0, 10000);
+  const prompt = `You are a professional recruitment consultant at PlaceMe IT Recruitment writing a formal candidate profile document for ${candidateName}.
 
-Profile text:
+Source material (CV, interview notes, or both):
 ${excerpt}
 
 Return ONLY valid JSON with this exact structure:
 {
-  "executiveSummary": "2-3 paragraph professional third-person summary of the candidate, highlighting their key strengths, experience, and what makes them a strong candidate. Write in a polished recruitment style. Do not use first person.",
+  "executiveSummary": "3-4 paragraph professional third-person summary. Paragraph 1: overview of career, years of experience, key domains. Paragraph 2: current/most recent role detail. Paragraph 3: previous role or key skills. Paragraph 4: what they bring and what they are looking for. Write in polished recruitment consultant prose. No first person. Minimum 200 words.",
   "workHistory": [
-    { "company": "Company Name", "role": "Job Title", "dateRange": "Month Year – Month Year (or Present)" }
+    {
+      "company": "Company Name",
+      "role": "Job Title (contract/permanent if known), Month Year – Month Year",
+      "bullets": [
+        "Concise achievement or responsibility written as a professional bullet point",
+        "Another bullet point"
+      ]
+    }
   ],
   "qualifications": [
-    { "institution": "University or Institution Name", "courseYear": "Degree/Diploma Name | Year" }
+    { "institution": "University or Institution Name", "courseYear": "Degree/Certification Name | Year" }
   ]
 }
 
 Rules:
-- workHistory: list all roles found, most recent first, company and role separate
-- qualifications: include degrees, diplomas, certifications — institution and course+year separate
-- If no qualifications found, return empty array
-- executiveSummary must be substantive (minimum 150 words), professional, and specific to this candidate`;
+- workHistory: most recent first. For each role write 3–6 bullet points that describe responsibilities and achievements — use the source material, do not invent. If the source is interview notes with dot points, expand them into professional sentences.
+- role field must include date range e.g. "Senior Business Analyst, Nov 2024 – Feb 2026"
+- qualifications: degrees, diplomas, certifications. Empty array if none found.
+- executiveSummary: specific to this candidate, substantive, no generic filler.`;
 
   try {
-    const text = await chat(prompt, 0.3, 1500);
+    const text = await chat(prompt, 0.3, 2500);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("No JSON found");
     const parsed = JSON.parse(match[0]) as Partial<ProfileDocSections>;
     return {
       executiveSummary: parsed.executiveSummary ?? "",
-      workHistory: Array.isArray(parsed.workHistory) ? parsed.workHistory : [],
+      workHistory: Array.isArray(parsed.workHistory)
+        ? parsed.workHistory.map((j) => ({
+            company:   String(j.company ?? ""),
+            role:      String(j.role ?? ""),
+            dateRange: String(j.dateRange ?? ""),
+            bullets:   Array.isArray(j.bullets) ? j.bullets.map(String) : [],
+          }))
+        : [],
       qualifications: Array.isArray(parsed.qualifications) ? parsed.qualifications : [],
     };
   } catch {
