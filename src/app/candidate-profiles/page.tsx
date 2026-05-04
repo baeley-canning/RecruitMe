@@ -172,6 +172,8 @@ export default function CandidateProfilesPage() {
   // Documents mode state
   const [docName, setDocName]   = useState("");
   const [docFiles, setDocFiles] = useState<File[]>([]);
+  const [docJd, setDocJd]       = useState("");
+  const [jdOpen, setJdOpen]     = useState(false);
 
   // Shared fields
   const [role, setRole]               = useState("");
@@ -223,6 +225,8 @@ export default function CandidateProfilesPage() {
     setSelected(null);
     setDocName("");
     setDocFiles([]);
+    setDocJd("");
+    setJdOpen(false);
     setRole("");
   };
 
@@ -256,6 +260,7 @@ export default function CandidateProfilesPage() {
         form.append("managerEmail",    manager.email);
         form.append("managerPhone",    manager.phone);
         docFiles.forEach((f) => form.append("files", f));
+        if (docJd.trim()) form.append("jd", docJd.trim());
         res = await fetch("/api/candidate-profiles/generate", { method: "POST", body: form });
       }
 
@@ -415,6 +420,30 @@ export default function CandidateProfilesPage() {
                   placeholder="e.g. Suzzanne Dobson"
                 />
                 <FileDropZone files={docFiles} onChange={setDocFiles} />
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setJdOpen((o) => !o)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    <span>
+                      Job Description
+                      <span className="font-normal text-slate-400 ml-1.5">optional — focuses the summary on the role</span>
+                    </span>
+                    {jdOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                  </button>
+                  {jdOpen && (
+                    <div className="px-4 py-4">
+                      <textarea
+                        value={docJd}
+                        onChange={(e) => setDocJd(e.target.value)}
+                        placeholder="Paste the job description here…"
+                        rows={6}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 resize-y"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}

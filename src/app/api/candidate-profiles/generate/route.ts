@@ -86,7 +86,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Could not extract text from the uploaded files" }, { status: 422 });
     }
 
-    const sections = await generateCandidateProfileSections(combinedText, candidateName);
+    const jdText = ((form.get("jd") as string | null) ?? "").slice(0, 10000) || undefined;
+
+    const sections = await generateCandidateProfileSections(combinedText, candidateName, jdText);
 
     const referredDate = new Date().toLocaleDateString("en-NZ", {
       weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -130,7 +132,7 @@ export async function POST(req: Request) {
       name: true,
       profileText: true,
       orgId: true,
-      job: { select: { orgId: true, title: true } },
+      job: { select: { orgId: true, title: true, rawJd: true } },
     },
   });
 
@@ -147,7 +149,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Candidate has no profile text to generate from." }, { status: 422 });
   }
 
-  const sections = await generateCandidateProfileSections(candidate.profileText, candidate.name);
+  const jdText = candidate.job?.rawJd?.trim() || undefined;
+  const sections = await generateCandidateProfileSections(candidate.profileText, candidate.name, jdText);
 
   const referredDate = new Date().toLocaleDateString("en-NZ", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",

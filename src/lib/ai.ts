@@ -841,7 +841,8 @@ const SONNET = "claude-sonnet-4-6";
 
 export async function generateCandidateProfileSections(
   profileText: string,
-  candidateName: string
+  candidateName: string,
+  jdText?: string
 ): Promise<ProfileDocSections> {
   const excerpt = profileText.slice(0, 10000);
 
@@ -915,18 +916,22 @@ Return ONLY valid JSON — no commentary:
     lookingFor: facts.lookingFor,
   }, null, 2);
 
+  const roleContext = jdText?.trim()
+    ? `\nRole this candidate is being put forward for:\n${jdText.slice(0, 2000)}\n\nAngle the summary toward this role. Lead with the facts most relevant to the hiring manager's needs. Do NOT mention requirements the candidate doesn't meet. The role context tells you what to emphasise — not what to invent.\n`
+    : "";
+
   const summaryPrompt = `Write a professional executive summary for a candidate profile document.
 
 You are given verified facts only. You MUST NOT add, infer, or embellish anything beyond these facts.
 Write in third person. No first person. Polished recruitment consultant tone.
 If the facts are sparse, keep the summary short — do not pad it out.
 Do not use generic filler like "proven track record" or "strong communicator" unless the facts explicitly state it.
-
+${roleContext}
 Verified facts:
 ${factsForSummary}
 
 Write 3–4 paragraphs:
-1. Career overview — roles and domains from the facts
+1. Career overview — roles and domains from the facts${jdText ? ", emphasising what is most relevant to the role above" : ""}
 2. Most recent role — what they did, based on the key points
 3. Previous experience or notable skills — from the facts only
 4. What they are looking for — only if stated in the facts, otherwise omit this paragraph
