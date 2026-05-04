@@ -4,8 +4,6 @@ import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { generateCandidateProfileSections } from "@/lib/ai";
 import { generateProfileDocx } from "@/lib/generate-candidate-profile-doc";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
 import mammoth from "mammoth";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +29,8 @@ async function extractFileText(file: File): Promise<string> {
   const name = file.name.toLowerCase();
 
   if (name.endsWith(".pdf")) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
     const result = await pdfParse(buf);
     return result.text ?? "";
   }
@@ -38,11 +38,11 @@ async function extractFileText(file: File): Promise<string> {
     const result = await mammoth.extractRawText({ buffer: buf });
     return result.value ?? "";
   }
-  // Plain text fallback
   return buf.toString("utf8");
 }
 
 export async function POST(req: Request) {
+  try {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
@@ -180,4 +180,9 @@ export async function POST(req: Request) {
       "Cache-Control": "no-store",
     },
   });
+  } catch (err) {
+    console.error("[candidate-profiles/generate]", err);
+    const message = err instanceof Error ? err.message : "Unexpected server error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
