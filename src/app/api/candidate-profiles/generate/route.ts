@@ -87,8 +87,8 @@ export async function POST(req: Request) {
     }
 
     const jdFileField = form.get("jdFile");
-    const jdText = jdFileField instanceof File
-      ? ((await extractFileText(jdFileField)).slice(0, 10000) || undefined)
+    const jdText = jdFileField && typeof jdFileField !== "string"
+      ? ((await extractFileText(jdFileField as File)).slice(0, 10000) || undefined)
       : undefined;
 
     const sections = await generateCandidateProfileSections(combinedText, candidateName, jdText);
