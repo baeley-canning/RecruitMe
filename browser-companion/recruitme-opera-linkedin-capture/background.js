@@ -10,6 +10,8 @@ const PENDING_CAPTURE_ALARM = "recruitme-pending-capture-check";
 const activeAutoCaptures = new Map(); // sessionId -> startedAt timestamp
 const pendingSessionEnsures = new Set();
 const autoOpenedTabs = new Set(); // Tab IDs auto-opened by the extension for background capture
+const recentAutoCaptureLookups = new Map(); // url -> timestamp; throttles checkPendingCapture calls
+const AUTO_CAPTURE_LOOKUP_COOLDOWN_MS = 12_000;
 const ERROR_BADGE_COLOR = "#b91c1c";
 
 async function setExtensionError(message) {
@@ -401,6 +403,10 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
 }
 
 async function maybeAutoCapture(tabId, linkedinUrl) {
+  const lastLookup = recentAutoCaptureLookups.get(linkedinUrl);
+  if (lastLookup && Date.now() - lastLookup < AUTO_CAPTURE_LOOKUP_COOLDOWN_MS) return;
+  recentAutoCaptureLookups.set(linkedinUrl, Date.now());
+
   const pending = await checkPendingCapture(linkedinUrl);
   console.log("[RecruitMe] maybeAutoCapture", { tabId, linkedinUrl, status: pending.data?.status, sessionId: pending.data?.sessionId });
   if (!pending.data?.active || !pending.data?.sessionId) return;

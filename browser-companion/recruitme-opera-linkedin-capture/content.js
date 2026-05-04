@@ -829,10 +829,13 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   } finally {
     captureInProgress = false;
     captureInProgressSessionId = "";
+    // Restore so the setInterval doesn't immediately re-send linkedin-page-observed
+    lastObservedUrl = location.href.replace(/[?#].*$/, "");
   }
 }
 
 function notifyBackground() {
+  if (captureInProgress) return; // Don't send while a capture is running — avoids API spam
   if (!isLinkedInProfilePage()) return;
   if (!isRootLinkedInProfile(location.href)) return; // Skip sub-pages like /details/experience
 
