@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import { scoreCandidateStructured, predictAcceptance, extractCandidateInfo, cleanCvText } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
@@ -244,20 +245,39 @@ export async function POST(
     }
   }
 
-  const updated = await prisma.candidate.update({
-    where: { id: candidateId },
-    data: {
-      name,
-      headline,
-      location,
-      profileText,
-      profileCapturedAt: new Date(),
-      ...(body.success && body.data.linkedinUrl
-        ? { linkedinUrl: body.data.linkedinUrl.split("?")[0] }
-        : {}),
-      ...scoreData,
-    },
-  });
+  const profileData = {
+    name,
+    headline,
+    location,
+    profileText,
+    profileCapturedAt: new Date(),
+    ...scoreData,
+  };
 
-  return NextResponse.json(updated);
+  const linkedinUrlFromExtension = body.success && body.data.linkedinUrl
+    ? body.data.linkedinUrl.split("?")[0]
+    : null;
+
+  try {
+    const updated = await prisma.candidate.update({
+      where: { id: candidateId },
+      data: {
+        ...profileData,
+        ...(linkedinUrlFromExtension ? { linkedinUrl: linkedinUrlFromExtension } : {}),
+      },
+    });
+    return NextResponse.json(updated);
+  } catch (err) {
+    // Another candidate in this job already has this LinkedIn URL (duplicate import).
+    // Save the profile data without overwriting the URL — the profile text and scores
+    // are still valuable even if we can't claim the URL on this row.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const updated = await prisma.candidate.update({
+        where: { id: candidateId },
+        data: profileData,
+      });
+      return NextResponse.json(updated);
+    }
+    throw err;
+  }
 }
