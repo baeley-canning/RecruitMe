@@ -5,6 +5,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey } from "@/lib/utils";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { getOrgScoringWeights } from "@/lib/scoring-config";
 import { NextResponse } from "next/server";
 
 const CONCURRENCY = 3;
@@ -43,6 +44,7 @@ export async function POST(
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
+  const weights = await getOrgScoringWeights(auth.orgId);
 
   const total = candidates.length;
   let scored = 0;
@@ -73,7 +75,7 @@ export async function POST(
 
             try {
               const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-                scoreCandidateStructured(candidate.profileText, parsedRole, salary),
+                scoreCandidateStructured(candidate.profileText, parsedRole, salary, weights),
                 predictAcceptance(candidate.profileText, parsedRole, salary),
               ]);
               if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;

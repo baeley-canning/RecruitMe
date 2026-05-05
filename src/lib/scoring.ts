@@ -38,6 +38,10 @@ export interface NiceToHaveStatus {
   evidence:     string;
 }
 
+// ─── External weight config (optional — falls back to CATEGORY_WEIGHTS_V2) ─────
+export type { ScoringWeights } from "./scoring-config";
+import type { ScoringWeights } from "./scoring-config";
+
 // ─── Score structures ──────────────────────────────────────────────────────────
 
 export interface CategoryScore {
@@ -220,21 +224,24 @@ export function computeEvidenceCoverageScore(
 
 export function computeOverallScore(
   categories: ScoreBreakdown["categories"],
-  mustHavePct: number
+  mustHavePct: number,
+  weights?: ScoringWeights
 ): number {
   // Backward compat: old records have industry_fit + keyword_alignment instead of domain_fit.
-  // Derive an equivalent domain score from the legacy fields so old records score correctly.
   const domainScore = categories.domain_fit?.score ??
     ((categories.industry_fit?.score ?? 50) * 0.04 + (categories.keyword_alignment?.score ?? 50) * 0.06) / 0.10;
 
+  const w = weights ?? CATEGORY_WEIGHTS_V2;
+  const mustHaveW = weights ? weights.must_have : MUST_HAVE_WEIGHT_V2;
+
   const weighted =
-    categories.skill_fit.score        * CATEGORY_WEIGHTS_V2.skill_fit +
-    categories.location_fit.score     * CATEGORY_WEIGHTS_V2.location_fit +
-    categories.seniority_fit.score    * CATEGORY_WEIGHTS_V2.seniority_fit +
-    categories.title_fit.score        * CATEGORY_WEIGHTS_V2.title_fit +
-    domainScore                       * CATEGORY_WEIGHTS_V2.domain_fit +
-    categories.nice_to_have_fit.score * CATEGORY_WEIGHTS_V2.nice_to_have_fit +
-    mustHavePct                       * MUST_HAVE_WEIGHT_V2;
+    categories.skill_fit.score        * w.skill_fit +
+    categories.location_fit.score     * w.location_fit +
+    categories.seniority_fit.score    * w.seniority_fit +
+    categories.title_fit.score        * w.title_fit +
+    domainScore                       * w.domain_fit +
+    categories.nice_to_have_fit.score * w.nice_to_have_fit +
+    mustHavePct                       * mustHaveW;
 
   return Math.min(100, Math.max(0, Math.round(weighted)));
 }
@@ -315,11 +322,12 @@ export function buildScoreBreakdown(params: {
   missing_evidence:      string[];
   recruiter_summary:     string;
   profileCharCount:      number;
+  weights?:              ScoringWeights;
 }): ScoreBreakdown {
   const dataQuality   = classifyDataQuality(params.profileCharCount);
   const mustHavePct   = computeMustHavePct(params.must_have_coverage, dataQuality);
   const niceToHavePct = computeNiceToHavePct(params.nice_to_have_coverage);
-  const rawOverall    = computeOverallScore(params.categories, mustHavePct);
+  const rawOverall    = computeOverallScore(params.categories, mustHavePct, params.weights);
 
   // Base cap by data quality: snippets/partial captures are leads, not confirmed matches.
   let cap =

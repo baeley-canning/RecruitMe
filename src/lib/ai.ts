@@ -580,7 +580,8 @@ export type { ScoreBreakdown } from "./scoring";
 export async function scoreCandidateStructured(
   profileText: string,
   parsedRole: ParsedRole,
-  salary?: { min: number; max: number } | null
+  salary?: { min: number; max: number } | null,
+  weights?: import("./scoring-config").ScoringWeights
 ): Promise<ScoreBreakdown> {
   if (!profileText || profileText.trim().length < 100) {
     throw new Error("Profile text too short to score");
@@ -829,6 +830,7 @@ Do NOT let seniority in an unrelated domain satisfy the clause. A senior account
     missing_evidence:      stringArray(raw.missing_evidence),
     recruiter_summary:     typeof raw.recruiter_summary === "string" ? raw.recruiter_summary : "",
     profileCharCount:      profileText.length,
+    weights,
   });
 }
 

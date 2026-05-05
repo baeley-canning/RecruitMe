@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
@@ -291,6 +291,18 @@ export function Sidebar({ jobs }: SidebarProps) {
           >
             <Bookmark className="w-4 h-4" />
             LinkedIn Setup
+          </Link>
+          <Link
+            href="/settings"
+            className={cn(
+              "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
+              pathname === "/settings"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            )}
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Scoring Settings
           </Link>
         </nav>
 
