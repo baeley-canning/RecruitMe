@@ -4,11 +4,17 @@ import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { ensureDefaultOrg } from "./org";
 
+// Warn at module load if NEXTAUTH_SECRET is missing — full validation at runtime in authorize().
+// (Can't throw at module load because Next.js imports this during build without secrets.)
+if (process.env.NODE_ENV === "production" && !process.env.NEXTAUTH_SECRET?.trim()) {
+  console.error("NEXTAUTH_SECRET is not set — sessions will not work. Set it in Railway Variables.");
+}
+
 // DB-backed brute-force protection — survives server restarts and horizontal scaling.
 const MAX_ATTEMPTS = 10;
 const WINDOW_MS = 15 * 60 * 1000;
 
-async function recordLoginFailure(key: string): Promise<void> {
+export async function recordLoginFailure(key: string): Promise<void> {
   const now = new Date();
   const resetAt = new Date(now.getTime() + WINDOW_MS);
   try {
@@ -20,13 +26,13 @@ async function recordLoginFailure(key: string): Promise<void> {
   } catch { /* non-fatal */ }
 }
 
-async function clearLoginFailures(key: string): Promise<void> {
+export async function clearLoginFailures(key: string): Promise<void> {
   try {
     await prisma.loginAttempt.deleteMany({ where: { key } });
   } catch { /* non-fatal */ }
 }
 
-async function checkLoginLocked(key: string): Promise<{ locked: boolean; minsLeft: number }> {
+export async function checkLoginLocked(key: string): Promise<{ locked: boolean; minsLeft: number }> {
   try {
     const entry = await prisma.loginAttempt.findUnique({ where: { key } });
     if (!entry) return { locked: false, minsLeft: 0 };
@@ -64,6 +70,12 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
+        // Runtime secret validation — catches misconfigured deployments immediately.
+        const secret = process.env.NEXTAUTH_SECRET?.trim();
+        if (!secret || secret.length < 32) {
+          throw new Error("Server misconfiguration: NEXTAUTH_SECRET must be set and ≥32 chars.");
+        }
+
         if (!credentials?.username || !credentials?.password) return null;
 
         const key = credentials.username.toLowerCase().trim();
@@ -133,5 +145,6 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: "jwt",
+    maxAge: 12 * 60 * 60, // 12 hours — reduces window of compromise for stolen tokens
   },
 };

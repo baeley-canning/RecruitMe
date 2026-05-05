@@ -145,7 +145,7 @@ export async function POST(
 
     const profileText = row.profileText!;
     scored++;
-    console.log(`[talent-pool] scoring "${row.name}" — ${profileText.length}ch`);
+    console.log(`[talent-pool] scoring candidate ${row.id} — ${profileText.length}ch`);
 
     const scoreData: Record<string, unknown> = {};
     let matchScore: number | null = null;
@@ -172,7 +172,7 @@ export async function POST(
         isRemote: job.isRemote,
       });
     } catch (err) {
-      console.error(`[talent-pool] score failed for "${row.name}":`, err);
+      console.error(`[talent-pool] score failed for candidate ${row.id}:`, err);
       if (minScore > 0) { skippedScore++; continue; }
     }
 

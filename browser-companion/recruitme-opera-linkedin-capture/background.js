@@ -607,10 +607,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+async function checkForExtensionUpdate() {
+  try {
+    const bases = await getServerBases();
+    const preferredBase = bases[0] || "";
+    for (const base of bases) {
+      try {
+        const res = await fetch(`${base}/api/extension/version`, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const latestVersion = data?.version;
+        const manifest = chrome.runtime.getManifest();
+        const currentVersion = manifest.version;
+        if (latestVersion && latestVersion !== currentVersion) {
+          await chrome.action.setBadgeText({ text: "!" });
+          await chrome.action.setBadgeBackgroundColor({ color: "#f59e0b" });
+          await chrome.action.setTitle({ title: `RecruitMe update available (${currentVersion} → ${latestVersion}). Visit LinkedIn Setup in the app to download.` });
+          console.log(`[RecruitMe] Extension update available: ${currentVersion} → ${latestVersion}`);
+        }
+        return;
+      } catch { /* try next base */ }
+    }
+  } catch { /* non-fatal */ }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   void ensurePendingCaptureAlarm();
   void clearExtensionError().catch(() => {});
   void ensurePendingSessionTabs().catch(() => {});
+  void checkForExtensionUpdate().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {

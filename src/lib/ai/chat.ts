@@ -44,6 +44,12 @@ export async function chat(
       messages: [{ role: "user", content: prompt }],
     });
 
+    // Log token usage for cost visibility — surfaced in admin analytics
+    if (response.usage) {
+      const { input_tokens, output_tokens } = response.usage;
+      console.log(`[ai] model=${model} input=${input_tokens} output=${output_tokens}`);
+    }
+
     const block = response.content[0];
     return block.type === "text" ? block.text : "";
   }

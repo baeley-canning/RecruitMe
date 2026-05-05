@@ -1,5 +1,10 @@
 import { chat, getJobParsingProvider, parseJson, SONNET } from "./chat";
 import { enrichRoleWithSecurityClearance } from "../security-clearance";
+import {
+  PARSING_SYSTEM_CONTEXT,
+  PARSING_JSON_SCHEMA,
+  PARSING_RULES,
+} from "./prompts/parsing";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -93,68 +98,14 @@ function ensureSkillNotes(value: unknown): SkillNote[] {
 // ─── AI function ───────────────────────────────────────────────────────────────
 
 export async function parseJobDescription(jd: string): Promise<ParsedRole> {
-  const text = await chat(`You are a senior recruitment consultant with deep knowledge of the NZ market. You will receive either a formal job description (JD) or an informal hiring brief. Extract a structured hiring profile that powers candidate search and screening.
+  const text = await chat(`${PARSING_SYSTEM_CONTEXT}
 
 Input (JD or hiring brief):
 ${jd.slice(0, 8000)}
 
-Return ONLY valid JSON (no markdown, no explanation):
-{
-  "title": "standardised market-facing job title — if the internal title is unusual, translate it to what the person would actually be called",
-  "title_source": "explicit|inferred|empty string if unknown",
-  "company": "company or client name, or empty string",
-  "company_source": "explicit|inferred|empty string if unknown",
-  "location": "city or region only — e.g. 'Auckland', 'Wellington'",
-  "location_source": "explicit|inferred|empty string if unknown",
-  "experience": "years requirement only if explicitly stated — e.g. '5+ years'. Empty string otherwise.",
-  "seniority_band": "one of: Graduate | Junior | Mid-level | Senior | Lead | Principal | Manager | Director | Executive",
-  "seniority_source": "explicit|inferred|empty string if unknown",
-  "salary_band": "inferred NZD salary range — use your NZ market knowledge if not stated. Format '$90k–$120k NZD'. Empty string only if genuinely impossible to estimate.",
-  "salary_source": "explicit|inferred|empty string if unknown",
-  "location_rules": "office/remote policy in plain English — e.g. 'Auckland CBD, 3 days in office' or 'Fully remote, NZ-based only' or 'Flexible'",
-  "location_rules_source": "explicit|inferred|empty string if unknown",
-  "visa_flags": ["work rights or visa requirements — e.g. 'NZ citizen or permanent resident only', 'Open Work Visa accepted'. Empty array if not mentioned."],
-  "must_haves": ["only explicit or near-explicit must-haves from the ad — do not harden soft wording into stricter requirements than the ad supports. Be specific and exhaustive."],
-  "nice_to_haves": ["explicitly preferred or advantageous things — 'would be great', 'advantageous', 'desirable'. Separate from must-haves."],
-  "knockout_criteria": ["ONLY true binary gates — legal/compliance requirements a recruiter would ask on a screening call before reading the CV. Examples: work rights, mandatory licences (driver's licence, security clearance), specific mandatory professional registration. DO NOT include skills, experience years, or technologies here — those belong in must_haves and are scoring factors, not gates. Most JDs have zero or one knockout criteria. If there are none, return an empty array."],
-  "application_requirements": ["explicit application asks or screening asks such as 'Portfolio requested', 'Cover letter requested', 'Expected salary question'. Empty array if none."],
-  "explicitly_stated": ["short recruiter-readable facts written in the ad itself. Do not include inference here."],
-  "strongly_inferred": ["short recruiter-readable inferences that are reasonable but not explicitly written in the ad."],
-  "search_expansion": ["broader sourcing angles that help search but are NOT ad facts."],
-  "synonym_titles": ["7-10 real LinkedIn headline titles — how actual people in this role describe themselves on their profile, NOT generic job board terms. Only include titles you would genuinely find on LinkedIn profiles. Examples for a Rails developer: 'Ruby on Rails Developer', 'Full Stack Engineer', 'Backend Engineer', 'Rails Engineer', 'Software Engineer' — NOT made-up compound titles like 'Technical Developer' or 'Application Developer' that no one uses."],
-  "responsibilities": ["concrete day-to-day activities from the JD — what they will actually do"],
-  "search_queries": [
-    "query 1: most common LinkedIn headline equivalent for this role + 1-2 core skills",
-    "query 2: different seniority angle or adjacent title people actually use",
-    "query 3: industry/domain angle — sector or type of company"
-  ],
-  "google_queries": [
-    "query 1: skills-first angle using the 2-3 most distinctive requirements",
-    "query 2: seniority + domain angle that appears in real LinkedIn headlines"
-  ],
-  "skills_required": ["technical and hard skills from must_haves — same content, skills only"],
-  "skills_preferred": ["technical and hard skills from nice_to_haves — same content, skills only"],
-  "skill_notes": [
-    {"skill": "Sybase", "type": "legacy", "note": "Sybase (SAP ASE) is largely obsolete — candidates with SQL Server or SAP HANA may adapt quickly", "alternatives": ["SAP HANA", "SQL Server", "PostgreSQL"]}
-  ],
-  "anchor_terms": ["C++", "Sybase", "SQL"]
-}
+${PARSING_JSON_SCHEMA}
 
-Rules:
-- Separate truth from inference. If the ad does not explicitly say something, do not place it in explicitly_stated.
-- Use the *_source fields honestly. If seniority, salary, or work setup are inferred from context, mark them as "inferred".
-- must_haves should stay faithful to the ad. If wording is softer (for example "assist with backend and front-end applications"), do not rewrite it into a harder requirement than the ad supports.
-- Put broader recruiter logic in strongly_inferred and search_expansion, not in explicitly_stated.
-- search_queries and google_queries: KEYWORD TERMS ONLY. Location and site:linkedin.com/in are added automatically. No years of experience. Never copy the exact job title verbatim.
-- synonym_titles is the most important field for search coverage — a "Digital Solutions Analyst" might be "Business Analyst", "Systems Analyst", "Product Analyst", "IT Analyst", "Digital Analyst" on LinkedIn. Think about what 10 different people doing this job would call themselves. Banned terms that no one uses on LinkedIn: "Application Developer", "Technical Developer", "IT Developer", "Mid-level Developer", "Junior Developer", "Graduate Developer" — use the actual technology stack or domain in the title instead.
-- must_haves vs nice_to_haves: if the JD says "required" or "must have" it's a must-have. If it says "preferred", "advantageous", "desirable", "bonus" it's nice-to-have.
-- Grouped/partial skill lists: when a JD says "experience across at least half of the following", "one or more of", "familiarity with any of", or similar partial-coverage language, compress those items into ONE single must-have string that preserves the threshold — e.g. "At least half of: Java, Node.js, React, GitLab CI, Jenkins, Terraform, Jira, Ansible". Do NOT expand a partial list into separate individual must-haves — that would over-penalise candidates who meet the actual threshold.
-- Security clearance: if the ad explicitly says a clearance is required, must be held, or must be obtainable, add it to knockout_criteria and must_haves. If the ad only implies sensitive government/security context through the employer or product area, do NOT make it a knockout; put it in strongly_inferred/search_expansion instead.
-- knockout_criteria: STRICT — only legal/compliance binary gates a recruiter asks on a phone screen before looking at the CV. Work rights, mandatory licences, explicit security clearances. Skills and experience are NOT knockouts — they go in must_haves. Most roles have one knockout or none. When in doubt, leave it out.
-- anchor_terms: 2–5 specific technology or tool names that a strong candidate MUST have visible somewhere in their LinkedIn profile or headline. These drive candidate search filtering — they must be concrete, unambiguous terms (e.g. "C++", "Sybase", "Salesforce", "JMeter", "ServiceNow", "React", "Kubernetes"). Rules: only include terms from the must_haves list; never include soft skills, generic terms ("SQL" alone is too broad — prefer "SQL Server" or "PostgreSQL" if specified), methodologies, or degree requirements; if the role has no rare/distinctive technical anchor (e.g. a generic Project Manager role), return an empty array; maximum 5 terms.
-- skill_notes: identify at most 3 skills in the JD that are legacy/obsolete and where considering modern alternatives would genuinely widen the candidate pool. Use type "legacy". Classic examples: Sybase → SAP HANA/SQL Server, COBOL → Java/mainframe-IBM, VB6/Visual Basic → C#/.NET, ColdFusion → PHP/Node.js, Informix → PostgreSQL/Oracle, Delphi/Pascal → C#/Java, Flash/ActionScript → React/Vue, Lotus Notes → SharePoint/M365. Do NOT flag any mainstream modern technology (React, Python, AWS, Azure, Docker, Kubernetes, Java, C#, .NET, PostgreSQL, MySQL, SQL Server, MongoDB, C, C++, Go, Rust, etc.). Do NOT flag C or C++ — they are specific, legitimate modern requirements. Only flag skills whose alternatives are genuine replacements, not just related technologies. Return an empty array if nothing applies — most JDs should have no skill_notes at all.
-- application_requirements: use this for portfolio / CV / cover letter asks and application questions. These are not knockout criteria unless the ad clearly says mandatory.
-- salary_band: if the JD states a range, use it. If not, use your knowledge of NZ market rates for this role and seniority.`, 0.1, 2048, {
+${PARSING_RULES}`, 0.1, 2048, {
     provider: getJobParsingProvider(),
     model: SONNET,
   });

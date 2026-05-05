@@ -938,7 +938,7 @@ async function runSearchBackground(args: {
               });
             }
           } catch (err) {
-            console.error(`[search] score failed for "${r.name}":`, err);
+            console.error(`[search] score failed for candidate ${r.linkedinUrl ?? "unknown"}:`, err);
             const fallback = buildProvisionalSearchScore(
               r,
               parsedRole,

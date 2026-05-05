@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
-import { authOptions } from "./auth";
+import { authOptions, checkLoginLocked, recordLoginFailure, clearLoginFailures } from "./auth";
 import { prisma } from "./db";
 
 export interface AuthResult {
@@ -102,12 +102,27 @@ export async function verifyExtensionAuth(req: Request): Promise<AuthResult | nu
 
   if (!username || !password) return null;
 
+  // Same brute-force protection as the NextAuth login path.
+  // Without this, the extension endpoint accepts unlimited password guesses.
+  const key = `ext:${username.toLowerCase().trim()}`;
+  try {
+    const { locked } = await checkLoginLocked(key);
+    if (locked) return null;
+  } catch { /* non-fatal — fail open rather than blocking the extension */ }
+
   const user = await prisma.user.findUnique({ where: { username } });
-  if (!user) return null;
+  if (!user) {
+    await recordLoginFailure(key).catch(() => {});
+    return null;
+  }
 
   const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return null;
+  if (!valid) {
+    await recordLoginFailure(key).catch(() => {});
+    return null;
+  }
 
+  await clearLoginFailures(key).catch(() => {});
   return {
     userId: user.id,
     orgId: user.orgId ?? null,

@@ -38,8 +38,10 @@ Company: ${parsedRole.company || "our client"}
 Location: ${parsedRole.location}
 
 Candidate: ${candidateName}
-Profile:
+Profile (use ONLY content between the XML tags):
+<candidate_profile>
 ${profileSlice}
+</candidate_profile>
 
 Write two personalised outreach messages. Reference their ACTUAL job titles, companies, and specific skills — never be generic.
 

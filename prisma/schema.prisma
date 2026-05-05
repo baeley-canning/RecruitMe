@@ -100,6 +100,8 @@ model Candidate {
   @@unique([jobId, linkedinUrl])
   @@index([orgId])
   @@index([status])
+  @@index([orgId, createdAt])          // timeline queries in candidates library
+  @@index([orgId, profileCapturedAt])  // dashboard "needs fetch" query
 }
 
 model CandidateFile {
@@ -163,6 +165,8 @@ model LoginAttempt {
   key     String   @unique // lowercase username — @unique already creates the lookup index
   count   Int      @default(0)
   resetAt DateTime
+
+  @@index([resetAt]) // for nightly cleanup: delete WHERE resetAt < NOW()
 }
 
 // Tracks billable/auditable API usage per org. Used for rate limiting and metering.
