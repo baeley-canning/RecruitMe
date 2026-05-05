@@ -53,7 +53,9 @@ export async function chat(
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set in .env.local");
 
-    const client = new Anthropic({ apiKey });
+    // 90s timeout — scoring prompts can be long but should never take longer.
+    // Prevents requests hanging indefinitely if Anthropic is slow.
+    const client = new Anthropic({ apiKey, timeout: 90_000 });
     const model  = options?.model ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
     const response = await client.messages.create({
@@ -98,6 +100,30 @@ export async function chat(
   });
 
   return response.choices[0]?.message?.content ?? "";
+}
+
+// ─── Retry helper ─────────────────────────────────────────────────────────────
+// Retries an async function up to maxAttempts times with exponential backoff.
+// Only retries on rate-limit (429) or transient server errors (500/529).
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+  baseDelayMs = 2000
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number })?.status;
+      if (status !== 429 && status !== 500 && status !== 529) throw err;
+      if (attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 // ─── Ollama auto-detect ────────────────────────────────────────────────────────
@@ -361,6 +387,7 @@ Rules:
 - application_requirements: use this for portfolio / CV / cover letter asks and application questions. These are not knockout criteria unless the ad clearly says mandatory.
 - salary_band: if the JD states a range, use it. If not, use your knowledge of NZ market rates for this role and seniority.`, 0.1, 2048, {
     provider: getJobParsingProvider(),
+    model: SONNET,
   });
 
   const parsed = parseJson<Partial<ParsedRole>>(text);

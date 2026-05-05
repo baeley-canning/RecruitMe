@@ -49,7 +49,11 @@ const scoringConfigMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => dbMocks);
-vi.mock("@/lib/ai", () => aiMocks);
+vi.mock("@/lib/ai", () => ({
+  ...aiMocks,
+  // withRetry is a pass-through in tests — just call the function directly
+  withRetry: (fn: () => unknown) => fn(),
+}));
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,

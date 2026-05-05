@@ -692,19 +692,22 @@ function appendSection(mainCapture, sectionText, sectionKey) {
 }
 
 async function enrichWithSkillsAndCertifications(mainCapture, profileBaseUrl) {
-  const [skillsText, certsText] = await Promise.all([
+  const [skillsText, certsText, educationText] = await Promise.all([
     fetchDetailsPageText(profileBaseUrl, "skills", "Skills"),
     fetchDetailsPageText(profileBaseUrl, "certifications", "Licenses & Certifications"),
+    fetchDetailsPageText(profileBaseUrl, "education", "Education"),
   ]);
 
   let enriched = mainCapture;
-  if (skillsText) enriched = appendSection(enriched, skillsText, "skills");
-  if (certsText)  enriched = appendSection(enriched, certsText, "licenses_certifications");
+  if (skillsText)    enriched = appendSection(enriched, skillsText, "skills");
+  if (certsText)     enriched = appendSection(enriched, certsText, "licenses_certifications");
+  if (educationText) enriched = appendSection(enriched, educationText, "education");
 
   if (enriched.profileText.length > mainCapture.profileText.length + 60) {
-    console.log("[RecruitMe] merged skills/certifications", {
+    console.log("[RecruitMe] merged skills/certs/education", {
       skills: skillsText.length,
       certs: certsText.length,
+      education: educationText.length,
       totalAfter: enriched.profileText.length,
     });
   }

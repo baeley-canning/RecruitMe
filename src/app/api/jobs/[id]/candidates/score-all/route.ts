@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance, withRetry } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
@@ -78,8 +78,8 @@ export async function POST(
 
             try {
               const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-                scoreCandidateStructured(candidate.profileText, parsedRole, salary, weights),
-                predictAcceptance(candidate.profileText, parsedRole, salary),
+                withRetry(() => scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights)),
+                withRetry(() => predictAcceptance(candidate.profileText!, parsedRole, salary)),
               ]);
               if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
               const breakdown = applyLocationFitOverride(
