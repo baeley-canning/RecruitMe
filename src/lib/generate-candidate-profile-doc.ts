@@ -2,8 +2,11 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
+  Footer,
   Header,
   ImageRun,
+  PageNumber,
+  NumberFormat,
   Packer,
   Paragraph,
   SectionType,
@@ -40,6 +43,7 @@ export interface ProfileDocData {
   consultant: { name: string; email: string; phone: string };
   manager: { name: string; email: string; phone: string };
   executiveSummary: string;
+  skillGroups: Array<{ title: string; skills: string[] }>;
   workHistory: Array<{ company: string; role: string; dates?: string; bullets?: string[] }>;
   qualifications: Array<{ institution: string; courseYear: string }>;
 }
@@ -205,12 +209,31 @@ function buildCoverPage(data: ProfileDocData): (Paragraph | Table)[] {
 }
 
 function buildExecutiveSummaryPage(data: ProfileDocData): Paragraph[] {
+  const children: Paragraph[] = [sectionHeading("Executive Summary"), emptyLine()];
+
   const paragraphs = data.executiveSummary
     .split(/\n\n+/)
     .filter(Boolean)
     .map((p) => bodyParagraph(p.trim(), { spacing: PT(10) }));
 
-  return [sectionHeading("Executive Summary"), emptyLine(), ...paragraphs];
+  children.push(...paragraphs);
+
+  // Key Skills section on the same page, below the summary
+  if (data.skillGroups && data.skillGroups.length > 0) {
+    children.push(emptyLine(), sectionHeading("Key Skills"), emptyLine());
+    for (const group of data.skillGroups) {
+      if (!group.title && group.skills.length === 0) continue;
+      if (group.title) {
+        children.push(bodyParagraph(group.title, { bold: true, spacing: PT(2) }));
+      }
+      if (group.skills.length > 0) {
+        // Skills on one line, comma-separated, italic — compact and readable
+        children.push(bodyParagraph(group.skills.join("  ·  "), { italic: true, spacing: PT(6) }));
+      }
+    }
+  }
+
+  return children;
 }
 
 function bulletPoint(text: string): Paragraph {
@@ -253,7 +276,7 @@ function buildWorkHistoryPage(data: ProfileDocData): Paragraph[] {
   return children;
 }
 
-// Header used on pages 2+: candidate name, Calibri Bold 16pt, right-aligned
+// Header on pages 2+: candidate name right-aligned
 function candidateHeader(name: string): Header {
   return new Header({
     children: [
@@ -266,24 +289,44 @@ function candidateHeader(name: string): Header {
   });
 }
 
+// Footer on pages 2+: page number centred
+function pageNumberFooter(): Footer {
+  return new Footer({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({ children: [PageNumber.CURRENT], size: PT(9), font: FONT, color: "888888" }),
+        ],
+        spacing: { after: 0 },
+      }),
+    ],
+  });
+}
+
 export async function generateProfileDocx(data: ProfileDocData): Promise<Buffer> {
   const header = candidateHeader(data.candidateName);
+  const footer = pageNumberFooter();
 
   const doc = new Document({
+    features: { updateFields: true },
+    numbering: { config: [] },
     sections: [
       {
-        // Cover page — no header (separate section = no inherited header)
-        properties: { page: PAGE, type: SectionType.NEXT_PAGE },
+        // Cover page — no header, no footer, no page number
+        properties: { page: { ...PAGE, pageNumbers: { formatType: NumberFormat.DECIMAL, start: 1 } }, type: SectionType.NEXT_PAGE },
         children: buildCoverPage(data),
       },
       {
         properties: { page: PAGE, type: SectionType.NEXT_PAGE },
         headers: { default: header },
+        footers: { default: footer },
         children: buildExecutiveSummaryPage(data),
       },
       {
         properties: { page: PAGE },
         headers: { default: header },
+        footers: { default: footer },
         children: buildWorkHistoryPage(data),
       },
     ],

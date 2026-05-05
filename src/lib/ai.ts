@@ -896,138 +896,177 @@ Return ONLY valid JSON:
 
 // ── Candidate profile document sections ───────────────────────────────────────
 
-export interface ProfileDocSections {
-  executiveSummary: string;
-  workHistory: Array<{ company: string; role: string; dates: string; bullets: string[] }>;
-  qualifications: Array<{ institution: string; courseYear: string }>;
+export interface SkillGroup {
+  title: string;
+  skills: string[];
 }
 
-// Internal type returned by Pass 1 (fact extraction)
-interface ExtractedFacts {
+export interface ProfileDocSections {
+  executiveSummary: string;
+  skillGroups: SkillGroup[];
   workHistory: Array<{ company: string; role: string; dates: string; bullets: string[] }>;
-  skills: string[];
   qualifications: Array<{ institution: string; courseYear: string }>;
   availability: string;
-  lookingFor: string;
+  trimmedPositions: number; // jobs excluded as irrelevant to the target role
+}
+
+// Internal type returned by Pass 1 (fact extraction + curation)
+interface ExtractedFacts {
+  workHistory: Array<{ company: string; role: string; dates: string; bullets: string[] }>;
+  skillGroups: SkillGroup[];
+  qualifications: Array<{ institution: string; courseYear: string }>;
+  availability: string;
+  trimmedPositions: number;
 }
 
 const SONNET = "claude-sonnet-4-6";
 
+/**
+ * Two-pass profile generation:
+ * Pass 1 — Extract AND curate facts for the specific target role. Irrelevant
+ *           positions are excluded; skills are grouped by category.
+ * Pass 2 — Write a concise executive summary positioned for the target role,
+ *           using only the verified facts from Pass 1.
+ */
 export async function generateCandidateProfileSections(
   profileText: string,
   candidateName: string,
+  targetRole: string,
   jdText?: string
 ): Promise<ProfileDocSections> {
   const excerpt = profileText.slice(0, 16000);
+  const roleContext = jdText?.trim()
+    ? `\nJob description for the target role:\n${jdText.slice(0, 3000)}`
+    : "";
 
-  // ── Pass 1: Extract facts only (no prose writing) ─────────────────────────
-  const extractionPrompt = `Extract factual information from the source material below for candidate ${candidateName}.
+  // ── Pass 1: Extract and curate for target role ────────────────────────────
+  const extractionPrompt = `You are a recruitment consultant preparing a candidate presentation for a client.
 
-RULES — strictly follow:
-- Extract ONLY what is explicitly stated. Do not infer, assume, or invent anything.
-- For bullets: restate the fact clearly but do not embellish. If the source uses dot points, restate them as short professional sentences using the same meaning.
-- If dates are missing, use an empty string — do not guess.
-- If a field has no data in the source, use an empty string or empty array.
+Candidate name: ${candidateName}
+Being put forward for: ${targetRole}${roleContext}
 
-Source material:
+SOURCE MATERIAL:
 ${excerpt}
 
-Return ONLY valid JSON — no commentary:
+TASK: Extract and CURATE the candidate's profile for the target role above. This is NOT a full CV dump — include only what is relevant and compelling for this specific placement.
+
+RULES:
+- Extract ONLY what is explicitly stated. Do not infer, assume, or invent.
+- Work history: include the 3–5 positions MOST RELEVANT to "${targetRole}". Skip roles with no connection to the target. If all roles are relevant, keep up to 5 most recent/relevant. Count how many you excluded in trimmedPositions.
+- For work bullets: restate key achievements and responsibilities clearly. Keep them punchy — 1–2 sentences each. Focus on what matters for "${targetRole}".
+- Skills: group into logical categories relevant to "${targetRole}" (e.g. "Technical Skills", "Frameworks & Tools", "Domain Expertise"). Most relevant category first. Only include skills mentioned in the source.
+- If a field has no data, use empty string or empty array. If dates are missing, use "".
+
+Return ONLY valid JSON:
 {
   "workHistory": [
     {
-      "company": "Exact company name from source",
-      "role": "Exact job title only — no dates in this field",
-      "dates": "StartMonth Year – EndMonth Year (empty string if not stated)",
-      "bullets": ["Fact 1 from source", "Fact 2 from source"]
+      "company": "Exact company name",
+      "role": "Exact job title",
+      "dates": "Start – End (or empty string)",
+      "bullets": ["Specific achievement or responsibility"]
     }
   ],
-  "skills": ["only skills explicitly mentioned in source"],
-  "qualifications": [
-    { "institution": "Institution name", "courseYear": "Qualification name | Year (if stated)" }
+  "skillGroups": [
+    {
+      "title": "Category name relevant to target role",
+      "skills": ["Skill A", "Skill B"]
+    }
   ],
-  "availability": "Availability as stated, or empty string",
-  "lookingFor": "What candidate said they are looking for, or empty string"
+  "qualifications": [
+    { "institution": "Institution name", "courseYear": "Degree/Certification | Year" }
+  ],
+  "availability": "As stated in source, or empty string",
+  "trimmedPositions": 0
 }`;
 
   let facts: ExtractedFacts = {
-    workHistory: [], skills: [], qualifications: [], availability: "", lookingFor: "",
+    workHistory: [], skillGroups: [], qualifications: [], availability: "", trimmedPositions: 0,
   };
 
   try {
-    const raw = await chat(extractionPrompt, 0.1, 2000, { model: SONNET });
+    const raw = await withRetry(() => chat(extractionPrompt, 0.1, 2500, { model: SONNET }));
     const match = raw.match(/\{[\s\S]*\}/);
     if (match) {
       const parsed = JSON.parse(match[0]) as Partial<ExtractedFacts>;
       facts = {
         workHistory: Array.isArray(parsed.workHistory)
-          ? parsed.workHistory.map((j) => ({
+          ? parsed.workHistory.slice(0, 5).map((j) => ({
               company: String(j.company ?? ""),
               role:    String(j.role ?? ""),
               dates:   String(j.dates ?? ""),
-              bullets: Array.isArray(j.bullets) ? j.bullets.map(String) : [],
+              bullets: Array.isArray(j.bullets) ? j.bullets.map(String).filter(Boolean) : [],
             }))
           : [],
-        skills:         Array.isArray(parsed.skills) ? parsed.skills.map(String) : [],
+        skillGroups: Array.isArray(parsed.skillGroups)
+          ? parsed.skillGroups.map((g) => ({
+              title:  String(g.title ?? ""),
+              skills: Array.isArray(g.skills) ? g.skills.map(String).filter(Boolean) : [],
+            })).filter((g) => g.title && g.skills.length > 0)
+          : [],
         qualifications: Array.isArray(parsed.qualifications) ? parsed.qualifications : [],
         availability:   String(parsed.availability ?? ""),
-        lookingFor:     String(parsed.lookingFor ?? ""),
+        trimmedPositions: Number(parsed.trimmedPositions ?? 0),
       };
     }
   } catch {
-    // Pass 1 failed — return empty rather than hallucinate
-    return { executiveSummary: "", workHistory: [], qualifications: [] };
+    return { executiveSummary: "", skillGroups: [], workHistory: [], qualifications: [], availability: "", trimmedPositions: 0 };
   }
 
   if (facts.workHistory.length === 0) {
-    return { executiveSummary: "", workHistory: [], qualifications: [] };
+    return { executiveSummary: "", skillGroups: facts.skillGroups, workHistory: [], qualifications: facts.qualifications, availability: facts.availability, trimmedPositions: facts.trimmedPositions };
   }
 
-  // ── Pass 2: Write executive summary from verified facts only ──────────────
-  const factsForSummary = JSON.stringify({
+  // ── Pass 2: Write executive summary positioned for the target role ─────────
+  const factsJson = JSON.stringify({
     name: candidateName,
-    workHistory: facts.workHistory.map((j) => ({ company: j.company, role: j.role, dates: j.dates, keyPoints: j.bullets })),
-    skills: facts.skills,
+    targetRole,
+    workHistory: facts.workHistory.map((j) => ({
+      company: j.company, role: j.role, dates: j.dates, keyPoints: j.bullets.slice(0, 3),
+    })),
+    skills: facts.skillGroups.flatMap((g) => g.skills).slice(0, 20),
     availability: facts.availability,
-    lookingFor: facts.lookingFor,
   }, null, 2);
 
-  const roleContext = jdText?.trim()
-    ? `\nRole this candidate is being put forward for:\n${jdText.slice(0, 2000)}\n\nAngle the summary toward this role. Lead with the facts most relevant to the hiring manager's needs. Do NOT mention requirements the candidate doesn't meet. The role context tells you what to emphasise — not what to invent.\n`
-    : "";
+  const jdAngle = jdText?.trim()
+    ? `\nThis candidate is being put forward for: ${targetRole}. Lead with what is most relevant to the hiring manager's needs. Reference specific requirements from the JD where supported by evidence. Do NOT mention gaps or requirements the candidate doesn't meet.\n`
+    : `\nThis candidate is being put forward for: ${targetRole}. Lead with their most relevant experience for this role.\n`;
 
-  const summaryPrompt = `Write a concise executive summary for a candidate profile document.
+  const summaryPrompt = `Write a concise executive summary for a client-facing candidate profile.
 
-Rules — strictly follow:
-- Under 150 words total. Brevity is quality.
-- Third person only. No first person.
-- Only facts from the verified list below. Do NOT infer, embellish, or invent.
-- No filler phrases: no "proven track record", "strong communicator", "passionate about", "results-driven".
-- This summary appears directly above the work history. Do NOT re-summarise the work history — write the pitch a hiring manager reads to decide whether to read on.
-- Every sentence must add something the others don't. Cut anything that could apply to any candidate.
-${roleContext}
+Rules:
+- Under 150 words. Brevity is quality.
+- Third person only. No "I" or "we".
+- Every fact must come from the verified list below. No invention, no embellishment.
+- Explicitly position the candidate for "${targetRole}" — not a generic summary.
+- No filler: no "proven track record", "strong communicator", "passionate about", "results-driven", "extensive experience".
+- Do not re-summarise the work history — write the pitch that makes the hiring manager want to read on.
+- Every sentence must add something specific. Cut anything generic.
+${jdAngle}
 Verified facts:
-${factsForSummary}
+${factsJson}
 
-Write 2–3 short paragraphs, 2–3 sentences each:
-1. Career headline — who they are and their domain in one or two sentences${jdText ? ", leading with what is most relevant to the role" : ""}
-2. Most compelling experience — the 2–3 facts that matter most for this placement
-3. One closing sentence only if there is a concrete differentiating fact not yet covered in paragraphs 1 or 2 — something specific from the verified list (a metric, a rare skill, notable employer, or compelling availability). If no such uncovered fact exists, stop after paragraph 2. Do not write a generic closing sentence.
+Write 2–3 short paragraphs (2–3 sentences each):
+1. Who they are and why they suit "${targetRole}" specifically
+2. The 2–3 most compelling facts for this placement (specific employer, achievement, or rare skill)
+3. One closing sentence only if it adds a concrete differentiating fact (metric, rare skill, availability). Skip if nothing new to add.
 
-Return ONLY the summary text. No JSON. No headings.`;
+Return ONLY the summary text. No JSON. No headings. No labels.`;
 
   let executiveSummary = "";
   try {
-    executiveSummary = await chat(summaryPrompt, 0.2, 1000, { model: SONNET });
-    executiveSummary = executiveSummary.trim();
+    executiveSummary = (await withRetry(() => chat(summaryPrompt, 0.2, 1000, { model: SONNET }))).trim();
   } catch {
     executiveSummary = "";
   }
 
   return {
     executiveSummary,
-    workHistory:    facts.workHistory.map((j) => ({ company: j.company, role: j.role, dates: j.dates, bullets: j.bullets })),
+    skillGroups:    facts.skillGroups,
+    workHistory:    facts.workHistory,
     qualifications: facts.qualifications,
+    availability:   facts.availability,
+    trimmedPositions: facts.trimmedPositions,
   };
 }
 
