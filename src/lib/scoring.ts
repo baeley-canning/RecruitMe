@@ -158,7 +158,10 @@ export function getMustHaveImportance(requirement: string): number {
   // Very important technical requirements
   if (/\bux\b|user experience|design principle|web design|ux.{0,10}design|design.{0,10}develop/i.test(r)) return 1.3;
   if (/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i.test(r)) return 1.3;
-  if (/\bangular\b|\.net|asp\.net|c#|c\+\+|sybase|azure|kubernetes|aks|api design|ci\/cd|pipeline/i.test(r)) return 1.3;
+  // Primary programming language for the role — if explicitly required and confirmed missing,
+  // no amount of location/domain/seniority alignment rescues the candidate.
+  if (/\bc\+\+\b/i.test(r)) return 1.5;
+  if (/\bangular\b|\.net|asp\.net|c#|sybase|azure|kubernetes|aks|api design|ci\/cd|pipeline/i.test(r)) return 1.3;
   if (/\bitil\b|\bitsm\b|service management|incident management|change management|problem management|requirements|process mapping|business analysis/i.test(r)) return 1.2;
   if (/concept to launch|full.{0,5}site|full.{0,5}build|full website|ownership|end.to.end/i.test(r)) return 1.2;
   if (/shopify|squarespace|woocommerce/i.test(r))                            return 1.2;
@@ -321,8 +324,8 @@ export function buildScoreBreakdown(params: {
       ? params.profileCharCount < 500 ? 54 : 65
       : dataQuality === "minimal" ? 40 : 100;
 
-  // Critical gate: if any 1.5× importance must-have is unconfirmed on a non-full profile,
-  // the candidate cannot be presented as a real match until fetch proves otherwise.
+  // Critical gate for snippets/minimal: if any 1.5× must-have is unconfirmed, cap hard —
+  // the candidate cannot be presented as a real match until a full profile proves otherwise.
   if (dataQuality !== "full_profile") {
     // "equivalent" counts as satisfied — only unresolved statuses trigger the cap
     const criticalUnconfirmed = params.must_have_coverage.filter(
@@ -332,6 +335,20 @@ export function buildScoreBreakdown(params: {
     );
     if (criticalUnconfirmed.length > 0) {
       cap = Math.min(cap, 45);
+    }
+  }
+
+  // Critical gate for full profiles: if a 1.5× must-have is *confirmed* missing or negative,
+  // no amount of location/seniority/domain alignment should produce a match-level score.
+  // We use 50 (not 45) because full-profile absence is a cleaner signal than snippet-unknown.
+  if (dataQuality === "full_profile") {
+    const criticalMissing = params.must_have_coverage.filter(
+      (c) =>
+        getMustHaveImportance(c.requirement) >= 1.5 &&
+        (c.status === "missing" || c.status === "negative")
+    );
+    if (criticalMissing.length > 0) {
+      cap = Math.min(cap, 50);
     }
   }
 
