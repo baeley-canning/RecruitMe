@@ -22,7 +22,7 @@ export default async function SettingsPage() {
           <h1 className="text-2xl font-bold text-slate-900">Scoring Settings</h1>
         </div>
         <p className="text-slate-500 text-sm ml-12">
-          Control how the seven scoring dimensions are weighted when calculating a candidate's overall match score.
+          Control how the seven scoring dimensions are weighted when calculating a candidate&apos;s overall match score.
         </p>
       </div>
 
@@ -42,7 +42,7 @@ export default async function SettingsPage() {
           </div>
           <div>
             <p className="font-medium text-slate-700">Skill fit (default 22%)</p>
-            <p>Technical and role-specific alignment across the candidate's full profile — harder to fake than title or domain.</p>
+            <p>Technical and role-specific alignment across the candidate&apos;s full profile — harder to fake than title or domain.</p>
           </div>
           <div>
             <p className="font-medium text-slate-700">Domain fit (default 10%)</p>
@@ -50,11 +50,11 @@ export default async function SettingsPage() {
           </div>
           <div>
             <p className="font-medium text-slate-700">Seniority fit (default 10%)</p>
-            <p>Career level relative to the role's expectation. Over- and under-seniority both reduce this score.</p>
+            <p>Career level relative to the role&apos;s expectation. Over- and under-seniority both reduce this score.</p>
           </div>
           <div>
             <p className="font-medium text-slate-700">Location fit (default 8%)</p>
-            <p>Geographic proximity. Kept intentionally low so a strong Wellington candidate isn't penalised for a slightly different suburb listing.</p>
+            <p>Geographic proximity. Kept intentionally low so a strong Wellington candidate isn&apos;t penalised for a slightly different suburb listing.</p>
           </div>
           <div>
             <p className="font-medium text-slate-700">Title fit (default 8%)</p>

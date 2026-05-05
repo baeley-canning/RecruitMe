@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { RotateCcw, Save, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ScoringWeights } from "@/lib/scoring-config";
-import { WEIGHT_LABELS, WEIGHT_DESCRIPTIONS, DEFAULT_SCORING_WEIGHTS } from "@/lib/scoring-config";
+import { WEIGHT_LABELS, WEIGHT_DESCRIPTIONS } from "@/lib/scoring-config";
 
 // ─── Radar chart ──────────────────────────────────────────────────────────────
 
@@ -249,7 +249,7 @@ export function ScoringWeightsEditor({
           <p className="text-xs text-amber-700 font-medium mb-1">Changes take effect on next re-score</p>
           <p className="text-[11px] text-amber-600">
             Existing candidate scores reflect the weights that were active when they were last scored.
-            Run "Re-score all" after saving to apply the new weights.
+            Run &quot;Re-score all&quot; after saving to apply the new weights.
           </p>
         </div>
       </div>
