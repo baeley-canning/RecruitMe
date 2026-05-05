@@ -81,32 +81,72 @@ function dedupeQueries(queries: string[]): string[] {
 }
 
 const REQUIREMENT_STOP_WORDS = new Set([
+  // Generic English
   "ability", "across", "and", "any", "based", "build", "building", "candidate",
   "comfortable", "commitment", "development", "driven", "experience", "good",
   "have", "including", "knowledge", "mindset", "must", "new", "principles",
   "professional", "proficiency", "required", "role", "solid", "strong",
   "understanding", "using", "with", "work", "working", "years",
+  // Qualifiers that appear in parenthetical notes — "(critical)", "(preferred)", etc.
+  "critical", "preferred", "essential", "desirable", "mandatory", "optional",
+  // Overly broad tech/business words that match almost any developer
+  "enterprise", "platforms", "platform", "solutions", "solution", "systems",
+  "technology", "technologies", "stacks", "modern", "similar", "grade",
+  "server", "ase",
+  // Generic behavioral verbs that appear in soft requirements
+  "designing", "delivering", "supporting", "optimising", "optimizing",
+  "maintaining", "ensuring", "implementing", "managing",
 ]);
 
 const TECH_ALIASES: Array<[RegExp, string[]]> = [
+  // Databases / SQL
   [/\bsql\b|\brelational database\b|\brdbms\b|\bt-sql\b|\btsql\b|\bpl\/sql\b|\bplsql\b/i, ["sql", "database", "relational database", "rdbms"]],
   [/\bmysql\b/i, ["mysql", "sql", "database"]],
   [/\bpostgresql\b|\bpostgres\b/i, ["postgresql", "postgres", "sql", "database"]],
+  [/\bsybase\b/i, ["sybase", "sql"]],
+  [/\boracle\b/i, ["oracle", "sql", "database"]],
+  [/\bsql server\b|\bmssql\b/i, ["sql server", "mssql", "sql"]],
+  [/\bmongodb\b|\bmongo\b/i, ["mongodb", "mongo"]],
+  [/\bredis\b/i, ["redis"]],
+  // Systems / infrastructure
+  [/\bc\+\+/i, ["c++", "cpp"]],
+  [/\.net\b|asp\.net/i, [".net", "asp.net", "dotnet"]],
+  [/\bc#/i, ["c#", ".net"]],
+  [/\bjava\b/i, ["java"]],
+  [/\blinux\b|\bunix\b/i, ["linux", "unix"]],
+  [/\bbash\b|\bshell script/i, ["bash", "shell", "scripting"]],
+  [/\bperl\b/i, ["perl"]],
+  [/\bgo\b|\bgolang\b/i, ["golang", "go"]],
+  [/\brust\b/i, ["rust"]],
+  [/\bkubernetes\b|\bk8s\b|\baks\b|\beks\b/i, ["kubernetes", "k8s"]],
+  [/\bdocker\b|container/i, ["docker", "container"]],
+  [/\bazure\b/i, ["azure"]],
+  [/\baws\b|amazon web services/i, ["aws", "amazon"]],
+  [/\bgcp\b|google cloud/i, ["gcp", "google cloud"]],
+  [/\bgit\b|\bgithub\b|\bgitlab\b/i, ["git", "github", "gitlab"]],
+  [/\bterraform\b/i, ["terraform"]],
+  [/\bansible\b/i, ["ansible"]],
+  [/\bmicroservices?\b/i, ["microservices"]],
+  // Web / frontend
   [/\bwordpress\b|content management system|\bcms\b/i, ["wordpress", "cms", "content management system"]],
   [/\bux\b|user experience/i, ["ux", "user experience", "ui/ux"]],
-  [/web design|design principle|digital design/i, ["web design", "designer", "digital designer", "ui/ux"]],
-  [/front.?end/i, ["front-end", "frontend", "front end", "html", "css", "javascript", "react"]],
-  [/back.?end/i, ["back-end", "backend", "back end", "php", "node", "ruby", "python", "rails", ".net"]],
+  [/web design|design principle|digital design/i, ["web design", "designer", "ui/ux"]],
+  [/front.?end/i, ["front-end", "frontend", "html", "css", "javascript", "react"]],
+  [/back.?end/i, ["back-end", "backend", "php", "node", "ruby", "python", "rails", ".net"]],
   [/full.?stack|front.?end.*back.?end|back.?end.*front.?end/i, ["full-stack", "full stack", "frontend", "backend"]],
-  [/react/i, ["react", "react.js", "reactjs"]],
-  [/ruby|rails|ror/i, ["ruby", "rails", "ruby on rails", "ror"]],
-  [/python/i, ["python"]],
-  [/docker|container/i, ["docker", "container", "containerisation", "containerization"]],
-  [/typescript/i, ["typescript", "type script"]],
-  [/javascript/i, ["javascript", "js"]],
-  [/shopify/i, ["shopify"]],
-  [/squarespace/i, ["squarespace", "square space"]],
-  [/portfolio/i, ["portfolio"]],
+  [/\breact\b/i, ["react", "react.js", "reactjs"]],
+  [/\bangular\b/i, ["angular"]],
+  [/\bvue\b/i, ["vue", "vue.js"]],
+  [/ruby|rails|ror/i, ["ruby", "rails", "ruby on rails"]],
+  [/\bpython\b/i, ["python"]],
+  [/\btypescript\b/i, ["typescript"]],
+  [/\bjavascript\b/i, ["javascript", "js"]],
+  [/\bnode\.?js\b|\bnode\b/i, ["node", "node.js"]],
+  [/\bphp\b/i, ["php"]],
+  [/\bshopify\b/i, ["shopify"]],
+  [/\bsquarespace\b/i, ["squarespace"]],
+  // Testing / QA
+  [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["performance testing", "jmeter", "loadrunner"]],
 ];
 
 function normaliseText(value: string): string {
