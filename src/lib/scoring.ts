@@ -228,9 +228,13 @@ export function computeOverallScore(
   mustHavePct: number,
   weights?: ScoringWeights
 ): number {
-  // Backward compat: old records have industry_fit + keyword_alignment instead of domain_fit.
+  // Backward compat: old records stored industry_fit + keyword_alignment instead of domain_fit.
+  // Use industry_fit as the direct domain proxy — cleaner than the weighted formula which
+  // introduced rounding drift when keyword_alignment was absent. Legacy candidates score
+  // within ~2pts of their original; clicking Re-score will compute domain_fit properly.
   const domainScore = categories.domain_fit?.score ??
-    ((categories.industry_fit?.score ?? 50) * 0.04 + (categories.keyword_alignment?.score ?? 50) * 0.06) / 0.10;
+    categories.industry_fit?.score ??
+    50;
 
   const w = weights ?? CATEGORY_WEIGHTS_V2;
   const mustHaveW = weights ? weights.must_have : MUST_HAVE_WEIGHT_V2;

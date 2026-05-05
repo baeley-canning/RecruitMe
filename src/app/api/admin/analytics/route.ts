@@ -36,16 +36,19 @@ export async function GET(req: Request) {
 
   const orgMap = new Map(orgs.map((o) => [o.id, o.name]));
 
-  // Per-org breakdown
+  // Per-org breakdown.
+  // orgId is null for owner (role="owner") actions — these are explicitly bucketed
+  // under the "__owner__" key so they don't get merged with any tenant org.
   type OrgRow = { orgId: string | null; orgName: string | null } & Record<UsageType, number> & { total: number };
   const byOrgMap = new Map<string, OrgRow>();
 
   for (const row of events) {
+    // Owners have orgId=null by design (they have no org assignment)
     const key = row.orgId ?? "__owner__";
     if (!byOrgMap.has(key)) {
       byOrgMap.set(key, {
         orgId: row.orgId,
-        orgName: row.orgId ? (orgMap.get(row.orgId) ?? row.orgId) : "Owner (no org)",
+        orgName: row.orgId ? (orgMap.get(row.orgId) ?? `Unknown org (${row.orgId})`) : "Owner",
         search: 0, score: 0, score_all: 0, parse: 0, capture: 0, total: 0,
       });
     }

@@ -73,7 +73,7 @@ model Candidate {
   linkedinUrl  String?
   jobAdderUrl  String?  // JobAdder candidate profile URL — set manually until API integration
   profileText     String?  // Raw pasted/captured profile text
-  profileTextHash String?  // Score-context cache key; skip re-score only if profile and job inputs are unchanged
+  profileTextHash String?  // Written after every score; cleared when profile is updated. Used by the UI stale indicator — if matchScore is set but this is null, the profile was refreshed since last score.
   matchScore       Int?
   matchReason      String?  // AI JSON: { summary, strengths, gaps }
   fetchPriorityScore  Int?

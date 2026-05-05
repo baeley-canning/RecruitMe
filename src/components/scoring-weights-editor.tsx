@@ -140,6 +140,13 @@ export function ScoringWeightsEditor({
         body: JSON.stringify(weights),
       });
       if (!res.ok) throw new Error("Save failed");
+      // Re-fetch to confirm what the server actually persisted — prevents
+      // showing "Saved" when the DB write silently succeeded but stored wrong values.
+      const verify = await fetch("/api/settings/scoring");
+      if (verify.ok) {
+        const { weights: confirmed } = await verify.json() as { weights: typeof weights };
+        setWeights(confirmed);
+      }
       setSaved(true);
     } catch {
       setError("Failed to save — please try again.");
