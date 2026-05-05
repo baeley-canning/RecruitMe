@@ -224,7 +224,13 @@ function buildProvisionalSearchScore(
     weights,
   });
 
-  return applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote, weights);
+  const provisionalScore = applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote, weights);
+  // 30% floor: a snippet candidate that passed the source gate has enough signal to be worth
+  // importing. Don't let missing fields collapse the score below 30.
+  if (provisionalScore.overall < 30) {
+    (provisionalScore as { overall: number }).overall = 30;
+  }
+  return provisionalScore;
 }
 
 const PAGE_SIZE = 10;
@@ -855,7 +861,7 @@ async function runSearchBackground(args: {
           skippedSourceGate++;
           return false;
         }
-        if (!poolEntry && !r.fullText && fetchPriorityScore < 48) {
+        if (!poolEntry && !r.fullText && fetchPriorityScore < 44) {
           skippedSourceGate++;
           return false;
         }

@@ -165,10 +165,11 @@ export function getMustHaveImportance(requirement: string): number {
   // Very important technical requirements
   if (/\bux\b|user experience|design principle|web design|ux.{0,10}design|design.{0,10}develop/i.test(r)) return 1.3;
   if (/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i.test(r)) return 1.3;
-  // Primary programming language for the role — if explicitly required and confirmed missing,
+  // Primary/rare technologies — if explicitly required and confirmed missing on a full profile,
   // no amount of location/domain/seniority alignment rescues the candidate.
   if (/\bc\+\+\b/i.test(r)) return 1.5;
-  if (/\bangular\b|\.net|asp\.net|c#|sybase|azure|kubernetes|aks|api design|ci\/cd|pipeline/i.test(r)) return 1.3;
+  if (/\bsybase\b|\bcobol\b|\bmainframe\b/i.test(r)) return 1.5; // legacy/rare: absence is a blocker
+  if (/\bangular\b|\.net|asp\.net|c#|azure|kubernetes|aks|api design|ci\/cd|pipeline/i.test(r)) return 1.3;
   if (/\bitil\b|\bitsm\b|service management|incident management|change management|problem management|requirements|process mapping|business analysis/i.test(r)) return 1.2;
   if (/concept to launch|full.{0,5}site|full.{0,5}build|full website|ownership|end.to.end/i.test(r)) return 1.2;
   if (/shopify|squarespace|woocommerce/i.test(r))                            return 1.2;

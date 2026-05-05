@@ -137,7 +137,9 @@ export function computeFetchPriority(args: {
     score += 10;
     signals.push(`Role/title term matches: ${matchedTitleTerms[0]}`);
   } else {
-    score -= 8;
+    // Soft penalty — when anchor terms or req terms are present, title is a weak signal.
+    // -8 was too harsh for roles with variable job titles (QA → Performance Tester etc.)
+    score -= 3;
     risks.push("Headline does not clearly match the role family");
   }
 
@@ -194,7 +196,7 @@ export function computeFetchPriority(args: {
     // -20 was too aggressive for small markets like NZ where many LinkedIn
     // profiles don't surface location in the SerpAPI snippet. The overseas
     // text scan below catches confirmed offshore signals separately (-25).
-    const noLocPenalty = isRemote ? -6 : -12;
+    const noLocPenalty = isRemote ? -6 : -8;
     score += noLocPenalty;
     risks.push("No location signal — could be overseas");
   }
