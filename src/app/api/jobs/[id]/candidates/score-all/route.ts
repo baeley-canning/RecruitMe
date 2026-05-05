@@ -8,7 +8,6 @@ import { buildScoreCacheKey } from "@/lib/utils";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 
 const CONCURRENCY = 3;
-const COOLDOWN_MS = 2 * 60 * 1000; // 2 minutes per job
 
 export async function POST(
   _req: Request,
@@ -30,15 +29,6 @@ export async function POST(
     return NextResponse.json({ error: `Score-all rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
   }
 
-  // DB-backed cooldown — survives server restarts and works across multiple instances.
-  if (job.lastScoredAt) {
-    const elapsed = Date.now() - job.lastScoredAt.getTime();
-    if (elapsed < COOLDOWN_MS) {
-      const waitSec = Math.ceil((COOLDOWN_MS - elapsed) / 1000);
-      return NextResponse.json({ error: `Re-score all was just run. Wait ${waitSec}s before running again.` }, { status: 429 });
-    }
-  }
-  // Claim the slot before async work so concurrent requests see the timestamp.
   await prisma.job.update({ where: { id }, data: { lastScoredAt: new Date() } });
 
   const candidates = await prisma.candidate.findMany({
@@ -55,7 +45,6 @@ export async function POST(
     : null;
 
   let scored = 0;
-  let skipped = 0;
 
   for (let i = 0; i < candidates.length; i += CONCURRENCY) {
     const chunk = candidates.slice(i, i + CONCURRENCY);
@@ -70,10 +59,6 @@ export async function POST(
           jobLocation: job.location,
           isRemote: job.isRemote,
         });
-        if (candidate.profileTextHash === scoreCacheKey && candidate.matchScore !== null) {
-          skipped++;
-          return;
-        }
 
         try {
           const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
@@ -108,7 +93,7 @@ export async function POST(
     );
   }
 
-  console.log(`[score-all] scored=${scored}, skipped=${skipped} (unchanged score context)`);
-  void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored, skipped });
-  return NextResponse.json({ scored, skipped, total: candidates.length });
+  console.log(`[score-all] scored=${scored} of ${candidates.length}`);
+  void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored });
+  return NextResponse.json({ scored, total: candidates.length });
 }
