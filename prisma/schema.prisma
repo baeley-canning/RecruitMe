@@ -160,11 +160,9 @@ model SearchSession {
 // DB-backed login attempt tracking — survives server restarts and horizontal scaling.
 model LoginAttempt {
   id      String   @id @default(cuid())
-  key     String   @unique // lowercase username
+  key     String   @unique // lowercase username — @unique already creates the lookup index
   count   Int      @default(0)
   resetAt DateTime
-
-  @@index([key])
 }
 
 // Tracks billable/auditable API usage per org. Used for rate limiting and metering.

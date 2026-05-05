@@ -13,6 +13,7 @@ export const EXTENSION_CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Vary": "Origin", // required so CDN caches don't serve wrong-origin responses
 } as const;
 
 /**
