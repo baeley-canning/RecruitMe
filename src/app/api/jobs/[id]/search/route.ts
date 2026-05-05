@@ -855,7 +855,7 @@ async function runSearchBackground(args: {
           skippedSourceGate++;
           return false;
         }
-        if (!poolEntry && !r.fullText && fetchPriorityScore < 55) {
+        if (!poolEntry && !r.fullText && fetchPriorityScore < 48) {
           skippedSourceGate++;
           return false;
         }

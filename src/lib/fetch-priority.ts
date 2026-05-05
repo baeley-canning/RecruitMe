@@ -190,8 +190,11 @@ export function computeFetchPriority(args: {
       signals.push(`Location present: ${loc}`);
     }
   } else {
-    // No location at all is a bigger red flag for city-specific roles than for remote ones.
-    const noLocPenalty = isRemote ? -6 : -20;
+    // No location in snippet — moderate penalty for non-remote roles.
+    // -20 was too aggressive for small markets like NZ where many LinkedIn
+    // profiles don't surface location in the SerpAPI snippet. The overseas
+    // text scan below catches confirmed offshore signals separately (-25).
+    const noLocPenalty = isRemote ? -6 : -12;
     score += noLocPenalty;
     risks.push("No location signal — could be overseas");
   }
