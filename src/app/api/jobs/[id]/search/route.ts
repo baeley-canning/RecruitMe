@@ -89,6 +89,9 @@ const REQUIREMENT_STOP_WORDS = new Set([
 ]);
 
 const TECH_ALIASES: Array<[RegExp, string[]]> = [
+  [/\bsql\b|\brelational database\b|\brdbms\b|\bt-sql\b|\btsql\b|\bpl\/sql\b|\bplsql\b/i, ["sql", "database", "relational database", "rdbms"]],
+  [/\bmysql\b/i, ["mysql", "sql", "database"]],
+  [/\bpostgresql\b|\bpostgres\b/i, ["postgresql", "postgres", "sql", "database"]],
   [/\bwordpress\b|content management system|\bcms\b/i, ["wordpress", "cms", "content management system"]],
   [/\bux\b|user experience/i, ["ux", "user experience", "ui/ux"]],
   [/web design|design principle|digital design/i, ["web design", "designer", "digital designer", "ui/ux"]],
@@ -127,8 +130,14 @@ function requirementSignals(requirement: string): string[] {
 }
 
 function hasSignal(text: string, signal: string): boolean {
-  const normalisedSignal = normaliseText(signal);
-  return Boolean(normalisedSignal) && text.includes(normalisedSignal);
+  const s = normaliseText(signal);
+  if (!s) return false;
+  // Short tokens (≤4 chars) use whole-word matching to prevent substring false positives,
+  // e.g. "sql" must not match "nosql", "css" must not match "access".
+  if (s.length <= 4) {
+    return new RegExp(`(?:^|\\s)${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`).test(text);
+  }
+  return text.includes(s);
 }
 
 function textHasTerm(value: string, term: string): boolean {
@@ -276,6 +285,9 @@ const DISTINCTIVE_REQUIREMENT_ALIASES: Array<[RegExp, string[]]> = [
   [/\bc\+\+/i, ["C++"]],
   [/\.net|asp\.net|c#/i, [".NET", "C#"]],
   [/\bangular\b/i, ["Angular"]],
+  [/\bsql\b|\brelational database\b|\brdbms\b/i, ["SQL", "database"]],
+  [/\bmysql\b/i, ["MySQL"]],
+  [/\bpostgresql\b|\bpostgres\b/i, ["PostgreSQL"]],
   [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["performance testing", "JMeter", "LoadRunner"]],
   [/\bitil\b|\bitsm\b|service management|incident management|change management|problem management/i, ["ITIL", "ITSM"]],
   [/security clearance|secret vetting|confidential vetting|\bsv\b|\bcv\b|nzsis|defence|defense/i, ["security clearance", "Secret Vetting"]],
