@@ -1,8 +1,4 @@
-import type { NextAuthOptions } from "next-auth";
-import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "./db";
-import bcrypt from "bcryptjs";
-import { ensureDefaultOrg } from "./org";
 
 // Warn at module load if NEXTAUTH_SECRET is missing — full validation at runtime in authorize().
 // (Can't throw at module load because Next.js imports this during build without secrets.)
@@ -49,102 +45,6 @@ export async function checkLoginLocked(key: string): Promise<{ locked: boolean; 
   return { locked: false, minsLeft: 0 };
 }
 
-const authUrl =
-  process.env.NEXTAUTH_URL ||
-  process.env.NEXT_PUBLIC_APP_URL ||
-  process.env.RAILWAY_PUBLIC_DOMAIN ||
-  "";
-
-const useSecureCookies =
-  authUrl.startsWith("https://") ||
-  Boolean(process.env.RAILWAY_PUBLIC_DOMAIN && !authUrl.startsWith("http://"));
-
-export const authOptions: NextAuthOptions = {
-  secret: process.env.NEXTAUTH_SECRET,
-  useSecureCookies,
-  providers: [
-    CredentialsProvider({
-      name: "credentials",
-      credentials: {
-        username: { label: "Username", type: "text" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        // Runtime secret validation — catches misconfigured deployments immediately.
-        const secret = process.env.NEXTAUTH_SECRET?.trim();
-        if (!secret || secret.length < 32) {
-          throw new Error("Server misconfiguration: NEXTAUTH_SECRET must be set and ≥32 chars.");
-        }
-
-        if (!credentials?.username || !credentials?.password) return null;
-
-        const key = credentials.username.toLowerCase().trim();
-
-        const { locked, minsLeft } = await checkLoginLocked(key);
-        if (locked) {
-          throw new Error(`Too many failed attempts — try again in ${minsLeft} minute${minsLeft !== 1 ? "s" : ""}.`);
-        }
-
-        let user = await prisma.user.findUnique({
-          where: { username: credentials.username },
-        });
-
-        if (!user) {
-          // Count failed attempt for non-existent usernames too (prevents enumeration timing)
-          await recordLoginFailure(key);
-          return null;
-        }
-
-        const valid = await bcrypt.compare(credentials.password, user.password);
-        if (!valid) {
-          await recordLoginFailure(key);
-          return null;
-        }
-
-        await clearLoginFailures(key);
-
-        if (user.role !== "owner" && !user.orgId) {
-          const defaultOrg = await ensureDefaultOrg();
-          user = await prisma.user.update({
-            where: { id: user.id },
-            data: { orgId: defaultOrg.id },
-          });
-        }
-
-        return {
-          id: user.id,
-          name: user.username,
-          role: user.role,
-          orgId: user.orgId ?? null,
-        };
-      },
-    }),
-  ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        const authUser = user as { id?: string; role?: string; orgId?: string | null };
-        token.role = authUser.role;
-        token.id = authUser.id;
-        token.orgId = authUser.orgId ?? null;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        const u = session.user as Record<string, unknown>;
-        u.role  = token.role;
-        u.id    = token.id;
-        u.orgId = token.orgId ?? null;
-      }
-      return session;
-    },
-  },
-  pages: {
-    signIn: "/login",
-  },
-  session: {
-    strategy: "jwt",
-    maxAge: 12 * 60 * 60, // 12 hours — reduces window of compromise for stolen tokens
-  },
-};
+// authOptions has been removed — configuration now lives in src/auth.ts (next-auth v5).
+// This file retains only the brute-force login protection helpers used by both the
+// NextAuth authorize() callback (src/auth.ts) and the extension Basic auth path (session.ts).

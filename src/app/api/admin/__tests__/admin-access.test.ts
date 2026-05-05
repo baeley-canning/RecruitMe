@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-const sessionMocks = vi.hoisted(() => ({
-  getServerSession: vi.fn(),
-}));
+// Mock the new v5 auth() function from @/auth
+const authMock = vi.hoisted(() => ({ auth: vi.fn() }));
 const dbMocks = vi.hoisted(() => ({
   prisma: {
     user: { findMany: vi.fn().mockResolvedValue([]) },
@@ -14,22 +13,21 @@ const dbMocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("next-auth", () => sessionMocks);
+vi.mock("@/auth", () => authMock);
 vi.mock("@/lib/db", () => dbMocks);
-vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 
 import { GET as usersGET } from "../users/route";
 import { GET as orgsGET } from "../orgs/route";
 import { GET as analyticsGET } from "../analytics/route";
 
 function ownerSession() {
-  sessionMocks.getServerSession.mockResolvedValue({ user: { role: "owner" } });
+  authMock.auth.mockResolvedValue({ user: { role: "owner", id: "owner-1", orgId: null } });
 }
 function userSession() {
-  sessionMocks.getServerSession.mockResolvedValue({ user: { role: "user", orgId: "org-1" } });
+  authMock.auth.mockResolvedValue({ user: { role: "user", id: "user-1", orgId: "org-1" } });
 }
 function noSession() {
-  sessionMocks.getServerSession.mockResolvedValue(null);
+  authMock.auth.mockResolvedValue(null);
 }
 
 describe("admin routes — access control", () => {

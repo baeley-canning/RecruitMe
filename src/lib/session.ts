@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
-import { authOptions, checkLoginLocked, recordLoginFailure, clearLoginFailures } from "./auth";
+import { auth } from "@/auth";
+import { checkLoginLocked, recordLoginFailure, clearLoginFailures } from "./auth";
 import { prisma } from "./db";
 
 export interface AuthResult {
@@ -10,20 +10,13 @@ export interface AuthResult {
   isOwner: boolean;
 }
 
-type SessionUser = {
-  id?: string;
-  role?: string;
-  orgId?: string | null;
-};
-
 export async function getAuth(): Promise<AuthResult | null> {
-  const session = await getServerSession(authOptions);
+  const session = await auth();
   if (!session?.user) return null;
-  const u = session.user as SessionUser;
   return {
-    userId: u.id ?? "",
-    orgId: u.orgId ?? null,
-    isOwner: u.role === "owner",
+    userId: session.user.id ?? "",
+    orgId: session.user.orgId ?? null,
+    isOwner: session.user.role === "owner",
   };
 }
 

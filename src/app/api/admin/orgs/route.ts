@@ -1,18 +1,14 @@
+import { auth } from "@/auth";
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
 
 type AnySession = { user?: { role?: string } } | null;
 
-function isOwner(session: AnySession) {
-  return session?.user?.role === "owner";
-}
 
 export async function GET() {
-  const session = await getServerSession(authOptions) as AnySession;
-  if (!isOwner(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const session = await auth();
+  if (session?.user?.role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const orgs = await prisma.org.findMany({
     orderBy: { name: "asc" },
@@ -31,8 +27,8 @@ const CreateOrgSchema = z.object({
 });
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions) as AnySession;
-  if (!isOwner(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const session = await auth();
+  if (session?.user?.role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const result = CreateOrgSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) {
@@ -58,8 +54,8 @@ export async function POST(req: Request) {
 const DeleteOrgSchema = z.object({ id: z.string() });
 
 export async function DELETE(req: Request) {
-  const session = await getServerSession(authOptions) as AnySession;
-  if (!isOwner(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const session = await auth();
+  if (session?.user?.role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const result = DeleteOrgSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) return NextResponse.json({ error: "Invalid request" }, { status: 422 });
