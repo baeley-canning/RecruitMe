@@ -241,11 +241,13 @@ const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
   const terms = new Set<string>();
+  // Only must-haves and knockout criteria — nice-to-haves must not widen the
+  // source gate, or a "nice to have React" on a Salesforce role would let any
+  // React developer through regardless of Salesforce absence.
   const requirements = [
     ...(parsedRole.must_haves ?? []),
     ...(parsedRole.skills_required ?? []),
-    ...(parsedRole.nice_to_haves ?? []),
-    ...(parsedRole.skills_preferred ?? []),
+    ...(parsedRole.knockout_criteria ?? []),
   ];
 
   for (const requirement of requirements) {

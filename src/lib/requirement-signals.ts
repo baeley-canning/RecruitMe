@@ -112,35 +112,69 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   [/\bbanking\b|payments?|lending|core banking|financial services|fintech/i, ["banking", "payments", "financial services"]],
 ];
 
+// Used by the source gate: terms distinctive enough that a candidate who
+// doesn't mention them in a snippet is unlikely to match the role.
+// Rules for inclusion:
+//   ✓ Specific named technology or tool (React, JMeter, Salesforce)
+//   ✓ Technical language/platform that narrows the candidate pool meaningfully
+//   ✗ Generic business terms that appear on most profiles (banking, microservices)
+//   ✗ Duplicate entries
+//   ✗ Technology already covered by a more specific entry
 export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
-  [/\bpsybase\b/i, ["Sybase"]],
-  [/\bsybase\b/i, ["Sybase"]],
-  [/\bsql\b|\brelational database\b|\brdbms\b|\bt-sql\b|\btsql\b/i, ["SQL", "database"]],
-  [/\bmysql\b/i, ["MySQL"]],
-  [/\bpostgresql\b|\bpostgres\b/i, ["PostgreSQL"]],
-  [/\bc\+\+/i, ["C++"]],
-  [/\.net|asp\.net|c#/i, [".NET", "C#"]],
-  [/\bjava\b/i, ["Java"]],
-  [/\bpython\b/i, ["Python"]],
-  [/\bangular\b/i, ["Angular"]],
-  [/\breact\b/i, ["React"]],
-  [/\bnode\.?js\b/i, ["Node.js"]],
-  [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["performance testing", "JMeter", "LoadRunner"]],
-  [/\bitil\b|\bitsm\b|service management|incident management|change management|problem management/i, ["ITIL", "ITSM"]],
-  [/security clearance|secret vetting|confidential vetting|\bsv\b|\bcv\b|nzsis|defence|defense/i, ["security clearance", "Secret Vetting"]],
-  [/\bbanking\b|payments?|lending|core banking|financial services|fintech/i, ["banking", "payments", "financial services"]],
-  [/\blinux\b/i, ["Linux"]],
-  [/\bazure\b/i, ["Azure"]],
-  [/\baws\b|amazon web services/i, ["AWS"]],
-  [/\bgcp\b|google cloud/i, ["GCP"]],
-  [/\bmicroservices?\b|\bminiservices?\b/i, ["microservices"]],
-  [/\bdb2\b/i, ["DB2"]],
-  [/\boracle\b/i, ["Oracle"]],
-  [/\bsql server\b/i, ["SQL Server"]],
-  [/\bsnowflake\b/i, ["Snowflake"]],
-  [/\bpower bi\b/i, ["Power BI"]],
-  [/\btableau\b/i, ["Tableau"]],
-  [/\bmainframe\b/i, ["mainframe"]],
+  // Databases / legacy
+  [/\bsybase\b/i,                                       ["Sybase"]],
+  [/\bcobol\b/i,                                        ["COBOL"]],
+  [/\bmainframe\b|\bas400\b/i,                          ["mainframe"]],
+  [/\bdb2\b/i,                                          ["DB2"]],
+  [/\boracle\b/i,                                       ["Oracle"]],
+  [/\bsql server\b|\bmssql\b/i,                         ["SQL Server"]],
+  [/\bpostgresql\b|\bpostgres\b/i,                      ["PostgreSQL"]],
+  [/\bmysql\b/i,                                        ["MySQL"]],
+  [/\bsnowflake\b/i,                                    ["Snowflake"]],
+  [/\bsql\b|\brelational database\b|\brdbms\b/i,        ["SQL", "database"]],
+  // Languages
+  [/\bc\+\+/i,                                          ["C++"]],
+  [/\.net\b|asp\.net/i,                                 [".NET"]],
+  [/\bc#/i,                                             ["C#"]],
+  [/\bjava\b/i,                                         ["Java"]],
+  [/\bpython\b/i,                                       ["Python"]],
+  [/\bruby\b|\brails\b/i,                               ["Ruby"]],
+  [/\bphp\b/i,                                          ["PHP"]],
+  [/\bscala\b/i,                                        ["Scala"]],
+  [/\bkotlin\b/i,                                       ["Kotlin"]],
+  [/\bswift\b/i,                                        ["Swift"]],
+  // Frameworks
+  [/\breact\b/i,                                        ["React"]],
+  [/\bangular\b/i,                                      ["Angular"]],
+  [/\bvue\b/i,                                          ["Vue"]],
+  [/\bnode\.?js\b/i,                                    ["Node.js"]],
+  [/\bdjango\b/i,                                       ["Django"]],
+  [/\bspring\b/i,                                       ["Spring"]],
+  // Infrastructure / DevOps
+  [/\blinux\b|\bunix\b/i,                               ["Linux"]],
+  [/\bazure\b/i,                                        ["Azure"]],
+  [/\baws\b|amazon web services/i,                      ["AWS"]],
+  [/\bgcp\b|google cloud/i,                             ["GCP"]],
+  [/\bkubernetes\b|\bk8s\b/i,                           ["Kubernetes"]],
+  [/\bterraform\b/i,                                    ["Terraform"]],
+  // Business apps / platforms
+  [/\bsalesforce\b/i,                                   ["Salesforce"]],
+  [/\bservicenow\b/i,                                   ["ServiceNow"]],
+  [/\bsap\b/i,                                          ["SAP"]],
+  [/\bdynamics\b/i,                                     ["Dynamics"]],
+  // Analytics / BI
+  [/\bpower bi\b/i,                                     ["Power BI"]],
+  [/\btableau\b/i,                                      ["Tableau"]],
+  [/\blooker\b/i,                                       ["Looker"]],
+  // Testing
+  [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["JMeter"]],
+  [/\bselenium\b/i,                                     ["Selenium"]],
+  // Compliance / clearance
+  [/\bitil\b|\bitsm\b/i,                                ["ITIL"]],
+  [/security clearance|secret vetting|confidential vetting/i, ["security clearance"]],
+  // Design
+  [/\bfigma\b/i,                                        ["Figma"]],
+  [/\bux\b|user experience/i,                           ["UX"]],
 ];
 
 // Words that appear in requirement text but provide no useful candidate signal.
