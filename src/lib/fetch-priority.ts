@@ -114,10 +114,19 @@ export function computeFetchPriority(args: {
   const risks: string[] = [];
   let score = 25;
 
+  // Pre-compute anchor presence so it can modulate title/requirement penalties below.
+  // If the rare specialist skills are confirmed in the snippet, vocabulary mismatches
+  // in job title or requirement term ratio become much less important.
+  const anchorTermsEarly = (parsedRole?.anchor_terms ?? []).filter(Boolean);
+  const matchedAnchorsEarly = anchorTermsEarly.filter((t) => textHasTerm(searchable, t));
+  const hasAnyAnchor  = anchorTermsEarly.length === 0 || matchedAnchorsEarly.length > 0;
+  const hasAllAnchors = anchorTermsEarly.length === 0 || matchedAnchorsEarly.length === anchorTermsEarly.length;
+
   if (isFromTalentPool || profileText || result.fullText) {
     score += 24;
     signals.push(isFromTalentPool ? "Existing captured profile available" : "Richer profile data available");
-  } else if ((result.snippet ?? "").length >= 120) {
+  } else if ((result.snippet ?? "").length >= 100) {
+    // Lowered from 120 — most real SerpAPI snippets are 80-120 chars; 120 punished most results
     score += 8;
     signals.push("Search snippet has enough text to inspect");
   } else {
@@ -137,9 +146,9 @@ export function computeFetchPriority(args: {
     score += 10;
     signals.push(`Role/title term matches: ${matchedTitleTerms[0]}`);
   } else {
-    // Soft penalty — when anchor terms or req terms are present, title is a weak signal.
-    // -8 was too harsh for roles with variable job titles (QA → Performance Tester etc.)
-    score -= 3;
+    // Soft penalty — reduced further when anchor skills confirm the specialist fit.
+    // "Backend Engineer" with .NET+C# in snippet is more relevant than their generic title suggests.
+    score -= hasAnyAnchor ? 1 : 3;
     risks.push("Headline does not clearly match the role family");
   }
 
@@ -154,7 +163,10 @@ export function computeFetchPriority(args: {
     if (matchedRequirementTerms.length >= 2) {
       score += 4;
     }
-    if (ratio < 0.25) {
+    if (ratio < 0.25 && !hasAllAnchors) {
+      // Skip the requirement ratio penalty when all anchor terms are present — anchors
+      // already confirm the specialist skill. The ratio penalty would double-penalise
+      // a ".NET C# developer" who uses different vocabulary for the other requirements.
       score -= 12;
       risks.push("Few must-have terms visible before fetching");
     }
@@ -163,18 +175,15 @@ export function computeFetchPriority(args: {
     signals.push("General role without rare hard-skill anchors");
   }
 
-  // Anchor-term check: hard penalty if the candidate is missing most anchor terms,
-  // bonus if all are present. Anchors are the rare/specific skills that define the role.
-  const anchorTerms = (args.parsedRole?.anchor_terms ?? []).filter(Boolean);
-  if (anchorTerms.length > 0) {
-    const matchedAnchors = anchorTerms.filter((term) => textHasTerm(searchable, term));
-    const anchorRatio = matchedAnchors.length / anchorTerms.length;
-    if (anchorRatio === 1) {
+  // Anchor-term scoring — uses the pre-computed values from the top of the function.
+  if (anchorTermsEarly.length > 0) {
+    const anchorRatio = matchedAnchorsEarly.length / anchorTermsEarly.length;
+    if (hasAllAnchors) {
       score += 8;
-      signals.push(`All ${anchorTerms.length} anchor term(s) found: ${matchedAnchors.slice(0, 3).join(", ")}`);
+      signals.push(`All ${anchorTermsEarly.length} anchor term(s) found: ${matchedAnchorsEarly.slice(0, 3).join(", ")}`);
     } else if (anchorRatio < 0.5) {
       score -= 25;
-      risks.push(`Missing ${anchorTerms.length - matchedAnchors.length} of ${anchorTerms.length} anchor terms`);
+      risks.push(`Missing ${anchorTermsEarly.length - matchedAnchorsEarly.length} of ${anchorTermsEarly.length} anchor terms`);
     }
     // ratio 0.5–1.0 = neutral (partial match, no bonus or penalty)
   }
@@ -196,7 +205,7 @@ export function computeFetchPriority(args: {
     // -20 was too aggressive for small markets like NZ where many LinkedIn
     // profiles don't surface location in the SerpAPI snippet. The overseas
     // text scan below catches confirmed offshore signals separately (-25).
-    const noLocPenalty = isRemote ? -6 : -8;
+    const noLocPenalty = isRemote ? -6 : -4;
     score += noLocPenalty;
     risks.push("No location signal — could be overseas");
   }

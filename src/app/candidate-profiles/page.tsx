@@ -206,19 +206,26 @@ export default function CandidateProfilesPage() {
 
     try {
       let res: Response;
-      if (sourceMode === "library") {
-        res = await fetch("/api/candidate-profiles/draft", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ candidateId: selectedId, targetRole: targetRole.trim(), jdText: jdText.trim() || undefined }),
-        });
-      } else {
-        const form = new FormData();
-        form.append("candidateName", manualName.trim());
-        form.append("targetRole",    targetRole.trim());
-        if (jdText.trim()) form.append("jdText", jdText.trim());
-        uploadedFiles.forEach((f) => form.append("files", f));
-        res = await fetch("/api/candidate-profiles/draft", { method: "POST", body: form });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90_000); // 90s max
+      try {
+        if (sourceMode === "library") {
+          res = await fetch("/api/candidate-profiles/draft", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ candidateId: selectedId, targetRole: targetRole.trim(), jdText: jdText.trim() || undefined }),
+            signal: controller.signal,
+          });
+        } else {
+          const form = new FormData();
+          form.append("candidateName", manualName.trim());
+          form.append("targetRole",    targetRole.trim());
+          if (jdText.trim()) form.append("jdText", jdText.trim());
+          uploadedFiles.forEach((f) => form.append("files", f));
+          res = await fetch("/api/candidate-profiles/draft", { method: "POST", body: form, signal: controller.signal });
+        }
+      } finally {
+        clearTimeout(timeout);
       }
 
       clearInterval(interval);
@@ -259,7 +266,11 @@ export default function CandidateProfilesPage() {
       setStep("review");
     } catch (err) {
       clearInterval(interval);
-      setGenError(err instanceof Error ? err.message : "Network error. Please try again.");
+      const isTimeout = err instanceof Error && err.name === "AbortError";
+      setGenError(isTimeout
+        ? "Generation timed out (90s). The AI may be slow — please try again."
+        : (err instanceof Error ? err.message : "Network error. Please try again.")
+      );
       setStep("source");
     }
   };

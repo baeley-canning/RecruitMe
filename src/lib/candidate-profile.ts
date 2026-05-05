@@ -72,8 +72,8 @@ function normalized(value: string) {
 
 function hasEvidence(sourceText: string, quote: unknown) {
   const cleaned = cleanString(quote);
-  // Minimum 4 chars — allows short but specific terms like "C++", "SAP", "R"
-  if (cleaned.length < 4) return false;
+  // Minimum 2 chars — allows short tech terms like "Go", "R", "C++", "AWS", "SAP"
+  if (cleaned.length < 2) return false;
   return normalized(sourceText).includes(normalized(cleaned));
 }
 

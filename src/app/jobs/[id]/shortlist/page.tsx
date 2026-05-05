@@ -47,6 +47,7 @@ interface Candidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  jobAdderUrl: string | null;
   matchScore: number | null;
   matchReason: string | null;
   scoreBreakdown: string | null;
@@ -125,6 +126,17 @@ function CandidateBrief({
                 )}
                 {candidate.linkedinUrl && (
                   <span className="hidden print:inline text-xs text-slate-400">{candidate.linkedinUrl}</span>
+                )}
+                {candidate.jobAdderUrl && (
+                  <a
+                    href={candidate.jobAdderUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold bg-orange-500 text-white border border-orange-600 hover:opacity-80 transition-opacity print:hidden"
+                    title="Open in JobAdder"
+                  >
+                    JA
+                  </a>
                 )}
               </div>
               {candidate.headline && (

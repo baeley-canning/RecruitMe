@@ -695,6 +695,7 @@ export default function JobDetailPage({
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
         console.error("score-all failed:", data.error);
+        // rescoringAll reset happens in finally — no stuck spinner
         return;
       }
       if (!res.body) return;
@@ -703,20 +704,24 @@ export default function JobDetailPage({
       const decoder = new TextDecoder();
       let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean };
-            setRescoreProgress({ scored: msg.scored, total: msg.total });
-            if (msg.done) setRescoreResult({ scored: msg.scored, total: msg.total, failedIds: (msg as { failedIds?: string[] }).failedIds });
-          } catch { /* ignore malformed lines */ }
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean };
+              setRescoreProgress({ scored: msg.scored, total: msg.total });
+              if (msg.done) setRescoreResult({ scored: msg.scored, total: msg.total, failedIds: (msg as { failedIds?: string[] }).failedIds });
+            } catch { /* ignore malformed lines */ }
+          }
         }
+      } catch {
+        // Network dropped mid-stream — progress already shown; just end cleanly
       }
 
       await fetchJob();
@@ -728,7 +733,8 @@ export default function JobDetailPage({
 
   const handleDelete = useCallback(async (candidateId: string) => {
     if (!confirm("Remove this candidate?")) return;
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, { method: "DELETE" });
+    const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}`, { method: "DELETE" });
+    if (!res.ok) { alert("Delete failed — please try again."); return; }
     setSelectedIds((prev) => { const next = new Set(prev); next.delete(candidateId); return next; });
     await fetchJob();
   }, [fetchJob, id]);
