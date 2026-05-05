@@ -37,6 +37,57 @@ const OVERSEAS_MARKERS = [
   "romania",
   "uae",
   "dubai",
+  // Additional countries missing from current list
+  "pakistan",
+  "bangladesh",
+  "sri lanka",
+  "nepal",
+  "myanmar",
+  "cambodia",
+  "turkey",
+  "egypt",
+  "kenya",
+  "nigeria",
+  "ghana",
+  "ethiopia",
+  "greece",
+  "czech republic",
+  "hungary",
+  "sweden",
+  "norway",
+  "denmark",
+  "finland",
+  "switzerland",
+  "austria",
+  "colombia",
+  "chile",
+  "peru",
+  "ukraine",
+  "russia",
+  "belarus",
+  // Additional city/region names that appear in profiles
+  "istanbul",
+  "ankara",
+  "cairo",
+  "nairobi",
+  "lagos",
+  "johannesburg",
+  "stockholm",
+  "oslo",
+  "copenhagen",
+  "helsinki",
+  "zurich",
+  "vienna",
+  "warsaw",
+  "prague",
+  "budapest",
+  "bucharest",
+  "sao paulo",
+  "buenos aires",
+  "bogota",
+  "lima",
+  "moscow",
+  "kyiv",
 ];
 
 const NON_LOCATION_TERMS = [
@@ -167,6 +218,8 @@ export function isPlausibleLocation(value: string | null | undefined): boolean {
 export function isRemoteFriendlyLocationRule(locationRules?: string | null): boolean {
   const normalized = normalizeLocationText(locationRules ?? "");
   if (!normalized) return false;
+  // Office attendance (hybrid or partial) overrides a remote mention — e.g.
+  // "Remote optional, 3 days in office" is NOT remote-friendly.
   if (normalized.includes("hybrid") || normalized.includes("office")) return false;
   return (
     normalized.includes("remote") ||

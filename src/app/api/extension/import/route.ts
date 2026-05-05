@@ -1,14 +1,11 @@
+import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { importCapturedLinkedInProfile } from "@/lib/linkedin-capture";
 import { prisma } from "@/lib/db";
 import { verifyExtensionAuth } from "@/lib/session";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+// EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
 const BodySchema = z.object({
   jobId: z.string().min(1),
@@ -16,32 +13,32 @@ const BodySchema = z.object({
   profileText: z.string().min(100).max(100_000),
 });
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS });
+export async function OPTIONS(req: Request) {
+  return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
 }
 
 export async function POST(req: Request) {
   const auth = await verifyExtensionAuth(req);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: extensionCorsHeaders(req) });
 
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: CORS });
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: extensionCorsHeaders(req) });
   }
 
   const job = await prisma.job.findUnique({ where: { id: parsed.data.jobId } });
-  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404, headers: CORS });
+  if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404, headers: extensionCorsHeaders(req) });
   if (!auth.isOwner && job.orgId !== auth.orgId) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: CORS });
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
   }
 
   try {
     const candidate = await importCapturedLinkedInProfile(parsed.data);
-    return NextResponse.json(candidate, { headers: CORS });
+    return NextResponse.json(candidate, { headers: EXTENSION_CORS });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to import captured profile" },
-      { status: 500, headers: CORS }
+      { status: 500, headers: extensionCorsHeaders(req) }
     );
   }
 }

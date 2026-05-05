@@ -916,18 +916,28 @@ function ProfileDrawer({
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
   const [editingJobAdder, setEditingJobAdder] = useState(false);
   const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
+  const [jobAdderSaveError, setJobAdderSaveError] = useState<string | null>(null);
 
   const [files, setFiles] = useState<DrawerFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
+  const [filesError, setFilesError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     fetch(`/api/candidates/${candidate.id}/files`, { signal: controller.signal })
-      .then((r) => r.ok ? r.json() : [])
-      .then(setFiles)
-      .catch((e) => { if (e.name !== "AbortError") console.error(e); })
-      .finally(() => setFilesLoading(false));
-    return () => controller.abort();
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error("Request failed")))
+      .then((data) => { setFiles(data); setFilesError(null); })
+      .catch((e) => {
+        if (e.name !== "AbortError") {
+          setFilesError("Could not load files");
+        } else {
+          setFilesError("Could not load files");
+        }
+        setFilesLoading(false);
+      })
+      .finally(() => { clearTimeout(timeoutId); setFilesLoading(false); });
+    return () => { clearTimeout(timeoutId); controller.abort(); };
   }, [candidate.id]);
 
   const handleSaveLinkedIn = useCallback(() => {
@@ -935,9 +945,14 @@ function ProfileDrawer({
     setEditingLinkedIn(false);
   }, [candidate.id, linkedInInput, onLinkedInChange]);
 
-  const handleSaveJobAdder = useCallback(() => {
-    onJobAdderChange?.(candidate.id, jobAdderInput.trim());
-    setEditingJobAdder(false);
+  const handleSaveJobAdder = useCallback(async () => {
+    try {
+      await onJobAdderChange?.(candidate.id, jobAdderInput.trim());
+      setEditingJobAdder(false);
+      setJobAdderSaveError(null);
+    } catch {
+      setJobAdderSaveError("Failed to save — try again");
+    }
   }, [candidate.id, jobAdderInput, onJobAdderChange]);
 
   return (
@@ -1143,6 +1158,8 @@ function ProfileDrawer({
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…
               </div>
+            ) : filesError ? (
+              <p className="text-xs text-amber-600">{filesError}</p>
             ) : (
               <div className="space-y-2 mb-3">
                 {files.length === 0 && (
@@ -1219,6 +1236,7 @@ export const CandidateCard = memo(function CandidateCard({
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
   const [editingJobAdder, setEditingJobAdder] = useState(false);
   const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
+  const [jobAdderSaveError, setJobAdderSaveError] = useState<string | null>(null);
   const [outreachOpen, setOutreachOpen] = useState(false);
   const [rejectionOpen, setRejectionOpen] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
@@ -1268,9 +1286,14 @@ export const CandidateCard = memo(function CandidateCard({
     setEditingLinkedIn(false);
   };
 
-  const handleSaveJobAdder = () => {
-    onJobAdderChange?.(candidate.id, jobAdderInput.trim());
-    setEditingJobAdder(false);
+  const handleSaveJobAdder = async () => {
+    try {
+      await onJobAdderChange?.(candidate.id, jobAdderInput.trim());
+      setEditingJobAdder(false);
+      setJobAdderSaveError(null);
+    } catch {
+      setJobAdderSaveError("Failed to save — try again");
+    }
   };
 
   return (
@@ -1650,7 +1673,7 @@ export const CandidateCard = memo(function CandidateCard({
                 <p className="text-xs font-medium text-slate-600">JobAdder</p>
               </div>
               {!editingJobAdder && (
-                <button onClick={() => { setJobAdderInput(candidate.jobAdderUrl ?? ""); setEditingJobAdder(true); }}
+                <button onClick={() => { setJobAdderInput(candidate.jobAdderUrl ?? ""); setJobAdderSaveError(null); setEditingJobAdder(true); }}
                   className="text-xs text-orange-500 hover:text-orange-600">
                   {candidate.jobAdderUrl ? "Edit" : "Link"}
                 </button>
@@ -1667,6 +1690,7 @@ export const CandidateCard = memo(function CandidateCard({
                   <button onClick={handleSaveJobAdder} className="text-xs text-orange-500 font-medium hover:text-orange-600">Save</button>
                   <button onClick={() => setEditingJobAdder(false)} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
                 </div>
+                {jobAdderSaveError && <p className="text-xs text-amber-600 mt-1">{jobAdderSaveError}</p>}
               </div>
             ) : candidate.jobAdderUrl ? (
               <a href={candidate.jobAdderUrl} target="_blank" rel="noopener noreferrer"

@@ -1,31 +1,28 @@
+import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { findSessionInQueue, updateSessionInQueue } from "@/lib/linkedin-capture";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+// EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
 const BodySchema = z.object({
   sessionId: z.string().min(1),
   error: z.string().trim().min(1).max(500),
 });
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS });
+export async function OPTIONS(req: Request) {
+  return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
 }
 
 export async function POST(req: Request) {
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: CORS });
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: extensionCorsHeaders(req) });
   }
 
   const session = await findSessionInQueue((s) => s.sessionId === parsed.data.sessionId);
   if (!session) {
-    return NextResponse.json({ error: "No matching capture session" }, { status: 404, headers: CORS });
+    return NextResponse.json({ error: "No matching capture session" }, { status: 404, headers: extensionCorsHeaders(req) });
   }
 
   const error = parsed.data.error.trim();
@@ -36,5 +33,5 @@ export async function POST(req: Request) {
     error,
   });
 
-  return NextResponse.json(updated ?? { ok: true }, { headers: CORS });
+  return NextResponse.json(updated ?? { ok: true }, { headers: EXTENSION_CORS });
 }

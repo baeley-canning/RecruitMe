@@ -169,10 +169,10 @@ function buildProvisionalSearchScore(
     const matched = signals.filter((signal) => hasSignal(haystack, signal));
     return {
       requirement,
-      status: matched.length > 0 ? "likely" : "unknown",
+      status: matched.length > 0 ? "likely" : "missing",
       evidence: matched.length > 0
         ? `Snippet/headline mentions ${matched.slice(0, 3).join(", ")}.`
-        : "Not verifiable from search snippet.",
+        : "Not found in search snippet.",
     };
   });
 

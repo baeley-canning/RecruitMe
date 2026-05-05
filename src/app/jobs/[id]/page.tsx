@@ -176,7 +176,7 @@ export default function JobDetailPage({
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
-  const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number } | null>(null);
+  const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number; failedIds?: string[] } | null>(null);
   const [rescoreProgress, setRescoreProgress] = useState<{ scored: number; total: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -206,6 +206,7 @@ export default function JobDetailPage({
     lastKnownStatus: "pending" | "processing";
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
+    consecutiveNetworkErrors: number;
   }
   const jobRef = useRef<Job | null>(null);
   const activeFetchesRef = useRef<Map<string, FetchEntry>>(new Map());
@@ -480,6 +481,7 @@ export default function JobDetailPage({
         candidate?: Candidate;
         error?: string;
       };
+      entry.consecutiveNetworkErrors = 0; // reset on any successful response
       if (data.status === "processing") {
         entry.lastKnownStatus = "processing";
         entry.processingStartedAt ??= Date.now();
@@ -507,7 +509,17 @@ export default function JobDetailPage({
         finishFetchRef.current(candidateId, "error", data.error ?? data.message ?? "Capture failed");
         return;
       }
-    } catch { /* network error — keep polling */ }
+    } catch {
+      // Network error — track consecutive failures and abort after 3
+      entry.consecutiveNetworkErrors = (entry.consecutiveNetworkErrors ?? 0) + 1;
+      if (entry.consecutiveNetworkErrors >= 3) {
+        finishFetchRef.current(
+          candidateId,
+          "error",
+          "Connection lost — check your network and try again"
+        );
+      }
+    }
   };
 
   // Keep fn-refs current every render.
@@ -598,6 +610,7 @@ export default function JobDetailPage({
           lastKnownStatus: "pending",
           done: false,
           pollInterval: null,
+          consecutiveNetworkErrors: 0,
         };
         activeFetchesRef.current.set(candidateId, entry);
         entry.pollInterval = setInterval(() => {
@@ -701,7 +714,7 @@ export default function JobDetailPage({
           try {
             const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean };
             setRescoreProgress({ scored: msg.scored, total: msg.total });
-            if (msg.done) setRescoreResult({ scored: msg.scored, total: msg.total });
+            if (msg.done) setRescoreResult({ scored: msg.scored, total: msg.total, failedIds: (msg as { failedIds?: string[] }).failedIds });
           } catch { /* ignore malformed lines */ }
         }
       }
@@ -724,11 +737,14 @@ export default function JobDetailPage({
     if (selectedIds.size === 0) return;
     if (!confirm(`Delete ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
     setBulkDeleting(true);
-    await fetch(`/api/jobs/${id}/candidates/bulk-delete`, {
+    const res = await fetch(`/api/jobs/${id}/candidates/bulk-delete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids: [...selectedIds] }),
     });
+    if (!res.ok) {
+      alert(`Delete failed — please try again.`);
+    }
     setSelectedIds(new Set());
     setBulkDeleting(false);
     await fetchJob();
@@ -738,7 +754,7 @@ export default function JobDetailPage({
     if (selectedIds.size === 0) return;
     if (!confirm(`Move ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""} to "${statusLabel(status)}"?`)) return;
     setBulkStatusChanging(true);
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       [...selectedIds].map((candidateId) =>
         fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
           method: "PATCH",
@@ -747,6 +763,10 @@ export default function JobDetailPage({
         })
       )
     );
+    const failCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)).length;
+    if (failCount > 0) {
+      alert(`${failCount} of ${selectedIds.size} updates failed — refresh and try again for those candidates.`);
+    }
     setSelectedIds(new Set());
     setBulkStatusChanging(false);
     await fetchJob();
@@ -1479,6 +1499,9 @@ ${toHtml(job.rawJd)}
           <div className="mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border text-emerald-700 bg-emerald-50 border-emerald-200">
             <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
             {`Re-scored ${rescoreResult.scored} of ${rescoreResult.total} candidates`}
+            {rescoreResult.failedIds && rescoreResult.failedIds.length > 0 && (
+              <span className="ml-2 text-amber-600">· {rescoreResult.failedIds.length} failed</span>
+            )}
           </div>
         )}
 

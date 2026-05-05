@@ -161,6 +161,22 @@ export function computeFetchPriority(args: {
     signals.push("General role without rare hard-skill anchors");
   }
 
+  // Anchor-term check: hard penalty if the candidate is missing most anchor terms,
+  // bonus if all are present. Anchors are the rare/specific skills that define the role.
+  const anchorTerms = (args.parsedRole?.anchor_terms ?? []).filter(Boolean);
+  if (anchorTerms.length > 0) {
+    const matchedAnchors = anchorTerms.filter((term) => textHasTerm(searchable, term));
+    const anchorRatio = matchedAnchors.length / anchorTerms.length;
+    if (anchorRatio === 1) {
+      score += 8;
+      signals.push(`All ${anchorTerms.length} anchor term(s) found: ${matchedAnchors.slice(0, 3).join(", ")}`);
+    } else if (anchorRatio < 0.5) {
+      score -= 25;
+      risks.push(`Missing ${anchorTerms.length - matchedAnchors.length} of ${anchorTerms.length} anchor terms`);
+    }
+    // ratio 0.5–1.0 = neutral (partial match, no bonus or penalty)
+  }
+
   const loc = candidateLocation ?? result.location ?? "";
   if (loc) {
     if (isExplicitlyOverseasLocation(loc)) {

@@ -345,7 +345,9 @@ export function buildScoreBreakdown(params: {
         (c.status === "missing" || c.status === "negative" || c.status === "unknown")
     );
     if (criticalUnconfirmed.length > 0) {
-      cap = Math.min(cap, 45);
+      // Each additional unconfirmed critical drops the cap by 8 more points
+      const compoundedCap = Math.max(20, 45 - (criticalUnconfirmed.length - 1) * 8);
+      cap = Math.min(cap, compoundedCap);
     }
   }
 
@@ -370,6 +372,17 @@ export function buildScoreBreakdown(params: {
   );
   const confidence = computeConfidence(params.profileCharCount, params.must_have_coverage);
 
+  // If the cap was applied, surface the reason so recruiters understand why the
+  // score is lower than the raw weighted sum would suggest.
+  const effectiveReasonsAgainst = [...params.reasons_against];
+  if (rawOverall > overall) {
+    if (dataQuality !== "full_profile") {
+      effectiveReasonsAgainst.push(`Score capped at ${overall} — provisional snippet data; fetch full profile for reliable assessment`);
+    } else {
+      effectiveReasonsAgainst.push(`Score reduced from ${rawOverall} to ${overall} — critical requirement confirmed absent from full profile`);
+    }
+  }
+
   return {
     version:                 2,
     overall,
@@ -380,7 +393,7 @@ export function buildScoreBreakdown(params: {
     nice_to_have_coverage:   params.nice_to_have_coverage,
     nice_to_have_pct:        niceToHavePct,
     reasons_for:             params.reasons_for.slice(0, 4),
-    reasons_against:         params.reasons_against.slice(0, 4),
+    reasons_against:         effectiveReasonsAgainst.slice(0, 4),
     missing_evidence:        params.missing_evidence.slice(0, 4),
     confidence,
     data_quality:            dataQuality,

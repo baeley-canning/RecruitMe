@@ -79,6 +79,17 @@ export function applyLocationFitOverride(
     overall = 50;
   }
 
+  // For snippet-quality data the score is already capped to reflect uncertainty.
+  // The location override must not push a capped snippet score above that cap.
+  // Full-profile and minimal candidates are not subject to this constraint:
+  //   - full_profile: no data-quality cap was applied, so a location boost is valid
+  //   - minimal: the cap (40) is so aggressive that a small location boost is
+  //     acceptable; blocking it would incorrectly gate out genuine NZ candidates
+  //     with very short snippets
+  if (breakdown.data_quality === "snippet" && overall > breakdown.overall) {
+    overall = breakdown.overall;
+  }
+
   return {
     ...breakdown,
     categories,

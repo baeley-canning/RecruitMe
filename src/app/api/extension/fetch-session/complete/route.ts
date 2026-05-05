@@ -1,3 +1,4 @@
+import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
@@ -7,11 +8,7 @@ import {
   updateSessionInQueue,
 } from "@/lib/linkedin-capture";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+// EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
 const BodySchema = z.object({
   sessionId: z.string().min(1),
@@ -19,8 +16,8 @@ const BodySchema = z.object({
   profileText: z.string().min(100).max(100_000),
 });
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS });
+export async function OPTIONS(req: Request) {
+  return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
 }
 
 async function processCaptureCompletion(args: {
@@ -59,14 +56,14 @@ async function processCaptureCompletion(args: {
 export async function POST(req: Request) {
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: CORS });
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: extensionCorsHeaders(req) });
   }
 
   const { sessionId, linkedinUrl, profileText } = parsed.data;
   const session = await findSessionInQueue((s) => s.sessionId === sessionId);
 
   if (!session) {
-    return NextResponse.json({ error: "No matching capture session" }, { status: 404, headers: CORS });
+    return NextResponse.json({ error: "No matching capture session" }, { status: 404, headers: extensionCorsHeaders(req) });
   }
 
   if (!linkedInProfileMatches(session.linkedinUrl, linkedinUrl)) {
@@ -76,7 +73,7 @@ export async function POST(req: Request) {
       message: "Captured profile URL did not match the pending candidate",
       error: "linkedin_url_mismatch",
     });
-    return NextResponse.json({ error: "LinkedIn URL mismatch" }, { status: 409, headers: CORS });
+    return NextResponse.json({ error: "LinkedIn URL mismatch" }, { status: 409, headers: extensionCorsHeaders(req) });
   }
 
   await updateSessionInQueue({
@@ -94,6 +91,6 @@ export async function POST(req: Request) {
       status: "processing",
       message: "Profile received - scoring with AI",
     },
-    { status: 202, headers: CORS }
+    { status: 202, headers: extensionCorsHeaders(req) }
   );
 }

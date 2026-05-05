@@ -28,6 +28,9 @@ model Job {
   searchSessions SearchSession[]
   orgId          String?
   org            Org?     @relation(fields: [orgId], references: [id])
+
+  @@index([orgId])
+  @@index([status])
 }
 
 model Setting {
@@ -95,6 +98,8 @@ model Candidate {
   fetchSessions FetchSession[]
 
   @@unique([jobId, linkedinUrl])
+  @@index([orgId])
+  @@index([status])
 }
 
 model CandidateFile {

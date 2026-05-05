@@ -51,6 +51,7 @@ export async function POST(
 
   const total = candidates.length;
   let scored = 0;
+  const failed: string[] = [];
   const encoder = new TextEncoder();
 
   // Stream progress as newline-delimited JSON so the client can show a live counter.
@@ -106,13 +107,14 @@ export async function POST(
               send({ scored, total });
             } catch (err) {
               console.error(`Score failed for candidate ${candidate.id}:`, err);
+              failed.push(candidate.id);
             }
           })
         );
       }
 
-      // Final message signals completion to the client.
-      send({ scored, total, done: true });
+      // Final message signals completion to the client, including any failures.
+      send({ scored, total, done: true, ...(failed.length > 0 && { failedIds: failed }) });
       controller.close();
 
       console.log(`[score-all] scored=${scored} of ${total}`);
