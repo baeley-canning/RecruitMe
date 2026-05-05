@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
-import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance, cleanCvText } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
@@ -138,17 +138,39 @@ export async function POST(
     select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },
   });
 
-  // For CV uploads: extract text, update profileText, and auto-score.
+  // For CV uploads: extract text, clean it, merge with any existing LinkedIn capture,
+  // then update profileText and auto-score.
   // Done after saving so the file is always persisted even if parsing fails.
   if (type === "cv") {
-    const profileText = await extractText(buffer, file.type, file.name);
-    if (profileText && profileText.trim().length > 100) {
-      const cvText = profileText.trim();
-      // Keep whichever source is richer — a captured LinkedIn profile at 6,000+ chars
-      // carries more signal than a one-page CV at 1,500 chars. Only replace if the CV
-      // is meaningfully longer than what's already stored.
+    const rawExtracted = await extractText(buffer, file.type, file.name);
+    if (rawExtracted && rawExtracted.trim().length > 100) {
+      // Fix 1: Clean garbled PDF text through AI before scoring.
+      // PDFs from complex multi-column layouts produce broken line breaks and jumbled
+      // columns — cleanCvText() normalises this into readable prose.
+      // Word docs extracted via mammoth are already clean; only PDFs need this.
+      let cvText = rawExtracted.trim();
+      if (file.name.toLowerCase().endsWith(".pdf") && cvText.length > 200) {
+        try {
+          cvText = await cleanCvText(cvText);
+        } catch {
+          // If cleaning fails, proceed with raw text rather than blocking the upload
+        }
+      }
+
+      // Fix 2: Merge CV with an existing LinkedIn capture rather than discarding one.
+      // LinkedIn provides current-role context and headline signal; a CV provides
+      // detailed technical bullets and the full skills list. Together they score better.
       const existingText = candidate.profileText?.trim() ?? "";
-      const text = cvText.length > existingText.length + 500 ? cvText : existingText || cvText;
+      const hasLinkedInCapture = Boolean(candidate.profileCapturedAt) || candidate.source === "extension";
+
+      let text: string;
+      if (hasLinkedInCapture && existingText.length >= 500) {
+        // Merge: LinkedIn text first (current role context), CV appended for detail
+        text = `${existingText}\n\n--- CV ---\n\n${cvText}`.slice(0, 50000);
+      } else {
+        // No meaningful LinkedIn capture — use whichever source is richer
+        text = cvText.length > existingText.length + 500 ? cvText : existingText || cvText;
+      }
       const updates: Record<string, unknown> = {
         profileText: text,
         profileTextHash: null,
