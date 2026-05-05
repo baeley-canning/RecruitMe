@@ -36,4 +36,56 @@ describe("buildRequirementAwareProfileExcerpt", () => {
     expect(requirementAware).toContain("Contract Sybase DBA");
     expect(requirementAware).toContain("Enhancing Sybase housekeeping");
   });
+
+  it("uses the shared requirement signals for newer role families", () => {
+    const filler = Array.from({ length: 70 }, (_, index) =>
+      `Recent delivery summary ${index + 1} covering roadmap, stakeholders and release planning.`
+    ).join("\n");
+    const historicalTestingRole = [
+      "Senior QA Automation Engineer",
+      "Built Selenium regression suites for payment workflows.",
+      "Used Playwright for cross-browser smoke coverage.",
+    ].join("\n");
+    const profileText = [
+      "Avery Chen",
+      "Delivery Lead",
+      "About",
+      "Delivery and quality specialist.",
+      "Experience",
+      filler,
+      historicalTestingRole,
+    ].join("\n");
+
+    const baseline = buildProfileExcerpt(profileText, 900);
+    const requirementAware = buildRequirementAwareProfileExcerpt(profileText, 900, [
+      "Experience with Selenium or similar test automation frameworks",
+      "Playwright experience",
+    ]);
+
+    expect(baseline).not.toContain("Selenium regression");
+    expect(requirementAware).toContain("Senior QA Automation Engineer");
+    expect(requirementAware).toContain("Built Selenium regression suites");
+    expect(requirementAware).toContain("Used Playwright");
+  });
+
+  it("does not preserve irrelevant NoSQL lines for a SQL requirement", () => {
+    const filler = Array.from({ length: 70 }, (_, index) =>
+      `Recent software delivery line ${index + 1} with API ownership.`
+    ).join("\n");
+    const profileText = [
+      "Jamie Patel",
+      "Backend Engineer",
+      "About",
+      "Backend engineer.",
+      "Experience",
+      filler,
+      "Built NoSQL document models with MongoDB.",
+    ].join("\n");
+
+    const requirementAware = buildRequirementAwareProfileExcerpt(profileText, 900, [
+      "SQL and relational database experience",
+    ]);
+
+    expect(requirementAware).not.toContain("Built NoSQL document models");
+  });
 });

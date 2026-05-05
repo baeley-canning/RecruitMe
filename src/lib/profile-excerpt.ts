@@ -1,3 +1,9 @@
+import {
+  extractSignalsFromRequirement,
+  normalizeSignalText,
+  signalMatchesText,
+} from "./requirement-signals";
+
 const PROFILE_SECTION_ALIASES = new Map<string, string>([
   ["about", "About"],
   ["experience", "Experience"],
@@ -49,19 +55,6 @@ const PROFILE_SECTION_LIMITS: Record<string, number> = {
 export const SCORE_PROFILE_EXCERPT_MAX_CHARS = 6500;
 export const OUTREACH_PROFILE_EXCERPT_MAX_CHARS = 3500;
 export const ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS = 3500;
-
-const REQUIREMENT_TERM_ALIASES: Array<[RegExp, string[]]> = [
-  [/\bpsybase\b/i, ["sybase"]],
-  [/\bsybase\b/i, ["sybase", "sap sybase", "sql anywhere"]],
-  [/\bc\+\+/i, ["c++"]],
-  [/\bc sharp\b|\bc#/i, ["c#", "c sharp"]],
-  [/\b\.net\b/i, [".net", "dotnet"]],
-  [/\bjavascript\b|\bjs\b/i, ["javascript", "js"]],
-  [/\btypescript\b/i, ["typescript"]],
-  [/\blinux\b/i, ["linux"]],
-  [/\bazure\b/i, ["azure", "microsoft azure"]],
-  [/\bmicroservices?\b|\bminiservices?\b/i, ["microservice", "microservices", "miniservice", "miniservices"]],
-];
 
 function normalizeSectionHeading(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -142,39 +135,21 @@ export function buildProfileExcerpt(profileText: string, maxChars: number): stri
 }
 
 function normalizeRequirementTerm(value: string) {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
+  return normalizeSignalText(value);
 }
 
 function extractRequirementTerms(requirements: string[]): string[] {
   const terms = new Set<string>();
 
   for (const requirement of requirements) {
-    for (const [pattern, aliases] of REQUIREMENT_TERM_ALIASES) {
-      if (pattern.test(requirement)) aliases.forEach((alias) => terms.add(normalizeRequirementTerm(alias)));
-    }
-
-    const explicitTech = requirement.match(/\b[A-Za-z][A-Za-z0-9.+#-]{1,}\b/g) ?? [];
-    for (const token of explicitTech) {
-      const lower = token.toLowerCase();
-      if (
-        token.length >= 3 &&
-        !/^(and|the|with|from|that|this|have|has|experience|knowledge|ability|strong|software|database|development|programming|platform|platforms)$/.test(lower) &&
-        (/[A-Z+#.]/.test(token) || /^(sybase|psybase|linux|azure|microservices?|miniservices?)$/i.test(token))
-      ) {
-        terms.add(normalizeRequirementTerm(lower === "psybase" ? "sybase" : token));
-      }
-    }
+    extractSignalsFromRequirement(requirement).forEach((term) => terms.add(normalizeRequirementTerm(term)));
   }
 
   return [...terms].filter((term) => term.length >= 2).slice(0, 24);
 }
 
 function lineIncludesTerm(line: string, term: string) {
-  const haystack = line.toLowerCase();
-  if (term === "c++") return /\bc\+\+/i.test(line);
-  if (term === "c#") return /\bc#/i.test(line);
-  if (term === ".net") return /\.net\b/i.test(line);
-  return haystack.includes(term);
+  return signalMatchesText(line, term);
 }
 
 export function buildRequirementAwareProfileExcerpt(
@@ -186,7 +161,7 @@ export function buildRequirementAwareProfileExcerpt(
   if (!requirements.length || profileText.length <= maxChars) return baseline;
 
   const terms = extractRequirementTerms(requirements).filter((term) =>
-    profileText.toLowerCase().includes(term) && !baseline.toLowerCase().includes(term)
+    signalMatchesText(profileText, term) && !signalMatchesText(baseline, term)
   );
   if (terms.length === 0) return baseline;
 
