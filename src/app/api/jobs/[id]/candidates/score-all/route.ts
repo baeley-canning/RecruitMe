@@ -3,7 +3,7 @@ import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
-import { buildScoreCacheKey } from "@/lib/utils";
+import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { getOrgScoringWeights } from "@/lib/scoring-config";
 import { NextResponse } from "next/server";
@@ -40,7 +40,10 @@ export async function POST(
     return NextResponse.json({ scored: 0, total: 0 });
   }
 
-  const parsedRole = JSON.parse(job.parsedRole) as ParsedRole;
+  const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
+  if (!parsedRole) {
+    return NextResponse.json({ error: "Job parse data is invalid. Parse the job description again." }, { status: 400 });
+  }
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;

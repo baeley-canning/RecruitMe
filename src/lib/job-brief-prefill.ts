@@ -1,4 +1,5 @@
 import type { ParsedRole } from "./ai";
+import { isRemoteFriendlyLocationRule } from "./location";
 
 export interface JobBriefUploadPrefill {
   title: string;
@@ -61,30 +62,7 @@ export function parseSalaryBandRange(salaryBand: string): { min: number | null; 
 }
 
 export function inferRemoteRole(locationRules: string): boolean {
-  const normalized = cleanText(locationRules).toLowerCase();
-  if (!normalized) return false;
-
-  const hasHybridSignal =
-    /\bhybrid\b/.test(normalized) ||
-    /\b\d+\s+days?\s+in\s+(?:the\s+)?office\b/.test(normalized) ||
-    /\bin\s+(?:the\s+)?office\b/.test(normalized) ||
-    /\bonsite\b/.test(normalized) ||
-    /\bon-site\b/.test(normalized) ||
-    /\boffice based\b/.test(normalized);
-
-  if (hasHybridSignal) return false;
-
-  return (
-    /^remote\b/.test(normalized) ||
-    /\bfully remote\b/.test(normalized) ||
-    /\bremote role\b/.test(normalized) ||
-    /\bremote\s*\/\s*flexible\b/.test(normalized) ||
-    /\bwork from anywhere\b/.test(normalized) ||
-    /\bcan work from anywhere\b/.test(normalized) ||
-    /\banywhere in nz\b/.test(normalized) ||
-    /\bnz-based remote\b/.test(normalized) ||
-    /\bnew zealand-based remote\b/.test(normalized)
-  );
+  return isRemoteFriendlyLocationRule(locationRules);
 }
 
 export function deriveJobBriefUploadPrefill(

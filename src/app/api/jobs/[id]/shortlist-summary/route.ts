@@ -80,10 +80,8 @@ export async function POST(
     // acceptanceReason is also JSON
     let acceptText = "";
     if (c.acceptanceReason) {
-      try {
-        const ar = JSON.parse(c.acceptanceReason) as { headline?: string; summary?: string };
-        acceptText = [ar.headline, ar.summary].filter(Boolean).join(" ").trim();
-      } catch { acceptText = ""; }
+      const ar = safeParseJson<{ headline?: string; summary?: string } | null>(c.acceptanceReason, null);
+      acceptText = [ar?.headline, ar?.summary].filter(Boolean).join(" ").trim();
     }
 
     return `--- CANDIDATE ${i + 1} (id: ${c.id}) ---

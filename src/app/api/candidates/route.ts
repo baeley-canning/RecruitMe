@@ -111,6 +111,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
   }
   const body = result.data;
+  const linkedinUrl = body.linkedinUrl ? normaliseLinkedInUrl(body.linkedinUrl) : null;
 
   if (!body.profileText && !body.name) {
     return NextResponse.json({ error: "Provide profileText or a name." }, { status: 400 });
@@ -138,7 +139,7 @@ export async function POST(req: Request) {
       name:        name || "Unknown",
       headline:    headline || null,
       location:    location || null,
-      linkedinUrl: body.linkedinUrl?.trim() || null,
+      linkedinUrl,
       profileText: body.profileText?.trim() || null,
       source:      "manual",
       status:      "new",

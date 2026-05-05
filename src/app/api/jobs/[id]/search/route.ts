@@ -529,7 +529,7 @@ export async function GET(
     }
   }
 
-  const importedIds: string[] = JSON.parse(session.importedIds || "[]");
+  const importedIds = safeParseJson<string[]>(session.importedIds, []);
   const candidates = importedIds.length > 0
     ? await prisma.candidate.findMany({
         where: { id: { in: importedIds } },

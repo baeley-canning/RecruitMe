@@ -6,6 +6,9 @@ describe("LinkedIn URL helpers", () => {
     expect(normaliseLinkedInUrl("https://nz.linkedin.com/in/ranjana-tyagi-3755b615/?trk=people")).toBe(
       "https://www.linkedin.com/in/ranjana-tyagi-3755b615"
     );
+    expect(normaliseLinkedInUrl("https://www.linkedin.com/in/RanjanaTyagi/?miniProfileUrn=abc")).toBe(
+      "https://www.linkedin.com/in/ranjanatyagi"
+    );
   });
 
   it("builds alias keys for LinkedIn canonical redirects", () => {

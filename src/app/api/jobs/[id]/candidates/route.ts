@@ -5,7 +5,8 @@ import { extractCandidateInfo, predictAcceptance, scoreCandidateStructured } fro
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
-import { buildScoreCacheKey } from "@/lib/utils";
+import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { normaliseLinkedInUrl } from "@/lib/linkedin";
 
 export async function GET(
   _req: Request,
@@ -44,6 +45,7 @@ export async function POST(
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
   }
   const body = result.data;
+  const linkedinUrl = body.linkedinUrl ? normaliseLinkedInUrl(body.linkedinUrl) : null;
 
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
@@ -70,7 +72,7 @@ export async function POST(
       name: name || "Unknown",
       headline: headline || null,
       location: location || null,
-      linkedinUrl: body.linkedinUrl?.trim() || null,
+      linkedinUrl,
       profileText: body.profileText?.trim() || null,
       source: "manual",
       status: "new",
@@ -78,7 +80,8 @@ export async function POST(
   });
 
   if (body.autoScore !== false && body.profileText && job.parsedRole) {
-    const parsedRole = JSON.parse(job.parsedRole) as ParsedRole;
+    const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
+    if (!parsedRole) return NextResponse.json(candidate, { status: 201 });
     const salary = (job.salaryMin || job.salaryMax)
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;

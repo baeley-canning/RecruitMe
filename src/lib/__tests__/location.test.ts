@@ -5,6 +5,7 @@ import {
   expandLocationKeywords,
   extractKnownLocationTargets,
   isPlausibleLocation,
+  isRemoteFriendlyLocationRule,
   locationMatches,
 } from "../location";
 
@@ -20,6 +21,15 @@ describe("locationMatches", () => {
     const wellingtonKeywords = expandLocationKeywords("Wellington");
 
     expect(locationMatches("Napier, Hawke's Bay, New Zealand", wellingtonKeywords)).toBe(false);
+  });
+});
+
+describe("isRemoteFriendlyLocationRule", () => {
+  it("uses one remote/hybrid interpretation for scoring and job prefill", () => {
+    expect(isRemoteFriendlyLocationRule("Fully remote, NZ-based only")).toBe(true);
+    expect(isRemoteFriendlyLocationRule("Can work from anywhere in NZ")).toBe(true);
+    expect(isRemoteFriendlyLocationRule("Hybrid, Wellington office")).toBe(false);
+    expect(isRemoteFriendlyLocationRule("Remote optional, 3 days in office")).toBe(false);
   });
 });
 

@@ -25,6 +25,7 @@ interface ConsultantFields {
 type Mode = "library" | "documents";
 
 const STORAGE_KEY = "recruitme:profile-consultant";
+const SETTINGS_ENDPOINT = "/api/candidate-profiles/settings";
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -229,6 +230,7 @@ export default function CandidateProfilesPage() {
   const [generating, setGenerating]   = useState(false);
   const [error, setError]             = useState("");
   const initRef = useRef(false);
+  const settingsLoadedRef = useRef(false);
 
   useEffect(() => {
     if (!initRef.current) {
@@ -236,6 +238,24 @@ export default function CandidateProfilesPage() {
       const saved = loadSaved();
       setConsultant(saved.consultant);
       setManager(saved.manager);
+      fetch(SETTINGS_ENDPOINT)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data: { settings?: { consultant?: ConsultantFields; manager?: ConsultantFields } } | null) => {
+          if (data?.settings) {
+            setConsultant({
+              name: str(data.settings.consultant?.name),
+              email: str(data.settings.consultant?.email),
+              phone: str(data.settings.consultant?.phone),
+            });
+            setManager({
+              name: str(data.settings.manager?.name),
+              email: str(data.settings.manager?.email),
+              phone: str(data.settings.manager?.phone),
+            });
+          }
+        })
+        .catch(() => {})
+        .finally(() => { settingsLoadedRef.current = true; });
     }
     fetch("/api/candidates")
       .then((r) => r.json())
@@ -246,6 +266,15 @@ export default function CandidateProfilesPage() {
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ consultant, manager })); } catch {}
+    if (!settingsLoadedRef.current) return;
+    const timer = window.setTimeout(() => {
+      void fetch(SETTINGS_ENDPOINT, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consultant, manager }),
+      }).catch(() => {});
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, [consultant, manager]);
 
   const filtered = useMemo(() => {

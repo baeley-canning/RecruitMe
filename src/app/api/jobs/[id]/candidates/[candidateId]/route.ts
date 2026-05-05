@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { safeParseJson } from "@/lib/utils";
+import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 
 const VALID_STATUSES = [
@@ -34,6 +35,9 @@ export async function PATCH(
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
   }
   const body = result.data;
+  const linkedinUrl = body.linkedinUrl !== undefined
+    ? body.linkedinUrl ? normaliseLinkedInUrl(body.linkedinUrl) : null
+    : undefined;
 
   // Build base update
   const data: Record<string, unknown> = {
@@ -41,7 +45,7 @@ export async function PATCH(
     ...(body.name          !== undefined && { name: body.name }),
     ...(body.headline      !== undefined && { headline: body.headline }),
     ...(body.location      !== undefined && { location: body.location }),
-    ...(body.linkedinUrl   !== undefined && { linkedinUrl: body.linkedinUrl || null }),
+    ...(linkedinUrl        !== undefined && { linkedinUrl }),
     ...(body.screeningData  !== undefined && { screeningData: body.screeningData }),
     ...(body.interviewNotes !== undefined && { interviewNotes: body.interviewNotes }),
   };

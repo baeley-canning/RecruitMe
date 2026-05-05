@@ -116,4 +116,27 @@ describe("manual candidate ingestion route", () => {
     expect(dbMocks.prisma.candidate.update.mock.calls[0][0].data.acceptanceScore).toBe(66);
     expect(body.scoreBreakdown).toContain("\"version\":2");
   });
+
+  it("normalizes manual LinkedIn URLs before saving", async () => {
+    const req = new Request("http://localhost/api/jobs/job-1/candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ranjana Tyagi",
+        linkedinUrl: "https://nz.linkedin.com/in/ranjana-tyagi-3755b615/?trk=people",
+        autoScore: false,
+      }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+
+    expect(res.status).toBe(201);
+    expect(dbMocks.prisma.candidate.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          linkedinUrl: "https://www.linkedin.com/in/ranjana-tyagi-3755b615",
+        }),
+      })
+    );
+  });
 });

@@ -163,4 +163,20 @@ describe("score-all route", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("returns 400 when stored parsedRole JSON is invalid", async () => {
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: { ...makeJob("j"), parsedRole: "{broken" }, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-1", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+    ]);
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "j" }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/parse data is invalid/i);
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+  });
 });

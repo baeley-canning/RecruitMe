@@ -7,6 +7,7 @@ import type { ParsedRole } from "@/lib/ai";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
+import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 
 // ---------------------------------------------------------------------------
@@ -255,7 +256,7 @@ export async function POST(
   };
 
   const linkedinUrlFromExtension = body.success && body.data.linkedinUrl
-    ? body.data.linkedinUrl.split("?")[0]
+    ? normaliseLinkedInUrl(body.data.linkedinUrl)
     : null;
 
   try {

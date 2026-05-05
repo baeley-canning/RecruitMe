@@ -4,6 +4,7 @@ const dbMocks = vi.hoisted(() => ({
   prisma: {
     candidate: {
       findMany: vi.fn(),
+      create: vi.fn(),
     },
   },
 }));
@@ -16,7 +17,7 @@ const sessionMocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 
-import { GET } from "./route";
+import { GET, POST } from "./route";
 
 describe("candidates library API", () => {
   beforeEach(() => {
@@ -84,5 +85,30 @@ describe("candidates library API", () => {
     expect(res.status).toBe(200);
     expect(body.map((row: { id: string }) => row.id).sort()).toEqual(["captured-short", "full-1"]);
     expect(body[0]).not.toHaveProperty("profileText");
+  });
+
+  it("normalizes LinkedIn URLs when creating library candidates", async () => {
+    dbMocks.prisma.candidate.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "library-1",
+      ...data,
+    }));
+
+    const res = await POST(new Request("http://localhost/api/candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ranjana Tyagi",
+        linkedinUrl: "https://nz.linkedin.com/in/ranjana-tyagi-3755b615/?trk=people",
+      }),
+    }));
+
+    expect(res.status).toBe(201);
+    expect(dbMocks.prisma.candidate.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          linkedinUrl: "https://www.linkedin.com/in/ranjana-tyagi-3755b615",
+        }),
+      })
+    );
   });
 });

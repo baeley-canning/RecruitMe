@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateOutreachMessage } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { safeParseJson } from "@/lib/utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 
 export async function POST(
@@ -26,7 +27,10 @@ export async function POST(
   }
 
   try {
-    const parsedRole = JSON.parse(job.parsedRole) as ParsedRole;
+    const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
+    if (!parsedRole) {
+      return NextResponse.json({ error: "Job parse data is invalid. Parse the job description again." }, { status: 400 });
+    }
     const message = await generateOutreachMessage(
       candidate.profileText,
       parsedRole,

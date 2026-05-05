@@ -164,7 +164,7 @@ export function isPlausibleLocation(value: string | null | undefined): boolean {
   return words.length <= 3;
 }
 
-function isRemoteFriendlyLocationRule(locationRules?: string | null): boolean {
+export function isRemoteFriendlyLocationRule(locationRules?: string | null): boolean {
   const normalized = normalizeLocationText(locationRules ?? "");
   if (!normalized) return false;
   if (normalized.includes("hybrid") || normalized.includes("office")) return false;

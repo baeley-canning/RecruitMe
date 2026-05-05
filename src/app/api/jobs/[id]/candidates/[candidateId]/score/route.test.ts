@@ -103,4 +103,21 @@ describe("candidate re-score route", () => {
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
     expect(body.scoreBreakdown).toContain("\"version\":2");
   });
+
+  it("returns 400 for invalid stored job parse data", async () => {
+    sessionMocks.requireCandidateAccess.mockResolvedValue({
+      job: { id: "job-1", parsedRole: "{broken", salaryMin: null, salaryMax: null },
+      candidate: { id: "cand-5", location: "Wellington", profileText: "Candidate profile text" },
+      error: null,
+    });
+
+    const res = await POST(new Request("http://localhost/api/jobs/job-1/candidates/cand-5/score", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-1", candidateId: "cand-5" }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/parse data is invalid/i);
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+  });
 });
