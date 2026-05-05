@@ -6,6 +6,7 @@ import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { getOrgScoringWeights } from "@/lib/scoring-config";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_TYPES = [
@@ -167,8 +168,9 @@ export async function POST(
           const salary = (candidate.job.salaryMin || candidate.job.salaryMax)
             ? { min: candidate.job.salaryMin ?? 0, max: candidate.job.salaryMax ?? 0 }
             : null;
+          const weights = await getOrgScoringWeights(auth.orgId);
           const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-            scoreCandidateStructured(text, parsedRole, salary),
+            scoreCandidateStructured(text, parsedRole, salary, weights),
             predictAcceptance(text, parsedRole, salary),
           ]);
           if (rawBreakdown.status === "fulfilled") {
@@ -178,6 +180,7 @@ export async function POST(
               parsedRole.location ?? candidate.job.location ?? "",
               parsedRole.location_rules,
               candidate.job.isRemote,
+              weights,
             );
             Object.assign(updates, deriveUpdateData(breakdown));
             updates.profileTextHash = buildScoreCacheKey({

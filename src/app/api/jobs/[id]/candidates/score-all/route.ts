@@ -88,6 +88,7 @@ export async function POST(
                 parsedRole.location,
                 parsedRole.location_rules,
                 job.isRemote,
+                weights,
               );
               const acceptance = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
               await prisma.candidate.update({

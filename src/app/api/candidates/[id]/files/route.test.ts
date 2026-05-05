@@ -33,9 +33,25 @@ const aiMocks = vi.hoisted(() => ({
   }),
 }));
 
+const scoringConfigMocks = vi.hoisted(() => ({
+  customWeights: {
+    must_have: 0.5,
+    skill_fit: 0.2,
+    location_fit: 0.05,
+    seniority_fit: 0.05,
+    title_fit: 0.05,
+    domain_fit: 0.1,
+    nice_to_have_fit: 0.05,
+  },
+  getOrgScoringWeights: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/ai", () => aiMocks);
+vi.mock("@/lib/scoring-config", () => ({
+  getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+}));
 
 import { POST } from "./route";
 
@@ -100,6 +116,7 @@ describe("candidate file CV upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
+    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.candidate.findUnique.mockResolvedValue(makeCandidate());
     dbMocks.prisma.candidateFile.create.mockResolvedValue({
       id: "file-1",
@@ -147,6 +164,12 @@ describe("candidate file CV upload", () => {
 
     expect(res.status).toBe(201);
     expect(body.scored).toBe(true);
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      cvText.trim(),
+      parsedRole,
+      { min: 90000, max: 120000 },
+      scoringConfigMocks.customWeights
+    );
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         profileTextHash: buildScoreCacheKey({

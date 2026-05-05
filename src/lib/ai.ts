@@ -813,12 +813,12 @@ Do NOT let seniority in an unrelated domain satisfy the clause. A senior account
     Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
 
   const categories: ScoreBreakdown["categories"] = {
-    skill_fit:        parseCategory("skill_fit",        CATEGORY_WEIGHTS_V2.skill_fit),
-    location_fit:     parseCategory("location_fit",     CATEGORY_WEIGHTS_V2.location_fit),
-    seniority_fit:    parseCategory("seniority_fit",    CATEGORY_WEIGHTS_V2.seniority_fit),
-    title_fit:        parseCategory("title_fit",        CATEGORY_WEIGHTS_V2.title_fit),
-    domain_fit:       parseCategory("domain_fit",       CATEGORY_WEIGHTS_V2.domain_fit),
-    nice_to_have_fit: parseCategory("nice_to_have_fit", CATEGORY_WEIGHTS_V2.nice_to_have_fit),
+    skill_fit:        parseCategory("skill_fit",        weights?.skill_fit ?? CATEGORY_WEIGHTS_V2.skill_fit),
+    location_fit:     parseCategory("location_fit",     weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit),
+    seniority_fit:    parseCategory("seniority_fit",    weights?.seniority_fit ?? CATEGORY_WEIGHTS_V2.seniority_fit),
+    title_fit:        parseCategory("title_fit",        weights?.title_fit ?? CATEGORY_WEIGHTS_V2.title_fit),
+    domain_fit:       parseCategory("domain_fit",       weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit),
+    nice_to_have_fit: parseCategory("nice_to_have_fit", weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit),
   };
 
   return buildScoreBreakdown({

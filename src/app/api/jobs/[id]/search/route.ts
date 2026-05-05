@@ -26,6 +26,7 @@ import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
+import { getOrgScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
@@ -139,6 +140,7 @@ function buildProvisionalSearchScore(
   targetLocation: string,
   locationRules: string | null | undefined,
   isRemote: boolean,
+  weights?: ScoringWeights,
 ): ScoreBreakdown {
   const baseMustHaves = parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required;
   const knockouts = parsedRole.knockout_criteria ?? [];
@@ -201,12 +203,12 @@ function buildProvisionalSearchScore(
 
   const breakdown = buildScoreBreakdown({
     categories: {
-      skill_fit:        { score: skillScore,                    weight: CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Provisional score from LinkedIn search snippet." },
-      location_fit:     { score: candidateLocation ? 75 : 50,  weight: CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
-      seniority_fit:    { score: seniorityScore,                weight: CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Seniority inferred from headline only." },
-      title_fit:        { score: titleScore,                    weight: CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Title fit inferred from LinkedIn headline." },
-      domain_fit:       { score: Math.round((50 + keywordScore) / 2), weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Domain fit estimated provisionally from snippet keywords and title match." },
-      nice_to_have_fit: { score: 45,                           weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Nice-to-haves are provisional until the full profile is captured." },
+      skill_fit:        { score: skillScore,                    weight: weights?.skill_fit ?? CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Provisional score from LinkedIn search snippet." },
+      location_fit:     { score: candidateLocation ? 75 : 50,  weight: weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
+      seniority_fit:    { score: seniorityScore,                weight: weights?.seniority_fit ?? CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Seniority inferred from headline only." },
+      title_fit:        { score: titleScore,                    weight: weights?.title_fit ?? CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Title fit inferred from LinkedIn headline." },
+      domain_fit:       { score: Math.round((50 + keywordScore) / 2), weight: weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Domain fit estimated provisionally from snippet keywords and title match." },
+      nice_to_have_fit: { score: 45,                           weight: weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Nice-to-haves are provisional until the full profile is captured." },
     },
     must_have_coverage: mustHaveCoverage,
     nice_to_have_coverage: niceToHaveCoverage,
@@ -218,9 +220,10 @@ function buildProvisionalSearchScore(
     missing_evidence: ["Full LinkedIn profile text", "Detailed experience history", "Confirmed work rights"],
     recruiter_summary: "Provisional search match from a LinkedIn snippet. Fetch the full profile before treating the score as reliable.",
     profileCharCount: profileText.length,
+    weights,
   });
 
-  return applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote);
+  return applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote, weights);
 }
 
 const PAGE_SIZE = 10;
@@ -437,6 +440,7 @@ export async function POST(
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
+  const weights = await getOrgScoringWeights(auth.orgId);
 
   const knownTargets = extractKnownLocationTargets(job.location, location, parsedRole.location_rules);
   const canonicalJobCity = knownTargets[0] ?? getCityCoords(locationSource)?.name ?? "";
@@ -469,6 +473,7 @@ export async function POST(
     job,
     parsedRole,
     salary,
+    weights,
     maxResults,
     targetRaw,
     searchQueries,
@@ -555,6 +560,7 @@ async function runSearchBackground(args: {
   job: { orgId: string | null; parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null };
   parsedRole: ParsedRole;
   salary: { min: number; max: number } | null;
+  weights: ScoringWeights;
   maxResults: number;
   targetRaw: number;
   searchQueries: string[];
@@ -569,7 +575,7 @@ async function runSearchBackground(args: {
   isOwner: boolean;
   orgId: string | null;
 }) {
-  const { sessionId, jobId, job, parsedRole, salary, maxResults, targetRaw,
+  const { sessionId, jobId, job, parsedRole, salary, weights, maxResults, targetRaw,
     searchQueries, searchLocation, targetLocation, hasSerpApi, hasBing, hasPDL,
     serpApiKey, bingKey, pdlKey, isOwner, orgId } = args;
 
@@ -879,11 +885,12 @@ async function runSearchBackground(args: {
             const hasFullProfile = classifyDataQuality(profileText?.length ?? 0) === "full_profile";
             const breakdown = hasFullProfile
               ? applyLocationFitOverride(
-                  await scoreCandidateStructured(textToScore, parsedRole, salary),
+                  await scoreCandidateStructured(textToScore, parsedRole, salary, weights),
                   candidateLocation,
                   targetLocation,
                   parsedRole.location_rules,
                   job.isRemote,
+                  weights,
                 )
               : buildProvisionalSearchScore(
                   r,
@@ -892,6 +899,7 @@ async function runSearchBackground(args: {
                   targetLocation,
                   parsedRole.location_rules,
                   job.isRemote,
+                  weights,
                 );
             matchScore = breakdown.overall;
             locationFitScore = breakdown.categories.location_fit.score;
@@ -914,6 +922,7 @@ async function runSearchBackground(args: {
               targetLocation,
               parsedRole.location_rules,
               job.isRemote,
+              weights,
             );
             matchScore = fallback.overall;
             locationFitScore = fallback.categories.location_fit.score;

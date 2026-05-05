@@ -22,9 +22,25 @@ const sessionMocks = vi.hoisted(() => ({
   unauthorized: vi.fn(() => new Response(null, { status: 401 })),
 }));
 
+const scoringConfigMocks = vi.hoisted(() => ({
+  customWeights: {
+    must_have: 0.5,
+    skill_fit: 0.2,
+    location_fit: 0.05,
+    seniority_fit: 0.05,
+    title_fit: 0.05,
+    domain_fit: 0.1,
+    nice_to_have_fit: 0.05,
+  },
+  getOrgScoringWeights: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/scoring-config", () => ({
+  getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+}));
 
 import { POST } from "./route";
 
@@ -71,6 +87,7 @@ describe("talent-pool ingestion route", () => {
     };
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
     dbMocks.prisma.candidate.findMany
       .mockResolvedValueOnce([])
@@ -106,6 +123,12 @@ describe("talent-pool ingestion route", () => {
 
     expect(res.status).toBe(200);
     expect(body.count).toBe(1);
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      null,
+      scoringConfigMocks.customWeights
+    );
     expect(dbMocks.prisma.candidate.create).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.create.mock.calls[0][0].data.source).toBe("talent_pool");
   });

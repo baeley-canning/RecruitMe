@@ -35,9 +35,25 @@ const sessionMocks = vi.hoisted(() => ({
   unauthorized: vi.fn(() => new Response(null, { status: 401 })),
 }));
 
+const scoringConfigMocks = vi.hoisted(() => ({
+  customWeights: {
+    must_have: 0.5,
+    skill_fit: 0.2,
+    location_fit: 0.05,
+    seniority_fit: 0.05,
+    title_fit: 0.05,
+    domain_fit: 0.1,
+    nice_to_have_fit: 0.05,
+  },
+  getOrgScoringWeights: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/scoring-config", () => ({
+  getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+}));
 
 import { POST } from "./route";
 
@@ -96,6 +112,7 @@ describe("score-all route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
     dbMocks.prisma.candidate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => data);
   });
@@ -114,7 +131,12 @@ describe("score-all route", () => {
     expect(res.status).toBe(200);
     const result = await readStreamResult(res);
     expect(result).toMatchObject({ scored: 1, total: 1, done: true });
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledTimes(1);
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      PROFILE_TEXT,
+      expect.any(Object),
+      { min: 90000, max: 120000 },
+      scoringConfigMocks.customWeights
+    );
   });
 
   it("streams progress updates — scored count increments before final done message", async () => {

@@ -1,5 +1,6 @@
 import { computeOverallScore, type ScoreBreakdown } from "./scoring";
 import { assessLocationFit } from "./location";
+import type { ScoringWeights } from "./scoring-config";
 
 /**
  * Derive all Prisma candidate update fields from a v2 ScoreBreakdown.
@@ -41,6 +42,7 @@ export function applyLocationFitOverride(
   targetLocation: string | null | undefined,
   locationRules?: string | null,
   isRemote?: boolean,
+  weights?: ScoringWeights,
 ): ScoreBreakdown {
   const assessment = assessLocationFit(candidateLocation, targetLocation, locationRules);
   if (!assessment) return breakdown;
@@ -62,7 +64,7 @@ export function applyLocationFitOverride(
     ? `${assessment.evidence} ${breakdown.recruiter_summary}`.trim()
     : breakdown.recruiter_summary;
 
-  let overall = computeOverallScore(categories, breakdown.must_have_pct);
+  let overall = computeOverallScore(categories, breakdown.must_have_pct, weights);
 
   // Apply an out-of-area penalty when the job is not remote and location fit is poor.
   // Scales from ×0.6 (completely out of area) to ×1.0 (at the 50-point threshold).

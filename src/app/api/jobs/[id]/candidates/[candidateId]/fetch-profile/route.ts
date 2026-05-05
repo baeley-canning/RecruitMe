@@ -9,6 +9,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { getOrgScoringWeights } from "@/lib/scoring-config";
 
 // ---------------------------------------------------------------------------
 // Server-side LinkedIn scraper
@@ -210,13 +211,15 @@ export async function POST(
   };
   if (parsedRole) {
     try {
-      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary);
+      const weights = await getOrgScoringWeights(auth.orgId);
+      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary, weights);
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         location,
         parsedRole.location,
         parsedRole.location_rules,
         job.isRemote,
+        weights,
       );
       Object.assign(scoreData, deriveUpdateData(breakdown));
       scoreData.profileTextHash = buildScoreCacheKey({

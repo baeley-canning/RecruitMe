@@ -46,6 +46,7 @@ export async function POST(
       parsedRole.location,
       parsedRole.location_rules,
       job.isRemote,
+      weights,
     );
 
     const acceptanceData = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;

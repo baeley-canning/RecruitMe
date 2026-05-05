@@ -45,18 +45,32 @@ function settingKey(orgId: string | null | undefined) {
   return orgId ? `SCORING_WEIGHTS_V1:${orgId}` : "SCORING_WEIGHTS_V1:default";
 }
 
-export function normaliseWeights(raw: ScoringWeights): ScoringWeights {
-  const total = Object.values(raw).reduce((s, v) => s + v, 0);
+function readWeight(raw: Partial<ScoringWeights> | null | undefined, key: keyof ScoringWeights): number {
+  const value = raw?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : DEFAULT_SCORING_WEIGHTS[key];
+}
+
+export function normaliseWeights(raw: Partial<ScoringWeights>): ScoringWeights {
+  const cleaned: ScoringWeights = {
+    must_have:        readWeight(raw, "must_have"),
+    skill_fit:        readWeight(raw, "skill_fit"),
+    location_fit:     readWeight(raw, "location_fit"),
+    seniority_fit:    readWeight(raw, "seniority_fit"),
+    title_fit:        readWeight(raw, "title_fit"),
+    domain_fit:       readWeight(raw, "domain_fit"),
+    nice_to_have_fit: readWeight(raw, "nice_to_have_fit"),
+  };
+  const total = Object.values(cleaned).reduce((s, v) => s + v, 0);
   if (total === 0) return DEFAULT_SCORING_WEIGHTS;
   const factor = 1 / total;
   return {
-    must_have:        Math.max(0, raw.must_have)        * factor,
-    skill_fit:        Math.max(0, raw.skill_fit)        * factor,
-    location_fit:     Math.max(0, raw.location_fit)     * factor,
-    seniority_fit:    Math.max(0, raw.seniority_fit)    * factor,
-    title_fit:        Math.max(0, raw.title_fit)        * factor,
-    domain_fit:       Math.max(0, raw.domain_fit)       * factor,
-    nice_to_have_fit: Math.max(0, raw.nice_to_have_fit) * factor,
+    must_have:        cleaned.must_have        * factor,
+    skill_fit:        cleaned.skill_fit        * factor,
+    location_fit:     cleaned.location_fit     * factor,
+    seniority_fit:    cleaned.seniority_fit    * factor,
+    title_fit:        cleaned.title_fit        * factor,
+    domain_fit:       cleaned.domain_fit       * factor,
+    nice_to_have_fit: cleaned.nice_to_have_fit * factor,
   };
 }
 

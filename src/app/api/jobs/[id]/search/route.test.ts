@@ -41,6 +41,19 @@ const sessionMocks = vi.hoisted(() => ({
   unauthorized: vi.fn(() => new Response(null, { status: 401 })),
 }));
 
+const scoringConfigMocks = vi.hoisted(() => ({
+  customWeights: {
+    must_have: 0.5,
+    skill_fit: 0.2,
+    location_fit: 0.05,
+    seniority_fit: 0.05,
+    title_fit: 0.05,
+    domain_fit: 0.1,
+    nice_to_have_fit: 0.05,
+  },
+  getOrgScoringWeights: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/search", () => ({
@@ -51,6 +64,9 @@ vi.mock("@/lib/search", () => ({
 vi.mock("@/lib/search-collection", () => searchCollectionMocks);
 vi.mock("@/lib/talent-pool", () => talentPoolMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/scoring-config", () => ({
+  getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+}));
 
 import { POST } from "./route";
 
@@ -104,6 +120,7 @@ describe("search import route", () => {
     };
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
     dbMocks.prisma.candidate.findMany
       .mockResolvedValueOnce([])
@@ -158,6 +175,7 @@ describe("search import route", () => {
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.scoreBreakdown).toContain("\"version\":2");
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityScore).toBeGreaterThanOrEqual(45);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityReason).toContain("fetch");
+    expect(scoringConfigMocks.getOrgScoringWeights).toHaveBeenCalledWith("org-1");
   });
 
   it("upgrades an existing snippet candidate when a full talent-pool profile exists", async () => {
@@ -198,6 +216,12 @@ describe("search import route", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(res.status).toBe(200);
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      fullProfile,
+      expect.any(Object),
+      null,
+      scoringConfigMocks.customWeights
+    );
     expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "cand-existing" },

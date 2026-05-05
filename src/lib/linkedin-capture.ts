@@ -11,6 +11,7 @@ import { buildScoreCacheKey, safeParseJson } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isExplicitlyOverseasLocation, isNzLocation, isPlausibleLocation } from "./location";
+import { getOrgScoringWeights } from "./scoring-config";
 
 export { linkedInProfileMatches, linkedInSlugAliasKey, normaliseLinkedInUrl } from "./linkedin";
 
@@ -330,6 +331,7 @@ async function buildCapturedCandidateData(args: {
     job.salaryMin || job.salaryMax
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
+  const weights = await getOrgScoringWeights(job.orgId);
 
   // Run all three AI calls concurrently — they are independent of each other.
   const [info, rawBreakdown, acceptance] = await Promise.all([
@@ -337,7 +339,7 @@ async function buildCapturedCandidateData(args: {
       ? extractCandidateInfo(cleanedProfileText).catch(() => null)
       : Promise.resolve(null),
     parsedRole
-      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary).catch(() => null)
+      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights).catch(() => null)
       : Promise.resolve(null),
     !profileUnchanged && cleanedProfileText.length >= 250 && parsedRole
       ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch(() => null)
@@ -370,6 +372,7 @@ async function buildCapturedCandidateData(args: {
         parsedRole.location,
         parsedRole.location_rules,
         job.isRemote,
+        weights,
       );
       Object.assign(scoreData, deriveUpdateData(breakdown));
       scoreData.profileTextHash = buildScoreCacheKey({
@@ -431,7 +434,8 @@ export async function saveCapturedProfileToCandidate(args: {
     // Another candidate in this job already has the same LinkedIn URL.
     // Save everything except the URL — profile text and scores are still valuable.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      const { linkedinUrl: _linkedinUrl, ...dataWithoutUrl } = data;
+      const dataWithoutUrl: Record<string, unknown> = { ...data };
+      delete dataWithoutUrl.linkedinUrl;
       return await prisma.candidate.update({
         where: { id: candidateId },
         data: { ...dataWithoutUrl, source: "extension" },
