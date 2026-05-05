@@ -108,17 +108,28 @@ export function isNzLocation(location: string): boolean {
   );
 }
 
+// US state two-letter codes and AU/UK state abbreviations that appear in location strings
+// like "Chicago, IL" or "Sydney, NSW". Standalone abbreviations are too ambiguous (WA = Western
+// Australia OR Washington); we only fire when preceded by a comma, space, or start of string.
+const US_STATE_RE = /\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WV|WI|WY|DC)\b/;
+const AU_STATE_RE = /\b(NSW|VIC|QLD|TAS|ACT|NT)\b/; // WA omitted — clashes with Washington
+// Common US cities not covered by OVERSEAS_MARKERS
+const US_CITIES_RE = /\b(pittsburgh|philadelphia|chicago|houston|atlanta|dallas|boston|denver|seattle|miami|charlotte|raleigh|phoenix|minneapolis|portland|detroit|sacramento|austin|nashville|baltimore|st louis|new orleans|tampa|las vegas|cincinnati|cleveland|kansas city|columbus|indianapolis|louisville|memphis|san francisco|san diego|san jose|los angeles|new york|washington dc)\b/i;
+
 export function isExplicitlyOverseasLocation(location: string): boolean {
   const normalized = normalizeLocationText(location);
   if (!normalized) return false;
   if (NZ_MARKERS.some((marker) => normalized.includes(marker))) return false;
-  return OVERSEAS_MARKERS.some((marker) => {
+  if (OVERSEAS_MARKERS.some((marker) => {
     const normalizedMarker = normalizeLocationText(marker);
     if (normalizedMarker.length <= 3) {
       return new RegExp(`(^| )${normalizedMarker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( |$)`).test(normalized);
     }
     return normalized.includes(normalizedMarker);
-  });
+  })) return true;
+  // US/AU state abbreviations and known US city names in the location string
+  if (US_STATE_RE.test(location) || AU_STATE_RE.test(location) || US_CITIES_RE.test(normalized)) return true;
+  return false;
 }
 
 export function isPlausibleLocation(value: string | null | undefined): boolean {

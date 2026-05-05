@@ -872,6 +872,7 @@ async function runSearchBackground(args: {
           candidateLocation,
           profileText,
           isFromTalentPool: Boolean(poolEntry),
+          isRemote: job.isRemote,
         });
         return {
           ...workItem,
@@ -895,7 +896,7 @@ async function runSearchBackground(args: {
           skippedSourceGate++;
           return false;
         }
-        if (!poolEntry && !r.fullText && fetchPriorityScore < 45) {
+        if (!poolEntry && !r.fullText && fetchPriorityScore < 55) {
           skippedSourceGate++;
           return false;
         }

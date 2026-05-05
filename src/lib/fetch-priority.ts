@@ -137,8 +137,9 @@ export function computeFetchPriority(args: {
   candidateLocation?: string | null;
   profileText?: string | null;
   isFromTalentPool?: boolean;
+  isRemote?: boolean;
 }): FetchPriorityResult {
-  const { result, parsedRole, candidateLocation, profileText, isFromTalentPool = false } = args;
+  const { result, parsedRole, candidateLocation, profileText, isFromTalentPool = false, isRemote = false } = args;
   const searchable = [
     result.name,
     result.headline,
@@ -212,8 +213,20 @@ export function computeFetchPriority(args: {
       signals.push(`Location present: ${loc}`);
     }
   } else {
-    score -= 6;
-    risks.push("No location signal in search result");
+    // No location at all is a bigger red flag for city-specific roles than for remote ones.
+    const noLocPenalty = isRemote ? -6 : -20;
+    score += noLocPenalty;
+    risks.push("No location signal — could be overseas");
+  }
+
+  // Scan full searchable text for US/AU geographic signals even when no explicit location field.
+  // Catches "Senior Developer at PNC, Pittsburgh PA" type headlines.
+  if (!loc) {
+    const fullText = [result.headline, result.snippet, result.matchedQuery].filter(Boolean).join(" ");
+    if (isExplicitlyOverseasLocation(fullText)) {
+      score -= 25;
+      risks.push("Overseas geographic signal detected in profile text");
+    }
   }
 
   if (result.matchedQuery) {
