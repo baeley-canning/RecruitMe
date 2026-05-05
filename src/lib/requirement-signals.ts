@@ -214,6 +214,39 @@ export function extractDistinctiveSignalsFromRequirement(requirement: string): s
   return [...signals];
 }
 
+// Patterns for technologies rare enough to be used as hard search anchors in the
+// legacy fallback path (roles parsed before anchor_terms was added).
+// Deliberately narrow: common tech like Azure, .NET, SQL is NOT listed here because
+// it appears on 30-50% of profiles and should not gate a specialist search.
+const RARE_ANCHOR_PATTERNS: Array<[RegExp, string]> = [
+  [/\bc\+\+/i,                                               "C++"],
+  [/\bsybase\b/i,                                            "Sybase"],
+  [/\bcobol\b/i,                                             "COBOL"],
+  [/\bmainframe\b|\bas400\b|\bos\/400\b|\bibm i\b/i,         "mainframe"],
+  [/\bdelphi\b|\bpascal\b/i,                                 "Delphi"],
+  [/\bjmeter\b|\bloadrunner\b|\bgatling\b|\bneoload\b/i,     "JMeter"],
+  [/\bsap\b/i,                                               "SAP"],
+  [/\bservicenow\b/i,                                        "ServiceNow"],
+  [/\bsalesforce\b/i,                                        "Salesforce"],
+  [/security clearance|secret vetting|confidential vetting/i,"security clearance"],
+  [/\bdb2\b/i,                                               "DB2"],
+  [/\boracle forms\b|\bplsql\b|\bpl\/sql\b/i,                "PL/SQL"],
+];
+
+/**
+ * For roles parsed before anchor_terms was added: extract the 2-5 rarest
+ * technologies from must-haves to use as search anchors.
+ * Only picks up genuinely niche tech — not common tools like Azure, SQL, .NET.
+ */
+export function extractLegacyAnchorTerms(requirements: string[]): string[] {
+  const terms = new Set<string>();
+  const combined = requirements.join("\n");
+  for (const [pattern, term] of RARE_ANCHOR_PATTERNS) {
+    if (pattern.test(combined)) terms.add(term);
+  }
+  return [...terms].slice(0, 5);
+}
+
 export function normalizeSignalText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").replace(/\s+/g, " ").trim();
 }

@@ -35,6 +35,7 @@ import {
   extractSignalsFromRequirement,
   normalizeSignalText,
   signalMatchesText,
+  extractLegacyAnchorTerms,
 } from "@/lib/requirement-signals";
 
 const SearchSchema = z.object({
@@ -255,17 +256,20 @@ function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
 }
 
 function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {
-  const terms = new Set<string>();
+  // Prefer AI-generated anchors from the parse step — these work for ANY technology.
+  if (parsedRole.anchor_terms?.length) {
+    return parsedRole.anchor_terms.slice(0, 5);
+  }
+
+  // Fallback for roles parsed before anchor_terms was added.
+  // Uses a narrow rare-tech list so common tools (Azure, SQL, .NET) don't
+  // become anchors and over-restrict the search.
   const hardRequirements = [
     ...(parsedRole.must_haves ?? []),
     ...(parsedRole.skills_required ?? []),
     ...(parsedRole.knockout_criteria ?? []),
-  ].join("\n");
-
-  if (/\bpsybase\b|\bsybase\b/i.test(hardRequirements)) terms.add("Sybase");
-  if (/\bc\+\+/i.test(hardRequirements)) terms.add("C++");
-
-  return [...terms];
+  ];
+  return extractLegacyAnchorTerms(hardRequirements);
 }
 
 function buildSearchQueries(parsedRole: ParsedRole): string[] {
@@ -275,13 +279,17 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
   const distinctiveTerms = extractDistinctiveRequirementTerms(parsedRole);
   const anchorTerms = extractAnchorRequirementTerms(parsedRole);
 
+  const DB_ANCHOR_RE = /\b(sql|sybase|oracle|postgres|mysql|db2|database|rdbms|snowflake|dynamo)\b/i;
   const skillQueries: string[] = [];
   if (anchorTerms.length > 0) {
+    // All anchors together — catches people who list multiple rare skills
     skillQueries.push(anchorTerms.join(" "));
+    // Title + all anchors
     skillQueries.push(`${baseTitle || "Software Developer"} ${anchorTerms.join(" ")}`);
     for (const term of anchorTerms) {
       skillQueries.push(`${term} developer`);
-      skillQueries.push(`${term} dba`);
+      // "dba" only makes sense for database anchors, not for React, JMeter, etc.
+      if (DB_ANCHOR_RE.test(term)) skillQueries.push(`${term} dba`);
     }
   }
   if (distinctiveTerms.length > 0) {
