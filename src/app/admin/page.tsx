@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
   Users, Building2, Plus, Trash2, Loader2, Shield, User, X, Eye, EyeOff,
-  BarChart3, Search, Sparkles, FileText, Camera,
+  BarChart3, Search, Sparkles, FileText, Camera, ArrowLeft,
 } from "lucide-react";
 
 interface UserRow {
@@ -178,6 +178,10 @@ export default function AdminPage() {
 
   return (
     <div className="p-8 max-w-3xl mx-auto space-y-10">
+      <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-700 transition-colors">
+        <ArrowLeft className="w-4 h-4" />
+        Back
+      </button>
 
       {/* ── Users ── */}
       <div>

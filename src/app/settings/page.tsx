@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getAuth } from "@/lib/session";
 import { getOrgScoringWeights, DEFAULT_SCORING_WEIGHTS } from "@/lib/scoring-config";
 import { ScoringWeightsEditor } from "@/components/scoring-weights-editor";
-import { SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal, ArrowLeft } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,10 @@ export default async function SettingsPage() {
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
+      <Link href="/jobs" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-700 transition-colors mb-6">
+        <ArrowLeft className="w-4 h-4" />
+        Back
+      </Link>
       <div className="mb-8">
         <div className="flex items-center gap-3 mb-1">
           <div className="w-9 h-9 bg-indigo-50 rounded-lg flex items-center justify-center">
