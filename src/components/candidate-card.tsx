@@ -756,7 +756,7 @@ function DrawerFileRow({ file, candidateId, onDeleted }: { file: DrawerFile; can
       </span>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium text-slate-700 truncate">{file.filename}</p>
-        <p className="text-[10px] text-slate-400">{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
+        <p className="text-[10px] text-slate-400" suppressHydrationWarning>{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <a
@@ -975,7 +975,7 @@ function ProfileDrawer({
                 {captureLabel}
               </Badge>
               {capturedAt && (
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-slate-400" suppressHydrationWarning>
                   Captured {capturedAt.toLocaleString()}
                 </span>
               )}
@@ -1298,7 +1298,7 @@ export const CandidateCard = memo(function CandidateCard({
                   {captureLabel}
                 </button>
                 {candidate.profileText && (
-                  <span className="text-[11px] text-slate-400">
+                  <span className="text-[11px] text-slate-400" suppressHydrationWarning>
                     {candidate.profileText.length.toLocaleString()} chars saved
                   </span>
                 )}
@@ -1625,7 +1625,7 @@ export const CandidateCard = memo(function CandidateCard({
                         )}>
                           {statusLabel(ev.status)}
                         </span>
-                        <span className="text-xs text-slate-400 ml-1.5">
+                        <span className="text-xs text-slate-400 ml-1.5" suppressHydrationWarning>
                           {timeAgo(ev.changedAt)}
                         </span>
                       </div>

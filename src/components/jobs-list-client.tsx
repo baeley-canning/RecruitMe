@@ -137,7 +137,7 @@ export function JobsListClient({ jobs }: { jobs: JobStub[] }) {
                 {job.location && (
                   <span className="text-sm text-slate-400">{job.location}</span>
                 )}
-                <span className="text-xs text-slate-400 flex items-center gap-1">
+                <span className="text-xs text-slate-400 flex items-center gap-1" suppressHydrationWarning>
                   <Clock className="w-3 h-3" />
                   {timeAgo(job.createdAt)}
                 </span>

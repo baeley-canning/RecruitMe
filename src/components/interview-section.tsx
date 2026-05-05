@@ -179,7 +179,7 @@ export function InterviewSection({ candidateId, jobId, interviewNotes, onSaved }
           {field("Culture / team fit", "culture", true)}
 
           {parsed.updatedAt && (
-            <p className="text-[10px] text-slate-400">
+            <p className="text-[10px] text-slate-400" suppressHydrationWarning>
               Last saved {new Date(parsed.updatedAt).toLocaleString()}
             </p>
           )}

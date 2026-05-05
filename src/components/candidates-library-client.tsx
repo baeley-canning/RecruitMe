@@ -129,7 +129,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
         </div>
       </div>
 
-      <p className="text-xs text-slate-400 mt-2.5 text-right">
+      <p className="text-xs text-slate-400 mt-2.5 text-right" suppressHydrationWarning>
         {c.profileCapturedAt
           ? `Captured ${timeAgo(new Date(c.profileCapturedAt))}`
           : `Added ${timeAgo(new Date(c.createdAt))}`}

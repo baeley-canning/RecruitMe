@@ -219,7 +219,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                 {!searching && searchHistory.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {searchHistory.map((s) => (
-                      <p key={s.id} className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                      <p key={s.id} className="text-[11px] text-slate-400 flex items-center gap-1.5" suppressHydrationWarning>
                         {s.status === "complete"
                           ? <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" />
                           : <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" />}

@@ -120,7 +120,7 @@ export function ScreeningSection({ candidateId, jobId, screeningData, onSaved }:
           {field("Additional notes", "notes", true)}
 
           {parsed.screenedAt && (
-            <p className="text-[10px] text-slate-400">
+            <p className="text-[10px] text-slate-400" suppressHydrationWarning>
               Last saved {new Date(parsed.screenedAt).toLocaleString()}
             </p>
           )}
