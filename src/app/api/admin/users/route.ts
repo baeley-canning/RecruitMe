@@ -1,15 +1,19 @@
-import { auth } from "@/auth";
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
 type AnySession = { user?: { role?: string; id?: string; name?: string | null } } | null;
 
+function isOwner(session: AnySession) {
+  return session?.user?.role === "owner";
+}
 
 export async function GET() {
-  const session = await auth();
-  if (session?.user?.role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const session = await getServerSession(authOptions) as AnySession;
+  if (!isOwner(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "asc" },
@@ -36,8 +40,8 @@ const CreateUserSchema = z.object({
 });
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (session?.user?.role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const session = await getServerSession(authOptions) as AnySession;
+  if (!isOwner(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const result = CreateUserSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) {
@@ -66,8 +70,8 @@ export async function POST(req: Request) {
 const DeleteSchema = z.object({ id: z.string() });
 
 export async function DELETE(req: Request) {
-  const session = await auth();
-  if (session?.user?.role !== "owner") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const session = await getServerSession(authOptions) as AnySession;
+  if (!isOwner(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const result = DeleteSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) return NextResponse.json({ error: "Invalid request" }, { status: 422 });
