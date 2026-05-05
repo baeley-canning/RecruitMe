@@ -174,6 +174,7 @@ export default function JobDetailPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
   const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number } | null>(null);
+  const [rescoreProgress, setRescoreProgress] = useState<{ scored: number; total: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
@@ -662,15 +663,40 @@ export default function JobDetailPage({
   const handleRescoreAll = async () => {
     setRescoringAll(true);
     setRescoreResult(null);
+    setRescoreProgress(null);
     try {
       const res = await fetch(`/api/jobs/${id}/candidates/score-all`, { method: "POST" });
-      const data = await res.json() as { scored?: number; total?: number; error?: string };
-      if (res.ok) {
-        setRescoreResult({ scored: data.scored ?? 0, total: data.total ?? 0 });
-        await fetchJob();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        console.error("score-all failed:", data.error);
+        return;
       }
+      if (!res.body) return;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean };
+            setRescoreProgress({ scored: msg.scored, total: msg.total });
+            if (msg.done) setRescoreResult({ scored: msg.scored, total: msg.total });
+          } catch { /* ignore malformed lines */ }
+        }
+      }
+
+      await fetchJob();
     } finally {
       setRescoringAll(false);
+      setRescoreProgress(null);
     }
   };
 
@@ -1350,7 +1376,11 @@ ${toHtml(job.rawJd)}
                     title="Re-score all candidates with current job requirements"
                   >
                     {!rescoringAll && <Sparkles className="w-3.5 h-3.5" />}
-                    {rescoringAll ? "Scoring…" : "Re-score all"}
+                    {rescoringAll
+                      ? rescoreProgress
+                        ? `Scoring ${rescoreProgress.scored} of ${rescoreProgress.total}…`
+                        : "Scoring…"
+                      : "Re-score all"}
                   </Button>
                 )}
                 {filteredCandidates.length > 0 && (

@@ -142,7 +142,12 @@ export async function POST(
   if (type === "cv") {
     const profileText = await extractText(buffer, file.type, file.name);
     if (profileText && profileText.trim().length > 100) {
-      const text = profileText.trim();
+      const cvText = profileText.trim();
+      // Keep whichever source is richer — a captured LinkedIn profile at 6,000+ chars
+      // carries more signal than a one-page CV at 1,500 chars. Only replace if the CV
+      // is meaningfully longer than what's already stored.
+      const existingText = candidate.profileText?.trim() ?? "";
+      const text = cvText.length > existingText.length + 500 ? cvText : existingText || cvText;
       const updates: Record<string, unknown> = {
         profileText: text,
         profileTextHash: null,

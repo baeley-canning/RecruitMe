@@ -399,6 +399,9 @@ export async function predictAcceptance(
   parsedRole: ParsedRole,
   salary?: { min: number; max: number } | null
 ): Promise<AcceptancePrediction> {
+  if (!profileText || profileText.trim().length < 100) {
+    throw new Error("Profile text too short to predict acceptance");
+  }
   const profileSlice = buildProfileExcerpt(profileText, ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS);
   const salaryLine = salary?.min || salary?.max
     ? `Salary offered: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD/year`
@@ -579,6 +582,9 @@ export async function scoreCandidateStructured(
   parsedRole: ParsedRole,
   salary?: { min: number; max: number } | null
 ): Promise<ScoreBreakdown> {
+  if (!profileText || profileText.trim().length < 100) {
+    throw new Error("Profile text too short to score");
+  }
   const clamp = (v: unknown, fallback = 50) =>
     typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : fallback;
 
@@ -648,7 +654,7 @@ Return EXACTLY this JSON structure:
     "nice_to_have_fit": {"score":0,"evidence":"one sentence about how many nice-to-haves are present"}
   },
   "must_have_coverage": [
-    {"requirement":"exact text from must-haves list","status":"confirmed|equivalent|likely|missing|negative|unknown","evidence":"direct quote or paraphrase from profile, or Not mentioned"}
+    {"requirement":"exact text from must-haves list","status":"confirmed|equivalent|likely|likely_historical|missing|negative|unknown","evidence":"direct quote or paraphrase from profile, or Not mentioned"}
   ],
   "nice_to_have_coverage": [
     {"requirement":"exact text from nice-to-haves list","status":"confirmed|likely|absent","evidence":"direct quote or paraphrase, or Not mentioned"}
@@ -671,13 +677,14 @@ must_have_coverage rules:
 - "confirmed" = clearly and explicitly stated in the profile
 - "equivalent" = requirement uses an equivalency clause ("or equivalent experience", "or comparable experience", "preferred but not essential") AND the candidate's experience is sufficient to satisfy it — use the thresholds in the equivalency rules below
 - "likely" = strongly implied by adjacent evidence (e.g. a company or framework implies a skill); also use for partial equivalency where experience is present but not clearly sufficient
+- "likely_historical" = the skill clearly appears in PAST work history (typically a previous role, 3+ years ago) BUT the candidate's current and recent roles show they have moved to a clearly different primary technology or domain. The skill is real and verifiable; the concern is recency and active use. Use this when a C++ developer is now exclusively doing C#, a Java engineer has spent 5 years in Python, etc. Do NOT use for general seniority or domain drift — only when the specific technology has been replaced by something else.
 - "missing" = not mentioned AND no equivalency route applies — could have it but unverifiable
 - "negative" = profile actively contradicts this requirement (e.g. no work rights, wrong country, degree stated in a completely unrelated field)
 - "unknown" = insufficient data to make any assessment
 - Include EXACTLY one entry per must-have. Do not skip or merge any.${knockouts.length ? `
 - If any knockout criterion is failed, status must be "negative".` : ""}
 - Grouped requirement rule: if a must-have starts with "At least half of:" or similar partial-coverage phrasing, assess the candidate holistically against the whole list. "confirmed" = meets or exceeds the stated threshold; "likely" = one item short of the threshold or meets it via adjacent skills; "missing" = clearly below the threshold; "unknown" = cannot assess from available data.
-- Historical experience rule: scan the FULL work history, not just the current or recent role. A skill that appears in an older role (even 5–15 years ago) counts as "likely" for that skill — the candidate has demonstrably used it, even if rusty. Only mark "missing" if the skill appears nowhere in the entire profile. If the role explicitly requires RECENT experience (e.g. "currently working with X"), then recency matters — otherwise, historical evidence is valid. Never say "none of which are evident" if any skill appears anywhere in the profile.
+- Historical experience rule: scan the FULL work history, not just the current or recent role. A skill that appears in an older role counts as at minimum "likely" — the candidate has demonstrably used it. Only mark "missing" if the skill appears nowhere in the entire profile. However: if a skill appears only in past roles AND the candidate's current/recent work is clearly a different primary technology (e.g. was a C++ developer, is now exclusively C#/.NET; was a Java engineer, now only Python), use "likely_historical" rather than "likely" to signal the skill is real but not current. Use plain "likely" when the historical skill is still plausibly in use or when the candidate's overall stack suggests continuity.
 - Career-stage awareness: if a candidate has moved from a hands-on technical role to a management/leadership role, note this as a concern in reasons_against (e.g. "Has moved away from hands-on X development") rather than falsely stating the skill is absent. The skill history is real; the concern is recency and focus, not absence.
 - Security clearance inference: do not invent an active clearance. If clearance is explicit, "confirmed" requires direct profile evidence of clearance or a role/employer where clearance is normally mandatory; "likely" can be used for recent NZ defence, intelligence, police, corrections, customs, border, justice, or vetted government supplier work; otherwise use "unknown" or "missing". If clearance is only inferred from the role context, mention this under nice-to-have/industry fit and missing_evidence rather than treating it as an automatic fail.
 
@@ -828,6 +835,9 @@ Do NOT let seniority in an unrelated domain satisfy the clause. A senior account
 export async function extractCandidateInfo(
   profileText: string
 ): Promise<{ name: string; headline: string; location: string }> {
+  if (!profileText || profileText.trim().length < 50) {
+    return { name: "", headline: "", location: "" };
+  }
   try {
     const text = await chat(`Extract the candidate's name, job title/headline, and location from this LinkedIn profile text. Return actual values found in the text only.
 

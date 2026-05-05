@@ -75,6 +75,10 @@ const CAPTURE_NOISE_LINE_PATTERNS = [
   /^.* has no recent posts$/i,
   /^recent posts .* displayed here\.$/i,
   /^from .* industry$/i,
+  /^.{3,60} is a mutual connection$/i,
+  /^\d+ mutual connections?$/i,
+  /^you(?:'re| are) connected$/i,
+  /^\d+ connections? in common$/i,
 ];
 
 function normalizeCaptureLine(value: string) {
@@ -127,6 +131,8 @@ function looksLikeCapturedName(value: string): boolean {
 
 function looksLikeCapturedLocation(value: string): boolean {
   if (!value || value.length < 3) return false;
+  // Real locations are short — "Wellington, New Zealand" is 3 words, never 7+
+  if (value.trim().split(/\s+/).length > 6) return false;
   if (!isPlausibleLocation(value)) return false;
   if (isNzLocation(value) || isExplicitlyOverseasLocation(value)) return true;
   return /^[A-Za-z .'-]+,\s*[A-Za-z .'-]+(?:,\s*[A-Za-z .'-]+)?$/.test(value);

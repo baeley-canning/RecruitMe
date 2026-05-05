@@ -504,12 +504,13 @@ function FetchPriorityBadge({
 // ─── Coverage chips ─────────────────────────────────────────────────────────────
 
 const MH_CONFIG: Record<MustHaveCoverageStatus, { bg: string; text: string; icon: string }> = {
-  confirmed:  { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", icon: "✓" },
-  equivalent: { bg: "bg-teal-50 border-teal-200",       text: "text-teal-700",    icon: "≈" },
-  likely:     { bg: "bg-blue-50 border-blue-200",        text: "text-blue-700",    icon: "~" },
-  missing:    { bg: "bg-slate-50 border-slate-200",      text: "text-slate-500",   icon: "?" },
-  negative:   { bg: "bg-red-50 border-red-200",          text: "text-red-700",     icon: "✗" },
-  unknown:    { bg: "bg-slate-50 border-slate-200",      text: "text-slate-400",   icon: "?" },
+  confirmed:         { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", icon: "✓" },
+  equivalent:        { bg: "bg-teal-50 border-teal-200",       text: "text-teal-700",    icon: "≈" },
+  likely:            { bg: "bg-blue-50 border-blue-200",       text: "text-blue-700",    icon: "~" },
+  likely_historical: { bg: "bg-amber-50 border-amber-200",    text: "text-amber-700",   icon: "⟳" },
+  missing:           { bg: "bg-slate-50 border-slate-200",     text: "text-slate-500",   icon: "?" },
+  negative:          { bg: "bg-red-50 border-red-200",         text: "text-red-700",     icon: "✗" },
+  unknown:           { bg: "bg-slate-50 border-slate-200",     text: "text-slate-400",   icon: "?" },
 };
 
 const NTH_CONFIG: Record<NiceToHaveCoverageStatus, { bg: string; text: string; icon: string }> = {
@@ -537,7 +538,7 @@ function chip(requirement: string, evidence: string, cfg: { bg: string; text: st
 
 function MustHaveCoverageChips({ coverage }: { coverage: ScoreBreakdown["must_have_coverage"] }) {
   if (coverage.length === 0) return null;
-  const order: MustHaveCoverageStatus[] = ["confirmed", "equivalent", "likely", "unknown", "missing", "negative"];
+  const order: MustHaveCoverageStatus[] = ["confirmed", "equivalent", "likely", "likely_historical", "unknown", "missing", "negative"];
   const sorted = [...coverage].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
   return (
     <div>

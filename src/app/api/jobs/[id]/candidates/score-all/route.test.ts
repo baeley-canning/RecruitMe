@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildScoreBreakdown, CATEGORY_WEIGHTS_V2 } from "@/lib/scoring";
-import { buildScoreCacheKey } from "@/lib/utils";
 
 const dbMocks = vi.hoisted(() => ({
   prisma: {
@@ -42,6 +41,16 @@ vi.mock("@/lib/session", () => sessionMocks);
 
 import { POST } from "./route";
 
+// Reads all newline-delimited JSON lines from a streaming Response and returns the last one.
+async function readStreamResult(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  const lines = text.split("\n").filter(Boolean);
+  return JSON.parse(lines[lines.length - 1]);
+}
+
+const PROFILE_TEXT = "React engineer based in Wellington with five years of experience building " +
+  "production web applications. Strong skills in TypeScript and Node.js. Previously at Xero.";
+
 function makeJob(id: string, location = "Wellington") {
   return {
     id,
@@ -70,7 +79,7 @@ function makeBreakdown() {
       location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Location fits." },
       seniority_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Seniority fits." },
       title_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Title fits." },
-      domain_fit: { score: 62, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Some domain overlap, aligned wording." },
+      domain_fit: { score: 62, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Some domain overlap." },
       nice_to_have_fit: { score: 50, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Neutral." },
     },
     must_have_coverage: [{ requirement: "React", status: "confirmed", evidence: "Listed." }],
@@ -79,11 +88,11 @@ function makeBreakdown() {
     reasons_against: [],
     missing_evidence: [],
     recruiter_summary: "Good candidate.",
-    profileCharCount: 1200,
+    profileCharCount: PROFILE_TEXT.length,
   });
 }
 
-describe("score-all route cache freshness", () => {
+describe("score-all route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
@@ -91,62 +100,67 @@ describe("score-all route cache freshness", () => {
     dbMocks.prisma.candidate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => data);
   });
 
-  it("skips candidates only when the full score context is unchanged", async () => {
-    const job = makeJob("job-cache-skip");
-    const parsedRole = JSON.parse(job.parsedRole);
-    const profileText = "React engineer based in Wellington.";
-    const scoreCacheKey = buildScoreCacheKey({
-      profileText,
-      parsedRole,
-      salary: { min: 90000, max: 120000 },
-      jobLocation: job.location,
-      isRemote: false,
-    });
-
+  it("always rescores every candidate regardless of cache key", async () => {
+    const job = makeJob("job-always-rescore");
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
-      { id: "cand-1", profileText, profileTextHash: scoreCacheKey, matchScore: 82, location: "Wellington" },
+      { id: "cand-1", profileText: PROFILE_TEXT, profileTextHash: "old-hash", matchScore: 82, location: "Wellington" },
     ]);
 
-    const res = await POST(new Request("http://localhost/api/jobs/job-cache-skip/candidates/score-all", { method: "POST" }), {
-      params: Promise.resolve({ id: "job-cache-skip" }),
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-always-rescore" }),
     });
-    const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toMatchObject({ scored: 0, skipped: 1, total: 1 });
-    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
-    expect(dbMocks.prisma.candidate.update).not.toHaveBeenCalled();
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 1, total: 1, done: true });
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledTimes(1);
   });
 
-  it("re-scores when job context changes even if profile text is unchanged", async () => {
-    const job = makeJob("job-cache-refresh", "Wellington");
-    const currentRole = JSON.parse(job.parsedRole);
-    const profileText = "React engineer based in Wellington.";
-    const staleCacheKey = buildScoreCacheKey({
-      profileText,
-      parsedRole: currentRole,
-      salary: { min: 90000, max: 120000 },
-      jobLocation: "Auckland",
-      isRemote: false,
-    });
-
+  it("streams progress updates — scored count increments before final done message", async () => {
+    const job = makeJob("job-stream-progress");
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
-      { id: "cand-2", profileText, profileTextHash: staleCacheKey, matchScore: 82, location: "Wellington" },
+      { id: "cand-a", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+      { id: "cand-b", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
     ]);
 
-    const res = await POST(new Request("http://localhost/api/jobs/job-cache-refresh/candidates/score-all", { method: "POST" }), {
-      params: Promise.resolve({ id: "job-cache-refresh" }),
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-stream-progress" }),
     });
 
-    expect(res.status).toBe(200);
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledTimes(1);
-    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "cand-2" },
-      data: expect.objectContaining({
-        profileTextHash: expect.not.stringMatching(staleCacheKey),
-      }),
-    }));
+    const text = await res.text();
+    const messages = text.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+
+    // First message announces total before any scoring starts.
+    expect(messages[0]).toMatchObject({ scored: 0, total: 2 });
+    // Last message has done flag.
+    expect(messages[messages.length - 1]).toMatchObject({ done: true, total: 2 });
+  });
+
+  it("skips candidates with profile text under 100 chars", async () => {
+    const job = makeJob("job-short-profile");
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-short", profileText: "Too short.", profileTextHash: null, matchScore: null, location: "Wellington" },
+    ]);
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-short-profile" }),
+    });
+
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 0, total: 1, done: true });
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when job has no parsedRole", async () => {
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: { ...makeJob("j"), parsedRole: null }, error: null });
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "j" }),
+    });
+
+    expect(res.status).toBe(400);
   });
 });

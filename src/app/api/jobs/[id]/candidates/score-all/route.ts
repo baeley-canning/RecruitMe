@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
@@ -6,6 +5,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey } from "@/lib/utils";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { NextResponse } from "next/server";
 
 const CONCURRENCY = 3;
 
@@ -36,7 +36,7 @@ export async function POST(
   });
 
   if (candidates.length === 0) {
-    return NextResponse.json({ scored: 0, total: 0, message: "No candidates with profile text to score." });
+    return NextResponse.json({ scored: 0, total: 0 });
   }
 
   const parsedRole = JSON.parse(job.parsedRole) as ParsedRole;
@@ -44,56 +44,77 @@ export async function POST(
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
 
+  const total = candidates.length;
   let scored = 0;
+  const encoder = new TextEncoder();
 
-  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
-    const chunk = candidates.slice(i, i + CONCURRENCY);
-    await Promise.all(
-      chunk.map(async (candidate) => {
-        if (!candidate.profileText) return;
+  // Stream progress as newline-delimited JSON so the client can show a live counter.
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: object) =>
+        controller.enqueue(encoder.encode(JSON.stringify(data) + "\n"));
 
-        const scoreCacheKey = buildScoreCacheKey({
-          profileText: candidate.profileText,
-          parsedRole,
-          salary,
-          jobLocation: job.location,
-          isRemote: job.isRemote,
-        });
+      // Send total upfront so the client can show "0 of N" immediately.
+      send({ scored: 0, total });
 
-        try {
-          const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-            scoreCandidateStructured(candidate.profileText, parsedRole, salary),
-            predictAcceptance(candidate.profileText, parsedRole, salary),
-          ]);
-          if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
-          const breakdown = applyLocationFitOverride(
-            rawBreakdown.value,
-            candidate.location,
-            parsedRole.location,
-            parsedRole.location_rules,
-            job.isRemote,
-          );
-          const acceptance = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
-          await prisma.candidate.update({
-            where: { id: candidate.id },
-            data: {
-              ...deriveUpdateData(breakdown),
-              profileTextHash: scoreCacheKey,
-              ...(acceptance && {
-                acceptanceScore: acceptance.score,
-                acceptanceReason: JSON.stringify(acceptance),
-              }),
-            },
-          });
-          scored++;
-        } catch (err) {
-          console.error(`Score failed for candidate ${candidate.id}:`, err);
-        }
-      })
-    );
-  }
+      for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+        const chunk = candidates.slice(i, i + CONCURRENCY);
+        await Promise.all(
+          chunk.map(async (candidate) => {
+            if (!candidate.profileText || candidate.profileText.trim().length < 100) return;
 
-  console.log(`[score-all] scored=${scored} of ${candidates.length}`);
-  void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored });
-  return NextResponse.json({ scored, total: candidates.length });
+            const scoreCacheKey = buildScoreCacheKey({
+              profileText: candidate.profileText,
+              parsedRole,
+              salary,
+              jobLocation: job.location,
+              isRemote: job.isRemote,
+            });
+
+            try {
+              const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
+                scoreCandidateStructured(candidate.profileText, parsedRole, salary),
+                predictAcceptance(candidate.profileText, parsedRole, salary),
+              ]);
+              if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
+              const breakdown = applyLocationFitOverride(
+                rawBreakdown.value,
+                candidate.location,
+                parsedRole.location,
+                parsedRole.location_rules,
+                job.isRemote,
+              );
+              const acceptance = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
+              await prisma.candidate.update({
+                where: { id: candidate.id },
+                data: {
+                  ...deriveUpdateData(breakdown),
+                  profileTextHash: scoreCacheKey,
+                  ...(acceptance && {
+                    acceptanceScore: acceptance.score,
+                    acceptanceReason: JSON.stringify(acceptance),
+                  }),
+                },
+              });
+              scored++;
+              send({ scored, total });
+            } catch (err) {
+              console.error(`Score failed for candidate ${candidate.id}:`, err);
+            }
+          })
+        );
+      }
+
+      // Final message signals completion to the client.
+      send({ scored, total, done: true });
+      controller.close();
+
+      console.log(`[score-all] scored=${scored} of ${total}`);
+      void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored });
+    },
+  });
+
+  return new Response(stream, {
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
 }

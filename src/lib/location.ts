@@ -50,6 +50,7 @@ const NON_LOCATION_TERMS = [
   "manager",
   "director",
   "engineer",
+  "engineering",
   "developer",
   "consultant",
   "analyst",
@@ -60,6 +61,17 @@ const NON_LOCATION_TERMS = [
   "junior",
   "principal",
   "multiple",
+  "integration",
+  "software",
+  "solutions",
+  "technology",
+  "services",
+  "systems",
+  "university",
+  "student",
+  "intern",
+  "architect",
+  "administrator",
   "at",
   "for",
   "with",
@@ -113,16 +125,18 @@ export function isPlausibleLocation(value: string | null | undefined): boolean {
   const raw = value?.trim() ?? "";
   if (!raw || raw.length > 120) return false;
 
-  if (isNzLocation(raw) || isExplicitlyOverseasLocation(raw)) return true;
-
   const normalized = normalizeLocationText(raw);
   const words = normalized.split(/\s+/).filter(Boolean);
   if (words.length === 0 || words.length > 8) return false;
 
+  // Title-language check runs first — a job title that happens to contain a city
+  // name (e.g. "Senior Developer at Wellington University") is not a location.
   const hasTitleLanguage = NON_LOCATION_TERMS.some((term) =>
     words.includes(normalizeLocationText(term))
   );
   if (hasTitleLanguage) return false;
+
+  if (isNzLocation(raw) || isExplicitlyOverseasLocation(raw)) return true;
 
   if (raw.includes(",")) {
     const segments = raw.split(",").map((part) => normalizeLocationText(part)).filter(Boolean);

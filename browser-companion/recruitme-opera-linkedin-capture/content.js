@@ -43,6 +43,10 @@ const NOISE_LINE_PATTERNS = [
   /^.* has no recent posts$/i,
   /^recent posts .* displayed here\.$/i,
   /^from .* industry$/i,
+  /^.{3,60} is a mutual connection$/i,
+  /^\d+ mutual connections?$/i,
+  /^you(?:'re| are) connected$/i,
+  /^\d+ connections? in common$/i,
 ];
 
 const INTRO_NAME_SELECTORS = [

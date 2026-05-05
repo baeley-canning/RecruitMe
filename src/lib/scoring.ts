@@ -19,7 +19,7 @@
 
 // ─── Status types ──────────────────────────────────────────────────────────────
 
-export type MustHaveCoverageStatus = "confirmed" | "equivalent" | "likely" | "missing" | "negative" | "unknown";
+export type MustHaveCoverageStatus = "confirmed" | "equivalent" | "likely" | "likely_historical" | "missing" | "negative" | "unknown";
 export type NiceToHaveCoverageStatus = "confirmed" | "likely" | "absent";
 export type DataQuality = "full_profile" | "snippet" | "minimal";
 export type ConfidenceLevel = "high" | "medium" | "low";
@@ -101,28 +101,31 @@ export const MUST_HAVE_WEIGHT_V2 = 0.36;
 
 const MUST_HAVE_POINTS_BY_QUALITY: Record<DataQuality, Record<MustHaveCoverageStatus, number>> = {
   full_profile: {
-    confirmed:  100,
-    equivalent: 100, // satisfies the requirement via experience — treated identically to confirmed
-    likely:     65,
-    missing:    0,
-    negative:   0,
-    unknown:    0,
+    confirmed:         100,
+    equivalent:        100, // satisfies via experience — treated identically to confirmed
+    likely:             65,
+    likely_historical:  35, // skill is real but not current — candidate has moved to a different stack
+    missing:             0,
+    negative:            0,
+    unknown:             0,
   },
   snippet: {
-    confirmed:  100,
-    equivalent: 85,  // high credit but less certainty than a full-profile equivalent assessment
-    likely:     55,
-    missing:    5,
-    negative:   0,
-    unknown:    30,
+    confirmed:         100,
+    equivalent:         85,
+    likely:             55,
+    likely_historical:  25,
+    missing:             5,
+    negative:            0,
+    unknown:            30,
   },
   minimal: {
-    confirmed:  100,
-    equivalent: 70,
-    likely:     45,
-    missing:    0,
-    negative:   0,
-    unknown:    10,
+    confirmed:         100,
+    equivalent:         70,
+    likely:             45,
+    likely_historical:  20,
+    missing:             0,
+    negative:            0,
+    unknown:            10,
   },
 };
 
