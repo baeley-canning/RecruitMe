@@ -50,7 +50,7 @@ describe("computeFetchPriority", () => {
 
     expect(priority.score).toBeGreaterThanOrEqual(80);
     expect(priority.reason.label).toBe("Strong lead");
-    expect(priority.reason.matchedTerms).toEqual(expect.arrayContaining(["C++", "Sybase", "Linux"]));
+    expect(priority.reason.matchedTerms).toEqual(expect.arrayContaining(["c++", "sybase", "linux"]));
   });
 
   it("penalises junior/no-evidence hits for senior specialist roles", () => {
@@ -90,5 +90,35 @@ describe("computeFetchPriority", () => {
 
     expect(priority.score).toBeGreaterThanOrEqual(80);
     expect(priority.reason.signals).toContain("Existing captured profile available");
+  });
+
+  it("does not treat soft behavioural requirements as fetch-priority evidence", () => {
+    const priority = computeFetchPriority({
+      parsedRole: {
+        ...role,
+        must_haves: [
+          "Excellent stakeholder management and communication skills",
+          "Proven track record of delivering large-scale solutions",
+          "Strong analytical and problem-solving skills",
+        ],
+        skills_required: [],
+        knockout_criteria: [],
+      },
+      candidateLocation: "Wellington, New Zealand",
+      result: {
+        name: "Morgan Lee",
+        headline: "Senior Software Developer",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/morgan-lee/",
+        snippet: "Senior developer with stakeholder management, solutions delivery and analytical problem solving.",
+        matchedQuery: "software developer Wellington",
+        source: "serpapi",
+      },
+    });
+
+    expect(priority.reason.signals.join(" ")).not.toMatch(/Must-have evidence/i);
+    expect(priority.reason.matchedTerms).not.toEqual(
+      expect.arrayContaining(["stakeholder", "management", "solutions", "analytical"])
+    );
   });
 });

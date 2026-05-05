@@ -29,6 +29,12 @@ import { getServerSetting } from "@/lib/settings";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
+import {
+  extractDistinctiveSignalsFromRequirement,
+  extractSignalsFromRequirement,
+  normalizeSignalText,
+  signalMatchesText,
+} from "@/lib/requirement-signals";
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
@@ -80,182 +86,20 @@ function dedupeQueries(queries: string[]): string[] {
   return deduped;
 }
 
-const REQUIREMENT_STOP_WORDS = new Set([
-  // Generic English
-  "ability", "across", "and", "any", "based", "build", "building", "candidate",
-  "comfortable", "commitment", "development", "driven", "experience", "good",
-  "have", "including", "knowledge", "mindset", "must", "new", "principles",
-  "professional", "proficiency", "required", "role", "solid", "strong",
-  "understanding", "using", "with", "work", "working", "years",
-  // Generic qualifiers / parenthetical notes
-  "critical", "preferred", "essential", "desirable", "mandatory", "optional",
-  "excellent", "proven", "demonstrated", "relevant", "ideally", "exposure",
-  "familiarity", "passionate", "highly", "highly", "focused", "ideally",
-  // Overly broad tech/business nouns — almost every profile mentions these
-  "enterprise", "platforms", "platform", "solutions", "solution", "systems",
-  "technology", "technologies", "stacks", "modern", "similar", "grade",
-  "server", "ase", "suite", "environment", "environments", "framework",
-  "frameworks", "tools", "tool", "applications", "application", "services",
-  "service", "infrastructure", "processes", "process", "pipeline", "pipelines",
-  "lifecycle", "stack", "codebase", "architecture",
-  // Generic soft-skill / behavioral phrases — these appear in almost every JD
-  "designing", "delivering", "supporting", "optimising", "optimizing",
-  "maintaining", "ensuring", "implementing", "managing", "building",
-  "developing", "leading", "driving", "owning", "collaborating",
-  "communicating", "stakeholder", "stakeholders", "communication", "skills",
-  "skill", "team", "player", "proactive", "collaborative", "self",
-  "motivated", "attention", "detail", "problem", "solving", "analytical",
-  "initiative", "ownership", "delivery", "track", "record",
-  // Scale/complexity qualifiers — not discriminating
-  "scale", "scalable", "large", "complex", "complex", "mission", "cross",
-  "functional", "end", "high", "performance", "quality", "best", "practices",
-  "practice", "world", "class", "real", "hands", "graduate",
-  // Common English words the tokeniser picks up that add no signal
-  "for", "its", "their", "that", "this", "are", "the",
-  // Generic single-concept words captured more precisely by tech aliases
-  "management", "power", "bus", "querying", "analysis",
-  "test", "testing", "automation", "automated", "unit",
-  "data", "cloud", "digital", "software", "technical",
-  // Temporal / quantitative noise
-  "years", "months", "least", "minimum", "plus",
-]);
-
-const TECH_ALIASES: Array<[RegExp, string[]]> = [
-  // ── Databases ──────────────────────────────────────────────────────────────
-  [/\bsql\b|\brelational database\b|\brdbms\b|\bt-sql\b|\btsql\b|\bpl\/sql\b|\bplsql\b/i, ["sql", "database", "relational database", "rdbms"]],
-  [/\bmysql\b/i, ["mysql", "sql", "database"]],
-  [/\bpostgresql\b|\bpostgres\b/i, ["postgresql", "postgres", "sql", "database"]],
-  [/\bsybase\b/i, ["sybase", "sql"]],
-  [/\boracle\b/i, ["oracle", "sql", "database"]],
-  [/\bsql server\b|\bmssql\b/i, ["sql server", "mssql", "sql"]],
-  [/\bmongodb\b|\bmongo\b/i, ["mongodb", "mongo", "nosql"]],
-  [/\bredis\b/i, ["redis"]],
-  [/\belasticsearch\b|\belastic\b|\belk\b/i, ["elasticsearch", "elk"]],
-  [/\bdb2\b/i, ["db2", "sql"]],
-  [/\bsnowflake\b/i, ["snowflake", "data warehouse"]],
-  [/\bdynamodb\b/i, ["dynamodb", "aws"]],
-  // ── Languages ──────────────────────────────────────────────────────────────
-  [/\bc\+\+/i, ["c++", "cpp"]],
-  [/\.net\b|asp\.net/i, [".net", "asp.net", "dotnet"]],
-  [/\bc#/i, ["c#", ".net"]],
-  [/\bjava\b/i, ["java"]],
-  [/\bpython\b/i, ["python"]],
-  [/\bruby\b|\brails\b|\bror\b/i, ["ruby", "rails", "ruby on rails"]],
-  [/\bphp\b/i, ["php"]],
-  [/\btypescript\b/i, ["typescript"]],
-  [/\bjavascript\b/i, ["javascript", "js"]],
-  [/\bswift\b/i, ["swift", "ios"]],
-  [/\bkotlin\b/i, ["kotlin", "android"]],
-  [/\bscala\b/i, ["scala"]],
-  [/\bgolang\b|\bgo\b/i, ["golang", "go"]],
-  [/\brust\b/i, ["rust"]],
-  [/\bcobol\b/i, ["cobol"]],
-  [/\br\b.*\bstatistic|\bstatistic.*\br\b|\bdata science\b/i, ["R", "statistics", "data science"]],
-  // ── Web frameworks ─────────────────────────────────────────────────────────
-  [/\breact\b/i, ["react", "react.js"]],
-  [/\bangular\b/i, ["angular"]],
-  [/\bvue\b/i, ["vue", "vue.js"]],
-  [/\bnext\.?js\b/i, ["next.js", "nextjs", "react"]],
-  [/\bnode\.?js\b/i, ["node.js", "nodejs", "node"]],
-  [/\bdjango\b/i, ["django", "python"]],
-  [/\bflask\b/i, ["flask", "python"]],
-  [/\bspring\b/i, ["spring", "spring boot", "java"]],
-  [/\blaravel\b/i, ["laravel", "php"]],
-  [/front.?end/i, ["front-end", "frontend", "html", "css", "javascript", "react"]],
-  [/back.?end/i, ["back-end", "backend", "php", "node", "python", "rails", ".net", "java"]],
-  [/full.?stack/i, ["full-stack", "full stack", "frontend", "backend"]],
-  // ── Infrastructure / DevOps ────────────────────────────────────────────────
-  [/\blinux\b|\bunix\b/i, ["linux", "unix"]],
-  [/\bbash\b|\bshell script/i, ["bash", "shell", "scripting"]],
-  [/\bperl\b/i, ["perl"]],
-  [/\bkubernetes\b|\bk8s\b|\baks\b|\beks\b/i, ["kubernetes", "k8s"]],
-  [/\bdocker\b|\bcontaineris/i, ["docker", "container"]],
-  [/\bazure\b/i, ["azure", "cloud"]],
-  [/\baws\b|amazon web services/i, ["aws", "amazon", "cloud"]],
-  [/\bgcp\b|google cloud/i, ["gcp", "google cloud"]],
-  [/\bgit\b|\bgithub\b|\bgitlab\b/i, ["git", "github", "gitlab"]],
-  [/\bterraform\b/i, ["terraform", "infrastructure as code"]],
-  [/\bansible\b/i, ["ansible"]],
-  [/\bjenkins\b/i, ["jenkins", "ci/cd"]],
-  [/\bci\/cd\b|continuous integration|continuous deployment/i, ["ci/cd", "devops"]],
-  [/\bmicroservices?\b/i, ["microservices"]],
-  [/\brest\b|\brestful\b|\bapi\b/i, ["rest", "api", "restful"]],
-  [/\bgraphql\b/i, ["graphql", "api"]],
-  // ── Cloud / data / analytics ───────────────────────────────────────────────
-  [/\bpower bi\b/i, ["power bi", "bi", "data visualisation"]],
-  [/\btableau\b/i, ["tableau", "bi", "data visualisation"]],
-  [/\blooker\b/i, ["looker", "bi"]],
-  [/\bspark\b/i, ["spark", "big data"]],
-  [/\bairflow\b/i, ["airflow", "data pipeline"]],
-  [/\bdbt\b/i, ["dbt", "data transformation"]],
-  // ── Business / ERP / CRM ──────────────────────────────────────────────────
-  [/\bsalesforce\b/i, ["salesforce", "crm"]],
-  [/\bservicenow\b/i, ["servicenow", "itsm"]],
-  [/\bsap\b/i, ["sap", "erp"]],
-  [/\bdynamics\b/i, ["dynamics", "microsoft dynamics", "crm"]],
-  [/\bxero\b/i, ["xero", "accounting"]],
-  [/\bmyob\b/i, ["myob", "accounting"]],
-  [/\bjira\b/i, ["jira", "agile"]],
-  [/\bconfluence\b/i, ["confluence"]],
-  // ── Design tools ──────────────────────────────────────────────────────────
-  [/\bfigma\b/i, ["figma", "design"]],
-  [/\bsketch\b/i, ["sketch", "design"]],
-  [/\badobe\b/i, ["adobe", "creative"]],
-  [/\bux\b|user experience/i, ["ux", "user experience", "ui/ux"]],
-  [/web design|design principle|digital design/i, ["web design", "designer", "ui/ux"]],
-  // ── Testing / QA ──────────────────────────────────────────────────────────
-  [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["performance testing", "jmeter", "loadrunner"]],
-  [/\bselenium\b/i, ["selenium", "test automation"]],
-  [/\bcypress\b/i, ["cypress", "test automation"]],
-  [/\bplaywright\b/i, ["playwright", "test automation"]],
-  // ── Methodologies ─────────────────────────────────────────────────────────
-  [/\bagile\b|\bscrum\b|\bkanban\b/i, ["agile", "scrum"]],
-  [/\bitil\b|\bitsm\b|service management/i, ["itil", "itsm", "service management"]],
-  [/\bdevops\b/i, ["devops"]],
-  // ── Security / compliance ──────────────────────────────────────────────────
-  [/security clearance|secret vetting|confidential vetting/i, ["security clearance"]],
-  [/\biso 27001\b|\bsoc 2\b|\bpci\b/i, ["iso 27001", "security compliance"]],
-  // ── CMS / ecommerce ───────────────────────────────────────────────────────
-  [/\bwordpress\b|content management system|\bcms\b/i, ["wordpress", "cms"]],
-  [/\bshopify\b/i, ["shopify", "ecommerce"]],
-  [/\bsquarespace\b/i, ["squarespace"]],
-];
-
 function normaliseText(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").replace(/\s+/g, " ").trim();
+  return normalizeSignalText(value);
 }
 
 function requirementSignals(requirement: string): string[] {
-  const signals = new Set<string>();
-  for (const [pattern, aliases] of TECH_ALIASES) {
-    if (pattern.test(requirement)) aliases.forEach((alias) => signals.add(alias));
-  }
-
-  const tokens = requirement
-    .toLowerCase()
-    .match(/[a-z][a-z0-9+#.]{2,}/g) ?? [];
-  for (const token of tokens) {
-    if (!REQUIREMENT_STOP_WORDS.has(token)) signals.add(token);
-  }
-
-  return [...signals].slice(0, 8);
+  return extractSignalsFromRequirement(requirement);
 }
 
 function hasSignal(text: string, signal: string): boolean {
-  const s = normaliseText(signal);
-  if (!s) return false;
-  // Short tokens (≤4 chars) use whole-word matching to prevent substring false positives,
-  // e.g. "sql" must not match "nosql", "css" must not match "access".
-  if (s.length <= 4) {
-    return new RegExp(`(?:^|\\s)${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`).test(text);
-  }
-  return text.includes(s);
+  return signalMatchesText(text, signal);
 }
 
 function textHasTerm(value: string, term: string): boolean {
-  if (!value) return false;
-  if (term === "C++") return /\bc\+\+/i.test(value);
-  return value.toLowerCase().includes(term.toLowerCase());
+  return signalMatchesText(value, term);
 }
 
 function candidateSearchText(result: SearchResult, profileText?: string | null, candidateLocation?: string | null) {
@@ -391,28 +235,6 @@ const SERPAPI_DELAY_MS = 600;
 const BING_DELAY_MS = 150;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
-const DISTINCTIVE_REQUIREMENT_ALIASES: Array<[RegExp, string[]]> = [
-  [/\bpsybase\b/i, ["Sybase"]],
-  [/\bsybase\b/i, ["Sybase"]],
-  [/\bc\+\+/i, ["C++"]],
-  [/\.net|asp\.net|c#/i, [".NET", "C#"]],
-  [/\bangular\b/i, ["Angular"]],
-  [/\bsql\b|\brelational database\b|\brdbms\b/i, ["SQL", "database"]],
-  [/\bmysql\b/i, ["MySQL"]],
-  [/\bpostgresql\b|\bpostgres\b/i, ["PostgreSQL"]],
-  [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["performance testing", "JMeter", "LoadRunner"]],
-  [/\bitil\b|\bitsm\b|service management|incident management|change management|problem management/i, ["ITIL", "ITSM"]],
-  [/security clearance|secret vetting|confidential vetting|\bsv\b|\bcv\b|nzsis|defence|defense/i, ["security clearance", "Secret Vetting"]],
-  [/\bbanking\b|payments?|lending|core banking|financial services|fintech/i, ["banking", "payments", "financial services"]],
-  [/\blinux\b/i, ["Linux"]],
-  [/\bazure\b/i, ["Azure"]],
-  [/\bmicroservices?\b|\bminiservices?\b/i, ["microservices"]],
-  [/\bdb2\b/i, ["DB2"]],
-  [/\boracle\b/i, ["Oracle"]],
-  [/\bsql server\b/i, ["SQL Server"]],
-  [/\bmainframe\b/i, ["mainframe"]],
-];
-
 function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
   const terms = new Set<string>();
   const requirements = [
@@ -423,10 +245,7 @@ function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
   ];
 
   for (const requirement of requirements) {
-    for (const [pattern, aliases] of DISTINCTIVE_REQUIREMENT_ALIASES) {
-      if (pattern.test(requirement)) aliases.forEach((alias) => terms.add(alias));
-    }
-
+    extractDistinctiveSignalsFromRequirement(requirement).forEach((term) => terms.add(term));
   }
 
   return [...terms].slice(0, 5);

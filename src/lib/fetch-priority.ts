@@ -1,6 +1,11 @@
 import type { ParsedRole } from "./ai";
 import type { SearchResult } from "./search";
 import { isExplicitlyOverseasLocation, isNzLocation } from "./location";
+import {
+  extractSignalsFromRequirement,
+  normalizeSignalText,
+  signalMatchesText,
+} from "./requirement-signals";
 
 export interface FetchPriorityReason {
   label: "Strong lead" | "Worth fetching" | "Possible lead" | "Weak lead";
@@ -21,58 +26,16 @@ const ROLE_STOP_WORDS = new Set([
   "consultant", "officer", "coordinator", "administrator", "experience",
 ]);
 
-const REQUIREMENT_ALIASES: Array<[RegExp, string[]]> = [
-  [/\bc\+\+/i, ["C++"]],
-  [/\.net|asp\.net|c#/i, [".NET", "C#"]],
-  [/\bjava\b/i, ["Java"]],
-  [/\bjavascript\b|\bjs\b/i, ["JavaScript", "JS"]],
-  [/\btypescript\b/i, ["TypeScript"]],
-  [/\breact\b/i, ["React"]],
-  [/\bangular\b/i, ["Angular"]],
-  [/\bvue\b/i, ["Vue"]],
-  [/\bnode\b/i, ["Node"]],
-  [/\bpython\b/i, ["Python"]],
-  [/\bruby\b|\brails\b/i, ["Ruby", "Rails"]],
-  [/\bphp\b/i, ["PHP"]],
-  [/\bwordpress\b|\bcms\b|content management system/i, ["WordPress", "CMS"]],
-  [/\bshopify\b/i, ["Shopify"]],
-  [/\bsquarespace\b/i, ["Squarespace"]],
-  [/\bsybase\b/i, ["Sybase"]],
-  [/\bsql\b|\brelational database\b|\brdbms\b|\bt-sql\b|\btsql\b/i, ["SQL", "database", "SQL Server", "MySQL", "PostgreSQL"]],
-  [/\bmysql\b/i, ["MySQL", "SQL"]],
-  [/\bpostgresql\b|\bpostgres\b/i, ["PostgreSQL", "SQL"]],
-  [/\bsql server\b/i, ["SQL Server", "SQL"]],
-  [/\bdb2\b/i, ["DB2"]],
-  [/\boracle\b/i, ["Oracle"]],
-  [/\bazure\b/i, ["Azure"]],
-  [/\baws\b|amazon web services/i, ["AWS"]],
-  [/\bgcp\b|google cloud/i, ["GCP"]],
-  [/\blinux\b/i, ["Linux"]],
-  [/\bkubernetes\b|\baks\b|\beks\b/i, ["Kubernetes"]],
-  [/\bdocker\b|container/i, ["Docker"]],
-  [/\bmicroservices?\b/i, ["microservices"]],
-  [/\bapi\b|api design/i, ["API"]],
-  [/\bperformance test|load test|jmeter|loadrunner|gatling/i, ["performance testing", "JMeter", "LoadRunner"]],
-  [/\bitil\b|\bitsm\b|service management/i, ["ITIL", "ITSM"]],
-  [/security clearance|secret vetting|confidential vetting|\bsv\b|\bcv\b/i, ["security clearance", "Secret Vetting"]],
-  [/\bux\b|user experience/i, ["UX", "user experience"]],
-  [/web design|digital design|ui\/ux/i, ["web design", "UI/UX"]],
-  [/\bbanking\b|payments?|financial services|fintech/i, ["banking", "payments", "financial services"]],
-];
-
 function clamp(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function norm(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").replace(/\s+/g, " ").trim();
+  return normalizeSignalText(value);
 }
 
 function textHasTerm(value: string, term: string) {
-  if (term === "C++") return /\bc\+\+/i.test(value);
-  if (term === ".NET") return /\.net|asp\.net/i.test(value);
-  if (term === "C#") return /\bc#/i.test(value);
-  return norm(value).includes(norm(term));
+  return signalMatchesText(value, term);
 }
 
 function compactTerms(values: string[]) {
@@ -106,12 +69,7 @@ function requirementTerms(parsedRole: ParsedRole) {
     ...(parsedRole.skills_required ?? []),
     ...(parsedRole.knockout_criteria ?? []),
   ];
-  const terms: string[] = [];
-  for (const requirement of requirements) {
-    for (const [pattern, aliases] of REQUIREMENT_ALIASES) {
-      if (pattern.test(requirement)) terms.push(...aliases);
-    }
-  }
+  const terms = requirements.flatMap((requirement) => extractSignalsFromRequirement(requirement));
   return compactTerms(terms).slice(0, 10);
 }
 
