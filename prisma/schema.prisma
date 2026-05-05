@@ -68,6 +68,7 @@ model Candidate {
   headline     String?
   location     String?
   linkedinUrl  String?
+  jobAdderUrl  String?  // JobAdder candidate profile URL — set manually until API integration
   profileText     String?  // Raw pasted/captured profile text
   profileTextHash String?  // Score-context cache key; skip re-score only if profile and job inputs are unchanged
   matchScore       Int?

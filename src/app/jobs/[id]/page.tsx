@@ -44,6 +44,7 @@ interface Candidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  jobAdderUrl: string | null;
   profileText: string | null;
   profileCapturedAt: string | null;
   matchScore: number | null;
@@ -635,6 +636,15 @@ export default function JobDetailPage({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ linkedinUrl: linkedinUrl || null }),
+    });
+    await fetchJob();
+  }, [fetchJob, id]);
+
+  const handleJobAdderChange = useCallback(async (candidateId: string, jobAdderUrl: string) => {
+    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobAdderUrl: jobAdderUrl || null }),
     });
     await fetchJob();
   }, [fetchJob, id]);
@@ -1503,6 +1513,7 @@ ${toHtml(job.rawJd)}
                     onFetchProfile={handleFetchProfile}
                     onNotesChange={handleNotesChange}
                     onLinkedInChange={handleLinkedInChange}
+                    onJobAdderChange={handleJobAdderChange}
                     onScreeningDataChange={handleScreeningDataChange}
                     onInterviewNotesChange={handleInterviewNotesChange}
                     onDelete={handleDelete}

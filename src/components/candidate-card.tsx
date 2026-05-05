@@ -31,6 +31,25 @@ function LinkedInIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+// JobAdder "JA" badge — shows when a candidate is linked in JobAdder
+function JobAdderBadge({ url, className }: { url: string | null; className?: string }) {
+  const base = cn(
+    "inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold leading-none border transition-colors",
+    url
+      ? "bg-orange-500 text-white border-orange-600"
+      : "bg-slate-100 text-slate-400 border-slate-200 hover:border-orange-300 hover:text-orange-500",
+    className
+  );
+  if (url) {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" className={base} title="Open in JobAdder">
+        JA
+      </a>
+    );
+  }
+  return <span className={base}>JA</span>;
+}
 import { ScoreBadge } from "./score-badge";
 import { ScoreRadar } from "./score-radar";
 import type { RadarDimensions } from "./score-radar";
@@ -75,6 +94,7 @@ interface Candidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  jobAdderUrl: string | null;
   profileText: string | null;
   profileCapturedAt?: string | null;
   matchScore: number | null;
@@ -114,6 +134,7 @@ interface CandidateCardProps {
   onFetchProfile: (id: string) => void;
   onNotesChange: (id: string, notes: string) => void;
   onLinkedInChange?: (id: string, url: string) => void;
+  onJobAdderChange?: (id: string, url: string) => void;
   onScreeningDataChange?: (id: string, data: string) => void;
   onInterviewNotesChange?: (id: string, data: string) => void;
   onDelete: (id: string) => void;
@@ -857,12 +878,14 @@ function ProfileDrawer({
   candidate,
   onClose,
   onLinkedInChange,
+  onJobAdderChange,
   onFetchProfile,
   fetchingProfile = false,
 }: {
   candidate: Candidate;
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
+  onJobAdderChange?: (id: string, url: string) => void;
   onFetchProfile?: (id: string) => void;
   fetchingProfile?: boolean;
 }) {
@@ -891,6 +914,8 @@ function ProfileDrawer({
 
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
+  const [editingJobAdder, setEditingJobAdder] = useState(false);
+  const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
 
   const [files, setFiles] = useState<DrawerFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
@@ -909,6 +934,11 @@ function ProfileDrawer({
     onLinkedInChange?.(candidate.id, linkedInInput.trim());
     setEditingLinkedIn(false);
   }, [candidate.id, linkedInInput, onLinkedInChange]);
+
+  const handleSaveJobAdder = useCallback(() => {
+    onJobAdderChange?.(candidate.id, jobAdderInput.trim());
+    setEditingJobAdder(false);
+  }, [candidate.id, jobAdderInput, onJobAdderChange]);
 
   return (
     <>
@@ -1170,6 +1200,7 @@ export const CandidateCard = memo(function CandidateCard({
   onFetchProfile,
   onNotesChange,
   onLinkedInChange,
+  onJobAdderChange,
   onScreeningDataChange,
   onInterviewNotesChange,
   onDelete,
@@ -1186,6 +1217,8 @@ export const CandidateCard = memo(function CandidateCard({
   const [notes, setNotes] = useState(candidate.notes ?? "");
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
+  const [editingJobAdder, setEditingJobAdder] = useState(false);
+  const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
   const [outreachOpen, setOutreachOpen] = useState(false);
   const [rejectionOpen, setRejectionOpen] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
@@ -1235,6 +1268,11 @@ export const CandidateCard = memo(function CandidateCard({
     setEditingLinkedIn(false);
   };
 
+  const handleSaveJobAdder = () => {
+    onJobAdderChange?.(candidate.id, jobAdderInput.trim());
+    setEditingJobAdder(false);
+  };
+
   return (
     <div className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-shadow">
       {/* Header row */}
@@ -1263,16 +1301,13 @@ export const CandidateCard = memo(function CandidateCard({
                   {candidate.name}
                 </button>
                 {candidate.linkedinUrl && (
-                  <a
-                    href={candidate.linkedinUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <a href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer"
                     className="text-slate-400 hover:text-[#0A66C2] transition-colors flex-shrink-0"
-                    title="Open LinkedIn profile"
-                  >
+                    title="Open LinkedIn profile">
                     <LinkedInIcon className="w-3.5 h-3.5" />
                   </a>
                 )}
+                <JobAdderBadge url={candidate.jobAdderUrl} />
               </div>
               {candidate.headline && (
                 <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
@@ -1574,30 +1609,24 @@ export const CandidateCard = memo(function CandidateCard({
             )}
           </div>
 
-          {/* LinkedIn URL — editable when missing or to update */}
+          {/* LinkedIn URL */}
           {onLinkedInChange && (
             <div>
               <div className="flex items-center justify-between mb-1">
                 <p className="text-xs font-medium text-slate-600">LinkedIn URL</p>
                 {!editingLinkedIn && (
-                  <button
-                    onClick={() => { setLinkedInInput(candidate.linkedinUrl ?? ""); setEditingLinkedIn(true); }}
-                    className="text-xs text-blue-600 hover:text-blue-700"
-                  >
+                  <button onClick={() => { setLinkedInInput(candidate.linkedinUrl ?? ""); setEditingLinkedIn(true); }}
+                    className="text-xs text-blue-600 hover:text-blue-700">
                     {candidate.linkedinUrl ? "Edit" : "Add"}
                   </button>
                 )}
               </div>
               {editingLinkedIn ? (
                 <div>
-                  <input
-                    type="url"
-                    value={linkedInInput}
-                    onChange={(e) => setLinkedInInput(e.target.value)}
+                  <input type="url" value={linkedInInput} onChange={(e) => setLinkedInInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") handleSaveLinkedIn(); if (e.key === "Escape") setEditingLinkedIn(false); }}
-                    placeholder="https://linkedin.com/in/..."
+                    placeholder="https://linkedin.com/in/..." autoFocus
                     className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    autoFocus
                   />
                   <div className="flex gap-2 mt-1.5">
                     <button onClick={handleSaveLinkedIn} className="text-xs text-blue-600 font-medium hover:text-blue-700">Save</button>
@@ -1606,14 +1635,46 @@ export const CandidateCard = memo(function CandidateCard({
                 </div>
               ) : candidate.linkedinUrl ? (
                 <a href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline truncate block max-w-full">
-                  {candidate.linkedinUrl}
-                </a>
+                  className="text-xs text-blue-600 hover:underline truncate block max-w-full">{candidate.linkedinUrl}</a>
               ) : (
                 <p className="text-xs text-slate-400">No LinkedIn URL — add one to enable profile fetch</p>
               )}
             </div>
           )}
+
+          {/* JobAdder URL */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-1.5">
+                <JobAdderBadge url={null} className="w-4 h-4 text-[8px]" />
+                <p className="text-xs font-medium text-slate-600">JobAdder</p>
+              </div>
+              {!editingJobAdder && (
+                <button onClick={() => { setJobAdderInput(candidate.jobAdderUrl ?? ""); setEditingJobAdder(true); }}
+                  className="text-xs text-orange-500 hover:text-orange-600">
+                  {candidate.jobAdderUrl ? "Edit" : "Link"}
+                </button>
+              )}
+            </div>
+            {editingJobAdder ? (
+              <div>
+                <input type="url" value={jobAdderInput} onChange={(e) => setJobAdderInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSaveJobAdder(); if (e.key === "Escape") setEditingJobAdder(false); }}
+                  placeholder="https://app.jobadder.com/candidates/..." autoFocus
+                  className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+                <div className="flex gap-2 mt-1.5">
+                  <button onClick={handleSaveJobAdder} className="text-xs text-orange-500 font-medium hover:text-orange-600">Save</button>
+                  <button onClick={() => setEditingJobAdder(false)} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                </div>
+              </div>
+            ) : candidate.jobAdderUrl ? (
+              <a href={candidate.jobAdderUrl} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-orange-500 hover:underline truncate block max-w-full">{candidate.jobAdderUrl}</a>
+            ) : (
+              <p className="text-xs text-slate-400">Not linked — paste the JobAdder candidate URL to link</p>
+            )}
+          </div>
 
           {/* Status timeline */}
           {(() => {
@@ -1940,6 +2001,7 @@ export const CandidateCard = memo(function CandidateCard({
           candidate={candidate}
           onClose={() => setShowProfile(false)}
           onLinkedInChange={onLinkedInChange}
+          onJobAdderChange={onJobAdderChange}
           onFetchProfile={onFetchProfile}
           fetchingProfile={fetchingProfile}
         />

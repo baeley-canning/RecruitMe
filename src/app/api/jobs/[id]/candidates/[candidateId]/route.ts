@@ -17,6 +17,7 @@ const PatchCandidateSchema = z.object({
   headline:      z.string().max(500).trim().optional(),
   location:      z.string().max(200).trim().optional(),
   linkedinUrl:   z.string().url().max(500).optional().or(z.literal("")),
+  jobAdderUrl:   z.string().url().max(500).optional().or(z.literal("")),
   screeningData:   z.string().optional(), // JSON string
   interviewNotes:  z.string().optional(), // JSON string
 });
@@ -46,6 +47,7 @@ export async function PATCH(
     ...(body.headline      !== undefined && { headline: body.headline }),
     ...(body.location      !== undefined && { location: body.location }),
     ...(linkedinUrl        !== undefined && { linkedinUrl }),
+    ...(body.jobAdderUrl   !== undefined && { jobAdderUrl: body.jobAdderUrl || null }),
     ...(body.screeningData  !== undefined && { screeningData: body.screeningData }),
     ...(body.interviewNotes !== undefined && { interviewNotes: body.interviewNotes }),
   };
