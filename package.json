@@ -24,6 +24,7 @@
     "@anthropic-ai/sdk": "^0.88.0",
     "@auth/prisma-adapter": "^2.11.2",
     "@prisma/client": "^5.22.0",
+    "@sentry/nextjs": "^10.51.0",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "docx": "^9.6.1",

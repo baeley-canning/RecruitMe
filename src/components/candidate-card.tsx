@@ -78,6 +78,7 @@ interface Candidate {
   profileText: string | null;
   profileCapturedAt?: string | null;
   matchScore: number | null;
+  profileTextHash: string | null;
   matchReason: string | null;
   fetchPriorityScore?: number | null;
   fetchPriorityReason?: string | null;
@@ -1316,6 +1317,7 @@ export const CandidateCard = memo(function CandidateCard({
                 {/* Score badge with radar tooltip on hover */}
                 <div
                   ref={scoreBadgeRef}
+                  className="relative"
                   onMouseEnter={() => {
                     if (scoreBadgeRef.current) {
                       const rect = scoreBadgeRef.current.getBoundingClientRect();
@@ -1326,6 +1328,12 @@ export const CandidateCard = memo(function CandidateCard({
                   onMouseLeave={() => setShowRadar(false)}
                 >
                   <ScoreBadge score={candidate.matchScore} size="sm" />
+                  {candidate.matchScore != null && !candidate.profileTextHash && candidate.profileText && (
+                    <span
+                      title="Profile updated since last score — re-score recommended"
+                      className="absolute -top-1 -right-1 w-2 h-2 bg-amber-400 rounded-full border border-white"
+                    />
+                  )}
                 </div>
                 {showRadar && radarDimensions && (
                   <div

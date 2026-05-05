@@ -47,6 +47,7 @@ interface Candidate {
   profileText: string | null;
   profileCapturedAt: string | null;
   matchScore: number | null;
+  profileTextHash: string | null;
   matchReason: string | null;
   fetchPriorityScore: number | null;
   fetchPriorityReason: string | null;
@@ -164,6 +165,7 @@ export default function JobDetailPage({
   const [fetchError, setFetchError] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState("");
+  const [parseChanges, setParseChanges] = useState<string[]>([]);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [fetchStatuses, setFetchStatuses] = useState<Record<string, {
@@ -361,10 +363,11 @@ export default function JobDetailPage({
     setParseError("");
     try {
       const res = await fetch(`/api/jobs/${id}/parse`, { method: "POST" });
-      const data = await res.json() as { parsedRole?: ParsedRole; error?: string };
+      const data = await res.json() as { parsedRole?: ParsedRole; changes?: string[]; error?: string };
       if (!res.ok || data.error) {
         setParseError(data.error ?? "Parsing failed");
       } else {
+        if (data.changes?.length) setParseChanges(data.changes);
         await fetchJob();
       }
     } catch {
@@ -1031,6 +1034,16 @@ ${toHtml(job.rawJd)}
                     <AlertCircle className="w-3 h-3" />
                     {parseError}
                   </p>
+                )}
+                {parseChanges.length > 0 && !parseError && (
+                  <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-[11px] font-medium text-blue-700 mb-1">What changed</p>
+                    <ul className="space-y-0.5">
+                      {parseChanges.map((c, i) => (
+                        <li key={i} className="text-[11px] text-blue-600">· {c}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             </div>

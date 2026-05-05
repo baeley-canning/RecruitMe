@@ -514,18 +514,22 @@ function needsDeeperCapture(capture) {
   );
 }
 
-function buildExperienceDetailsUrl(profileBaseUrl) {
+function buildDetailsUrl(profileBaseUrl, section) {
   try {
     const url = new URL(profileBaseUrl);
     const match = url.pathname.match(/^(\/in\/[^/]+)\/?/i);
     if (!match) return "";
-    url.pathname = `${match[1]}/details/experience/`;
+    url.pathname = `${match[1]}/details/${section}/`;
     url.search = "";
     url.hash = "";
     return url.toString();
   } catch {
     return "";
   }
+}
+
+function buildExperienceDetailsUrl(profileBaseUrl) {
+  return buildDetailsUrl(profileBaseUrl, "experience");
 }
 
 function extractLinesFromDetachedDocument(doc) {
@@ -638,6 +642,75 @@ async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
   return enriched;
 }
 
+async function fetchDetailsPageText(profileBaseUrl, section, sectionLabel) {
+  const detailsUrl = buildDetailsUrl(profileBaseUrl, section);
+  if (!detailsUrl) return "";
+
+  try {
+    const response = await fetch(detailsUrl, {
+      credentials: "include",
+      cache: "no-store",
+      redirect: "follow",
+    });
+    if (!response.ok) return "";
+
+    const html = await response.text();
+    if (!new RegExp(`/details/${section}|${sectionLabel}`, "i").test(html)) return "";
+
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const lines = extractLinesFromDetachedDocument(doc);
+
+    const useful = [];
+    const seen = new Set();
+    for (const line of lines) {
+      if (new RegExp(`^(${sectionLabel}|profile|linkedin|search|skills)$`, "i").test(line)) continue;
+      if (/^skip to main content$/i.test(line)) continue;
+      const key = normalizeLineKey(line);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      useful.push(line);
+    }
+
+    if (useful.length < 2 || useful.join("\n").length < 60) return "";
+    return `${sectionLabel}\n${useful.join("\n")}`;
+  } catch (err) {
+    console.warn(`[RecruitMe] failed to fetch ${section} details:`, err?.message || err);
+    return "";
+  }
+}
+
+function appendSection(mainCapture, sectionText, sectionKey) {
+  if (!sectionText || sectionText.length < 60) return mainCapture;
+  const normalized = normalizeLineKey(sectionKey);
+  // Don't duplicate if already present in the main capture
+  if (mainCapture.profileText.toLowerCase().includes(normalized)) return mainCapture;
+  return {
+    ...mainCapture,
+    profileText: cleanText(`${mainCapture.profileText}\n\n${sectionText}`).slice(0, 100000),
+    sectionKeys: [...new Set([...mainCapture.sectionKeys, sectionKey])],
+  };
+}
+
+async function enrichWithSkillsAndCertifications(mainCapture, profileBaseUrl) {
+  const [skillsText, certsText] = await Promise.all([
+    fetchDetailsPageText(profileBaseUrl, "skills", "Skills"),
+    fetchDetailsPageText(profileBaseUrl, "certifications", "Licenses & Certifications"),
+  ]);
+
+  let enriched = mainCapture;
+  if (skillsText) enriched = appendSection(enriched, skillsText, "skills");
+  if (certsText)  enriched = appendSection(enriched, certsText, "licenses_certifications");
+
+  if (enriched.profileText.length > mainCapture.profileText.length + 60) {
+    console.log("[RecruitMe] merged skills/certifications", {
+      skills: skillsText.length,
+      certs: certsText.length,
+      totalAfter: enriched.profileText.length,
+    });
+  }
+  return enriched;
+}
+
 async function waitForRootProfilePage(expectedUrl = "") {
   const expectedSlug = normaliseLinkedInSlug(expectedUrl);
   for (let i = 0; i < 60; i += 1) {
@@ -671,6 +744,7 @@ async function captureProfile() {
   let capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
     capture = await enrichWithExperienceDetails(capture, startUrl);
+    capture = await enrichWithSkillsAndCertifications(capture, startUrl);
     if (capture.profileText.length < 200) {
       throw new Error("Captured profile text did not contain enough usable profile text");
     }
@@ -690,6 +764,7 @@ async function captureProfile() {
   capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
     capture = await enrichWithExperienceDetails(capture, startUrl);
+    capture = await enrichWithSkillsAndCertifications(capture, startUrl);
     if (capture.profileText.length < 200) {
       throw new Error("Captured profile text did not contain enough usable profile text");
     }
@@ -699,6 +774,7 @@ async function captureProfile() {
   await sleep(800);
   capture = collectProfileText(startUrl, { allowShort: true });
   capture = await enrichWithExperienceDetails(capture, startUrl);
+  capture = await enrichWithSkillsAndCertifications(capture, startUrl);
 
   if (capture.profileText.length < 200) {
     await sleep(1200);
@@ -706,6 +782,7 @@ async function captureProfile() {
     if (finalRescrolled) {
       capture = collectProfileText(startUrl, { allowShort: true });
       capture = await enrichWithExperienceDetails(capture, startUrl);
+      capture = await enrichWithSkillsAndCertifications(capture, startUrl);
     }
   }
   if (capture.profileText.length < 200) {
