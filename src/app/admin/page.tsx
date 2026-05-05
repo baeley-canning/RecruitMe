@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
   Users, Building2, Plus, Trash2, Loader2, Shield, User, X, Eye, EyeOff,
+  BarChart3, Search, Sparkles, FileText, Camera,
 } from "lucide-react";
 
 interface UserRow {
@@ -23,12 +24,33 @@ interface OrgRow {
   _count: { users: number; jobs: number };
 }
 
+interface OrgUsage {
+  orgId: string | null;
+  orgName: string | null;
+  search: number;
+  score: number;
+  score_all: number;
+  parse: number;
+  capture: number;
+  total: number;
+}
+
+interface AnalyticsData {
+  totals: { search: number; score: number; score_all: number; parse: number; capture: number; total: number };
+  byOrg: OrgUsage[];
+  recent: { id: string; orgName: string | null; type: string; meta: string | null; createdAt: string }[];
+  days: number;
+}
+
 export default function AdminPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [analyticsDays, setAnalyticsDays] = useState(30);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // User form
@@ -63,6 +85,19 @@ export default function AdminPage() {
     if (usersRes.ok) setUsers(await usersRes.json() as UserRow[]);
     if (orgsRes.ok) setOrgs(await orgsRes.json() as OrgRow[]);
     setLoading(false);
+    fetchAnalytics(analyticsDays);
+  };
+
+  const fetchAnalytics = async (days: number) => {
+    setAnalyticsLoading(true);
+    const res = await fetch(`/api/admin/analytics?days=${days}`);
+    if (res.ok) setAnalytics(await res.json() as AnalyticsData);
+    setAnalyticsLoading(false);
+  };
+
+  const handlePeriodChange = (days: number) => {
+    setAnalyticsDays(days);
+    fetchAnalytics(days);
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -428,6 +463,134 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* ── Analytics ── */}
+      <div>
+        <div className="mb-5 flex items-start justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-blue-600" />
+              Usage Analytics
+            </h2>
+            <p className="text-slate-500 text-sm mt-0.5">AI calls, searches, and captures across all orgs.</p>
+          </div>
+          <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+            {[7, 30, 90].map((d) => (
+              <button
+                key={d}
+                onClick={() => handlePeriodChange(d)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  analyticsDays === d ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {analyticsLoading && !analytics ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+          </div>
+        ) : analytics ? (
+          <div className="space-y-5">
+            {/* Stat cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: "Searches", value: analytics.totals.search, icon: Search, color: "text-blue-600 bg-blue-50" },
+                { label: "Scores", value: analytics.totals.score + analytics.totals.score_all, icon: Sparkles, color: "text-violet-600 bg-violet-50" },
+                { label: "JD Parses", value: analytics.totals.parse, icon: FileText, color: "text-emerald-600 bg-emerald-50" },
+                { label: "Captures", value: analytics.totals.capture, icon: Camera, color: "text-amber-600 bg-amber-50" },
+              ].map(({ label, value, icon: Icon, color }) => (
+                <div key={label} className="bg-white rounded-xl border border-slate-200 p-4">
+                  <div className="flex items-center gap-2.5 mb-2">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color}`}>
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-medium text-slate-500">{label}</span>
+                  </div>
+                  <p className="text-2xl font-bold text-slate-900 tabular-nums">{value.toLocaleString()}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">last {analyticsDays} days</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Per-org breakdown */}
+            {analytics.byOrg.length > 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">By Organisation</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide px-5 py-3">Org</th>
+                        <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wide px-4 py-3">Searches</th>
+                        <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wide px-4 py-3">Scores</th>
+                        <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wide px-4 py-3">Parses</th>
+                        <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wide px-4 py-3">Captures</th>
+                        <th className="text-right text-xs font-medium text-slate-500 uppercase tracking-wide px-5 py-3">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analytics.byOrg.map((row) => (
+                        <tr key={row.orgId ?? "__owner__"} className="border-b border-slate-50 last:border-0 hover:bg-slate-50">
+                          <td className="px-5 py-3 text-sm font-medium text-slate-900">{row.orgName}</td>
+                          <td className="px-4 py-3 text-sm text-right tabular-nums text-slate-600">{row.search || "—"}</td>
+                          <td className="px-4 py-3 text-sm text-right tabular-nums text-slate-600">{(row.score + row.score_all) || "—"}</td>
+                          <td className="px-4 py-3 text-sm text-right tabular-nums text-slate-600">{row.parse || "—"}</td>
+                          <td className="px-4 py-3 text-sm text-right tabular-nums text-slate-600">{row.capture || "—"}</td>
+                          <td className="px-5 py-3 text-sm text-right tabular-nums font-semibold text-slate-900">{row.total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Recent activity */}
+            {analytics.recent.length > 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">Recent Activity</h3>
+                </div>
+                <div className="divide-y divide-slate-50">
+                  {analytics.recent.slice(0, 20).map((e) => {
+                    const meta = e.meta ? (() => { try { return JSON.parse(e.meta); } catch { return null; } })() : null;
+                    const label = {
+                      search: "Search",
+                      score: "Re-score",
+                      score_all: "Score all",
+                      parse: "JD parse",
+                      capture: "Capture",
+                    }[e.type] ?? e.type;
+                    const detail = meta?.jobId ? ` · job ${meta.jobId.slice(-6)}` : meta?.scored != null ? ` · ${meta.scored} scored` : "";
+                    return (
+                      <div key={e.id} className="flex items-center justify-between px-5 py-2.5">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-medium text-slate-700 w-16">{label}</span>
+                          <span className="text-xs text-slate-400">{e.orgName}{detail}</span>
+                        </div>
+                        <span className="text-xs text-slate-400 tabular-nums" suppressHydrationWarning>
+                          {new Date(e.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {analytics.totals.total === 0 && (
+              <p className="text-center text-slate-400 text-sm py-10">No activity in the last {analyticsDays} days.</p>
+            )}
+          </div>
+        ) : null}
+      </div>
+
     </div>
   );
 }
