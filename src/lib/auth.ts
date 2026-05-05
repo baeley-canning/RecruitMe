@@ -4,11 +4,44 @@ import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { ensureDefaultOrg } from "./org";
 
-// In-memory brute-force protection — keyed by lowercase username.
-// Resets on server restart; sufficient for a single-instance Railway deployment.
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+// DB-backed brute-force protection — survives server restarts and horizontal scaling.
 const MAX_ATTEMPTS = 10;
 const WINDOW_MS = 15 * 60 * 1000;
+
+async function recordLoginFailure(key: string): Promise<void> {
+  const now = new Date();
+  const resetAt = new Date(now.getTime() + WINDOW_MS);
+  try {
+    await prisma.loginAttempt.upsert({
+      where: { key },
+      update: { count: { increment: 1 } },
+      create: { key, count: 1, resetAt },
+    });
+  } catch { /* non-fatal */ }
+}
+
+async function clearLoginFailures(key: string): Promise<void> {
+  try {
+    await prisma.loginAttempt.deleteMany({ where: { key } });
+  } catch { /* non-fatal */ }
+}
+
+async function checkLoginLocked(key: string): Promise<{ locked: boolean; minsLeft: number }> {
+  try {
+    const entry = await prisma.loginAttempt.findUnique({ where: { key } });
+    if (!entry) return { locked: false, minsLeft: 0 };
+    // Expired window — clean up and allow
+    if (new Date() >= entry.resetAt) {
+      await prisma.loginAttempt.deleteMany({ where: { key } });
+      return { locked: false, minsLeft: 0 };
+    }
+    if (entry.count >= MAX_ATTEMPTS) {
+      const minsLeft = Math.ceil((entry.resetAt.getTime() - Date.now()) / 60000);
+      return { locked: true, minsLeft };
+    }
+  } catch { /* non-fatal — fail open so a DB outage doesn't lock everyone out */ }
+  return { locked: false, minsLeft: 0 };
+}
 
 const authUrl =
   process.env.NEXTAUTH_URL ||
@@ -34,12 +67,10 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.username || !credentials?.password) return null;
 
         const key = credentials.username.toLowerCase().trim();
-        const now = Date.now();
-        const entry = loginAttempts.get(key);
 
-        if (entry && now < entry.resetAt && entry.count >= MAX_ATTEMPTS) {
-          const mins = Math.ceil((entry.resetAt - now) / 60000);
-          throw new Error(`Too many failed attempts — try again in ${mins} minute${mins !== 1 ? "s" : ""}.`);
+        const { locked, minsLeft } = await checkLoginLocked(key);
+        if (locked) {
+          throw new Error(`Too many failed attempts — try again in ${minsLeft} minute${minsLeft !== 1 ? "s" : ""}.`);
         }
 
         let user = await prisma.user.findUnique({
@@ -48,25 +79,17 @@ export const authOptions: NextAuthOptions = {
 
         if (!user) {
           // Count failed attempt for non-existent usernames too (prevents enumeration timing)
-          if (!entry || now >= entry.resetAt) {
-            loginAttempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
-          } else {
-            entry.count++;
-          }
+          await recordLoginFailure(key);
           return null;
         }
 
         const valid = await bcrypt.compare(credentials.password, user.password);
         if (!valid) {
-          if (!entry || now >= entry.resetAt) {
-            loginAttempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
-          } else {
-            entry.count++;
-          }
+          await recordLoginFailure(key);
           return null;
         }
 
-        loginAttempts.delete(key);
+        await clearLoginFailures(key);
 
         if (user.role !== "owner" && !user.orgId) {
           const defaultOrg = await ensureDefaultOrg();
