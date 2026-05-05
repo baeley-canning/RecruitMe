@@ -1270,7 +1270,11 @@ export const CandidateCard = memo(function CandidateCard({
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
   const radarDimensions = getRadarDimensions(breakdown, matchReason?.dimensions);
   const profileChars = candidate.profileText?.trim().length ?? 0;
-  const hasFetchedProfile = Boolean(candidate.profileCapturedAt || hasExtensionCapture);
+  // Only treat as fetched if there's still a linkedinUrl — deleting the URL means
+  // the Re-fetch button would fail, so revert to "Fetch profile" state.
+  const hasFetchedProfile = Boolean(
+    candidate.linkedinUrl && (candidate.profileCapturedAt || hasExtensionCapture)
+  );
   const hasViewableProfile = profileChars >= 500;
 
   // Use breakdown's recruiter_summary as the primary display summary when available
@@ -1420,7 +1424,7 @@ export const CandidateCard = memo(function CandidateCard({
             <p className="text-xs text-slate-600 leading-relaxed italic flex-1">
               &ldquo;{displaySummary}&rdquo;
             </p>
-            {(breakdown?.must_have_coverage?.length || matchReason?.reasoning) && (
+            {(breakdown?.must_have_coverage?.length ?? 0) > 0 && (
               <button
                 onClick={() => setShowReasoning((v) => !v)}
                 className="text-xs text-blue-600 hover:text-blue-700 whitespace-nowrap flex items-center gap-0.5 flex-shrink-0 mt-0.5 font-medium"

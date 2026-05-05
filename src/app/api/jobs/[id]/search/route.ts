@@ -307,19 +307,15 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
     skillQueries.push(distinctiveTerms.slice(0, 4).join(" "));
   }
 
-  // Interleave synonyms between AI queries so they survive the slice limit.
-  // Pattern: top AI query → base title → 2 synonyms → second AI query → third synonym → rest
-  // This guarantees 2-3 synonyms make it into the query pool even at MAX_QUERY_VARIANTS=6.
+  // Ordering: specialist skill queries first, then ALL AI-generated queries (most
+  // semantically rich — written by Claude for this specific role), then title/synonyms.
+  // AI queries were previously interleaved with synonyms and got sliced off for specialist
+  // roles; they should take precedence over mechanical synonym expansion.
   return dedupeQueries([
     ...skillQueries,
-    aiQueries[0],
+    ...aiQueries,          // all AI queries before synonyms
     baseTitle,
-    synonymQueries[0],
-    synonymQueries[1],
-    aiQueries[1],
-    synonymQueries[2],
-    ...aiQueries.slice(2),
-    ...synonymQueries.slice(3),
+    ...synonymQueries,
   ].filter(Boolean) as string[]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
 }
 
@@ -461,7 +457,11 @@ export async function POST(
   const knownTargets = extractKnownLocationTargets(job.location, location, parsedRole.location_rules);
   const canonicalJobCity = knownTargets[0] ?? getCityCoords(locationSource)?.name ?? "";
   const parsedSearchLocation = canonicalJobCity || locationSource;
-  const searchLocation = locationOverride?.trim() || parsedSearchLocation;
+  // For remote NZ roles, if no city is resolved, default to "New Zealand" so queries
+  // are NZ-scoped rather than global. Without this, "remote" roles get an empty location
+  // which produces a worldwide search and floods results with offshore candidates.
+  const effectiveParsedLocation = parsedSearchLocation || (job.isRemote ? "New Zealand" : "");
+  const searchLocation = locationOverride?.trim() || effectiveParsedLocation;
   const targetLocation = locationOverride?.trim() || buildTargetLocationLabel(job.location, location, parsedRole.location_rules) || location || canonicalJobCity || locationSource;
 
   // Build query pool with reserved slots for rare hard-skill terms. For niche

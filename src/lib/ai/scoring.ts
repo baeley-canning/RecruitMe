@@ -218,11 +218,11 @@ Category score rules:
 - location_fit: 100 = same city/region; 80 = commutable; 50 = same country; 0 = overseas
 - seniority_fit: 100 = exact match; 70 = one level off; 40 = two levels off; 0 = completely wrong level
 - title_fit: do recent titles align with how people in this role describe themselves on LinkedIn?
-- domain_fit: assess BOTH sector/domain experience AND vocabulary alignment together. 80+ = candidate's sector matches the role AND their language aligns with how this industry describes itself; 60-79 = good on one dimension but not both; 40-59 = adjacent domain; 0-39 = unrelated field
+- domain_fit: assess sector/domain experience primarily, with vocabulary alignment as a secondary signal. Sector experience (actual work delivered in the domain) must carry most of the weight — vocabulary alone (using industry terms without the delivery history) should not push this above 55. 80+ = multiple years shipping in this sector AND language aligns; 60-79 = genuine adjacent sector with transferable delivery history; 40-59 = adjacent domain, some transferable skills; 0-39 = unrelated field. Do NOT score 70+ based on vocabulary alone.
 - nice_to_have_fit: 80+ = most nice-to-haves present; 50 = some; 20 = few; if none listed, score 50
 
 must_have_coverage rules:
-- "confirmed" = clearly and explicitly stated in the profile
+- "confirmed" = clearly and explicitly stated in the profile body (work descriptions, skills sections, or certifications). A job title alone (e.g. "C++ Developer") is NOT sufficient for "confirmed" — it is "likely" unless the profile body also explicitly mentions the skill. Check the actual work history for evidence, not just the headline.
 - "equivalent" = requirement uses an equivalency clause ("or equivalent experience", "or comparable experience", "preferred but not essential") AND the candidate's experience is sufficient to satisfy it — use the thresholds in the equivalency rules below
 - "likely" = strongly implied by adjacent evidence (e.g. a company or framework implies a skill); also use for partial equivalency where experience is present but not clearly sufficient
 - "likely_historical" = the skill appears in PAST work history but the candidate's current/recent work (last 18 months) shows they have moved to a clearly different primary technology. Time rule: if the skill was last used within 18 months mark "likely" even if it is no longer dominant. If last used 2+ years ago AND the current primary stack is clearly different, use "likely_historical". Examples: C++ developer now exclusively doing C# for 2+ years; Java engineer now only in Python for 3+ years. Do NOT use for general seniority drift or domain changes — only when the specific technology has been demonstrably replaced in their daily work.
@@ -267,9 +267,9 @@ Equivalency clause rules: when a must-have requirement contains "or equivalent e
 - 8+ years directly relevant experience, or senior-level titles in the same domain → "equivalent" with high confidence
 The evidence string MUST explain HOW the equivalency is met: e.g. "11 years as IT Systems Administrator satisfies 'degree or equivalent experience' clause" — not just "has experience".
 IMPORTANT CARVE-OUTS — do NOT apply experience equivalency to requirements involving:
-- Professional registration (Registered Nurse, Chartered Accountant, Licensed Electrician, Engineer NZ, solicitor)
-- Legal compliance requirements (NZ work rights, security clearances, mandatory licences)
-- Roles where formal accreditation is a legal prerequisite for practice
+- Professional registration: Registered Nurse, Chartered Accountant (CA/CPA/CFA), Licensed Electrician, Engineer NZ (CPEng), solicitor, real estate agent licence, Licensed Building Practitioner (LBP), Practising Certificate (law/accounting/therapy), Registered Psychologist, Registered Teacher, Veterinary registration
+- Legal compliance requirements: NZ work rights, security clearances, mandatory licences, drug/alcohol testing requirements
+- Roles where formal accreditation is a legal prerequisite for practice — no amount of experience substitutes for the actual licence
 For these, equivalency does not apply. If no formal qualification is stated, mark "unknown" or "missing" as appropriate.
 Do NOT let seniority in an unrelated domain satisfy the clause. A senior accountant's experience does not satisfy "engineering degree or equivalent experience." Domain must match.`,
     0.1,

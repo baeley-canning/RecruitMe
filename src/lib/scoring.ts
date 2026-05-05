@@ -156,6 +156,13 @@ export function getMustHaveImportance(requirement: string): number {
   if (/\b(engineering degree|civil engineering|structural engineering)\b.*\b(degree|qualification)\b/i.test(r)) return 1.5;
   if (/\b(law degree|llb|legal qualification|bar admission)\b/i.test(r))     return 1.5;
   if (/\b(medical degree|mbchb|mbbs|nzmc registration)\b/i.test(r))         return 1.5;
+  // NZ-specific non-delegable licences and practising certificates
+  if (/\b(licensed building practitioner|lbp|building practitioner)\b/i.test(r)) return 1.5;
+  if (/\b(practising certificate|practicing certificate)\b/i.test(r))        return 1.5;
+  if (/\b(real estate licence|real estate license|real estate agent.*licen|rea licen)\b/i.test(r)) return 1.5;
+  if (/\b(veterinary registration|nzrv|veterinary council)\b/i.test(r))      return 1.5;
+  if (/\b(registered psychologist|psychology registration|nzpb)\b/i.test(r)) return 1.5;
+  if (/\b(registered teacher|teacher registration|teaching council)\b/i.test(r)) return 1.5;
   // Technical degrees where field relevance matters
   if (/\b(degree|bachelor|master|phd|doctorate)\b.{0,30}\b(computer science|software|information technology|data science|cybersecurity|electrical engineering)\b/i.test(r)) return 1.3;
   if (/\b(computer science|software engineering|information technology)\b.{0,30}\b(degree|qualification)\b/i.test(r)) return 1.3;

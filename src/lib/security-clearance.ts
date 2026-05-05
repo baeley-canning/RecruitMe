@@ -4,7 +4,7 @@ const EXPLICIT_CLEARANCE_RE =
   /\b(security clearance|national security clearance|baseline clearance|confidential clearance|secret clearance|top secret clearance|top\s+secret\s+special|ts\/sci|nzsis vetting|security vetting|must be cleared|ability to obtain clearance|eligible for clearance)\b/i;
 
 const SENSITIVE_ORG_RE =
-  /\b(new zealand customs|customs service|nz customs|nzdf|new zealand defence force|ministry of defence|defence|nzsis|gcsb|police|corrections|justice|border|immigration new zealand|aviation security|maritime new zealand|civil aviation authority)\b/i;
+  /\b(new zealand customs|customs service|nz customs|nzdf|new zealand defence force|ministry of defence|defence|nzsis|gcsb|police|corrections|justice|border|immigration new zealand|aviation security|maritime new zealand|civil aviation authority|mbie|ministry of business|stats nz|statistics new zealand|linz|land information|reserve bank|rbnz|treasury|department of prime minister|dpmc|crown law|serious fraud office|sfo|inland revenue|ird|parliamentary service)\b/i;
 
 const SENSITIVE_TITLE_RE =
   /\b(security|cyber|border|intelligence|protection|customs|defence|defense|national security|identity|fraud|risk|compliance|enforcement)\b/i;

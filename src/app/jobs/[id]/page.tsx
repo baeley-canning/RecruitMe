@@ -1073,7 +1073,10 @@ ${toHtml(job.rawJd)}
                 )}
                 {parseChanges.length > 0 && !parseError && (
                   <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-[11px] font-medium text-blue-700 mb-1">What changed</p>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[11px] font-medium text-blue-700">What changed</p>
+                      <button onClick={() => setParseChanges([])} className="text-[10px] text-blue-400 hover:text-blue-600">dismiss</button>
+                    </div>
                     <ul className="space-y-0.5">
                       {parseChanges.map((c, i) => (
                         <li key={i} className="text-[11px] text-blue-600">· {c}</li>
