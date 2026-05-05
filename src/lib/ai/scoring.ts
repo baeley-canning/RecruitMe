@@ -1,4 +1,4 @@
-import { chat, withRetry, parseJson, SONNET } from "./chat";
+import { chat, parseJson, SONNET } from "./chat";
 import {
   buildScoreBreakdown,
   CATEGORY_WEIGHTS_V2,

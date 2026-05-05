@@ -4,14 +4,7 @@ import {
   type EvidenceCandidateProfileDraft,
   type SanitizedCandidateProfileDraft,
 } from "../candidate-profile";
-import {
-  buildProfileExcerpt,
-  buildRequirementAwareProfileExcerpt,
-  SCORE_PROFILE_EXCERPT_MAX_CHARS,
-  ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS,
-} from "../profile-excerpt";
 import { getJobParsingProvider } from "./chat";
-import type { ParsedRole } from "./parsing";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 

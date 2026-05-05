@@ -52,7 +52,7 @@ import { ScoreRadar } from "./score-radar";
 import type { RadarDimensions } from "./score-radar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { cn, statusLabel, statusBadge, safeParseJson, timeAgo } from "@/lib/utils";
+import { cn, statusLabel, statusBadge, safeParseJson } from "@/lib/utils";
 import {
   CATEGORY_WEIGHTS_V2,
   MUST_HAVE_WEIGHT_V2,
@@ -671,14 +671,12 @@ function ProfileDrawer({
   candidate,
   onClose,
   onLinkedInChange,
-  onJobAdderChange,
   onFetchProfile,
   fetchingProfile = false,
 }: {
   candidate: Candidate;
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
-  onJobAdderChange?: (id: string, url: string) => void;
   onFetchProfile?: (id: string) => void;
   fetchingProfile?: boolean;
 }) {
@@ -707,22 +705,10 @@ function ProfileDrawer({
 
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
-  const [editingJobAdder, setEditingJobAdder] = useState(false);
-  const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
-
   const handleSaveLinkedIn = useCallback(() => {
     onLinkedInChange?.(candidate.id, linkedInInput.trim());
     setEditingLinkedIn(false);
   }, [candidate.id, linkedInInput, onLinkedInChange]);
-
-  const handleSaveJobAdder = useCallback(async () => {
-    try {
-      await onJobAdderChange?.(candidate.id, jobAdderInput.trim());
-      setEditingJobAdder(false);
-    } catch {
-      // Drawer has no visible error display; CandidateCard handles this separately
-    }
-  }, [candidate.id, jobAdderInput, onJobAdderChange]);
 
   return (
     <>
@@ -1660,7 +1646,6 @@ export const CandidateCard = memo(function CandidateCard({
           candidate={candidate}
           onClose={() => setShowProfile(false)}
           onLinkedInChange={onLinkedInChange}
-          onJobAdderChange={onJobAdderChange}
           onFetchProfile={onFetchProfile}
           fetchingProfile={fetchingProfile}
         />
