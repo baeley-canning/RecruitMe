@@ -292,6 +292,8 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
   if (anchorTerms.length > 0) {
     // All anchors together — catches people who list multiple rare skills
     skillQueries.push(anchorTerms.join(" "));
+    // Reversed order — "Sybase C++ developer" catches profiles that lead with the DB
+    if (anchorTerms.length > 1) skillQueries.push([...anchorTerms].reverse().join(" "));
     // Title + all anchors
     skillQueries.push(`${baseTitle || "Software Developer"} ${anchorTerms.join(" ")}`);
     for (const term of anchorTerms) {
@@ -689,6 +691,12 @@ async function runSearchBackground(args: {
             normalizeLocationText(searchLocation) !== "new zealand";
 
           if (!shouldTryNzFallback) return [...primaryOutcomes, ...specialistNzOutcomes];
+
+          // Notify recruiter that the search is broadening — don't do this silently
+          void prisma.searchSession.update({
+            where: { id: sessionId },
+            data: { message: `No results in ${searchLocation} — broadening to all of New Zealand` },
+          }).catch(() => {});
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
           const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];

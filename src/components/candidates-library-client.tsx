@@ -113,6 +113,16 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
               </span>
             )}
 
+            {/* No LinkedIn URL — may be duplicate */}
+            {!c.linkedinUrl && (
+              <span
+                title="No LinkedIn URL — if this person appears twice, they may be a duplicate. Add their LinkedIn URL to enable deduplication."
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-600 border border-amber-200 cursor-help"
+              >
+                No LinkedIn
+              </span>
+            )}
+
             {/* Cover letter */}
             {hasCoverLetter && (
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-purple-50 text-purple-600">

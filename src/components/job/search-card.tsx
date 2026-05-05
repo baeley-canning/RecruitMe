@@ -225,8 +225,13 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                           : <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" />}
                         {new Date(s.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         {" · "}
-                        {s.status === "complete" ? `${s.collected} found` : s.status === "rate_limited" ? "rate limited" : s.status}
-                        {s.location ? ` in ${s.location}` : ""}
+                        {s.status === "complete"
+                          ? s.collected === 0
+                            ? `0 found in ${s.location || "search area"} — try Re-analyse then Search Again`
+                            : `${s.collected} found`
+                          : s.status === "rate_limited" ? "rate limited" : s.status}
+                        {s.collected > 0 && s.location ? ` in ${s.location}` : ""}
+                        {s.message && s.message.includes("broadening") ? ` · ${s.message}` : ""}
                       </p>
                     ))}
                   </div>

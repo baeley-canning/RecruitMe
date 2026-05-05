@@ -68,6 +68,15 @@ function normalizeSource(value: unknown): "explicit" | "inferred" | "" {
   return value === "explicit" || value === "inferred" ? value : "";
 }
 
+// These title patterns are never actually used on LinkedIn profiles.
+// Filter them out even when the AI occasionally generates them.
+const BANNED_SYNONYM_TITLE_RE =
+  /\b(application developer|technical developer|it developer|mid.?level developer|junior developer|graduate developer|entry.?level developer|software professional|technology specialist|it professional)\b/i;
+
+function filterSynonymTitles(titles: string[]): string[] {
+  return titles.filter((t) => !BANNED_SYNONYM_TITLE_RE.test(t));
+}
+
 function ensureSkillNotes(value: unknown): SkillNote[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -174,7 +183,7 @@ Rules:
     explicitly_stated: ensureStringArray(parsed.explicitly_stated),
     strongly_inferred: ensureStringArray(parsed.strongly_inferred),
     search_expansion: ensureStringArray(parsed.search_expansion),
-    synonym_titles: ensureStringArray(parsed.synonym_titles),
+    synonym_titles: filterSynonymTitles(ensureStringArray(parsed.synonym_titles)),
     responsibilities: ensureStringArray(parsed.responsibilities),
     search_queries: ensureStringArray(parsed.search_queries),
     google_queries: ensureStringArray(parsed.google_queries),

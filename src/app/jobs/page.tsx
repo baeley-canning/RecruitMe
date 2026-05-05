@@ -28,7 +28,7 @@ export default async function JobsPage() {
         linkedinUrl: { not: null },
         profileCapturedAt: null,
       },
-      select: { id: true, jobId: true },
+      select: { id: true, jobId: true, job: { select: { title: true, company: true } } },
     }),
   ]);
 
@@ -39,6 +39,14 @@ export default async function JobsPage() {
     0
   );
 
+  // Group pending fetches by job for the indicator tooltip
+  const fetchByJob = needsFetchRows.reduce((acc, row) => {
+    if (!row.jobId) return acc;
+    if (!acc[row.jobId]) acc[row.jobId] = { count: 0, jobId: row.jobId, title: row.job?.title ?? "Untitled", company: row.job?.company ?? "" };
+    acc[row.jobId].count++;
+    return acc;
+  }, {} as Record<string, { count: number; jobId: string; title: string; company: string }>);
+  const fetchJobs = Object.values(fetchByJob).sort((a, b) => b.count - a.count);
   const fetchTarget = needsFetchRows.length > 0 ? needsFetchRows[0] : null;
 
   return (
@@ -52,17 +60,28 @@ export default async function JobsPage() {
         <div className="flex items-center gap-3">
           {/* Fetch status indicator */}
           {fetchTarget ? (
-            <Link
-              href={`/jobs/${fetchTarget.jobId}`}
-              title={`${needsFetchRows.length} candidate${needsFetchRows.length !== 1 ? "s" : ""} need profile fetches — click to go to one`}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 transition-colors text-xs font-medium text-orange-700"
-            >
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500" />
-              </span>
-              {needsFetchRows.length} to fetch
-            </Link>
+            <div className="relative group">
+              <Link
+                href={`/jobs/${fetchTarget.jobId}`}
+                title={fetchJobs.map(j => `${j.title}${j.company ? ` · ${j.company}` : ""}: ${j.count}`).join("\n")}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 transition-colors text-xs font-medium text-orange-700"
+              >
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500" />
+                </span>
+                {needsFetchRows.length} to fetch{fetchJobs.length > 1 ? ` · ${fetchJobs.length} jobs` : ""}
+              </Link>
+              {/* Per-job breakdown on hover */}
+              <div className="absolute right-0 top-full mt-1 z-10 hidden group-hover:block bg-white border border-slate-200 rounded-lg shadow-lg p-2 min-w-[200px]">
+                {fetchJobs.map(j => (
+                  <Link key={j.jobId} href={`/jobs/${j.jobId}`} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50 rounded text-xs">
+                    <span className="text-slate-700 truncate">{j.title}{j.company ? ` · ${j.company}` : ""}</span>
+                    <span className="ml-2 text-orange-600 font-medium flex-shrink-0">{j.count}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
           ) : (
             <span
               title="All captured profiles are up to date"

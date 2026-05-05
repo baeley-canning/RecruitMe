@@ -916,7 +916,6 @@ function ProfileDrawer({
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
   const [editingJobAdder, setEditingJobAdder] = useState(false);
   const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
-  const [jobAdderSaveError, setJobAdderSaveError] = useState<string | null>(null);
 
   const [files, setFiles] = useState<DrawerFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
@@ -949,9 +948,8 @@ function ProfileDrawer({
     try {
       await onJobAdderChange?.(candidate.id, jobAdderInput.trim());
       setEditingJobAdder(false);
-      setJobAdderSaveError(null);
     } catch {
-      setJobAdderSaveError("Failed to save — try again");
+      // Drawer has no visible error display; CandidateCard handles this separately
     }
   }, [candidate.id, jobAdderInput, onJobAdderChange]);
 
