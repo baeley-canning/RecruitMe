@@ -25,6 +25,7 @@ interface LibraryCandidate {
   source: string;
   status: string;
   notes: string | null;
+  orgName: string | null;
   profileCapturedAt: string | null;
   createdAt: string;
   job: { id: string; title: string; company: string | null } | null;
@@ -93,6 +94,12 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
 
           {/* Badges */}
           <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+            {/* Org name — only shown to owner, identifies cross-org candidates */}
+            {c.orgName && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-indigo-50 text-indigo-600 border border-indigo-100" title={`Organisation: ${c.orgName}`}>
+                {c.orgName}
+              </span>
+            )}
             {/* Job context */}
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">
               <Briefcase className="w-2.5 h-2.5" />

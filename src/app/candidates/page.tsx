@@ -11,39 +11,48 @@ export default async function CandidatesPage() {
   const auth = await getAuth();
   if (!auth) redirect("/login");
 
-  const rows = await prisma.candidate.findMany({
-    where: {
-      profileText: { not: null },
-      ...(auth.isOwner ? {} : {
-        OR: [
-          { job: { orgId: auth.orgId } },
-          { jobId: null, orgId: auth.orgId },
-        ],
-      }),
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      name: true,
-      headline: true,
-      location: true,
-      linkedinUrl: true,
-      profileText: true,
-      matchScore: true,
-      source: true,
-      status: true,
-      notes: true,
-      profileCapturedAt: true,
-      createdAt: true,
-      archivedJobTitle: true,
-      archivedJobCompany: true,
-      job: { select: { id: true, title: true, company: true } },
-      files: {
-        select: { id: true, type: true, filename: true, size: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
+  const [rows, orgs] = await Promise.all([
+    prisma.candidate.findMany({
+      where: {
+        profileText: { not: null },
+        ...(auth.isOwner ? {} : {
+          OR: [
+            { job: { orgId: auth.orgId } },
+            { jobId: null, orgId: auth.orgId },
+          ],
+        }),
       },
-    },
-  });
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        headline: true,
+        location: true,
+        linkedinUrl: true,
+        profileText: true,
+        matchScore: true,
+        source: true,
+        status: true,
+        notes: true,
+        orgId: true,
+        profileCapturedAt: true,
+        createdAt: true,
+        archivedJobTitle: true,
+        archivedJobCompany: true,
+        job: { select: { id: true, title: true, company: true } },
+        files: {
+          select: { id: true, type: true, filename: true, size: true, createdAt: true },
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    }),
+    // Owner only: fetch org names to label cross-org candidates
+    auth.isOwner
+      ? prisma.org.findMany({ select: { id: true, name: true } })
+      : Promise.resolve([] as { id: string; name: string }[]),
+  ]);
+
+  const orgMap = new Map(orgs.map((o) => [o.id, o.name]));
 
   // Manual candidates (CV upload) bypass captured-profile thresholds because their CVs are often shorter.
   const withProfile = rows.filter((row) => row.source === "manual" || hasFullCandidateProfile(row));
@@ -76,6 +85,7 @@ export default async function CandidatesPage() {
     delete rest.profileText;
     return {
       ...rest,
+      orgName: candidate.orgId ? (orgMap.get(candidate.orgId) ?? null) : null,
       profileCapturedAt: candidate.profileCapturedAt?.toISOString() ?? null,
       createdAt: candidate.createdAt.toISOString(),
       files: candidate.files.map((file) => ({

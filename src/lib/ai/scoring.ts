@@ -210,7 +210,7 @@ Return EXACTLY this JSON structure:
   "reasons_for": ["specific positive signal from the profile","..."],
   "reasons_against": ["specific concern or gap from the profile","..."],
   "missing_evidence": ["specific fact that would change the score if known","..."],
-  "recruiter_summary": "One sentence only. The single most important fact about fit or gap — name something specific from this profile (a skill, job title, company, or year count). Must not repeat anything already listed in reasons_for or reasons_against. If a strong match, say why in one line. If there is a blocker, name it."
+  "recruiter_summary": "One sentence only. The single most important fact a recruiter needs to decide whether to read on — usually the strongest signal for OR against. If all key points are already in reasons_for/against, synthesise the most critical one into a sharper verdict rather than inventing a new point. Name something specific (a skill, job title, company, year count, or recency gap). If a clear blocker exists, lead with that."
 }
 
 Category score rules:
@@ -241,7 +241,7 @@ nice_to_have_coverage rules:
 - Include EXACTLY one entry per nice-to-have. If no nice-to-haves were listed, return empty array.
 
 reasons_for: 2–4 specific, evidenced positive signals. Not generic praise. Reference actual job titles, companies, skills from the profile. Include historical experience where relevant.
-reasons_against: 2–4 specific concerns grounded in the profile. Do NOT claim a skill is absent if it appears anywhere in the work history — instead note recency concerns (e.g. "Sybase experience is from 2011; role may require current hands-on use"). Do not speculate beyond what the profile shows.
+reasons_against: 2–4 specific concerns grounded in the profile. If a skill is marked "likely_historical" (appears in old roles, current work is a different primary stack), you MUST note the recency gap here — name the year last used and current primary stack (e.g. "C++ last used 2017; now exclusively Python for 7 years — recency is the key risk for this role"). This is not claiming absence; it is explaining the coverage status. Do not speculate beyond what the profile shows.
 missing_evidence: 2–4 specific facts that are NOT in the profile and would materially change the score (e.g. "Years in role not stated", "No mention of team leadership despite Senior title").
 
 Short snippet rule: if the profile is a short snippet (under ~500 chars), treat unmentioned skills as genuinely unknown — do NOT assume they are present. Mark them "missing" or "unknown" accordingly. A snippet that does not mention WordPress does not confirm WordPress. Score only what is explicitly evidenced. Location and title alone should not carry a weak profile into 60%+ territory.
