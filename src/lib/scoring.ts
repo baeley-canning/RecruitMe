@@ -107,8 +107,8 @@ const MUST_HAVE_POINTS_BY_QUALITY: Record<DataQuality, Record<MustHaveCoverageSt
   full_profile: {
     confirmed:         100,
     equivalent:        100, // satisfies via experience — treated identically to confirmed
-    likely:             65,
-    likely_historical:  35, // skill is real but not current — candidate has moved to a different stack
+    likely:             50, // lowered from 65: a generous "likely" on a detailed profile shouldn't give 80%+
+    likely_historical:  30, // skill is real but not current — candidate has moved to a different stack
     missing:             0,
     negative:            0,
     unknown:             0,
@@ -198,7 +198,9 @@ export function computeMustHavePct(
   coverage: MustHaveStatus[],
   dataQuality: DataQuality = "full_profile"
 ): number {
-  if (coverage.length === 0) return 100;
+  // No must-haves defined on the role — treat as neutral 50, not 100.
+  // Returning 100 here was inflating all scores when parsedRole had no requirements.
+  if (coverage.length === 0) return 50;
   const pointTable = MUST_HAVE_POINTS_BY_QUALITY[dataQuality];
 
   let totalPoints = 0;
