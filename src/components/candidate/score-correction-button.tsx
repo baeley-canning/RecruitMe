@@ -83,7 +83,7 @@ export function ScoreCorrectionButton({
         <p className="text-xs font-medium text-slate-700">Train it — what should this score be?</p>
         <button
           onClick={() => { setOpen(false); setError(""); }}
-          className="text-slate-300 hover:text-slate-500"
+          className="text-slate-400 hover:text-slate-600"
           aria-label="Cancel"
         >
           <X className="w-3.5 h-3.5" />

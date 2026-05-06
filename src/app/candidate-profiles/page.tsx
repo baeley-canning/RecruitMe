@@ -549,7 +549,7 @@ export default function CandidateProfilesPage() {
                 <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                   <User className="w-4 h-4 text-blue-500" /> Candidate
                 </h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-slate-500 mb-1 block">Name</label>
                     <input value={draft.candidateName}
@@ -627,7 +627,7 @@ export default function CandidateProfilesPage() {
                   <h3 className="text-sm font-semibold text-slate-900">Work History</h3>
                   {draft.workHistory.map((job, ji) => (
                     <div key={ji} className="border border-slate-100 rounded-lg p-3 space-y-2">
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <input value={job.company}
                           onChange={(e) => {
                             const wh = [...draft.workHistory];
@@ -697,7 +697,7 @@ export default function CandidateProfilesPage() {
                 <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-2">
                   <h3 className="text-sm font-semibold text-slate-900">Qualifications</h3>
                   {draft.qualifications.map((q, qi) => (
-                    <div key={qi} className="grid grid-cols-2 gap-2">
+                    <div key={qi} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <input value={q.institution}
                         onChange={(e) => {
                           const quals = [...draft.qualifications];

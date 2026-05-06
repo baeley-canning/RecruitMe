@@ -302,7 +302,7 @@ function RefCard({
             type="button"
             onClick={onDelete}
             disabled={deleting}
-            className="text-slate-300 hover:text-red-500 transition-colors ml-1"
+            className="text-slate-400 hover:text-red-500 transition-colors ml-1"
           >
             {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
           </button>

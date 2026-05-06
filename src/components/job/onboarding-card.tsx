@@ -74,7 +74,7 @@ export function OnboardingCard({ jobId, hasParsedRole, candidateCount, scoredCou
     <div className="mb-6 rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white px-4 py-3 relative">
       <button
         onClick={handleDismiss}
-        className="absolute top-3 right-3 text-slate-300 hover:text-slate-500"
+        className="absolute top-3 right-3 text-slate-400 hover:text-slate-600"
         aria-label="Dismiss onboarding"
       >
         <X className="w-4 h-4" />

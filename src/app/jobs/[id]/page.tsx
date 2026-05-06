@@ -1098,6 +1098,15 @@ ${toHtml(job.rawJd)}
       {/* AI status banner */}
       <AiStatusBanner />
 
+      {/* Onboarding stepper — first card so new users see "what next?" without
+          scrolling past the empty pipeline. Auto-dismisses once all steps tick. */}
+      <OnboardingCard
+        jobId={id}
+        hasParsedRole={Boolean(parsedRole)}
+        candidateCount={job.candidates.length}
+        scoredCount={job.candidates.filter((c) => c.matchScore !== null).length}
+      />
+
       {/* Step 1: Parse JD */}
       {!parsedRole && (
         <Card className="mb-6">
@@ -1463,21 +1472,16 @@ ${toHtml(job.rawJd)}
         </div>
       )}
 
-      <OnboardingCard
-        jobId={id}
-        hasParsedRole={Boolean(parsedRole)}
-        candidateCount={job.candidates.length}
-        scoredCount={job.candidates.filter((c) => c.matchScore !== null).length}
-      />
-
       {parsedRole && (
-        <SearchCard
-          jobId={id}
-          parsedRole={parsedRole}
-          jobLocation={job.location}
-          jobStatus={job.status}
-          onComplete={fetchJob}
-        />
+        <div id="job-search-card">
+          <SearchCard
+            jobId={id}
+            parsedRole={parsedRole}
+            jobLocation={job.location}
+            jobStatus={job.status}
+            onComplete={fetchJob}
+          />
+        </div>
       )}
 
       {parsedRole && (
@@ -1698,13 +1702,19 @@ ${toHtml(job.rawJd)}
 
         {filteredCandidates.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-xl border border-slate-200 border-dashed">
-            <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <Users className="w-10 h-10 text-slate-400 mx-auto mb-3" />
             <p className="text-slate-500 text-sm font-medium">
               {filter === "all" ? "No candidates yet" : `No ${statusLabel(filter).toLowerCase()} candidates`}
             </p>
             {filter === "all" && parsedRole && (
               <p className="text-slate-400 text-xs mt-1">
-                Click &ldquo;Search LinkedIn Now&rdquo; above to find candidates automatically, or add them manually below.
+                <button
+                  onClick={() => document.getElementById("job-search-card")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                  className="text-blue-600 hover:text-blue-700 underline underline-offset-2"
+                >
+                  Find Candidates
+                </button>
+                {" "}or add them manually below.
               </p>
             )}
           </div>

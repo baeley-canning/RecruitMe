@@ -244,7 +244,8 @@ export default function AdminPage() {
           {users.length === 0 ? (
             <p className="text-slate-500 text-sm text-center py-10">No users yet.</p>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px]">
               <thead>
                 <tr className="border-b border-slate-100">
                   <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide px-5 py-3">User</th>
@@ -305,6 +306,7 @@ export default function AdminPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </div>
@@ -332,7 +334,8 @@ export default function AdminPage() {
           {orgs.length === 0 ? (
             <p className="text-slate-500 text-sm text-center py-10">No organisations yet.</p>
           ) : (
-            <table className="w-full">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px]">
               <thead>
                 <tr className="border-b border-slate-100">
                   <th className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide px-5 py-3">Name</th>
@@ -366,6 +369,7 @@ export default function AdminPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </div>

@@ -152,7 +152,7 @@ export function BulkUploadModal({ jobId, onClose, onComplete }: BulkUploadModalP
                   {entry.status === "error" && <span className="text-[11px] text-red-500">Failed</span>}
                   {!processing && entry.status === "queued" && (
                     <button onClick={() => setFiles((p) => p.filter((e) => e.id !== entry.id))}
-                      className="text-slate-300 hover:text-red-400 ml-1">
+                      className="text-slate-400 hover:text-red-500 ml-1">
                       <X className="w-3.5 h-3.5" />
                     </button>
                   )}

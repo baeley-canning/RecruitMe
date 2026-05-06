@@ -89,11 +89,11 @@ export function ShareShortlistButton({ jobId }: { jobId: string }) {
           role="dialog"
           aria-modal="false"
           aria-labelledby="share-shortlist-title"
-          className="absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-10"
+          className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-10"
         >
           <div className="flex items-center justify-between mb-3">
             <p id="share-shortlist-title" className="text-sm font-semibold text-slate-800">Share read-only shortlist</p>
-            <button onClick={() => setOpen(false)} aria-label="Close share menu" className="text-slate-300 hover:text-slate-500">
+            <button onClick={() => setOpen(false)} aria-label="Close share menu" className="text-slate-400 hover:text-slate-600">
               <X className="w-4 h-4" />
             </button>
           </div>

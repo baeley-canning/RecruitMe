@@ -266,7 +266,7 @@ export function SavedSearchesCard({
                 </Button>
                 <button
                   onClick={() => handleDelete(s)}
-                  className="text-slate-300 hover:text-red-500 p-1.5"
+                  className="text-slate-400 hover:text-red-500 p-1.5"
                   title="Delete saved search"
                   aria-label="Delete saved search"
                 >
