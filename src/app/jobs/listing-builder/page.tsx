@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, FileText, X, Loader2, DollarSign, Wifi, Sparkles, Copy, Check, ChevronRight, Download } from "lucide-react";
+import { Upload, FileText, X, Loader2, DollarSign, Wifi, Sparkles, Copy, Check, ChevronRight, Download, Eye, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SALARY_OPTIONS = [
@@ -12,9 +12,71 @@ const SALARY_OPTIONS = [
 ];
 
 const LISTING_SEED_KEY = "recruitme:new-job-from-listing";
+const DRAFT_AUTOSAVE_KEY = "recruitme:listing-builder-draft";
+const AUTOSAVE_DEBOUNCE_MS = 800;
 
 function fmtSalary(n: number) {
   return n >= 1000 ? `$${(n / 1000).toFixed(0)}k` : `$${n}`;
+}
+
+// Rendered markdown for the body preview. Mirrors the toHtml logic used by the
+// PDF export so what you see on screen matches what gets exported. Kept inline
+// rather than pulling in a markdown lib — the AI emits a tiny subset (headings,
+// bold, bullet lists, paragraphs) and we'd rather not ship a parser for it.
+function renderMarkdownBody(text: string): React.ReactNode {
+  const lines = text.split("\n");
+  const out: React.ReactNode[] = [];
+  let listBuf: string[] = [];
+
+  const flushList = () => {
+    if (listBuf.length === 0) return;
+    out.push(
+      <ul key={`ul-${out.length}`} className="list-disc pl-5 mb-3 space-y-1 text-sm text-slate-800">
+        {listBuf.map((item, i) => (
+          <li key={i} dangerouslySetInnerHTML={{ __html: inlineMarkdown(item) }} />
+        ))}
+      </ul>
+    );
+    listBuf = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (/^#{1,3}\s/.test(line)) {
+      flushList();
+      const level = line.match(/^(#{1,3})/)?.[1].length ?? 2;
+      const content = line.replace(/^#{1,3}\s*/, "");
+      const Tag = (`h${Math.min(level + 1, 6)}`) as keyof React.JSX.IntrinsicElements;
+      out.push(
+        <Tag key={`h-${out.length}`} className="text-base font-semibold text-slate-900 mt-4 mb-2"
+          dangerouslySetInnerHTML={{ __html: inlineMarkdown(content) }} />
+      );
+    } else if (/^[-*]\s/.test(line)) {
+      listBuf.push(line.replace(/^[-*]\s*/, ""));
+    } else if (line === "") {
+      flushList();
+      // Empty lines act as paragraph separators — no DOM needed.
+    } else {
+      flushList();
+      out.push(
+        <p key={`p-${out.length}`} className="text-sm text-slate-800 leading-relaxed mb-3"
+          dangerouslySetInnerHTML={{ __html: inlineMarkdown(line) }} />
+      );
+    }
+  }
+  flushList();
+  return out;
+}
+
+// Inline-only markdown: bold + escaping. No links, no italics — the AI doesn't
+// emit them and supporting unrequested syntax invites injection bugs.
+function inlineMarkdown(text: string): string {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  return escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
 }
 
 export default function ListingBuilderPage() {
@@ -37,6 +99,64 @@ export default function ListingBuilderPage() {
   const [listingHeadline, setListingHeadline] = useState("");
   const [listingBody, setListingBody] = useState("");
   const [listingCopied, setListingCopied] = useState(false);
+  const [bodyEditing, setBodyEditing] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // ── Autosave: restore on mount, persist on every change (debounced) ─────────
+  // Saves to localStorage so closing the tab mid-draft no longer loses work.
+  // Cleared on successful "Use in New Job" hand-off.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(DRAFT_AUTOSAVE_KEY);
+    if (!raw) return;
+    try {
+      const draft = JSON.parse(raw) as {
+        title?: string; company?: string; location?: string; isRemote?: boolean;
+        salaryEnabled?: boolean; salaryMin?: number; salaryMax?: number;
+        brief?: string; listingHeadline?: string; listingBody?: string;
+      };
+      if (draft.title) setTitle(draft.title);
+      if (draft.company) setCompany(draft.company);
+      if (draft.location) setLocation(draft.location);
+      if (typeof draft.isRemote === "boolean") setIsRemote(draft.isRemote);
+      if (typeof draft.salaryEnabled === "boolean") setSalaryEnabled(draft.salaryEnabled);
+      if (typeof draft.salaryMin === "number") setSalaryMin(draft.salaryMin);
+      if (typeof draft.salaryMax === "number") setSalaryMax(draft.salaryMax);
+      if (draft.brief) setBrief(draft.brief);
+      if (draft.listingHeadline) setListingHeadline(draft.listingHeadline);
+      if (draft.listingBody) setListingBody(draft.listingBody);
+      const hadAnything = Boolean(draft.brief || draft.listingHeadline || draft.listingBody || draft.title);
+      if (hadAnything) setDraftRestored(true);
+    } catch {
+      // Bad cached draft — drop it rather than show a confusing stale UI.
+      window.localStorage.removeItem(DRAFT_AUTOSAVE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handle = setTimeout(() => {
+      const hasContent = title || company || location || brief || listingHeadline || listingBody;
+      if (!hasContent) {
+        window.localStorage.removeItem(DRAFT_AUTOSAVE_KEY);
+        return;
+      }
+      window.localStorage.setItem(DRAFT_AUTOSAVE_KEY, JSON.stringify({
+        title, company, location, isRemote,
+        salaryEnabled, salaryMin, salaryMax,
+        brief, listingHeadline, listingBody,
+      }));
+    }, AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+  }, [title, company, location, isRemote, salaryEnabled, salaryMin, salaryMax, brief, listingHeadline, listingBody]);
+
+  const clearDraft = () => {
+    if (typeof window !== "undefined") window.localStorage.removeItem(DRAFT_AUTOSAVE_KEY);
+    setTitle(""); setCompany(""); setLocation(""); setIsRemote(false);
+    setSalaryEnabled(false); setBrief(""); setFileName("");
+    setListingHeadline(""); setListingBody(""); setListingCopied(false);
+    setError(""); setDraftRestored(false);
+  };
 
   const handleFile = async (file: File) => {
     if (!file.name.toLowerCase().endsWith(".pdf") && !file.name.toLowerCase().endsWith(".txt")) {
@@ -179,16 +299,47 @@ ${toHtml(listingBody)}
         jdText,
       })
     );
+    // Drop the autosaved draft — the listing has now graduated into a real job.
+    if (typeof window !== "undefined") window.localStorage.removeItem(DRAFT_AUTOSAVE_KEY);
     router.push("/jobs/new");
   };
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
       <div className="mb-7">
-        <h1 className="text-2xl font-bold text-slate-900">Listing Builder</h1>
-        <p className="text-slate-500 text-sm mt-1">
-          Draft the external job advertisement first. When it looks right, send it into the new job search flow.
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Listing Builder</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              Draft the external job advertisement first. When it looks right, send it into the new job search flow.
+            </p>
+          </div>
+          {(title || brief || listingHeadline || listingBody) && (
+            <button
+              type="button"
+              onClick={clearDraft}
+              className="text-xs text-slate-400 hover:text-red-600 underline underline-offset-2 mt-1 flex-shrink-0"
+              title="Clear the saved draft and start fresh"
+            >
+              Start over
+            </button>
+          )}
+        </div>
+        {draftRestored && (
+          <div className="mt-3 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-between gap-3">
+            <p className="text-xs text-blue-800">
+              <span className="font-medium">Draft restored.</span> We auto-save your work as you type — close the tab and come back any time.
+            </p>
+            <button
+              type="button"
+              onClick={() => setDraftRestored(false)}
+              className="text-blue-400 hover:text-blue-600 flex-shrink-0"
+              aria-label="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-5 space-y-4">
@@ -466,12 +617,40 @@ ${toHtml(listingBody)}
 
           <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
             <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">Headline</p>
-            <p className="font-bold text-slate-900 text-lg leading-snug">{listingHeadline}</p>
+            <input
+              type="text"
+              value={listingHeadline}
+              onChange={(e) => setListingHeadline(e.target.value)}
+              className="w-full bg-transparent font-bold text-slate-900 text-lg leading-snug focus:outline-none focus:ring-2 focus:ring-blue-300 rounded px-1 -mx-1"
+            />
           </div>
 
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Body</p>
-            <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{listingBody}</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Body</p>
+              <button
+                type="button"
+                onClick={() => setBodyEditing((v) => !v)}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-slate-700"
+                title={bodyEditing ? "Switch to rendered preview" : "Edit the body before exporting"}
+              >
+                {bodyEditing
+                  ? <><Eye className="w-3 h-3" /> Preview</>
+                  : <><Pencil className="w-3 h-3" /> Edit</>}
+              </button>
+            </div>
+            {bodyEditing ? (
+              <textarea
+                value={listingBody}
+                onChange={(e) => setListingBody(e.target.value)}
+                rows={Math.max(8, Math.min(28, listingBody.split("\n").length + 2))}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            ) : (
+              <div className="prose-sm max-w-none">
+                {renderMarkdownBody(listingBody)}
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end">
