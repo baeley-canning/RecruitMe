@@ -94,6 +94,7 @@ model Candidate {
   contactedAt      DateTime?
   source       String   @default("manual") // manual | serpapi | pdl | extension | talent_pool
   profileCapturedAt DateTime?
+  captureMetadata   String? // JSON: extension capture metadata — which deep pages were fetched, status, chars added, merge mode
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

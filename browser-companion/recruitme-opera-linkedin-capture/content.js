@@ -540,6 +540,119 @@ function buildExperienceDetailsUrl(profileBaseUrl) {
   return buildDetailsUrl(profileBaseUrl, "experience");
 }
 
+// ── Stricter deep-section merging helpers ────────────────────────────────────
+// Each LinkedIn section can be detected by a small set of header strings.
+// We use these for two things:
+//   1. Locate the precise byte-range a section occupies inside the main capture
+//      (so we can replace experience with the deep version, not just append).
+//   2. Decide whether to skip a deep fetch entirely because the main capture
+//      already covers the section adequately.
+const SECTION_HEADERS = {
+  experience:               ["Experience"],
+  education:                ["Education"],
+  skills:                   ["Skills", "Top skills"],
+  licenses_certifications:  [
+    "Licenses & Certifications",
+    "Licenses & certifications",
+    "Licenses and Certifications",
+    "Certifications",
+  ],
+};
+
+// Soft cap so a single bloated deep page can't monopolise the 100k profileText
+// budget. 25k ≈ 5 dense pages of A4 — plenty for any one section.
+const MAX_SECTION_CHARS = 25000;
+
+function escapeForRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Returns { header, index } pointing at the section header inside profileText,
+// or null if no known header for that section is present.
+function findSectionHeader(profileText, sectionKey) {
+  const headers = SECTION_HEADERS[sectionKey] || [];
+  for (const header of headers) {
+    const re = new RegExp(`(^|\\n)${escapeForRegex(header)}\\n`, "i");
+    const match = re.exec(profileText);
+    if (match) {
+      // match.index points at the leading \n (or 0); the actual header starts
+      // one char later when we matched a \n.
+      const headerStart = match.index === 0 ? 0 : match.index + 1;
+      return { header, index: headerStart };
+    }
+  }
+  return null;
+}
+
+// Returns the number of chars in profileText between this section's header and
+// the next known section header (or end of text). 0 if header is absent.
+function getSectionContentSize(profileText, sectionKey) {
+  const found = findSectionHeader(profileText, sectionKey);
+  if (!found) return 0;
+  const after = profileText.slice(found.index + found.header.length + 1); // +1 for the \n after header
+  const allHeaders = Object.values(SECTION_HEADERS).flat().map(escapeForRegex);
+  const nextRe = new RegExp(`\\n(${allHeaders.join("|")})\\n`, "i");
+  const nextIdx = after.search(nextRe);
+  return nextIdx === -1 ? after.length : nextIdx;
+}
+
+// Cap a single section's text at MAX_SECTION_CHARS, truncating at a line
+// boundary so we don't slice mid-word.
+function capSectionText(sectionText) {
+  if (sectionText.length <= MAX_SECTION_CHARS) return sectionText;
+  const truncated = sectionText.slice(0, MAX_SECTION_CHARS);
+  const lastNewline = truncated.lastIndexOf("\n");
+  return lastNewline > MAX_SECTION_CHARS / 2 ? truncated.slice(0, lastNewline) : truncated;
+}
+
+// Once-retry wrapper for deep-page fetches. LinkedIn frequently 429s on
+// rapid successive requests but recovers within ~600ms; a single retry
+// rescues a meaningful fraction of captures without hammering the server.
+async function fetchDeepPageHtml(detailsUrl) {
+  const result = { html: "", status: 0, finalUrl: "", reason: "" };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(detailsUrl, {
+        credentials: "include",
+        cache: "no-store",
+        redirect: "follow",
+      });
+      result.status = response.status;
+      result.finalUrl = response.url || detailsUrl;
+      if (response.ok) {
+        result.html = await response.text();
+        result.reason = "ok";
+        return result;
+      }
+      // Retry transient failures only; permanent client errors are final.
+      if (response.status !== 429 && response.status < 500) {
+        result.reason = `http_${response.status}`;
+        return result;
+      }
+      result.reason = `http_${response.status}`;
+    } catch (err) {
+      result.reason = "network_error";
+      result.status = 0;
+    }
+    if (attempt === 0) await sleep(600);
+  }
+  return result;
+}
+
+// Verify the response landed on the deep page we asked for instead of being
+// redirected to the main profile / a login wall / a 404 shell. The previous
+// check ("html contains '/details/skills' or 'Skills'") false-positives on
+// any profile that has the word "Skills" in their headline.
+function isDeepPageResponseValid(finalUrl, requestedSection) {
+  if (!finalUrl) return false;
+  try {
+    const u = new URL(finalUrl);
+    return new RegExp(`/in/[^/]+/details/${requestedSection}/?$`, "i").test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function extractLinesFromDetachedDocument(doc) {
   const root = doc.querySelector("main") || doc.body;
   if (!root) return [];
@@ -572,154 +685,265 @@ function extractLinesFromDetachedDocument(doc) {
   return filterProfileLines(raw.flatMap(splitIntoLines));
 }
 
+// Returns { text, meta } where meta records what happened so the server can
+// later prove the deep page was actually used. text is "" on any failure.
 async function fetchExperienceDetailsText(profileBaseUrl) {
+  const meta = { fetched: false, status: 0, reason: "skipped", finalUrl: "", chars: 0 };
   const detailsUrl = buildExperienceDetailsUrl(profileBaseUrl);
-  if (!detailsUrl) return "";
-
-  try {
-    const response = await fetch(detailsUrl, {
-      credentials: "include",
-      cache: "no-store",
-      redirect: "follow",
-    });
-    if (!response.ok) return "";
-
-    const html = await response.text();
-    if (!/\/details\/experience|Experience/i.test(html)) return "";
-
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const lines = extractLinesFromDetachedDocument(doc);
-    while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
-
-    const useful = [];
-    const seen = new Set();
-    for (const line of lines) {
-      if (/^(experience|profile|linkedin|search)$/i.test(line)) continue;
-      if (/^skip to main content$/i.test(line)) continue;
-      const key = normalizeLineKey(line);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      useful.push(line);
-    }
-
-    if (useful.length < 3 || useful.join("\n").length < 160) return "";
-    return `Experience\n${useful.join("\n")}`;
-  } catch (error) {
-    console.warn("[RecruitMe] failed to fetch full experience details:", error?.message || error);
-    return "";
+  if (!detailsUrl) {
+    meta.reason = "no_url";
+    return { text: "", meta };
   }
+
+  meta.fetched = true;
+  const fetched = await fetchDeepPageHtml(detailsUrl);
+  meta.status = fetched.status;
+  meta.finalUrl = fetched.finalUrl;
+  if (!fetched.html) {
+    meta.reason = fetched.reason || "empty_response";
+    return { text: "", meta };
+  }
+  if (!isDeepPageResponseValid(fetched.finalUrl, "experience")) {
+    meta.reason = "redirected_away";
+    return { text: "", meta };
+  }
+
+  const doc = new DOMParser().parseFromString(fetched.html, "text/html");
+  const lines = extractLinesFromDetachedDocument(doc);
+  while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
+
+  const useful = [];
+  const seen = new Set();
+  for (const line of lines) {
+    if (/^(experience|profile|linkedin|search)$/i.test(line)) continue;
+    if (/^skip to main content$/i.test(line)) continue;
+    const key = normalizeLineKey(line);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    useful.push(line);
+  }
+
+  if (useful.length < 3 || useful.join("\n").length < 160) {
+    meta.reason = "too_thin";
+    return { text: "", meta };
+  }
+
+  const text = capSectionText(`Experience\n${useful.join("\n")}`);
+  meta.reason = "ok";
+  meta.chars = text.length;
+  return { text, meta };
 }
 
+// Returns { capture, mode, charsAdded } so callers can record exactly how the
+// merge resolved. mode: "replace" (main had Experience, replaced with deep),
+// "append" (no Experience in main, added the deep block), "skip-too-small"
+// (deep block was discarded as not useful).
 function mergeExperienceSection(mainCapture, fullExperienceText) {
-  if (!fullExperienceText || fullExperienceText.length < 160) return mainCapture;
-
-  const profileText = mainCapture.profileText;
-  const expIdx = profileText.search(/\nExperience\n/i);
-  if (expIdx === -1) {
-    return {
-      ...mainCapture,
-      profileText: cleanText(`${profileText}\n\n${fullExperienceText}`).slice(0, 100000),
-      sectionKeys: [...new Set([...mainCapture.sectionKeys, "experience"])],
-    };
+  if (!fullExperienceText || fullExperienceText.length < 160) {
+    return { capture: mainCapture, mode: "skip-too-small", charsAdded: 0 };
   }
 
-  const afterExp = profileText.slice(expIdx + 1);
-  const nextMatch = afterExp.search(/\n(Education|Skills|Top skills|Licenses|Certifications)\n/i);
+  const before = mainCapture.profileText.length;
+  const profileText = mainCapture.profileText;
+  const found = findSectionHeader(profileText, "experience");
 
-  const merged =
-    nextMatch !== -1
-      ? profileText.slice(0, expIdx + 1) + fullExperienceText + "\n\n" + profileText.slice(expIdx + 1 + nextMatch + 1)
-      : profileText.slice(0, expIdx + 1) + fullExperienceText;
+  let merged;
+  let mode;
+  if (!found) {
+    merged = cleanText(`${profileText}\n\n${fullExperienceText}`).slice(0, 100000);
+    mode = "append";
+  } else {
+    // Replace from the start of the existing Experience header to the start of
+    // the next known section, with the deep block (which has its own header).
+    const allHeaders = Object.values(SECTION_HEADERS).flat().map(escapeForRegex);
+    const nextRe = new RegExp(`\\n(${allHeaders.join("|")})\\n`, "i");
+    const after = profileText.slice(found.index + found.header.length + 1);
+    const nextRel = after.search(nextRe);
+    const sliceEnd = nextRel === -1 ? profileText.length : found.index + found.header.length + 1 + nextRel;
+    merged = cleanText(
+      profileText.slice(0, found.index) + fullExperienceText + (nextRel === -1 ? "" : "\n\n" + profileText.slice(sliceEnd + 1))
+    ).slice(0, 100000);
+    mode = "replace";
+  }
 
   return {
-    ...mainCapture,
-    profileText: cleanText(merged).slice(0, 100000),
-    sectionKeys: [...new Set([...mainCapture.sectionKeys, "experience"])],
+    capture: {
+      ...mainCapture,
+      profileText: merged,
+      sectionKeys: [...new Set([...mainCapture.sectionKeys, "experience"])],
+    },
+    mode,
+    charsAdded: merged.length - before,
   };
 }
 
 async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
-  const fullExperienceText = await fetchExperienceDetailsText(profileBaseUrl);
-  const enriched = mergeExperienceSection(mainCapture, fullExperienceText);
-  if (enriched.profileText.length > mainCapture.profileText.length + 120) {
+  const { text, meta: fetchMeta } = await fetchExperienceDetailsText(profileBaseUrl);
+  const { capture, mode, charsAdded } = mergeExperienceSection(mainCapture, text);
+  const sectionMeta = {
+    key: "experience",
+    fetched: fetchMeta.fetched,
+    status: fetchMeta.status,
+    finalUrl: fetchMeta.finalUrl,
+    fetchOutcome: fetchMeta.reason,
+    deepChars: fetchMeta.chars,
+    mergeMode: mode,
+    charsAdded,
+  };
+  if (charsAdded > 0) {
     console.log("[RecruitMe] merged full experience details", {
       before: mainCapture.profileText.length,
-      after: enriched.profileText.length,
+      after: capture.profileText.length,
+      mode,
     });
   }
-  return enriched;
+  return { capture, sectionMeta };
 }
 
 async function fetchDetailsPageText(profileBaseUrl, section, sectionLabel) {
+  const meta = { fetched: false, status: 0, reason: "skipped", finalUrl: "", chars: 0 };
   const detailsUrl = buildDetailsUrl(profileBaseUrl, section);
-  if (!detailsUrl) return "";
-
-  try {
-    const response = await fetch(detailsUrl, {
-      credentials: "include",
-      cache: "no-store",
-      redirect: "follow",
-    });
-    if (!response.ok) return "";
-
-    const html = await response.text();
-    if (!new RegExp(`/details/${section}|${sectionLabel}`, "i").test(html)) return "";
-
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const lines = extractLinesFromDetachedDocument(doc);
-
-    const useful = [];
-    const seen = new Set();
-    for (const line of lines) {
-      if (new RegExp(`^(${sectionLabel}|profile|linkedin|search|skills)$`, "i").test(line)) continue;
-      if (/^skip to main content$/i.test(line)) continue;
-      const key = normalizeLineKey(line);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      useful.push(line);
-    }
-
-    if (useful.length < 2 || useful.join("\n").length < 60) return "";
-    return `${sectionLabel}\n${useful.join("\n")}`;
-  } catch (err) {
-    console.warn(`[RecruitMe] failed to fetch ${section} details:`, err?.message || err);
-    return "";
+  if (!detailsUrl) {
+    meta.reason = "no_url";
+    return { text: "", meta };
   }
+
+  meta.fetched = true;
+  const fetched = await fetchDeepPageHtml(detailsUrl);
+  meta.status = fetched.status;
+  meta.finalUrl = fetched.finalUrl;
+  if (!fetched.html) {
+    meta.reason = fetched.reason || "empty_response";
+    return { text: "", meta };
+  }
+  // Strict response check: was the request *not* redirected to the main profile
+  // (or login wall)? Without this, any /details/x request that 200s on a redirect
+  // back to /in/<slug> would be parsed as if it were the deep page.
+  if (!isDeepPageResponseValid(fetched.finalUrl, section)) {
+    meta.reason = "redirected_away";
+    return { text: "", meta };
+  }
+
+  const doc = new DOMParser().parseFromString(fetched.html, "text/html");
+  const lines = extractLinesFromDetachedDocument(doc);
+
+  const useful = [];
+  const seen = new Set();
+  for (const line of lines) {
+    if (new RegExp(`^(${escapeForRegex(sectionLabel)}|profile|linkedin|search|skills)$`, "i").test(line)) continue;
+    if (/^skip to main content$/i.test(line)) continue;
+    const key = normalizeLineKey(line);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    useful.push(line);
+  }
+
+  if (useful.length < 2 || useful.join("\n").length < 60) {
+    meta.reason = "too_thin";
+    return { text: "", meta };
+  }
+
+  const text = capSectionText(`${sectionLabel}\n${useful.join("\n")}`);
+  meta.reason = "ok";
+  meta.chars = text.length;
+  return { text, meta };
 }
 
-function appendSection(mainCapture, sectionText, sectionKey) {
-  if (!sectionText || sectionText.length < 60) return mainCapture;
-  const normalized = normalizeLineKey(sectionKey);
-  // Don't duplicate if already present in the main capture
-  if (mainCapture.profileText.toLowerCase().includes(normalized)) return mainCapture;
+// Decide whether to merge a deep section into the main capture, and which mode
+// to use:
+//   - "skip-already-present": main has this section header AND substantial
+//      content under it (>500 chars). The deep page would mostly duplicate.
+//   - "replace":              main has the header but content is thin (<500
+//      chars), so we substitute the deep version for the slim main one.
+//   - "append":               header absent from main, append fresh.
+//   - "skip-empty":           deep page returned no usable text.
+function mergeSection(mainCapture, sectionText, sectionKey, sectionLabel) {
+  if (!sectionText || sectionText.length < 60) {
+    return { capture: mainCapture, mode: "skip-empty", charsAdded: 0 };
+  }
+  const before = mainCapture.profileText.length;
+  const existingSize = getSectionContentSize(mainCapture.profileText, sectionKey);
+  const SUBSTANTIAL = 500;
+
+  if (existingSize > SUBSTANTIAL) {
+    return { capture: mainCapture, mode: "skip-already-present", charsAdded: 0 };
+  }
+
+  let merged;
+  let mode;
+  if (existingSize > 0) {
+    // Replace the slim existing block. Reuse the experience-merge logic: the
+    // main capture has a header, find the next-section boundary, splice in.
+    const found = findSectionHeader(mainCapture.profileText, sectionKey);
+    if (!found) {
+      merged = cleanText(`${mainCapture.profileText}\n\n${sectionText}`).slice(0, 100000);
+      mode = "append";
+    } else {
+      const allHeaders = Object.values(SECTION_HEADERS).flat().map(escapeForRegex);
+      const nextRe = new RegExp(`\\n(${allHeaders.join("|")})\\n`, "i");
+      const after = mainCapture.profileText.slice(found.index + found.header.length + 1);
+      const nextRel = after.search(nextRe);
+      const sliceEnd = nextRel === -1 ? mainCapture.profileText.length : found.index + found.header.length + 1 + nextRel;
+      merged = cleanText(
+        mainCapture.profileText.slice(0, found.index) + sectionText + (nextRel === -1 ? "" : "\n\n" + mainCapture.profileText.slice(sliceEnd + 1))
+      ).slice(0, 100000);
+      mode = "replace";
+    }
+  } else {
+    merged = cleanText(`${mainCapture.profileText}\n\n${sectionText}`).slice(0, 100000);
+    mode = "append";
+  }
+
   return {
-    ...mainCapture,
-    profileText: cleanText(`${mainCapture.profileText}\n\n${sectionText}`).slice(0, 100000),
-    sectionKeys: [...new Set([...mainCapture.sectionKeys, sectionKey])],
+    capture: {
+      ...mainCapture,
+      profileText: merged,
+      sectionKeys: [...new Set([...mainCapture.sectionKeys, sectionKey])],
+    },
+    mode,
+    charsAdded: merged.length - before,
   };
 }
 
 async function enrichWithSkillsAndCertifications(mainCapture, profileBaseUrl) {
-  const [skillsText, certsText, educationText] = await Promise.all([
-    fetchDetailsPageText(profileBaseUrl, "skills", "Skills"),
+  const [skills, certs, education] = await Promise.all([
+    fetchDetailsPageText(profileBaseUrl, "skills",         "Skills"),
     fetchDetailsPageText(profileBaseUrl, "certifications", "Licenses & Certifications"),
-    fetchDetailsPageText(profileBaseUrl, "education", "Education"),
+    fetchDetailsPageText(profileBaseUrl, "education",      "Education"),
   ]);
 
+  const sections = [
+    { key: "skills",                   label: "Skills",                     ...skills },
+    { key: "licenses_certifications",  label: "Licenses & Certifications",  ...certs },
+    { key: "education",                label: "Education",                  ...education },
+  ];
+
   let enriched = mainCapture;
-  if (skillsText)    enriched = appendSection(enriched, skillsText, "skills");
-  if (certsText)     enriched = appendSection(enriched, certsText, "licenses_certifications");
-  if (educationText) enriched = appendSection(enriched, educationText, "education");
+  const sectionMetas = [];
+  for (const s of sections) {
+    const merge = mergeSection(enriched, s.text, s.key, s.label);
+    enriched = merge.capture;
+    sectionMetas.push({
+      key:          s.key,
+      fetched:      s.meta.fetched,
+      status:       s.meta.status,
+      finalUrl:     s.meta.finalUrl,
+      fetchOutcome: s.meta.reason,
+      deepChars:    s.meta.chars,
+      mergeMode:    merge.mode,
+      charsAdded:   merge.charsAdded,
+    });
+  }
 
   if (enriched.profileText.length > mainCapture.profileText.length + 60) {
     console.log("[RecruitMe] merged skills/certs/education", {
-      skills: skillsText.length,
-      certs: certsText.length,
-      education: educationText.length,
+      skills: skills.text.length,
+      certs:  certs.text.length,
+      education: education.text.length,
       totalAfter: enriched.profileText.length,
     });
   }
-  return enriched;
+  return { capture: enriched, sectionMetas };
 }
 
 async function waitForRootProfilePage(expectedUrl = "") {
@@ -730,6 +954,20 @@ async function waitForRootProfilePage(expectedUrl = "") {
     if (!expectedSlug || linkedInProfileMatches(location.href, expectedUrl)) return true;
   }
   return false;
+}
+
+// Each call to enrichWithExperienceDetails / enrichWithSkillsAndCertifications
+// now returns its own metadata. captureProfile rolls them up into a single
+// captureMeta object that travels with the profileText to the server, so the
+// server (and a recruiter looking at the candidate detail panel) can verify
+// which deep pages were actually fetched, which were skipped, and why.
+async function enrichAll(capture, startUrl) {
+  const expResult  = await enrichWithExperienceDetails(capture, startUrl);
+  const restResult = await enrichWithSkillsAndCertifications(expResult.capture, startUrl);
+  return {
+    capture: restResult.capture,
+    sectionMetas: [expResult.sectionMeta, ...restResult.sectionMetas],
+  };
 }
 
 async function captureProfile() {
@@ -753,13 +991,26 @@ async function captureProfile() {
   }
 
   let capture = collectProfileText(startUrl, { allowShort: true });
-  if (!needsDeeperCapture(capture)) {
-    capture = await enrichWithExperienceDetails(capture, startUrl);
-    capture = await enrichWithSkillsAndCertifications(capture, startUrl);
-    if (capture.profileText.length < 200) {
+  const mainChars = capture.profileText.length;
+  let lastSectionMetas = [];
+
+  const finalize = (cap) => {
+    if (cap.profileText.length < 200) {
       throw new Error("Captured profile text did not contain enough usable profile text");
     }
-    return capture;
+    cap.captureMeta = {
+      capturedAt: new Date().toISOString(),
+      mainProfileChars: mainChars,
+      finalProfileChars: cap.profileText.length,
+      sections: lastSectionMetas,
+    };
+    return cap;
+  };
+
+  if (!needsDeeperCapture(capture)) {
+    const r = await enrichAll(capture, startUrl);
+    capture = r.capture; lastSectionMetas = r.sectionMetas;
+    return finalize(capture);
   }
 
   const expanded = await expandInlineSections(clicked, { visibleOnly: false, passes: 6 });
@@ -774,32 +1025,26 @@ async function captureProfile() {
 
   capture = collectProfileText(startUrl, { allowShort: true });
   if (!needsDeeperCapture(capture)) {
-    capture = await enrichWithExperienceDetails(capture, startUrl);
-    capture = await enrichWithSkillsAndCertifications(capture, startUrl);
-    if (capture.profileText.length < 200) {
-      throw new Error("Captured profile text did not contain enough usable profile text");
-    }
-    return capture;
+    const r = await enrichAll(capture, startUrl);
+    capture = r.capture; lastSectionMetas = r.sectionMetas;
+    return finalize(capture);
   }
 
   await sleep(800);
   capture = collectProfileText(startUrl, { allowShort: true });
-  capture = await enrichWithExperienceDetails(capture, startUrl);
-  capture = await enrichWithSkillsAndCertifications(capture, startUrl);
+  let r = await enrichAll(capture, startUrl);
+  capture = r.capture; lastSectionMetas = r.sectionMetas;
 
   if (capture.profileText.length < 200) {
     await sleep(1200);
     const finalRescrolled = await scrollProfile(clicked);
     if (finalRescrolled) {
       capture = collectProfileText(startUrl, { allowShort: true });
-      capture = await enrichWithExperienceDetails(capture, startUrl);
-      capture = await enrichWithSkillsAndCertifications(capture, startUrl);
+      r = await enrichAll(capture, startUrl);
+      capture = r.capture; lastSectionMetas = r.sectionMetas;
     }
   }
-  if (capture.profileText.length < 200) {
-    throw new Error("Captured profile text did not contain enough usable profile text");
-  }
-  return capture;
+  return finalize(capture);
 }
 
 let captureInProgress = false;
@@ -894,6 +1139,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
         linkedinUrl: capture.linkedinUrl,
         profileText: capture.profileText,
         candidateName: capture.title || "",
+        captureMeta: capture.captureMeta,
         serverBase,
       },
       120_000
@@ -1082,6 +1328,7 @@ async function handleAddToJobClick(button, linkedinUrl, serverBase) {
         jobId,
         linkedinUrl,
         profileText: capture.profileText,
+        captureMeta: capture.captureMeta,
       },
       120000
     );

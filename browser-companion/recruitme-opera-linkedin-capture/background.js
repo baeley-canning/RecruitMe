@@ -547,7 +547,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // when running inside a LinkedIn (or other) page context.
   if (message?.type === "submit-capture-result") {
     void (async () => {
-      const { sessionId, linkedinUrl, profileText, candidateName, serverBase } = message;
+      const { sessionId, linkedinUrl, profileText, candidateName, captureMeta, serverBase } = message;
       const tabId = sender.tab?.id;
       try {
         await requestRecruitMe(
@@ -555,7 +555,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           {
             method: "POST",
             timeoutMs: 120000,
-            body: JSON.stringify({ sessionId, linkedinUrl, profileText }),
+            body: JSON.stringify({ sessionId, linkedinUrl, profileText, captureMeta }),
           },
           serverBase || "",
           { rememberFailure: false }
@@ -702,7 +702,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // chosen job. Mirrors the auto-capture flow but without a server-side
   // pending FetchSession — recruiter intent comes from the overlay click.
   if (message?.type === "submit-add-to-job") {
-    const { jobId, linkedinUrl, profileText } = message;
+    const { jobId, linkedinUrl, profileText, captureMeta } = message;
     if (!jobId || !linkedinUrl || !profileText) {
       sendResponse({ ok: false, error: "jobId, linkedinUrl, profileText required" });
       return false;
@@ -712,7 +712,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       {
         method: "POST",
         timeoutMs: 90000,
-        body: JSON.stringify({ jobId, linkedinUrl, profileText }),
+        body: JSON.stringify({ jobId, linkedinUrl, profileText, captureMeta }),
       },
       "",
       { rememberFailure: false }

@@ -75,6 +75,7 @@ import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
 import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
 import { ScoreCorrectionButton } from "./candidate/score-correction-button";
+import { CaptureMetadataPanel } from "./candidate/capture-metadata-panel";
 
 interface AcceptanceSignal {
   label: string;
@@ -111,6 +112,7 @@ interface Candidate {
   status: string;
   statusHistory: string | null;
   source: string;
+  captureMetadata?: string | null;
 }
 
 interface CandidateCardProps {
@@ -927,6 +929,11 @@ function ProfileDrawer({
                 </div>
                 <CopyButton text={candidate.profileText} />
               </div>
+              {candidate.captureMetadata && (
+                <div className="mb-2">
+                  <CaptureMetadataPanel raw={candidate.captureMetadata} />
+                </div>
+              )}
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl max-h-[50vh] overflow-y-auto">
                 <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
                   {candidate.profileText}

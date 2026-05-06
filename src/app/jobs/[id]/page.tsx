@@ -57,6 +57,7 @@ interface Candidate {
   profileCapturedAt: string | null;
   matchScore: number | null;
   profileTextHash: string | null;
+  captureMetadata: string | null;
   matchReason: string | null;
   fetchPriorityScore: number | null;
   fetchPriorityReason: string | null;

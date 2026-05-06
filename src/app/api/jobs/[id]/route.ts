@@ -28,6 +28,7 @@ export async function GET(
           fetchPriorityScore: true, fetchPriorityReason: true,
           acceptanceScore: true, acceptanceReason: true,
           profileCapturedAt: true, profileTextHash: true,
+          captureMetadata: true,
           jobAdderUrl: true, notes: true, createdAt: true, updatedAt: true,
           archivedJobTitle: true, archivedJobCompany: true,
           // profileText intentionally excluded — large field, fetched on demand

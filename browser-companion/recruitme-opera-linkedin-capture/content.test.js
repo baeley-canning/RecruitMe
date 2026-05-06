@@ -77,12 +77,122 @@ describe("RecruitMe content script", () => {
       "Owned API integrations, frontend delivery, search workflows, and internal automation for recruiting teams.",
     ].join("\n");
 
-    const merged = context.mergeExperienceSection(capture, fullExperienceText);
+    // mergeExperienceSection now returns { capture, mode, charsAdded } so the
+    // caller can record proof-of-merge metadata. The merged profile text lives
+    // on .capture.
+    const result = context.mergeExperienceSection(capture, fullExperienceText);
+    const merged = result.capture;
 
     expect(merged.profileText).toContain("Earlier Engineer");
     expect(merged.profileText).not.toContain("Short role");
     expect(merged.profileText).toContain("Education\nVictoria University");
     expect(merged.sectionKeys).toContain("experience");
+    expect(result.mode).toBe("replace");
+    expect(result.charsAdded).toBeGreaterThan(0);
+  });
+
+  // ── Stricter deep-section merging — proof the audit-driven fixes hold ─────
+  it("findSectionHeader matches case-insensitively and returns the right index", () => {
+    const { context } = loadContentScriptContext();
+    const text = "Jane\nEngineer\n\nExperience\nCurrent role\n\nEducation\nUni";
+    const exp = context.findSectionHeader(text, "experience");
+    expect(exp).not.toBeNull();
+    expect(exp.header).toBe("Experience");
+    expect(text.slice(exp.index, exp.index + 10)).toBe("Experience");
+    const skills = context.findSectionHeader(text, "skills");
+    expect(skills).toBeNull();
+  });
+
+  it("getSectionContentSize stops at the next known section header (not at random keywords)", () => {
+    const { context } = loadContentScriptContext();
+    const text = "About\n\nSkills\nReact, Rails, leadership\n\nEducation\nUni";
+    const size = context.getSectionContentSize(text, "skills");
+    // "React, Rails, leadership" plus the leading newline before "Education" — bounded.
+    expect(size).toBeGreaterThan(10);
+    expect(size).toBeLessThan(40);
+  });
+
+  // Deep section text needs ≥60 chars to be considered useful — match real
+  // LinkedIn output so the merge logic, not the early-exit, is what's tested.
+  const SKILLS_DEEP = "Skills\nReact\nRails\nLeadership\nSystem design\nMentoring\nDistributed systems";
+
+  it("mergeSection appends a fresh skills block when the main capture has no Skills header", () => {
+    const { context } = loadContentScriptContext();
+    const main = {
+      profileText: "Jane\nEngineer\n\nExperience\nLong-form experience block.",
+      sectionKeys: ["experience"],
+    };
+    const result = context.mergeSection(main, SKILLS_DEEP, "skills", "Skills");
+    expect(result.mode).toBe("append");
+    expect(result.capture.profileText).toContain("Skills\nReact\nRails\nLeadership");
+    expect(result.capture.sectionKeys).toContain("skills");
+    expect(result.charsAdded).toBeGreaterThan(0);
+  });
+
+  // The bug this guards against: previous appendSection used
+  // profileText.includes(normalizeLineKey("skills")) so any profile mentioning
+  // the word "skills" (basically all of them) silently blocked the deep fetch.
+  it("mergeSection does not false-positive on the word 'skills' appearing in unrelated text", () => {
+    const { context } = loadContentScriptContext();
+    const main = {
+      profileText: "Jane\nEngineer with strong technical skills\n\nExperience\nLong-form experience block.",
+      sectionKeys: ["experience"],
+    };
+    const result = context.mergeSection(main, SKILLS_DEEP, "skills", "Skills");
+    // Should still append because there's no actual "Skills\n..." header in main.
+    expect(result.mode).toBe("append");
+    expect(result.capture.profileText).toContain("Skills\nReact\nRails\nLeadership");
+  });
+
+  it("mergeSection skips deep fetch when main already has a substantial section", () => {
+    const { context } = loadContentScriptContext();
+    const main = {
+      // 600+ chars under the Skills header — main capture is already detailed.
+      profileText: "Jane\nEngineer\n\nSkills\n" + "React experience across multiple complex products with end-to-end ownership. ".repeat(10),
+      sectionKeys: ["skills"],
+    };
+    const result = context.mergeSection(main, SKILLS_DEEP, "skills", "Skills");
+    expect(result.mode).toBe("skip-already-present");
+    expect(result.charsAdded).toBe(0);
+  });
+
+  it("mergeSection replaces a thin existing section with a richer deep version", () => {
+    const { context } = loadContentScriptContext();
+    const main = {
+      profileText: "Jane\nEngineer\n\nSkills\nReact\n\nEducation\nUni",
+      sectionKeys: ["skills", "education"],
+    };
+    const skillsText = "Skills\nReact\nRails\nLeadership\nSystem design\nMentoring junior engineers across multiple teams";
+    const result = context.mergeSection(main, skillsText, "skills", "Skills");
+    expect(result.mode).toBe("replace");
+    // Education should still be present below.
+    expect(result.capture.profileText).toContain("Education\nUni");
+    expect(result.capture.profileText).toContain("Mentoring junior engineers");
+    expect(result.charsAdded).toBeGreaterThan(0);
+  });
+
+  it("isDeepPageResponseValid only accepts URLs that landed on the requested deep page", () => {
+    const { context } = loadContentScriptContext();
+    expect(context.isDeepPageResponseValid("https://www.linkedin.com/in/jane/details/skills/", "skills")).toBe(true);
+    expect(context.isDeepPageResponseValid("https://www.linkedin.com/in/jane/details/skills",  "skills")).toBe(true);
+    // Redirected back to main profile — must reject.
+    expect(context.isDeepPageResponseValid("https://www.linkedin.com/in/jane/", "skills")).toBe(false);
+    // Wrong section requested.
+    expect(context.isDeepPageResponseValid("https://www.linkedin.com/in/jane/details/education/", "skills")).toBe(false);
+    // Login wall.
+    expect(context.isDeepPageResponseValid("https://www.linkedin.com/login", "skills")).toBe(false);
+  });
+
+  it("capSectionText preserves short sections and truncates oversize ones at a line boundary", () => {
+    const { context } = loadContentScriptContext();
+    const short = "Skills\nReact\nRails";
+    expect(context.capSectionText(short)).toBe(short);
+    const huge = "Skills\n" + Array.from({ length: 5000 }, (_, i) => `line-${i} contents go here`).join("\n");
+    const capped = context.capSectionText(huge);
+    expect(capped.length).toBeLessThanOrEqual(25000);
+    // Should not slice mid-word — if we cut in the middle of "line-NNN" the
+    // tail wouldn't end at a newline boundary.
+    expect(capped.endsWith("\n") || /line-\d+ contents go here$/.test(capped)).toBe(true);
   });
 
   it("rejects a second capture session while the tab is already capturing", () => {

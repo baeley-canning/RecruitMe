@@ -14,6 +14,8 @@ const BodySchema = z.object({
   sessionId: z.string().min(1),
   linkedinUrl: z.string().url().max(500),
   profileText: z.string().min(100).max(100_000),
+  // Extension-emitted proof of deep-page usage; opaque JSON, see import route.
+  captureMeta: z.unknown().optional(),
 });
 
 export async function OPTIONS(req: Request) {
@@ -25,8 +27,9 @@ async function processCaptureCompletion(args: {
   session: NonNullable<Awaited<ReturnType<typeof findSessionInQueue>>>;
   linkedinUrl: string;
   profileText: string;
+  captureMeta?: unknown;
 }) {
-  const { sessionId, session, linkedinUrl, profileText } = args;
+  const { sessionId, session, linkedinUrl, profileText, captureMeta } = args;
 
   try {
     await saveCapturedProfileToCandidate({
@@ -34,6 +37,7 @@ async function processCaptureCompletion(args: {
       candidateId: session.candidateId,
       linkedinUrl,
       profileText,
+      captureMeta,
     });
 
     await updateSessionInQueue({
@@ -59,7 +63,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: extensionCorsHeaders(req) });
   }
 
-  const { sessionId, linkedinUrl, profileText } = parsed.data;
+  const { sessionId, linkedinUrl, profileText, captureMeta } = parsed.data;
   const session = await findSessionInQueue((s) => s.sessionId === sessionId);
 
   if (!session) {
@@ -82,7 +86,7 @@ export async function POST(req: Request) {
     message: "Profile received - scoring with AI",
   });
 
-  void processCaptureCompletion({ sessionId, session, linkedinUrl, profileText });
+  void processCaptureCompletion({ sessionId, session, linkedinUrl, profileText, captureMeta });
 
   return NextResponse.json(
     {

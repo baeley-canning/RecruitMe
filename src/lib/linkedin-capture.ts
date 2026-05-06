@@ -412,8 +412,9 @@ export async function saveCapturedProfileToCandidate(args: {
   candidateId: string;
   profileText: string;
   linkedinUrl: string;
+  captureMeta?: unknown;
 }) {
-  const { jobId, candidateId, profileText, linkedinUrl } = args;
+  const { jobId, candidateId, profileText, linkedinUrl, captureMeta } = args;
 
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
   if (!candidate || candidate.jobId !== jobId) {
@@ -430,10 +431,20 @@ export async function saveCapturedProfileToCandidate(args: {
     linkedinUrl,
   });
 
+  // Same shape + cap as importCapturedLinkedInProfile so both paths surface
+  // the same proof structure on the candidate row.
+  const captureMetadata = captureMeta != null
+    ? JSON.stringify(captureMeta).slice(0, 8000)
+    : undefined;
+
   try {
     return await prisma.candidate.update({
       where: { id: candidateId },
-      data: { ...data, source: "extension" },
+      data: {
+        ...data,
+        source: "extension",
+        ...(captureMetadata !== undefined ? { captureMetadata } : {}),
+      },
     });
   } catch (err) {
     // Another candidate in this job already has the same LinkedIn URL.
@@ -443,7 +454,11 @@ export async function saveCapturedProfileToCandidate(args: {
       delete dataWithoutUrl.linkedinUrl;
       return await prisma.candidate.update({
         where: { id: candidateId },
-        data: { ...dataWithoutUrl, source: "extension" },
+        data: {
+          ...dataWithoutUrl,
+          source: "extension",
+          ...(captureMetadata !== undefined ? { captureMetadata } : {}),
+        },
       });
     }
     throw err;
@@ -455,8 +470,9 @@ export async function importCapturedLinkedInProfile(args: {
   linkedinUrl: string;
   profileText: string;
   source?: string;
+  captureMeta?: unknown;
 }) {
-  const { jobId, linkedinUrl, profileText, source = "extension" } = args;
+  const { jobId, linkedinUrl, profileText, source = "extension", captureMeta } = args;
   const cleanUrl = normaliseLinkedInUrl(linkedinUrl);
 
   // Match by normalised URL to handle variants stored by SerpAPI or manual entry
@@ -482,12 +498,21 @@ export async function importCapturedLinkedInProfile(args: {
     linkedinUrl: cleanUrl,
   });
 
+  // Persist the extension-emitted proof of deep-page usage as JSON. We don't
+  // validate the shape server-side — the extension is the source of truth and
+  // the schema may evolve. Capped at ~8KB to prevent a bloated payload from
+  // polluting the candidate row.
+  const captureMetadata = captureMeta != null
+    ? JSON.stringify(captureMeta).slice(0, 8000)
+    : undefined;
+
   if (existing) {
     return prisma.candidate.update({
       where: { id: existing.id },
       data: {
         ...data,
         source,
+        ...(captureMetadata !== undefined ? { captureMetadata } : {}),
       },
     });
   }
@@ -498,6 +523,7 @@ export async function importCapturedLinkedInProfile(args: {
       status: "new",
       source,
       ...data,
+      ...(captureMetadata !== undefined ? { captureMetadata } : {}),
     },
   });
 }

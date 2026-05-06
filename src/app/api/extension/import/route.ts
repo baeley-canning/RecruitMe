@@ -11,6 +11,11 @@ const BodySchema = z.object({
   jobId: z.string().min(1),
   linkedinUrl: z.string().url().max(500),
   profileText: z.string().min(100).max(100_000),
+  // Extension-emitted proof that the deep pages were actually fetched and how
+  // each one merged. Opaque to the API; persisted on the candidate row and
+  // surfaced as-is in the UI so a recruiter can see "experience pulled from
+  // deep page (1240 chars), skills deep fetch was redirected away" etc.
+  captureMeta: z.unknown().optional(),
 });
 
 export async function OPTIONS(req: Request) {
