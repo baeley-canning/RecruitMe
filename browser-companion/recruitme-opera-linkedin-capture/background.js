@@ -519,6 +519,76 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  // Content script captured the profile and hands it to the service worker to POST.
+  // Routing via the SW avoids cross-origin CORS ambiguity that content scripts have
+  // when running inside a LinkedIn (or other) page context.
+  if (message?.type === "submit-capture-result") {
+    void (async () => {
+      const { sessionId, linkedinUrl, profileText, candidateName, serverBase } = message;
+      const tabId = sender.tab?.id;
+      try {
+        await requestRecruitMe(
+          "/api/extension/fetch-session/complete",
+          {
+            method: "POST",
+            timeoutMs: 120000,
+            body: JSON.stringify({ sessionId, linkedinUrl, profileText }),
+          },
+          serverBase || "",
+          { rememberFailure: false }
+        );
+        if (sessionId) activeAutoCaptures.delete(sessionId);
+        if (tabId && autoOpenedTabs.has(tabId)) {
+          autoOpenedTabs.delete(tabId);
+          chrome.tabs.remove(tabId).catch(() => {});
+        }
+        void notifyCaptureDone(candidateName || "").catch(() => {});
+        void clearExtensionError().catch(() => {});
+        sendResponse({ ok: true });
+      } catch (error) {
+        // POST failed — report error to server and set badge
+        const errMsg = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+        console.warn("[RecruitMe] submit-capture-result failed:", errMsg);
+        if (sessionId) activeAutoCaptures.delete(sessionId);
+        if (tabId && autoOpenedTabs.has(tabId)) {
+          autoOpenedTabs.delete(tabId);
+          chrome.tabs.remove(tabId).catch(() => {});
+        }
+        await requestRecruitMe(
+          "/api/extension/fetch-session/error",
+          { method: "POST", body: JSON.stringify({ sessionId, error: errMsg }) },
+          serverBase || "",
+          { rememberFailure: false }
+        ).catch(() => {});
+        await setExtensionError(errMsg).catch(() => {});
+        sendResponse({ ok: false, error: errMsg });
+      }
+    })();
+    return true;
+  }
+
+  // Content script captured an error — let the SW report it to the server.
+  if (message?.type === "submit-capture-error") {
+    void (async () => {
+      const { sessionId, error: errMsg, serverBase } = message;
+      const tabId = sender.tab?.id;
+      if (sessionId) activeAutoCaptures.delete(sessionId);
+      if (tabId && autoOpenedTabs.has(tabId)) {
+        autoOpenedTabs.delete(tabId);
+        chrome.tabs.remove(tabId).catch(() => {});
+      }
+      await requestRecruitMe(
+        "/api/extension/fetch-session/error",
+        { method: "POST", body: JSON.stringify({ sessionId, error: errMsg }) },
+        serverBase || "",
+        { rememberFailure: false }
+      ).catch(() => {});
+      await setExtensionError(errMsg || "Capture failed").catch(() => {});
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
   if (message?.type === "get-config") {
     void getStoredSettings()
       .then((settings) =>

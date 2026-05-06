@@ -794,12 +794,6 @@ async function captureProfile() {
   return capture;
 }
 
-// Default server bases for content-script-side POSTs (no service worker involved).
-const CONTENT_DEFAULT_BASES = [
-  "https://recruitme-production-8cc6.up.railway.app",
-  "https://recruitme.railway.app",
-];
-
 let captureInProgress = false;
 let captureInProgressSessionId = "";
 
@@ -825,30 +819,26 @@ function linkedInProfileMatches(a = "", b = "") {
   return aKey.length >= 6 && aKey === bKey;
 }
 
-async function postJson(base, path, body) {
-  const resp = await fetch(`${base}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+// Send a message to the background service worker and await the response.
+// The SW has host permissions so it can POST to the RecruitMe server without
+// any CORS ambiguity that affects content-script fetch() calls.
+function sendToServiceWorker(data, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("Service worker response timed out")),
+      timeoutMs
+    );
+    chrome.runtime.sendMessage(data, (response) => {
+      clearTimeout(timer);
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (response?.ok) {
+        resolve(response);
+      } else {
+        reject(new Error(response?.error || "Service worker request failed"));
+      }
+    });
   });
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(data?.error || `Server error (${resp.status})`);
-  }
-}
-
-async function tryPost(serverBase, path, body) {
-  const bases = [...new Set([serverBase, ...CONTENT_DEFAULT_BASES].filter(Boolean))];
-  let lastErr = new Error("Could not reach RecruitMe server");
-  for (const base of bases) {
-    try {
-      await postJson(base, path, body);
-      return;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr;
 }
 
 async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
@@ -887,29 +877,34 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
     clearTimeout(captureTimer);
 
     console.log("[RecruitMe] capture done", { chars: capture.profileText.length, sections: capture.sectionKeys });
-    await tryPost(serverBase, "/api/extension/fetch-session/complete", {
-      sessionId,
-      linkedinUrl: capture.linkedinUrl,
-      profileText: capture.profileText,
-    });
-    chrome.runtime.sendMessage(
-      { type: "capture-complete", sessionId, candidateName: capture.title || "" },
-      () => void chrome.runtime.lastError
+    // Hand the captured data to the service worker for the server POST.
+    // The SW's host permissions bypass CORS restrictions that affect content scripts.
+    await sendToServiceWorker(
+      {
+        type: "submit-capture-result",
+        sessionId,
+        linkedinUrl: capture.linkedinUrl,
+        profileText: capture.profileText,
+        candidateName: capture.title || "",
+        serverBase,
+      },
+      120_000
     );
   } catch (error) {
     clearTimeout(captureTimer);
     const msg = (error?.message || "Capture failed").slice(0, 500);
     console.warn("[RecruitMe] capture failed:", msg);
-    await tryPost(serverBase, "/api/extension/fetch-session/error", {
-      sessionId,
-      error: msg,
-    }).catch((postErr) => {
-      console.warn("[RecruitMe] failed to post error to server:", postErr?.message || postErr);
+    await sendToServiceWorker(
+      { type: "submit-capture-error", sessionId, error: msg, serverBase },
+      15_000
+    ).catch((swErr) => {
+      console.warn("[RecruitMe] failed to report error via SW:", swErr?.message || swErr);
+      // Last-resort direct message — SW already handles badge/state for normal path
+      chrome.runtime.sendMessage(
+        { type: "capture-error", sessionId, error: msg },
+        () => void chrome.runtime.lastError
+      );
     });
-    chrome.runtime.sendMessage(
-      { type: "capture-error", sessionId, error: msg },
-      () => void chrome.runtime.lastError
-    );
   } finally {
     captureInProgress = false;
     captureInProgressSessionId = "";
