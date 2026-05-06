@@ -2,6 +2,7 @@ import { chat, parseJson } from "./chat";
 import {
   OUTREACH_PROFILE_EXCERPT_MAX_CHARS,
   buildProfileExcerpt,
+  escapeXmlForPrompt,
 } from "../profile-excerpt";
 import type { ParsedRole } from "./parsing";
 
@@ -40,7 +41,7 @@ Location: ${parsedRole.location}
 Candidate: ${candidateName}
 Profile (use ONLY content between the XML tags):
 <candidate_profile>
-${profileSlice}
+${escapeXmlForPrompt(profileSlice)}
 </candidate_profile>
 
 Write two personalised outreach messages. Reference their ACTUAL job titles, companies, and specific skills — never be generic.

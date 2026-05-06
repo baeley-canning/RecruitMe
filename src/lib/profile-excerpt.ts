@@ -4,6 +4,19 @@ import {
   signalMatchesText,
 } from "./requirement-signals";
 
+/**
+ * Escape angle brackets and ampersands in user-supplied text before
+ * injecting it inside XML tags in an AI prompt. Without this, a candidate
+ * profile containing `</candidate_profile>` could close the safety wrapper
+ * and inject instructions that the model would then execute.
+ */
+export function escapeXmlForPrompt(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 const PROFILE_SECTION_ALIASES = new Map<string, string>([
   ["about", "About"],
   ["experience", "Experience"],

@@ -7,6 +7,7 @@ import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { getOrgScoringWeights } from "@/lib/scoring-config";
 import { getRecruitingContext } from "@/lib/recruiter-memory";
+import { reportError } from "@/lib/error-reporting";
 import { NextResponse } from "next/server";
 
 // Allow up to 5 minutes for large scoring runs. Without this, Vercel (and some
@@ -114,7 +115,7 @@ export async function POST(
               scored++;
               send({ scored, total });
             } catch (err) {
-              console.error(`Score failed for candidate ${candidate.id}:`, err);
+              reportError(err, { route: "score-all", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
               failed.push(candidate.id);
             }
           })

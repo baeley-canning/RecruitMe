@@ -28,6 +28,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
 import { getOrgScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { reportError } from "@/lib/error-reporting";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
 import {
@@ -37,6 +38,12 @@ import {
   signalMatchesText,
   extractLegacyAnchorTerms,
 } from "@/lib/requirement-signals";
+
+// Allow up to 5 minutes for large search runs. Without this, Vercel and some
+// proxy configurations cut the connection at ~30s leaving partial results.
+// The route returns immediately with a sessionId; the background work uses this
+// budget. Same value as score-all/route.ts for consistency.
+export const maxDuration = 300;
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
@@ -535,7 +542,7 @@ export async function POST(
     isOwner: auth.isOwner,
     orgId: auth.orgId,
   }).catch((err) => {
-    console.error("[search] background task crashed:", err);
+    reportError(err, { route: "search:background", jobId: id, orgId: auth.orgId });
     prisma.searchSession.update({
       where: { id: session.id },
       data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search crashed" },
@@ -1180,7 +1187,7 @@ async function runSearchBackground(args: {
       },
     }).catch(() => {});
   } catch (err) {
-    console.error("[search] background error:", err);
+    reportError(err, { route: "search:runBackground", jobId, orgId });
     await prisma.searchSession.update({
       where: { id: sessionId },
       data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search failed" },

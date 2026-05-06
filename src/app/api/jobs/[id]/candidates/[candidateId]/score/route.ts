@@ -71,7 +71,8 @@ export async function POST(
 
     return NextResponse.json(updated);
   } catch (err) {
-    console.error("Score error:", err);
+    const { reportError } = await import("@/lib/error-reporting");
+    reportError(err, { route: "score:candidate", jobId: id, candidateId, orgId: auth.orgId });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Scoring failed" },
       { status: 500 }

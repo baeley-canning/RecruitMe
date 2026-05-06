@@ -42,8 +42,10 @@ function initials(name: string): string {
 }
 
 function titleSimilarity(a: string, b: string): number {
+  // Preserve + and # so technical terms like C++ and C# survive tokenisation.
+  // Length floor lowered to 2 so short critical terms (Go, C#) aren't filtered.
   const tokenise = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 3);
+    s.toLowerCase().replace(/[^a-z0-9+# ]/g, " ").split(/\s+/).filter((w) => w.length > 1);
   const ta = new Set(tokenise(a));
   const tb = new Set(tokenise(b));
   if (ta.size === 0 || tb.size === 0) return 0;
