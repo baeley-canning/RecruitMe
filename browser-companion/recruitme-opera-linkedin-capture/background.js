@@ -44,7 +44,17 @@ async function getStoredSettings() {
     serverBase: "",
     lastWorkingServerBase: "",
     lastError: "",
+    extUsername: "",
+    extPassword: "",
   });
+}
+
+// Build a Basic Authorization header from stored credentials, or return null.
+async function getBasicAuthHeader() {
+  const { extUsername, extPassword } = await getStoredSettings();
+  if (!extUsername || !extPassword) return null;
+  const encoded = btoa(`${extUsername}:${extPassword}`);
+  return `Basic ${encoded}`;
 }
 
 async function getServerBases() {
@@ -93,6 +103,9 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
 
   let lastError = new Error("Could not connect to RecruitMe");
 
+  // Attach stored credentials automatically so every request is authenticated.
+  const authHeader = await getBasicAuthHeader().catch(() => null);
+
   for (const base of bases) {
     try {
       const headers = new Headers(options.headers || {});
@@ -101,6 +114,9 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
 
       if (requestOptions.body && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
+      }
+      if (authHeader && !headers.has("Authorization")) {
+        headers.set("Authorization", authHeader);
       }
 
       const response = await withTimeout(`${base}${path}`, { ...requestOptions, headers }, timeoutMs);
@@ -602,7 +618,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           serverBase: settings.serverBase || settings.lastWorkingServerBase || DEFAULT_SERVER_BASES[0],
-          lastError: settings.lastError || "",
+          username:   settings.extUsername || "",
+          lastError:  settings.lastError || "",
         })
       )
       .catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -612,6 +629,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "set-config") {
     void (async () => {
       const serverBase = normaliseServerBase(message.serverBase || "") || DEFAULT_SERVER_BASES[0];
+      // Store credentials before the connection test so requestRecruitMe picks them up.
+      if (message.username !== undefined) {
+        await chrome.storage.local.set({
+          extUsername: message.username || "",
+          extPassword: message.password || "",
+        });
+      }
       const { base } = await requestRecruitMe(
         "/api/extension/fetch-session",
         {},

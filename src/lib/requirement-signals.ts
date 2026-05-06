@@ -226,7 +226,10 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   [/\bsalesforce\b/i,                                   ["Salesforce"]],
   [/\bservicenow\b/i,                                   ["ServiceNow"]],
   [/\bsap\b/i,                                          ["SAP"]],
-  [/\bdynamics\b/i,                                     ["Dynamics"]],
+  [/\bmicrosoft dynamics\b|\bdynamics 365\b|\bms dynamics\b/i, ["Dynamics 365"]], // tightened — avoids matching "team dynamics"
+  [/\bworkday\b/i,                                      ["Workday"]],
+  [/\bnetsuite\b|\boracle netsuite\b/i,                  ["NetSuite"]],
+  [/\boracle e.?business\b|\boracle ebs\b/i,             ["Oracle EBS"]],
   // Analytics / BI
   [/\bpower bi\b/i,                                     ["Power BI"]],
   [/\btableau\b/i,                                      ["Tableau"]],

@@ -6,6 +6,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { getOrgScoringWeights } from "@/lib/scoring-config";
+import { getRecruitingContext } from "@/lib/recruiter-memory";
 import { NextResponse } from "next/server";
 
 // Allow up to 5 minutes for large scoring runs. Without this, Vercel (and some
@@ -54,8 +55,6 @@ export async function POST(
   const weights = await getOrgScoringWeights(auth.orgId);
 
   // Pre-fetch recruiter memory once per job — avoids one DB query per candidate.
-  // Only used for full-profile candidates (snippet scores are provisional anyway).
-  const { getRecruitingContext } = await import("@/lib/recruiter-memory");
   const recruiterContext = await getRecruitingContext(parsedRole, auth.orgId).catch(() => "");
 
   const total = candidates.length;

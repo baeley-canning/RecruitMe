@@ -90,9 +90,11 @@ export default function AdminPage() {
 
   const fetchAnalytics = async (days: number) => {
     setAnalyticsLoading(true);
-    const res = await fetch(`/api/admin/analytics?days=${days}`);
-    if (res.ok) setAnalytics(await res.json() as AnalyticsData);
-    setAnalyticsLoading(false);
+    try {
+      const res = await fetch(`/api/admin/analytics?days=${days}`);
+      if (res.ok) setAnalytics(await res.json() as AnalyticsData);
+    } catch { /* network error — leave analytics at previous state */ }
+    finally { setAnalyticsLoading(false); }
   };
 
   const handlePeriodChange = (days: number) => {

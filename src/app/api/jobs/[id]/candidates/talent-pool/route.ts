@@ -193,6 +193,7 @@ export async function POST(
       const candidate = await prisma.candidate.create({
         data: {
           jobId,
+          orgId: job.orgId ?? null,   // inherit org from the job — prevents null-org data leaks
           name: row.name,
           headline: row.headline,
           location: row.location || null,

@@ -21,8 +21,8 @@ export function ParseHistoryCard({ jobId }: { jobId: string }) {
   useEffect(() => {
     if (!open || loaded) return;
     fetch(`/api/jobs/${jobId}/parse-history`)
-      .then((r) => r.ok ? r.json() as Promise<ParseHistoryEntry[]> : [])
-      .then((data) => { setHistory(data); setLoaded(true); })
+      .then((r) => r.ok ? (r.json().catch(() => []) as Promise<ParseHistoryEntry[]>) : Promise.resolve([]))
+      .then((data) => { setHistory(Array.isArray(data) ? data : []); setLoaded(true); })
       .catch(() => setLoaded(true));
   }, [open, loaded, jobId]);
 
@@ -60,8 +60,9 @@ export function ParseHistoryCard({ jobId }: { jobId: string }) {
             <p className="text-xs text-slate-400">No analysis history yet — run Re-analyse to start tracking.</p>
           )}
           {loaded && history.map((entry) => {
-            const anchors  = JSON.parse(entry.anchorTerms) as string[];
-            const changes  = JSON.parse(entry.changes) as string[];
+            const parseJsonSafe = <T,>(s: string, fallback: T): T => { try { return JSON.parse(s) as T; } catch { return fallback; } };
+            const anchors  = parseJsonSafe<string[]>(entry.anchorTerms, []);
+            const changes  = parseJsonSafe<string[]>(entry.changes, []);
             const showChanges = changes.slice(0, 4);
             const extra = changes.length - showChanges.length;
             const date = new Date(entry.parsedAt).toLocaleString(undefined, {

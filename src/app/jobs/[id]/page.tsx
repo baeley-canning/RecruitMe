@@ -1623,9 +1623,9 @@ ${toHtml(job.rawJd)}
         })()}
 
         {/* Stale-score warning: requirements updated since last score-all */}
-        {job && job.lastParsedAt && job.candidates.length > 0 && !rescoringAll && !rescoreResult && (() => {
-          const parsedMs  = new Date(job.lastParsedAt).getTime();
-          const scoredMs  = job.lastScoredAt ? new Date(job.lastScoredAt).getTime() : 0;
+        {job && job.lastParsedAt && job.lastScoredAt && job.candidates.length > 0 && !rescoringAll && !rescoreResult && (() => {
+          const parsedMs  = new Date(job.lastParsedAt!).getTime();
+          const scoredMs  = new Date(job.lastScoredAt!).getTime();
           return parsedMs > scoredMs ? (
             <div className="mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border text-amber-700 bg-amber-50 border-amber-200">
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />

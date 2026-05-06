@@ -212,7 +212,7 @@ export async function POST(
   if (parsedRole) {
     try {
       const weights = await getOrgScoringWeights(auth.orgId);
-      const rawBreakdown = await withRetry(() => scoreCandidateStructured(profileText, parsedRole!, salary, weights));
+      const rawBreakdown = await withRetry(() => scoreCandidateStructured(profileText, parsedRole!, salary, weights, auth.orgId));
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         location,

@@ -114,7 +114,8 @@ export async function withRetry<T>(
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status;
-      const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      const rawMsg = err instanceof Error ? (err.message ?? "") : String(err ?? "");
+      const message = (typeof rawMsg === "string" ? rawMsg : String(rawMsg)).toLowerCase();
       // Retry: rate limits (429), server errors (500/502/503/504/529), and
       // network-level failures (no status property — connection reset, timeout, DNS).
       const isRetryable =

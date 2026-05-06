@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { runMaintenance } from "@/lib/maintenance";
+import { purgeOldUsageEvents, purgeExpiredLoginAttempts, purgeOldSearchSessions, purgeOldFetchSessions } from "@/lib/maintenance";
 
 type AnySession = { user?: { role?: string } } | null;
 
@@ -12,6 +12,11 @@ export async function POST() {
   if (session?.user?.role !== "owner") {
     return NextResponse.json({ error: "Owner only" }, { status: 403 });
   }
-  await runMaintenance();
-  return NextResponse.json({ ok: true });
+  const [usage, attempts, searchSessions, fetchSessions] = await Promise.all([
+    purgeOldUsageEvents(),
+    purgeExpiredLoginAttempts(),
+    purgeOldSearchSessions(),
+    purgeOldFetchSessions(),
+  ]);
+  return NextResponse.json({ ok: true, deleted: { usage: usage.deleted, attempts: attempts.deleted, searchSessions: searchSessions.deleted, fetchSessions: fetchSessions.deleted } });
 }

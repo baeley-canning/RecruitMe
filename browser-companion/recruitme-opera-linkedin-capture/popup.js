@@ -1,9 +1,11 @@
-const serverBaseInput = document.getElementById("serverBase");
+const serverBaseInput  = document.getElementById("serverBase");
+const extUsernameInput = document.getElementById("extUsername");
+const extPasswordInput = document.getElementById("extPassword");
 const saveServerButton = document.getElementById("saveServer");
-const serverStatus = document.getElementById("serverStatus");
-const pageStatus = document.getElementById("pageStatus");
+const serverStatus     = document.getElementById("serverStatus");
+const pageStatus       = document.getElementById("pageStatus");
 const capturePendingButton = document.getElementById("capturePending");
-const pendingStatus = document.getElementById("pendingStatus");
+const pendingStatus    = document.getElementById("pendingStatus");
 
 function setStatus(element, message, kind = "") {
   element.textContent = message;
@@ -30,6 +32,8 @@ async function loadConfig() {
   try {
     const response = await sendMessage({ type: "get-config" });
     serverBaseInput.value = response.serverBase || "";
+    extUsernameInput.value = response.username || "";
+    // Never pre-fill password — user must re-enter if they want to change it
     if (response.lastError) {
       setStatus(serverStatus, response.lastError, "error");
     }
@@ -143,6 +147,8 @@ saveServerButton.addEventListener("click", async () => {
     const response = await sendMessage({
       type: "set-config",
       serverBase: serverBaseInput.value,
+      username:   extUsernameInput.value.trim(),
+      password:   extPasswordInput.value,
     });
     setStatus(serverStatus, `Connected to ${response.serverBase}`, "ok");
     await refreshPendingStatus();

@@ -70,7 +70,9 @@ export async function getRecruitingContext(
   if (!orgId) return "";
 
   // Pull recent decided candidates from this org that have been AI-scored.
-  const candidates = await prisma.candidate.findMany({
+  let candidates;
+  try {
+    candidates = await prisma.candidate.findMany({
     where: {
       orgId,
       status: { in: [...POSITIVE_STATUSES, ...NEGATIVE_STATUSES] },
@@ -87,6 +89,10 @@ export async function getRecruitingContext(
     orderBy: { updatedAt: "desc" },
     take: 200, // look at the last 200 decisions, then rank by similarity
   });
+  } catch (err) {
+    console.warn("[recruiter-memory] DB query failed:", err instanceof Error ? err.message : err);
+    return "";
+  }
 
   if (candidates.length === 0) return "";
 
@@ -100,7 +106,7 @@ export async function getRecruitingContext(
       const skillSim  = mustHaveSimilarity(mustHaves, jobParsed?.must_haves ?? []);
       return { ...c, similarity: titleSim * 0.4 + skillSim * 0.6 };
     })
-    .filter((c) => c.similarity > 0.1) // must have some relevance
+    .filter((c) => c.similarity > 0.25) // meaningful overlap required — 0.1 was too permissive
     .sort((a, b) => b.similarity - a.similarity);
 
   if (scored.length === 0) return "";
