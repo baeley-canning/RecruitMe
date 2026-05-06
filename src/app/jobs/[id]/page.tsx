@@ -32,6 +32,7 @@ import { FetchQueueToast } from "@/components/fetch-queue-toast";
 import { SearchCard } from "@/components/job/search-card";
 import { PipelineCard } from "@/components/job/pipeline-card";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
+import { ParseHistoryCard } from "@/components/job/parse-history-card";
 import { ClientReportModal, ClientReportButton } from "@/components/job/client-report-modal";
 import { JobAdModal } from "@/components/job/job-ad-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
@@ -1460,6 +1461,8 @@ ${toHtml(job.rawJd)}
           onComplete={fetchJob}
         />
       )}
+
+      {parsedRole && <ParseHistoryCard jobId={id} />}
 
       {/* Candidates */}
       <div>

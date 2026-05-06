@@ -27,6 +27,7 @@ model Job {
   candidates     Candidate[]
   fetchSessions  FetchSession[]
   searchSessions SearchSession[]
+  parseHistory   JobParseHistory[]
   orgId          String?
   org            Org?     @relation(fields: [orgId], references: [id])
 
@@ -142,20 +143,38 @@ model FetchSession {
 
 // Persists search progress so partial results survive rate-limit interruptions.
 model SearchSession {
-  id          String   @id @default(cuid())
-  jobId       String
-  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  status      String   @default("running") // running | complete | rate_limited
-  queries     String   // JSON: string[]
-  location    String
-  collected   Int      @default(0)
-  target      Int
-  page        Int      @default(0)
-  importedIds String   @default("[]") // JSON: candidateId[]
-  message     String?
-  orgId       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  jobId              String
+  job                Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status             String   @default("running") // running | complete | rate_limited
+  queries            String   // JSON: string[]
+  location           String
+  collected          Int      @default(0)
+  target             Int
+  page               Int      @default(0)
+  importedIds        String   @default("[]") // JSON: candidateId[]
+  message            String?
+  orgId              String?
+  // Self-evaluation written at completion
+  avgScore           Float?
+  candidatesRejected Int?
+  totalExamined      Int?
+  evaluation         String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([jobId])
+}
+
+model JobParseHistory {
+  id            String   @id @default(cuid())
+  jobId         String
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  parsedAt      DateTime @default(now())
+  anchorTerms   String   // JSON: string[]
+  mustHaveCount Int
+  changes       String   // JSON: string[]
+  evaluation    String
 
   @@index([jobId])
 }

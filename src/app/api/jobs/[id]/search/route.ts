@@ -282,6 +282,31 @@ function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {
 
 const DB_ANCHOR_RE = /\b(sql|sybase|oracle|postgres|mysql|db2|database|rdbms|snowflake|dynamo)\b/i;
 
+function buildSearchEvaluation(opts: {
+  collected: number;
+  avgScore: number | null;
+  totalExamined: number;
+  candidatesRejected: number;
+  sawRetryableSearchFailure: boolean;
+}): string {
+  const { collected, avgScore, totalExamined, candidatesRejected, sawRetryableSearchFailure } = opts;
+  const rejectionRate = totalExamined > 0 ? candidatesRejected / totalExamined : 0;
+
+  if (collected === 0 && sawRetryableSearchFailure)
+    return "FAIL — rate limited before results returned; run search again";
+  if (collected === 0)
+    return "FAIL — 0 candidates found; try broadening location or Re-analyse with looser anchor terms";
+  if (rejectionRate >= 0.80 && totalExamined >= 10)
+    return `WARNING — ${Math.round(rejectionRate * 100)}% of examined profiles rejected at source gate; anchor terms may be too restrictive for this role`;
+  if (collected <= 2)
+    return `WARNING — only ${collected} candidate${collected !== 1 ? "s" : ""} found; try broadening location or Re-analyse with looser anchor terms`;
+  if (avgScore !== null && avgScore >= 88)
+    return `WARNING — average score ${avgScore}%; parsedRole may have had no requirements when candidates were scored — re-score after Re-analyse`;
+  if (avgScore !== null && avgScore < 28)
+    return `WARNING — average score ${avgScore}%; search queries may not be finding the right candidate pool`;
+  return `OK — ${collected} candidate${collected !== 1 ? "s" : ""} found, average score ${avgScore ?? "n/a"}%`;
+}
+
 function buildSearchQueries(parsedRole: ParsedRole): string[] {
   const baseTitle = cleanQuery(parsedRole.title);
   const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
@@ -1075,15 +1100,32 @@ async function runSearchBackground(args: {
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
+    // Compute self-evaluation before writing the final session row.
+    const totalExamined  = allNormed.length;
+    const avgScore = sorted.length > 0
+      ? Math.round(sorted.reduce((s, c) => s + (c.matchScore ?? 0), 0) / sorted.length)
+      : null;
+    const evaluation = buildSearchEvaluation({
+      collected: sorted.length,
+      avgScore,
+      totalExamined,
+      candidatesRejected: skippedSourceGate,
+      sawRetryableSearchFailure,
+    });
+
     const finalStatus = sawRetryableSearchFailure ? "rate_limited" : "complete";
     const importedIds = sorted.map((c) => c.id);
 
     await prisma.searchSession.update({
       where: { id: sessionId },
       data: {
-        status:      finalStatus,
-        collected:   sorted.length,
-        importedIds: JSON.stringify(importedIds),
+        status:             finalStatus,
+        collected:          sorted.length,
+        importedIds:        JSON.stringify(importedIds),
+        avgScore,
+        candidatesRejected: skippedSourceGate,
+        totalExamined,
+        evaluation,
         message:     sorted.length === 0
           ? "No matching candidates found."
           : `Found ${sorted.length} candidate${sorted.length !== 1 ? "s" : ""}${sawRetryableSearchFailure ? " (partial — rate limited)" : ""}.`,
@@ -1108,10 +1150,10 @@ async function runSearchBackground(args: {
     await prisma.searchSession.update({
       where: { id: sessionId },
       data: {
-        status: sawRetryableSearchFailure ? "rate_limited" : "complete",
-        collected: sorted.length,
+        status:      sawRetryableSearchFailure ? "rate_limited" : "complete",
+        collected:   sorted.length,
         importedIds: JSON.stringify(sorted.map((c) => c.id)),
-        message: `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
+        message:     `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
       },
     }).catch(() => {});
   } catch (err) {

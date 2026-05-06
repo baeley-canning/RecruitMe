@@ -6,6 +6,31 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { recordUsage } from "@/lib/usage";
 import { safeParseJson } from "@/lib/utils";
 
+// Compliance/framework terms narrow enough to be dangerous as sole anchor terms
+const NARROW_CERT_RE = /\b(iso\s*\d{4,5}|isms|gdpr|pci\b|pci[-\s]?dss|sox|nist|hipaa|cissp|cism|crisc|cisa|ccsp|togaf)\b/i;
+
+function buildParseEvaluation(role: ParsedRole, changes: string[]): string {
+  const anchors      = role.anchor_terms ?? [];
+  const mustHaveCount = (role.must_haves ?? []).length;
+  const anchorStr    = anchors.length ? anchors.join(", ") : "none";
+
+  if (mustHaveCount === 0) {
+    return "WARNING — no must-haves extracted; scoring will be unreliable until the JD is re-analysed with more detail";
+  }
+  if (anchors.length === 0) {
+    return `OK — ${mustHaveCount} must-have${mustHaveCount !== 1 ? "s" : ""} extracted, no anchor terms (broad search)`;
+  }
+  const narrowAnchors = anchors.filter((a) => NARROW_CERT_RE.test(a));
+  if (narrowAnchors.length > 0 && narrowAnchors.length === anchors.length) {
+    return `WARNING — anchor terms are all compliance/framework terms (${anchorStr}); these will filter out operational candidates on hybrid roles. Consider Re-analysing with more JD context or clearing anchor terms.`;
+  }
+  const mustHaveChanges = changes.filter((c) => c.startsWith("Must-haves:")).length;
+  if (mustHaveChanges >= 3) {
+    return `WARNING — ${mustHaveChanges} must-have change${mustHaveChanges !== 1 ? "s" : ""} detected; re-score all candidates to apply updated requirements. Anchors: ${anchorStr}.`;
+  }
+  return `OK — ${mustHaveCount} must-have${mustHaveCount !== 1 ? "s" : ""} extracted, anchor terms: ${anchorStr}`;
+}
+
 function diffParsedRole(before: ParsedRole | null, after: ParsedRole): string[] {
   if (!before) return [];
   const changes: string[] = [];
@@ -78,8 +103,21 @@ export async function POST(
     });
 
     const changes = diffParsedRole(existing, parsedRole);
+    const evaluation = buildParseEvaluation(parsedRole, changes);
+
+    // Write history asynchronously — never block the response.
+    void prisma.jobParseHistory.create({
+      data: {
+        jobId:         id,
+        anchorTerms:   JSON.stringify(parsedRole.anchor_terms ?? []),
+        mustHaveCount: (parsedRole.must_haves ?? []).length,
+        changes:       JSON.stringify(changes),
+        evaluation,
+      },
+    }).catch((err) => console.error("[parse] history write failed:", err));
+
     void recordUsage(auth.orgId, auth.userId, "parse", { jobId: id });
-    return NextResponse.json({ parsedRole, changes });
+    return NextResponse.json({ parsedRole, changes, evaluation });
   } catch (err) {
     console.error("JD parse error:", err);
     return NextResponse.json(

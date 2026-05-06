@@ -27,7 +27,12 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
   const [sources, setSources] = useState<{ serpapi: boolean; bing: boolean; pdl: boolean } | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
-  const [searchHistory, setSearchHistory] = useState<Array<{ id: string; status: string; collected: number; location: string; message: string | null; createdAt: string }>>([]);
+  const [searchHistory, setSearchHistory] = useState<Array<{
+    id: string; status: string; collected: number; location: string;
+    message: string | null; createdAt: string;
+    evaluation: string | null; avgScore: number | null;
+    candidatesRejected: number | null; totalExamined: number | null;
+  }>>([]);
   const [maxResults, setMaxResults] = useState(20);
   const [locationOverride, setLocationOverride] = useState<string | null>(null);
   const [editingLocation, setEditingLocation] = useState(false);
@@ -217,22 +222,34 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   </div>
                 )}
                 {!searching && searchHistory.length > 0 && (
-                  <div className="mt-2 space-y-1">
+                  <div className="mt-2 space-y-1.5">
                     {searchHistory.map((s) => (
-                      <p key={s.id} className="text-[11px] text-slate-400 flex items-center gap-1.5" suppressHydrationWarning>
-                        {s.status === "complete"
-                          ? <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                          : <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" />}
-                        {new Date(s.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                        {" · "}
-                        {s.status === "complete"
-                          ? s.collected === 0
-                            ? `0 found in ${s.location || "search area"} — try Re-analyse then Search Again`
-                            : `${s.collected} found`
-                          : s.status === "rate_limited" ? "rate limited" : s.status}
-                        {s.collected > 0 && s.location ? ` in ${s.location}` : ""}
-                        {s.message && s.message.includes("broadening") ? ` · ${s.message}` : ""}
-                      </p>
+                      <div key={s.id} className="space-y-0.5">
+                        <p className="text-[11px] text-slate-400 flex items-center gap-1.5" suppressHydrationWarning>
+                          {s.status === "complete"
+                            ? <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                            : <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" />}
+                          {new Date(s.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          {" · "}
+                          {s.status === "complete"
+                            ? s.collected === 0
+                              ? `0 found in ${s.location || "search area"} — try Re-analyse then Search Again`
+                              : `${s.collected} found`
+                            : s.status === "rate_limited" ? "rate limited" : s.status}
+                          {s.collected > 0 && s.location ? ` in ${s.location}` : ""}
+                          {s.message && s.message.includes("broadening") ? ` · ${s.message}` : ""}
+                        </p>
+                        {s.evaluation && (
+                          <p className={cn(
+                            "text-[10px] px-2 py-0.5 rounded-full border inline-flex items-center gap-1 font-medium",
+                            s.evaluation.startsWith("FAIL")    ? "bg-red-50 text-red-600 border-red-200" :
+                            s.evaluation.startsWith("WARNING") ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                                                 "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          )}>
+                            {s.evaluation}
+                          </p>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}

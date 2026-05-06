@@ -166,6 +166,50 @@ await step("CandidateFile table", async () => {
   `;
 });
 
+// 9. SearchSession self-evaluation columns
+await step("SearchSession evaluation columns", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "SearchSession"
+      ADD COLUMN IF NOT EXISTS "avgScore"           DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS "candidatesRejected" INTEGER,
+      ADD COLUMN IF NOT EXISTS "totalExamined"      INTEGER,
+      ADD COLUMN IF NOT EXISTS "evaluation"         TEXT
+  `;
+});
+
+// 10. JobParseHistory table
+await step("JobParseHistory table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "JobParseHistory" (
+      "id"            TEXT         NOT NULL,
+      "jobId"         TEXT         NOT NULL,
+      "parsedAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "anchorTerms"   TEXT         NOT NULL,
+      "mustHaveCount" INTEGER      NOT NULL,
+      "changes"       TEXT         NOT NULL,
+      "evaluation"    TEXT         NOT NULL,
+      CONSTRAINT "JobParseHistory_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "JobParseHistory_jobId_idx"
+    ON "JobParseHistory"("jobId")
+  `;
+  await prisma.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'JobParseHistory_jobId_fkey'
+      ) THEN
+        ALTER TABLE "JobParseHistory"
+          ADD CONSTRAINT "JobParseHistory_jobId_fkey"
+          FOREIGN KEY ("jobId") REFERENCES "Job"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

@@ -9,27 +9,22 @@ export async function GET(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-
   const { error } = await requireJobAccess(id, auth);
   if (error) return error;
 
-  const sessions = await prisma.searchSession.findMany({
-    where: { jobId: id, status: { not: "running" } },
-    orderBy: { createdAt: "desc" },
-    take: 5,
+  const history = await prisma.jobParseHistory.findMany({
+    where: { jobId: id },
+    orderBy: { parsedAt: "desc" },
+    take: 10,
     select: {
       id: true,
-      status: true,
-      collected: true,
-      location: true,
-      message: true,
-      createdAt: true,
+      parsedAt: true,
+      anchorTerms: true,
+      mustHaveCount: true,
+      changes: true,
       evaluation: true,
-      avgScore: true,
-      candidatesRejected: true,
-      totalExamined: true,
     },
   });
 
-  return NextResponse.json(sessions);
+  return NextResponse.json(history);
 }
