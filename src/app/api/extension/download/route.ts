@@ -4,7 +4,15 @@ import fs from "fs";
 import path from "path";
 
 const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-opera-linkedin-capture");
-const FILES = ["manifest.json", "background.js", "content.js", "popup.html", "popup.js"];
+
+// Files we deliberately don't ship to end users. Anything else in the extension
+// directory is bundled — this prevents the kind of bug where the manifest
+// references a file (e.g. options.html) that the hardcoded list forgot to
+// include, which then causes Chrome's "Could not load manifest" cascade error.
+const EXCLUDED = new Set([
+  "README.md",
+  "content.test.js", // dev-only test file, not part of the shipping extension
+]);
 
 export const dynamic = "force-dynamic";
 
@@ -14,19 +22,24 @@ export async function GET() {
     const folder = zip.folder("recruitme-extension")!;
     let version = "unknown";
 
-    for (const file of FILES) {
-      const filePath = path.join(EXTENSION_DIR, file);
-      if (fs.existsSync(filePath)) {
-        const content = fs.readFileSync(filePath);
-        if (file === "manifest.json") {
-          try {
-            version = JSON.parse(content.toString("utf8")).version ?? version;
-          } catch {
-            version = "unknown";
-          }
+    const entries = fs.readdirSync(EXTENSION_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      // Skip directories, dotfiles, and explicitly-excluded files. If a
+      // sub-directory is added later (icons, locales) extend this to recurse.
+      if (!entry.isFile()) continue;
+      if (entry.name.startsWith(".")) continue;
+      if (EXCLUDED.has(entry.name)) continue;
+
+      const filePath = path.join(EXTENSION_DIR, entry.name);
+      const content = fs.readFileSync(filePath);
+      if (entry.name === "manifest.json") {
+        try {
+          version = JSON.parse(content.toString("utf8")).version ?? version;
+        } catch {
+          version = "unknown";
         }
-        folder.file(file, content);
       }
+      folder.file(entry.name, content);
     }
 
     const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
