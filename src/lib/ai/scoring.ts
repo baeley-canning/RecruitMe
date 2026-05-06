@@ -325,19 +325,34 @@ ${SCORING_EQUIVALENCY_RULES}`,
     nice_to_have_fit: parseCategory("nice_to_have_fit", weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit),
   };
 
-  // Use Claude's direct holistic verdict if present. The formula-derived score
-  // is kept as a cross-check but Claude's overall_score overrides it when
-  // provided — Claude can integrate the full picture better than our weights can.
-  const claudeOverallScore = typeof raw.overall_score === "number"
-    ? Math.min(100, Math.max(0, Math.round(raw.overall_score)))
-    : null;
+  // Use Claude's direct holistic verdict if present.
+  let claudeOverallScore: number | null = null;
+  if (typeof raw.overall_score === "number") {
+    claudeOverallScore = Math.min(100, Math.max(0, Math.round(raw.overall_score)));
+  } else {
+    // Claude failed to include overall_score — this should never happen given the prompt.
+    // Log it so we can detect if the model starts ignoring the field.
+    console.warn("[scoring] Claude did not return overall_score — falling back to formula");
+  }
+
+  // Consistency guard: if Claude wrote blocker-level reasons_against but still
+  // gave a high score, cap it. This catches the common case where the model
+  // correctly identifies mismatches in text but doesn't enforce it numerically.
+  const reasonsAgainst = stringArray(raw.reasons_against);
+  const hasExplicitBlocker = reasonsAgainst.some((r) =>
+    /\b(entirely absent|completely absent|no evidence|fundamental mismatch|wrong domain|wrong level|not a match|critical requirement.*missing|missing.*critical)\b/i.test(r)
+  );
+  if (claudeOverallScore !== null && claudeOverallScore > 45 && hasExplicitBlocker) {
+    console.warn(`[scoring] Claude gave ${claudeOverallScore} but reasons_against contains blocker — capping to 45`);
+    claudeOverallScore = Math.min(claudeOverallScore, 45);
+  }
 
   return buildScoreBreakdown({
     categories,
     must_have_coverage:    mustHaveCoverage,
     nice_to_have_coverage: niceToHaveCoverage,
     reasons_for:           stringArray(raw.reasons_for),
-    reasons_against:       stringArray(raw.reasons_against),
+    reasons_against:       reasonsAgainst,
     missing_evidence:      stringArray(raw.missing_evidence),
     recruiter_summary:     typeof raw.recruiter_summary === "string" ? raw.recruiter_summary : "",
     profileCharCount:      profileText.length,

@@ -1,4 +1,4 @@
-import { computeOverallScore, type ScoreBreakdown } from "./scoring";
+import { type ScoreBreakdown } from "./scoring";
 import { assessLocationFit } from "./location";
 import type { ScoringWeights } from "./scoring-config";
 
@@ -42,7 +42,7 @@ export function applyLocationFitOverride(
   targetLocation: string | null | undefined,
   locationRules?: string | null,
   isRemote?: boolean,
-  weights?: ScoringWeights,
+  weights?: ScoringWeights, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): ScoreBreakdown {
   const assessment = assessLocationFit(candidateLocation, targetLocation, locationRules);
   if (!assessment) return breakdown;
@@ -64,7 +64,12 @@ export function applyLocationFitOverride(
     ? `${assessment.evidence} ${breakdown.recruiter_summary}`.trim()
     : breakdown.recruiter_summary;
 
-  let overall = computeOverallScore(categories, breakdown.must_have_pct, weights);
+  // Start from the existing breakdown.overall — this preserves Claude's direct score
+  // when one was provided. Previously this recomputed from the formula using
+  // computeOverallScore(), which completely discarded Claude's holistic assessment.
+  // Now we apply location-specific adjustments as deltas on top of whatever score
+  // was already established (Claude's or formula-derived).
+  let overall = breakdown.overall;
 
   // Apply an out-of-area penalty when the job is not remote and location fit is poor.
   // Scales from ×0.6 (completely out of area) to ×1.0 (at the 50-point threshold).
@@ -73,19 +78,13 @@ export function applyLocationFitOverride(
     overall = Math.max(0, Math.round(overall * multiplier));
   }
 
-  // Hard-cap at 50 only for candidates who are genuinely out-of-area (score < 50
-  // means > 150 km away). Commutable candidates (score 55–80) keep their full score.
+  // Hard-cap at 50 only for candidates who are genuinely out-of-area.
   if (!isRemote && assessment.score < 50 && overall > 50) {
     overall = 50;
   }
 
-  // For snippet-quality data the score is already capped to reflect uncertainty.
-  // The location override must not push a capped snippet score above that cap.
-  // Full-profile and minimal candidates are not subject to this constraint:
-  //   - full_profile: no data-quality cap was applied, so a location boost is valid
-  //   - minimal: the cap (40) is so aggressive that a small location boost is
-  //     acceptable; blocking it would incorrectly gate out genuine NZ candidates
-  //     with very short snippets
+  // For snippet-quality data, location override must not push the score above the
+  // data-quality cap that was already applied in buildScoreBreakdown.
   if (breakdown.data_quality === "snippet" && overall > breakdown.overall) {
     overall = breakdown.overall;
   }

@@ -1290,7 +1290,7 @@ ${toHtml(job.rawJd)}
                 const dismissed = parsedRole.dismissed_knockout_criteria ?? [];
                 return (
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide mb-2 text-red-600">Knockout Criteria</p>
+                    <p className="text-xs font-medium uppercase tracking-wide mb-2 text-red-600" title="Binary gates — candidates who fail these are excluded regardless of other qualifications. Click × to relax a requirement (treats it as informational only for this search).">Hard Requirements</p>
                     <div className="flex flex-wrap gap-1.5">
                       {parsedRole.knockout_criteria.map((item) => {
                         const isDismissed = dismissed.includes(item);
@@ -1299,7 +1299,7 @@ ${toHtml(job.rawJd)}
                         return (
                           <span
                             key={item}
-                            title={isDismissed ? "Click to re-enable as a scoring gate" : "Click × to disable this gate (informational only)"}
+                            title={isDismissed ? "Click ↺ to re-enable this as a hard requirement" : "Click × to relax — candidates without this will still be scored (not automatically excluded)"}
                             className={cn(
                               "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border font-medium transition-colors",
                               isDismissed
@@ -1313,7 +1313,7 @@ ${toHtml(job.rawJd)}
                             ) : isDismissed ? (
                               <button
                                 onClick={() => handleRequirementAction("restore-knockout", item)}
-                                title="Re-enable as knockout gate"
+                                title="Re-enable as hard requirement"
                                 className="text-slate-400 hover:text-red-600 transition-colors flex-shrink-0"
                               >
                                 <RotateCcw className="w-2.5 h-2.5" />
@@ -1321,7 +1321,7 @@ ${toHtml(job.rawJd)}
                             ) : (
                               <button
                                 onClick={() => handleRequirementAction("dismiss-knockout", item)}
-                                title="Disable — treat as informational only"
+                                title="Relax this requirement (still shown but won't exclude candidates)"
                                 className="text-red-300 hover:text-red-600 transition-colors flex-shrink-0"
                               >
                                 <X className="w-2.5 h-2.5" />

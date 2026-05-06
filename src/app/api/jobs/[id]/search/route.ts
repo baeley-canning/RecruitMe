@@ -285,25 +285,27 @@ const DB_ANCHOR_RE = /\b(sql|sybase|oracle|postgres|mysql|db2|database|rdbms|sno
 function buildSearchEvaluation(opts: {
   collected: number;
   avgScore: number | null;
-  totalExamined: number;
-  candidatesRejected: number;
+  totalExamined: number;       // all raw profiles before ANY filtering
+  candidatesRejected: number;  // rejected at source gate only
+  totalFiltered: number;       // all filters combined (source gate + seniority + overseas + name)
   sawRetryableSearchFailure: boolean;
 }): string {
-  const { collected, avgScore, totalExamined, candidatesRejected, sawRetryableSearchFailure } = opts;
-  const rejectionRate = totalExamined > 0 ? candidatesRejected / totalExamined : 0;
+  const { collected, avgScore, totalExamined, totalFiltered, sawRetryableSearchFailure } = opts;
+  // Use total filtered for rejection rate — source gate is only one filter
+  const rejectionRate = totalExamined > 0 ? totalFiltered / totalExamined : 0;
 
   if (collected === 0 && sawRetryableSearchFailure)
-    return "FAIL — rate limited before results returned; run search again";
+    return "FAIL — rate limited; try again (already-imported candidates won't duplicate)";
   if (collected === 0)
-    return "FAIL — 0 candidates found; try broadening location or Re-analyse with looser anchor terms";
+    return "FAIL — 0 candidates found. Next steps: (1) try a different location, (2) click Re-analyse and Search Again, (3) add more detail to the JD";
   if (rejectionRate >= 0.80 && totalExamined >= 10)
-    return `WARNING — ${Math.round(rejectionRate * 100)}% of examined profiles rejected at source gate; anchor terms may be too restrictive for this role`;
+    return `WARNING — ${Math.round(rejectionRate * 100)}% of search results filtered out before scoring. The role's required skills may be too narrow for the available pool — try Re-analyse, then Search Again`;
   if (collected <= 2)
-    return `WARNING — only ${collected} candidate${collected !== 1 ? "s" : ""} found; try broadening location or Re-analyse with looser anchor terms`;
+    return `WARNING — only ${collected} candidate${collected !== 1 ? "s" : ""} found. Try a broader search location or Re-analyse the JD with more context`;
   if (avgScore !== null && avgScore >= 88)
-    return `WARNING — average score ${avgScore}%; parsedRole may have had no requirements when candidates were scored — re-score after Re-analyse`;
+    return `WARNING — average score ${avgScore}% is unusually high. The role may have had no requirements when candidates were last scored — click Re-score all`;
   if (avgScore !== null && avgScore < 28)
-    return `WARNING — average score ${avgScore}%; search queries may not be finding the right candidate pool`;
+    return `WARNING — average score ${avgScore}%; search found profiles but they don't match requirements well. Check anchor terms or add more JD detail`;
   return `OK — ${collected} candidate${collected !== 1 ? "s" : ""} found, average score ${avgScore ?? "n/a"}%`;
 }
 
@@ -523,6 +525,7 @@ export async function POST(
     searchQueries,
     searchLocation,
     targetLocation,
+    knownTargets,
     hasSerpApi,
     hasBing,
     hasPDL,
@@ -610,6 +613,7 @@ async function runSearchBackground(args: {
   searchQueries: string[];
   searchLocation: string;
   targetLocation: string;
+  knownTargets: string[];  // all accepted cities from the parsed location (e.g. ["Wellington","Christchurch"])
   hasSerpApi: boolean;
   hasBing: boolean;
   hasPDL: boolean;
@@ -620,7 +624,7 @@ async function runSearchBackground(args: {
   orgId: string | null;
 }) {
   const { sessionId, jobId, job, parsedRole, salary, weights, maxResults, targetRaw,
-    searchQueries, searchLocation, targetLocation, hasSerpApi, hasBing, hasPDL,
+    searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasBing, hasPDL,
     serpApiKey, bingKey, pdlKey, isOwner, orgId } = args;
 
   try {
@@ -666,17 +670,32 @@ async function runSearchBackground(args: {
 
           const serpTasks = hasSerpApi ? buildTasks("serpapi", searchLocation) : [];
           const bingTasks = hasBing ? buildTasks("bing", searchLocation) : [];
-          if (serpTasks.length === 0 && bingTasks.length === 0) return null;
 
-          const serpOutcomes = await executeSearchTaskQueue(serpTasks, {
-            concurrency: SERPAPI_CONCURRENCY,
-            delayMs: SERPAPI_DELAY_MS,
-          });
-          const bingOutcomes = await executeSearchTaskQueue(bingTasks, {
-            concurrency: BING_CONCURRENCY,
-            delayMs: BING_DELAY_MS,
-          });
-          const primaryOutcomes = [...serpOutcomes, ...bingOutcomes];
+          // When the JD explicitly accepts candidates from multiple cities (e.g.
+          // "Wellington, Christchurch"), search secondary cities in the same pass
+          // so their candidates surface alongside the primary city results.
+          // Only run on page 0 / attempt 0 to avoid runaway API usage.
+          const secondaryCities = page === 0 && attempt === 0
+            ? knownTargets.slice(1).filter(
+                (city) => normalizeLocationText(city) !== normalizeLocationText(searchLocation)
+              )
+            : [];
+          const secondarySerpTasks = hasSerpApi
+            ? secondaryCities.flatMap((city) => buildTasks("serpapi", city, queriesForAttempt.slice(0, 2)))
+            : [];
+          const secondaryBingTasks = hasBing
+            ? secondaryCities.flatMap((city) => buildTasks("bing", city, queriesForAttempt.slice(0, 2)))
+            : [];
+
+          if (serpTasks.length === 0 && bingTasks.length === 0 && secondarySerpTasks.length === 0 && secondaryBingTasks.length === 0) return null;
+
+          const [serpOutcomes, bingOutcomes, secondarySerpOutcomes, secondaryBingOutcomes] = await Promise.all([
+            executeSearchTaskQueue(serpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
+            executeSearchTaskQueue(bingTasks, { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS }),
+            executeSearchTaskQueue(secondarySerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
+            executeSearchTaskQueue(secondaryBingTasks, { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS }),
+          ]);
+          const primaryOutcomes = [...serpOutcomes, ...bingOutcomes, ...secondarySerpOutcomes, ...secondaryBingOutcomes];
           const anchorTerms = extractAnchorRequirementTerms(parsedRole);
           const shouldRunSpecialistNzSweep =
             page === 0 &&
@@ -882,6 +901,8 @@ async function runSearchBackground(args: {
     let skippedScore = 0;
     let skippedSourceGate = 0;
     let skippedSeniorityGate = 0;
+    let skippedOverseas = 0;
+    let skippedNameCheck = 0;
     let fromPool = 0;
 
     // Pre-filter: drop confirmed overseas candidates, non-person names, obvious
@@ -910,12 +931,12 @@ async function runSearchBackground(args: {
         };
       })
       .filter(({ result: r, fetchPriorityScore }) => {
-        if (!looksLikePersonName(r.name)) return false;
+        if (!looksLikePersonName(r.name)) { skippedNameCheck++; return false; }
         const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
         const poolEntry = poolMap.get(normUrl);
         const poolLoc = poolMap.get(normUrl)?.location ?? "";
         const loc = poolLoc || poolEntry?.location || r.location || "";
-        if (loc && isExplicitlyOverseasLocation(loc)) return false;
+        if (loc && isExplicitlyOverseasLocation(loc)) { skippedOverseas++; return false; }
         if (looksUnderqualifiedForRole(r, parsedRole)) {
           skippedSeniorityGate++;
           return false;
@@ -1102,6 +1123,7 @@ async function runSearchBackground(args: {
 
     // Compute self-evaluation before writing the final session row.
     const totalExamined  = allNormed.length;
+    const totalFiltered  = skippedNameCheck + skippedOverseas + skippedSeniorityGate + skippedSourceGate;
     const avgScore = sorted.length > 0
       ? Math.round(sorted.reduce((s, c) => s + (c.matchScore ?? 0), 0) / sorted.length)
       : null;
@@ -1110,6 +1132,7 @@ async function runSearchBackground(args: {
       avgScore,
       totalExamined,
       candidatesRejected: skippedSourceGate,
+      totalFiltered,
       sawRetryableSearchFailure,
     });
 

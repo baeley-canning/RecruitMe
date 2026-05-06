@@ -1098,6 +1098,11 @@ export const CandidateCard = memo(function CandidateCard({
             </div>
 
             <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+              {!hasFetchedProfile && candidate.matchScore != null && (
+                <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">
+                  Provisional
+                </span>
+              )}
               <div className="flex items-center gap-2">
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
@@ -1118,10 +1123,18 @@ export const CandidateCard = memo(function CandidateCard({
                   onMouseLeave={() => setShowRadar(false)}
                 >
                   <ScoreBadge score={candidate.matchScore} size="sm" />
+                  {/* Amber dot: profile updated since last score */}
                   {candidate.matchScore != null && !candidate.profileTextHash && candidate.profileText && (
                     <span
                       title="Profile updated since last score — re-score recommended"
                       className="absolute -top-1 -right-1 w-2 h-2 bg-amber-400 rounded-full border border-white"
+                    />
+                  )}
+                  {/* Amber dot: provisional score — no full profile captured yet */}
+                  {candidate.matchScore != null && !hasFetchedProfile && (
+                    <span
+                      title="Provisional score — based on a LinkedIn snippet, not a full profile. Fetch the full profile for a reliable score."
+                      className="absolute -top-1 -left-1 w-2 h-2 bg-orange-400 rounded-full border border-white"
                     />
                   )}
                 </div>
