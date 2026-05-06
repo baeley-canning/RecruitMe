@@ -1,15 +1,32 @@
-const serverBaseInput  = document.getElementById("serverBase");
-const extUsernameInput = document.getElementById("extUsername");
-const extPasswordInput = document.getElementById("extPassword");
-const saveServerButton = document.getElementById("saveServer");
-const serverStatus     = document.getElementById("serverStatus");
-const pageStatus       = document.getElementById("pageStatus");
+const settingsBtn       = document.getElementById("settingsBtn");
+const openSettingsBtn   = document.getElementById("openSettingsBtn");
+const connectionStatus  = document.getElementById("connectionStatus");
+const statusDot         = document.getElementById("statusDot");
+const statusLabel       = document.getElementById("statusLabel");
+const pageStatus        = document.getElementById("pageStatus");
 const capturePendingButton = document.getElementById("capturePending");
-const pendingStatus    = document.getElementById("pendingStatus");
+const pendingStatus     = document.getElementById("pendingStatus");
+const setupCard         = document.getElementById("setupCard");
+
+function openSettings() {
+  chrome.runtime.openOptionsPage();
+}
+
+settingsBtn.addEventListener("click", openSettings);
+openSettingsBtn.addEventListener("click", openSettings);
+
+function setConnectionState(state, label) {
+  const dotClass = { ok: "green", error: "red", unconfigured: "grey" }[state] ?? "grey";
+  const bgClass  = { ok: "ok",    error: "error", unconfigured: "unconfigured" }[state] ?? "unconfigured";
+  connectionStatus.className = `connection ${bgClass}`;
+  statusDot.className        = `dot ${dotClass}`;
+  statusLabel.textContent    = label;
+  setupCard.style.display    = state === "unconfigured" ? "block" : "none";
+}
 
 function setStatus(element, message, kind = "") {
   element.textContent = message;
-  element.className = kind ? `status ${kind}` : "status";
+  element.className   = kind ? `status ${kind}` : "status";
 }
 
 function sendMessage(message) {
@@ -20,7 +37,7 @@ function sendMessage(message) {
         return;
       }
       if (!response?.ok) {
-        reject(new Error(response?.error || "RecruitMe extension request failed"));
+        reject(new Error(response?.error || "Request failed"));
         return;
       }
       resolve(response);
@@ -28,138 +45,86 @@ function sendMessage(message) {
   });
 }
 
-async function loadConfig() {
+async function refreshPendingStatus() {
   try {
-    const response = await sendMessage({ type: "get-config" });
-    serverBaseInput.value = response.serverBase || "";
-    extUsernameInput.value = response.username || "";
-    // Never pre-fill password — user must re-enter if they want to change it
-    if (response.lastError) {
-      setStatus(serverStatus, response.lastError, "error");
+    const response = await sendMessage({ type: "get-session" });
+    const session  = response.session;
+
+    if (!session) {
+      setStatus(pendingStatus, "No pending RecruitMe fetch.");
+      capturePendingButton.disabled = true;
+      return;
     }
-  } catch (error) {
-    setStatus(serverStatus, error.message, "error");
+
+    const name = session.candidateName || session.linkedinUrl || "candidate";
+
+    if (session.status === "pending") {
+      setStatus(pendingStatus, `Ready to capture ${name}.`, "ok");
+      capturePendingButton.disabled = false;
+      return;
+    }
+    if (session.status === "processing") {
+      setStatus(pendingStatus, `Scoring ${name}…`);
+      capturePendingButton.disabled = true;
+      return;
+    }
+    if (session.status === "completed") {
+      setStatus(pendingStatus, `${name} captured and scored.`, "ok");
+      capturePendingButton.disabled = true;
+      return;
+    }
+    if (session.status === "error") {
+      setStatus(pendingStatus, session.error || session.message || "Last capture failed.", "error");
+      capturePendingButton.disabled = true;
+      return;
+    }
+
+    capturePendingButton.disabled = true;
+    setStatus(pendingStatus, "No pending RecruitMe fetch.");
+  } catch {
+    capturePendingButton.disabled = true;
   }
 }
 
-function normaliseLinkedInSlug(url) {
-  const m = url.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
-  return m ? m[1].toLowerCase() : "";
-}
+async function init() {
+  // Check if configured and connected
+  try {
+    const config = await sendMessage({ type: "get-config" });
+    if (!config.serverBase || !config.username) {
+      setConnectionState("unconfigured", "Not configured — open settings to connect");
+      pageStatus.textContent = "";
+      return;
+    }
+    // Show connected state immediately using stored server
+    const host = (() => { try { return new URL(config.serverBase).hostname; } catch { return config.serverBase; } })();
+    setConnectionState("ok", `Connected · ${host}`);
+    if (config.lastError) {
+      setConnectionState("error", config.lastError.slice(0, 60));
+    }
+  } catch {
+    setConnectionState("unconfigured", "Not configured — open settings to connect");
+    pageStatus.textContent = "";
+    return;
+  }
 
-function linkedInSlugAliasKey(url) {
-  return normaliseLinkedInSlug(url)
-    .replace(/-[a-z0-9]*\d[a-z0-9]{5,}$/i, "")
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function linkedInProfileMatches(a, b) {
-  const aSlug = normaliseLinkedInSlug(a);
-  const bSlug = normaliseLinkedInSlug(b);
-  if (!aSlug || !bSlug) return false;
-  if (aSlug === bSlug) return true;
-
-  const aKey = linkedInSlugAliasKey(a);
-  const bKey = linkedInSlugAliasKey(b);
-  return aKey.length >= 6 && aKey === bKey;
-}
-
-async function refreshPendingStatus() {
-  let currentTabUrl = "";
+  // Check current tab
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.url?.includes("linkedin.com/in/")) {
-      currentTabUrl = tab.url.replace(/[?#].*$/, "");
-      pageStatus.textContent = `Current: ${normaliseLinkedInSlug(currentTabUrl)}`;
+      pageStatus.textContent = "On a LinkedIn profile.";
     } else {
-      pageStatus.textContent = "Current tab is not a LinkedIn profile";
+      pageStatus.textContent = "Navigate to a LinkedIn profile to capture.";
     }
   } catch {
-    pageStatus.textContent = "Could not read current tab";
+    pageStatus.textContent = "";
   }
 
-  let session = null;
-  try {
-    const response = await sendMessage({ type: "get-session" });
-    const sessionData = response.session;
-    const sessions = Array.isArray(sessionData) ? sessionData : sessionData ? [sessionData] : [];
-
-    session =
-      sessions.find((s) => linkedInProfileMatches(s.linkedinUrl, currentTabUrl)) ||
-      sessions.find((s) => s.status === "pending") ||
-      sessions[0] ||
-      null;
-  } catch (error) {
-    capturePendingButton.disabled = true;
-    setStatus(pendingStatus, error.message, "error");
-    return;
-  }
-
-  if (!session) {
-    capturePendingButton.disabled = true;
-    setStatus(pendingStatus, "No pending RecruitMe fetch — click Fetch Profile on a candidate first.");
-    return;
-  }
-
-  const sessionSlug = normaliseLinkedInSlug(session.linkedinUrl);
-  const tabSlug = normaliseLinkedInSlug(currentTabUrl);
-  const urlMatches = linkedInProfileMatches(session.linkedinUrl, currentTabUrl);
-
-  if (session.status === "pending") {
-    if (urlMatches) {
-      setStatus(pendingStatus, `Ready to capture ${session.candidateName || "this candidate"}`, "ok");
-      capturePendingButton.disabled = false;
-    } else {
-      setStatus(
-        pendingStatus,
-        `Navigate to linkedin.com/in/${sessionSlug} to capture ${session.candidateName || "this candidate"}`
-      );
-      capturePendingButton.disabled = true;
-    }
-    return;
-  }
-
-  if (session.status === "processing") {
-    setStatus(pendingStatus, session.message || `Scoring ${session.candidateName || "profile"}…`, "ok");
-    capturePendingButton.disabled = true;
-    return;
-  }
-
-  if (session.status === "completed") {
-    setStatus(pendingStatus, session.message || `Captured ${session.candidateName || "profile"} ✓`, "ok");
-    capturePendingButton.disabled = true;
-    return;
-  }
-
-  if (session.status === "error") {
-    setStatus(pendingStatus, session.error || session.message || "Last capture failed.", "error");
-    capturePendingButton.disabled = true;
-    return;
-  }
-
-  capturePendingButton.disabled = true;
-  setStatus(pendingStatus, "No pending RecruitMe fetch.");
+  await refreshPendingStatus();
 }
-
-saveServerButton.addEventListener("click", async () => {
-  setStatus(serverStatus, "Testing RecruitMe connection...");
-  try {
-    const response = await sendMessage({
-      type: "set-config",
-      serverBase: serverBaseInput.value,
-      username:   extUsernameInput.value.trim(),
-      password:   extPasswordInput.value,
-    });
-    setStatus(serverStatus, `Connected to ${response.serverBase}`, "ok");
-    await refreshPendingStatus();
-  } catch (error) {
-    setStatus(serverStatus, error.message, "error");
-  }
-});
 
 capturePendingButton.addEventListener("click", async () => {
   capturePendingButton.disabled = true;
-  setStatus(pendingStatus, "Capturing pending RecruitMe fetch...");
+  setStatus(pendingStatus, "Capturing…");
   try {
     const response = await sendMessage({ type: "manual-capture-pending" });
     setStatus(
@@ -174,8 +139,5 @@ capturePendingButton.addEventListener("click", async () => {
   }
 });
 
-void loadConfig();
-void refreshPendingStatus();
-setInterval(() => {
-  void refreshPendingStatus();
-}, 2000);
+void init();
+setInterval(() => { void refreshPendingStatus(); }, 2000);
