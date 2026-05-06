@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Loader2, Key, AlertCircle, CheckCircle2, MapPin, Users, ExternalLink } from "lucide-react";
+import { Search, Loader2, Key, AlertCircle, CheckCircle2, MapPin, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -68,6 +68,31 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     setSearchError("");
     setSearchResult(null);
     setSearchTimedOut(false);
+    setPoolResult(null);
+    setPoolError("");
+
+    // Run the talent-pool query in parallel — it's local (no SerpAPI cost) and
+    // usually returns in seconds, so by the time the LinkedIn search completes
+    // pool candidates have already populated the candidate list.
+    void (async () => {
+      try {
+        const poolRes = await fetch(`/api/jobs/${jobId}/candidates/talent-pool`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ maxResults }),
+        });
+        const poolData = await poolRes.json() as { count?: number; error?: string; message?: string };
+        if (poolRes.ok && !poolData.error) {
+          setPoolResult({ count: poolData.count ?? 0, message: poolData.message });
+          if ((poolData.count ?? 0) > 0) onComplete();
+        }
+        // Pool errors are swallowed: the LinkedIn search is the primary path
+        // and surfacing two error states confuses the user.
+      } catch {
+        // ignore; LinkedIn path is authoritative
+      }
+    })();
+
     try {
       const res = await fetch(`/api/jobs/${jobId}/search`, {
         method: "POST",
@@ -175,7 +200,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
               <div>
                 <div className="flex items-center gap-2 flex-wrap mb-0.5">
                   <p className="font-semibold text-slate-900 text-sm">
-                    {searching ? "Searching LinkedIn..." : "Step 2 — Find Candidates on LinkedIn"}
+                    {searching ? "Searching..." : "Step 2 — Find Candidates"}
                   </p>
                   {sources && (
                     <div className="flex items-center gap-1">
@@ -196,7 +221,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                 </div>
                 <p className="text-xs text-slate-500">
                   {searching
-                    ? "Searching LinkedIn and importing provisional matches. Full scoring happens after profile capture."
+                    ? "Searching LinkedIn and your talent pool. Pool hits import instantly; LinkedIn hits scored after capture."
                     : "Searches configured sources, imports likely LinkedIn profiles, and uses full scoring for captured profiles."
                   }
                 </p>
@@ -271,12 +296,18 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
             <div className="flex flex-col gap-2 flex-shrink-0 items-end">
               <Button onClick={handleSearch} loading={searching} disabled={searching || searchingPool || jobStatus === "closed"} size="lg">
                 <Search className="w-4 h-4" />
-                {searching ? "Searching..." : searchResult ? "Search Again" : "Search LinkedIn Now"}
+                {searching ? "Searching..." : searchResult ? "Search Again" : "Find Candidates"}
               </Button>
-              <Button onClick={handleSearchPool} loading={searchingPool} disabled={searching || searchingPool || jobStatus === "closed"} size="sm" variant="outline" className="text-slate-600">
-                <Users className="w-3.5 h-3.5" />
-                {searchingPool ? "Searching pool..." : "Search Talent Pool"}
-              </Button>
+              <p className="text-[10px] text-slate-400 max-w-[180px] text-right">
+                Searches LinkedIn and your talent pool together.
+                <button
+                  onClick={handleSearchPool}
+                  disabled={searching || searchingPool || jobStatus === "closed"}
+                  className="ml-1 underline underline-offset-2 hover:text-slate-600 disabled:opacity-50 disabled:no-underline"
+                >
+                  {searchingPool ? "Searching pool…" : "Pool only"}
+                </button>
+              </p>
             </div>
           </div>
 
