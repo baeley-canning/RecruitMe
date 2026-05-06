@@ -146,6 +146,20 @@ model FetchSession {
   @@index([status])
 }
 
+// Reusable named scoring-weight presets per org. A preset is a snapshot of
+// ScoringWeights stored under a recruiter-chosen label like "Sales-heavy" or
+// "Engineer · Wellington" that can be applied to a specific job in one click.
+model ScoringWeightPreset {
+  id        String   @id @default(cuid())
+  orgId     String?
+  name      String
+  weights   String   // JSON: ScoringWeights
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+}
+
 // Recruiter score corrections — captures explicit "this score is wrong" signals.
 // Fed back into the scoring prompt as calibration examples so similar future
 // candidates score closer to the recruiter's mental model.
