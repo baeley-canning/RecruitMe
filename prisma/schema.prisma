@@ -18,6 +18,7 @@ model Job {
   salaryMin   Int?     // NZD yearly minimum (optional)
   salaryMax   Int?     // NZD yearly maximum (optional)
   scoringWeights String? // JSON: ScoringWeights override for this job; null = use org/default
+  shareToken     String? @unique // opaque random token for read-only public shortlist URL; null = sharing disabled
   isRemote     Boolean   @default(false)
   status       String    @default("active") // active | closed | on-hold
   lastScoredAt DateTime? // set by score-all; prevents re-runs within cooldown window

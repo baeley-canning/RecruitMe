@@ -1653,9 +1653,18 @@ ${toHtml(job.rawJd)}
           const parsedMs  = new Date(job.lastParsedAt!).getTime();
           const scoredMs  = new Date(job.lastScoredAt!).getTime();
           return parsedMs > scoredMs ? (
-            <div className="mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border text-amber-700 bg-amber-50 border-amber-200">
-              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              Requirements updated since last score — Re-score all to apply new criteria.
+            <div className="mb-3 flex items-center justify-between gap-3 text-xs rounded-lg px-3 py-2 border text-amber-700 bg-amber-50 border-amber-200">
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>Requirements updated since last score — re-score all to apply new criteria.</span>
+              </div>
+              <button
+                onClick={handleRescoreAll}
+                disabled={rescoringAll}
+                className="text-xs font-medium px-3 py-1 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:bg-slate-300"
+              >
+                Re-score all now
+              </button>
             </div>
           ) : null;
         })()}
