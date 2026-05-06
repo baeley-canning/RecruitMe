@@ -678,6 +678,50 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Q2.3: ask the server which jobs already include this LinkedIn URL and
+  // which active jobs the candidate could be added to. Used by the in-page
+  // overlay so the recruiter sees match info without leaving the profile.
+  if (message?.type === "query-profile-match") {
+    if (!message.linkedinUrl) {
+      sendResponse({ ok: false, error: "linkedinUrl required" });
+      return false;
+    }
+    void requestRecruitMe(
+      `/api/extension/profile-match?url=${encodeURIComponent(message.linkedinUrl)}`,
+      {},
+      "",
+      { rememberFailure: false }
+    )
+      .then(({ data, base }) => sendResponse({ ok: true, data, serverBase: base }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  // Q2.3: manual "Add to {job}" path. Captures via the content script first,
+  // then POSTs the captured profileText to /api/extension/import bound to the
+  // chosen job. Mirrors the auto-capture flow but without a server-side
+  // pending FetchSession — recruiter intent comes from the overlay click.
+  if (message?.type === "submit-add-to-job") {
+    const { jobId, linkedinUrl, profileText } = message;
+    if (!jobId || !linkedinUrl || !profileText) {
+      sendResponse({ ok: false, error: "jobId, linkedinUrl, profileText required" });
+      return false;
+    }
+    void requestRecruitMe(
+      "/api/extension/import",
+      {
+        method: "POST",
+        timeoutMs: 90000,
+        body: JSON.stringify({ jobId, linkedinUrl, profileText }),
+      },
+      "",
+      { rememberFailure: false }
+    )
+      .then(({ data }) => sendResponse({ ok: true, data }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === "manual-capture-pending") {
     void (async () => {
       const tab = await getActiveLinkedInTab();

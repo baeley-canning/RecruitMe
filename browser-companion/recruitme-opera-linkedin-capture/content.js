@@ -944,6 +944,197 @@ function notifyBackground() {
       void chrome.runtime.lastError;
     }
   );
+
+  // Q2.3 — surface RecruitMe match info while the recruiter is browsing.
+  // This is independent of the capture pipeline above: even if the candidate
+  // isn't queued for a server-driven fetch, we still want to show "in 2 jobs"
+  // or "add to {Job}?" on the page.
+  void renderProfileMatchOverlay(linkedinUrl);
+}
+
+// ─── Q2.3: in-page profile match overlay ──────────────────────────────────────
+// A tiny floating widget that calls /api/extension/profile-match for the
+// current LinkedIn profile and renders one of three states:
+//   1. On 1+ active jobs already → info pill linking back to the app
+//   2. In library, not on the active jobs → "Add to {job}" buttons
+//   3. Unknown person → no overlay (the existing capture flow handles new captures)
+const OVERLAY_ID = "recruitme-profile-match-overlay";
+
+function getOverlayServerBase(serverBase) {
+  if (!serverBase) return "";
+  return serverBase.replace(/\/+$/, "");
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function removeOverlay() {
+  const existing = document.getElementById(OVERLAY_ID);
+  if (existing) existing.remove();
+}
+
+function buildOverlayShell() {
+  removeOverlay();
+  const container = document.createElement("div");
+  container.id = OVERLAY_ID;
+  container.style.cssText = [
+    "position: fixed",
+    "right: 16px",
+    "bottom: 16px",
+    "z-index: 2147483647",
+    "max-width: 320px",
+    "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    "font-size: 13px",
+    "color: #0f172a",
+    "background: #ffffff",
+    "border: 1px solid #e2e8f0",
+    "border-radius: 12px",
+    "box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12)",
+    "padding: 12px 14px",
+    "line-height: 1.4",
+  ].join(";");
+  return container;
+}
+
+function renderOnActiveJobs(container, data, serverBase) {
+  const base = getOverlayServerBase(serverBase);
+  const jobs = (data.onActiveJobs || []).slice(0, 3);
+  const titles = jobs
+    .map((j) => `<a href="${base}/jobs/${encodeURIComponent(j.jobId)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:500">${escapeHtml(j.jobTitle)}</a>`)
+    .join(", ");
+  const moreCount = (data.onActiveJobs || []).length - jobs.length;
+  const moreLabel = moreCount > 0 ? ` <span style="color:#64748b">(+${moreCount} more)</span>` : "";
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981"></span>
+      <strong style="font-weight:600">Already in RecruitMe</strong>
+      <button id="recruitme-overlay-close" aria-label="Close" style="margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:14px;padding:0;line-height:1">×</button>
+    </div>
+    <div>On ${jobs.length} active job${jobs.length !== 1 ? "s" : ""}: ${titles}${moreLabel}</div>
+  `;
+  const closeBtn = container.querySelector("#recruitme-overlay-close");
+  if (closeBtn) closeBtn.addEventListener("click", removeOverlay);
+}
+
+function renderSuggestedJobs(container, data, linkedinUrl, serverBase) {
+  const suggested = (data.suggestedJobs || []).slice(0, 3);
+  if (suggested.length === 0) {
+    // No active jobs to add to — keep the overlay tidy.
+    removeOverlay();
+    return;
+  }
+  const inLibraryNote = data.inLibrary ? "In your library" : "Not yet in RecruitMe";
+  const jobButtons = suggested
+    .map(
+      (j) => `<button class="recruitme-add-to-job" data-job-id="${escapeHtml(j.id)}" data-job-title="${escapeHtml(j.title)}" style="display:block;width:100%;text-align:left;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;margin-top:6px;cursor:pointer;color:#0f172a;font-size:12px">+ Add to <strong>${escapeHtml(j.title)}</strong>${j.company ? ` <span style="color:#64748b">· ${escapeHtml(j.company)}</span>` : ""}</button>`
+    )
+    .join("");
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${data.inLibrary ? "#3b82f6" : "#94a3b8"}"></span>
+      <strong style="font-weight:600">${escapeHtml(inLibraryNote)}</strong>
+      <button id="recruitme-overlay-close" aria-label="Close" style="margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:14px;padding:0;line-height:1">×</button>
+    </div>
+    <div style="color:#475569;font-size:12px;margin-bottom:2px">Add to one of your active jobs:</div>
+    ${jobButtons}
+    <div id="recruitme-overlay-status" style="margin-top:8px;font-size:11px;color:#64748b;display:none"></div>
+  `;
+  container.querySelectorAll(".recruitme-add-to-job").forEach((btn) => {
+    btn.addEventListener("click", (e) => handleAddToJobClick(e.currentTarget, linkedinUrl, serverBase));
+  });
+  const closeBtn = container.querySelector("#recruitme-overlay-close");
+  if (closeBtn) closeBtn.addEventListener("click", removeOverlay);
+}
+
+async function handleAddToJobClick(button, linkedinUrl, serverBase) {
+  const jobId = button.getAttribute("data-job-id");
+  const jobTitle = button.getAttribute("data-job-title") || "job";
+  const status = document.getElementById("recruitme-overlay-status");
+  const setStatus = (text, colour = "#64748b") => {
+    if (!status) return;
+    status.style.display = "block";
+    status.style.color = colour;
+    status.textContent = text;
+  };
+  // Disable all add buttons during a single capture so the recruiter doesn't
+  // queue two simultaneous captures of the same profile.
+  document.querySelectorAll(".recruitme-add-to-job").forEach((b) => {
+    b.disabled = true;
+    b.style.opacity = "0.6";
+    b.style.cursor = "not-allowed";
+  });
+  setStatus(`Capturing profile…`);
+  try {
+    const capture = await captureProfile();
+    if (!capture?.profileText || capture.profileText.length < 100) {
+      throw new Error("Profile text was too short to import.");
+    }
+    setStatus(`Adding to ${jobTitle}…`);
+    const res = await sendToServiceWorker(
+      {
+        type: "submit-add-to-job",
+        jobId,
+        linkedinUrl,
+        profileText: capture.profileText,
+      },
+      120000
+    );
+    if (!res?.ok) throw new Error(res?.error || "Add to job failed");
+    setStatus(`✓ Added to ${jobTitle}`, "#059669");
+    const base = getOverlayServerBase(serverBase);
+    if (base) {
+      // Linkify the success message after a short delay so the user can click through.
+      setTimeout(() => {
+        if (status) {
+          status.innerHTML = `✓ Added to <a href="${base}/jobs/${encodeURIComponent(jobId)}" target="_blank" rel="noopener" style="color:#059669;text-decoration:underline">${escapeHtml(jobTitle)}</a>`;
+        }
+      }, 100);
+    }
+  } catch (err) {
+    setStatus(err?.message || "Failed to add. Try again.", "#dc2626");
+    document.querySelectorAll(".recruitme-add-to-job").forEach((b) => {
+      b.disabled = false;
+      b.style.opacity = "1";
+      b.style.cursor = "pointer";
+    });
+  }
+}
+
+// Tracks the last URL we fetched match data for so we don't refetch on every
+// notify cycle.
+let lastMatchQueriedUrl = "";
+
+async function renderProfileMatchOverlay(linkedinUrl) {
+  if (!linkedinUrl) return;
+  if (lastMatchQueriedUrl === linkedinUrl) return;
+  lastMatchQueriedUrl = linkedinUrl;
+  try {
+    const res = await sendToServiceWorker({ type: "query-profile-match", linkedinUrl }, 8000);
+    if (!res?.ok || !res.data) {
+      // Silent failure — the overlay is opportunistic, not load-bearing
+      return;
+    }
+    const data = res.data;
+    const onActive = (data.onActiveJobs || []).length > 0;
+    const container = buildOverlayShell();
+    if (onActive) {
+      renderOnActiveJobs(container, data, res.serverBase);
+    } else if (data.inLibrary || (data.suggestedJobs || []).length > 0) {
+      renderSuggestedJobs(container, data, linkedinUrl, res.serverBase);
+    } else {
+      // Genuinely unknown candidate — nothing actionable to show
+      return;
+    }
+    document.body.appendChild(container);
+  } catch {
+    // Silent — recruiter sees no overlay rather than an error toast
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -985,7 +1176,13 @@ notifyBackground();
 setTimeout(notifyBackground, 1500);
 setTimeout(notifyBackground, 4000);
 setInterval(() => {
-  if (!isLinkedInProfilePage()) return;
+  if (!isLinkedInProfilePage()) {
+    // Clean up the match overlay when the recruiter clicks off a profile —
+    // we don't want a stale "On 2 jobs" pill hovering on the LinkedIn home.
+    removeOverlay();
+    lastMatchQueriedUrl = "";
+    return;
+  }
   const linkedinUrl = location.href.replace(/[?#].*$/, "");
   if (linkedinUrl !== lastObservedUrl) {
     notifyBackground();
