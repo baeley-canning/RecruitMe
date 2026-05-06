@@ -8,6 +8,10 @@ import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { getOrgScoringWeights } from "@/lib/scoring-config";
 import { NextResponse } from "next/server";
 
+// Allow up to 5 minutes for large scoring runs. Without this, Vercel (and some
+// Railway proxy configurations) cut the connection at ~30s leaving partial results.
+export const maxDuration = 300;
+
 const CONCURRENCY = 3;
 
 export async function POST(

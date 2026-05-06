@@ -76,6 +76,8 @@ interface Job {
   salaryMin: number | null;
   salaryMax: number | null;
   status: string;
+  lastScoredAt: string | null;
+  lastParsedAt: string | null;
   candidates: Candidate[];
 }
 
@@ -178,7 +180,7 @@ export default function JobDetailPage({
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
-  const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number; failedIds?: string[] } | null>(null);
+  const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number; failedIds?: string[]; partial?: boolean } | null>(null);
   const [rescoreProgress, setRescoreProgress] = useState<{ scored: number; total: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -723,6 +725,8 @@ export default function JobDetailPage({
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let streamFinished = false;
+      let lastProgress: { scored: number; total: number } | null = null;
 
       try {
         while (true) {
@@ -734,14 +738,24 @@ export default function JobDetailPage({
           for (const line of lines) {
             if (!line.trim()) continue;
             try {
-              const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean };
-              setRescoreProgress({ scored: msg.scored, total: msg.total });
-              if (msg.done) setRescoreResult({ scored: msg.scored, total: msg.total, failedIds: (msg as { failedIds?: string[] }).failedIds });
+              const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean; failedIds?: string[] };
+              lastProgress = { scored: msg.scored, total: msg.total };
+              setRescoreProgress(lastProgress);
+              if (msg.done) {
+                setRescoreResult({ scored: msg.scored, total: msg.total, failedIds: msg.failedIds });
+                streamFinished = true;
+              }
             } catch { /* ignore malformed lines */ }
           }
         }
       } catch {
-        // Network dropped mid-stream — progress already shown; just end cleanly
+        // Network dropped mid-stream — fall through to partial result below
+      }
+
+      // If the stream ended without a done:true message, show a partial result
+      // so the user knows something was scored (not complete silence on failure).
+      if (!streamFinished && lastProgress) {
+        setRescoreResult({ scored: lastProgress.scored, total: lastProgress.total, failedIds: [], partial: true });
       }
 
       await fetchJob();
@@ -1605,12 +1619,33 @@ ${toHtml(job.rawJd)}
           );
         })()}
 
+        {/* Stale-score warning: requirements updated since last score-all */}
+        {job && job.lastParsedAt && job.candidates.length > 0 && !rescoringAll && !rescoreResult && (() => {
+          const parsedMs  = new Date(job.lastParsedAt).getTime();
+          const scoredMs  = job.lastScoredAt ? new Date(job.lastScoredAt).getTime() : 0;
+          return parsedMs > scoredMs ? (
+            <div className="mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border text-amber-700 bg-amber-50 border-amber-200">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              Requirements updated since last score — Re-score all to apply new criteria.
+            </div>
+          ) : null;
+        })()}
+
         {/* Re-score result */}
         {rescoreResult && !rescoringAll && (
-          <div className="mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border text-emerald-700 bg-emerald-50 border-emerald-200">
-            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-            {`Re-scored ${rescoreResult.scored} of ${rescoreResult.total} candidates`}
-            {rescoreResult.failedIds && rescoreResult.failedIds.length > 0 && (
+          <div className={cn(
+            "mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border",
+            rescoreResult.partial
+              ? "text-amber-700 bg-amber-50 border-amber-200"
+              : "text-emerald-700 bg-emerald-50 border-emerald-200"
+          )}>
+            {rescoreResult.partial
+              ? <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              : <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />}
+            {rescoreResult.partial
+              ? `Scored ${rescoreResult.scored} of ${rescoreResult.total} — connection dropped, re-run to finish`
+              : `Re-scored ${rescoreResult.scored} of ${rescoreResult.total} candidates`}
+            {!rescoreResult.partial && rescoreResult.failedIds && rescoreResult.failedIds.length > 0 && (
               <span className="ml-2 text-amber-600">· {rescoreResult.failedIds.length} failed</span>
             )}
           </div>

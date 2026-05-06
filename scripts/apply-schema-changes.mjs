@@ -40,10 +40,13 @@ await step("deduplicate candidates", async () => {
   console.log(`  removed ${deleted} duplicate(s)`);
 });
 
-// 2. Job.lastScoredAt
-await step("Job.lastScoredAt", async () => {
+// 2. Job.lastScoredAt + lastParsedAt
+await step("Job.lastScoredAt + lastParsedAt", async () => {
   await prisma.$executeRaw`
     ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "lastScoredAt" TIMESTAMP(3)
+  `;
+  await prisma.$executeRaw`
+    ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "lastParsedAt" TIMESTAMP(3)
   `;
 });
 

@@ -70,10 +70,11 @@ export async function POST(
       }
     }
 
-    // Save parsed role back to job
+    // Save parsed role back to job and stamp lastParsedAt so the UI can show
+    // "re-score recommended" when requirements have changed since last score-all.
     await prisma.job.update({
       where: { id },
-      data: { parsedRole: JSON.stringify(parsedRole) },
+      data: { parsedRole: JSON.stringify(parsedRole), lastParsedAt: new Date() },
     });
 
     const changes = diffParsedRole(existing, parsedRole);

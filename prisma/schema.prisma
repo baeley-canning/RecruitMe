@@ -20,6 +20,7 @@ model Job {
   isRemote     Boolean   @default(false)
   status       String    @default("active") // active | closed | on-hold
   lastScoredAt DateTime? // set by score-all; prevents re-runs within cooldown window
+  lastParsedAt DateTime? // set by re-analyse; UI shows "re-score recommended" when > lastScoredAt
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
