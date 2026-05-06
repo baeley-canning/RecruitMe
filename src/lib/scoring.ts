@@ -337,6 +337,7 @@ export function buildScoreBreakdown(params: {
   recruiter_summary:     string;
   profileCharCount:      number;
   weights?:              ScoringWeights;
+  claudeOverallScore?:   number | null; // Claude's direct holistic verdict — overrides formula when present
 }): ScoreBreakdown {
   const dataQuality   = classifyDataQuality(params.profileCharCount);
   const mustHavePct   = computeMustHavePct(params.must_have_coverage, dataQuality);
@@ -379,17 +380,27 @@ export function buildScoreBreakdown(params: {
     }
   }
 
-  const overall         = Math.min(rawOverall, cap);
+  const formulaOverall = Math.min(rawOverall, cap);
+
+  // When Claude provides a direct overall_score, trust it — Claude integrates
+  // the full picture better than a weighted formula can. The formula-derived
+  // score is kept as a floor reference: we still apply the data-quality cap
+  // so snippet candidates can't be boosted above their information ceiling,
+  // but within that cap Claude's verdict wins over the formula's arithmetic.
+  const overall = params.claudeOverallScore != null
+    ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
+    : formulaOverall;
+
   const evidenceCoverage = computeEvidenceCoverageScore(
     params.must_have_coverage,
     params.nice_to_have_coverage
   );
   const confidence = computeConfidence(params.profileCharCount, params.must_have_coverage);
 
-  // If the cap was applied, surface the reason so recruiters understand why the
-  // score is lower than the raw weighted sum would suggest.
   const effectiveReasonsAgainst = [...params.reasons_against];
-  if (rawOverall > overall) {
+  if (params.claudeOverallScore != null && params.claudeOverallScore > cap) {
+    effectiveReasonsAgainst.push(`Score capped at ${overall} — provisional snippet data; fetch full profile for reliable assessment`);
+  } else if (params.claudeOverallScore == null && rawOverall > overall) {
     if (dataQuality !== "full_profile") {
       effectiveReasonsAgainst.push(`Score capped at ${overall} — provisional snippet data; fetch full profile for reliable assessment`);
     } else {

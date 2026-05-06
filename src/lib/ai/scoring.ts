@@ -21,6 +21,7 @@ import {
   ACCEPTANCE_ASSESSMENT_RULES,
   SCORING_SYSTEM_CONTEXT,
   SCORING_JSON_SCHEMA,
+  SCORING_OVERALL_RULE,
   SCORING_CATEGORY_RULES,
   SCORING_MUST_HAVE_RULES,
   SCORING_KNOCKOUT_RULE,
@@ -211,6 +212,8 @@ ${profileSlice}
 
 ${SCORING_JSON_SCHEMA}
 
+${SCORING_OVERALL_RULE}
+
 ${SCORING_CATEGORY_RULES}
 
 ${SCORING_MUST_HAVE_RULES}${knockouts.length ? `\n${SCORING_KNOCKOUT_RULE}` : ""}
@@ -232,6 +235,7 @@ ${SCORING_EQUIVALENCY_RULES}`,
 
   type RawCat = { score?: number; evidence?: string };
   type RawAI = {
+    overall_score?: number;
     categories?: {
       skill_fit?:        RawCat;
       location_fit?:     RawCat;
@@ -321,6 +325,13 @@ ${SCORING_EQUIVALENCY_RULES}`,
     nice_to_have_fit: parseCategory("nice_to_have_fit", weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit),
   };
 
+  // Use Claude's direct holistic verdict if present. The formula-derived score
+  // is kept as a cross-check but Claude's overall_score overrides it when
+  // provided — Claude can integrate the full picture better than our weights can.
+  const claudeOverallScore = typeof raw.overall_score === "number"
+    ? Math.min(100, Math.max(0, Math.round(raw.overall_score)))
+    : null;
+
   return buildScoreBreakdown({
     categories,
     must_have_coverage:    mustHaveCoverage,
@@ -331,5 +342,6 @@ ${SCORING_EQUIVALENCY_RULES}`,
     recruiter_summary:     typeof raw.recruiter_summary === "string" ? raw.recruiter_summary : "",
     profileCharCount:      profileText.length,
     weights,
+    claudeOverallScore,
   });
 }

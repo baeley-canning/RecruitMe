@@ -20,6 +20,7 @@ export const SCORING_SYSTEM_CONTEXT = `You are a senior recruitment consultant s
 
 export const SCORING_JSON_SCHEMA = `Return EXACTLY this JSON structure:
 {
+  "overall_score": 0,
   "categories": {
     "skill_fit":        {"score":0,"evidence":"one sentence grounding the score in actual profile text"},
     "location_fit":     {"score":0,"evidence":"one sentence"},
@@ -39,6 +40,15 @@ export const SCORING_JSON_SCHEMA = `Return EXACTLY this JSON structure:
   "missing_evidence": ["specific fact that would change the score if known","..."],
   "recruiter_summary": "One sentence only. The single most important fact a recruiter needs to decide whether to read on — usually the strongest signal for OR against. If all key points are already in reasons_for/against, synthesise the most critical one into a sharper verdict rather than inventing a new point. Name something specific (a skill, job title, company, year count, or recency gap). If a clear blocker exists, lead with that."
 }`;
+
+export const SCORING_OVERALL_RULE = `overall_score rules:
+Set overall_score to your direct holistic verdict of how well this candidate fits the role — 0 to 100. This is YOUR assessment, not a formula. It should reflect the full picture: how many must-haves are genuinely met, how critical the gaps are, whether the candidate's actual career trajectory fits the role's intent, and whether you would put this person in front of a hiring manager.
+- 80–100: strong match — most must-haves confirmed, right domain, right level, would shortlist
+- 60–79: viable — several must-haves confirmed, some gaps but plausibly bridgeable, worth a full review
+- 40–59: partial — relevant background but meaningful gaps; a stretch or requires significant development
+- 20–39: weak — one or two overlapping signals but fundamentally misaligned on core requirements
+- 0–19: no match — wrong domain, wrong level, or critical must-haves all absent
+CRITICAL: if you have written reasons_against that describe fundamental blockers (core skill absent, wrong domain entirely, clearly wrong seniority), your overall_score MUST be below 40. Do not let a good location or one confirmed credential push a fundamentally mismatched candidate above 50. The score should reflect the hiring decision, not a balanced average.`;
 
 export const SCORING_CATEGORY_RULES = `Category score rules:
 - skill_fit: 80+ = most must-have skills confirmed; 60-79 = several confirmed; 40-59 = adjacent; 0-39 = mismatch
