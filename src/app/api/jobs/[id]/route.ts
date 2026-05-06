@@ -30,7 +30,13 @@ const PatchJobSchema = z.object({
   salaryMin:  z.number().int().min(0).max(2_000_000).nullable().optional(),
   salaryMax:  z.number().int().min(0).max(2_000_000).nullable().optional(),
   orgId:      z.string().nullable().optional(), // owner-only: reassign after org delete
-});
+}).refine(
+  (data) => {
+    if (data.salaryMin != null && data.salaryMax != null) return data.salaryMin <= data.salaryMax;
+    return true;
+  },
+  { message: "Salary minimum cannot exceed maximum" }
+);
 
 export async function PATCH(
   req: Request,

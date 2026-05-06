@@ -260,6 +260,10 @@ export default function ShortlistPage({
 
   const fetchJob = async () => {
     const res = await fetch(`/api/jobs/${id}`);
+    if (res.status === 401 || res.status === 403) {
+      window.location.href = "/login";
+      return;
+    }
     if (res.ok) setJob(await res.json() as Job);
     setLoading(false);
   };
@@ -351,7 +355,7 @@ export default function ShortlistPage({
             </span>
           )}
         </div>
-        <p className="text-xs text-slate-400 mt-3 hidden print:block">
+        <p className="text-xs text-slate-400 mt-3 hidden print:block" suppressHydrationWarning>
           Prepared {new Date().toLocaleDateString("en-NZ", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
         </p>
       </div>

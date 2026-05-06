@@ -245,7 +245,7 @@ export default function AdminPage() {
                     <td className="px-5 py-3.5 text-sm text-slate-500">
                       {user.orgName ?? <span className="text-slate-300 text-xs italic">none</span>}
                     </td>
-                    <td className="px-5 py-3.5 text-xs text-slate-400">
+                    <td className="px-5 py-3.5 text-xs text-slate-400" suppressHydrationWarning>
                       {new Date(user.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-5 py-3.5 text-right">
@@ -310,7 +310,7 @@ export default function AdminPage() {
                     <td className="px-5 py-3.5 text-sm font-medium text-slate-900">{org.name}</td>
                     <td className="px-5 py-3.5 text-sm text-slate-500">{org._count.users}</td>
                     <td className="px-5 py-3.5 text-sm text-slate-500">{org._count.jobs}</td>
-                    <td className="px-5 py-3.5 text-xs text-slate-400">{new Date(org.createdAt).toLocaleDateString()}</td>
+                    <td className="px-5 py-3.5 text-xs text-slate-400" suppressHydrationWarning>{new Date(org.createdAt).toLocaleDateString()}</td>
                     <td className="px-5 py-3.5 text-right">
                       <button
                         onClick={() => handleDeleteOrg(org.id, org.name)}

@@ -531,14 +531,13 @@ export default function JobDetailPage({
         return;
       }
     } catch {
-      // Network error — track consecutive failures and abort after 3
+      // Network error — track consecutive failures; after 3 in a row pause for
+      // 30s then reset the counter so polling can resume automatically.
       entry.consecutiveNetworkErrors = (entry.consecutiveNetworkErrors ?? 0) + 1;
       if (entry.consecutiveNetworkErrors >= 3) {
-        finishFetchRef.current(
-          candidateId,
-          "error",
-          "Connection lost — check your network and try again"
-        );
+        entry.consecutiveNetworkErrors = 0;
+        // Brief pause to let transient network issues resolve before retrying.
+        await new Promise((r) => setTimeout(r, 30_000));
       }
     }
   };

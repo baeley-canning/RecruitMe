@@ -4,8 +4,10 @@
  */
 import { prisma } from "./db";
 
-const USAGE_EVENT_RETENTION_DAYS = 90;
-const LOGIN_ATTEMPT_CLEANUP_DAYS = 1; // expired attempts can be purged daily
+const USAGE_EVENT_RETENTION_DAYS  = 90;
+const LOGIN_ATTEMPT_CLEANUP_DAYS  = 1;
+const SEARCH_SESSION_RETENTION_DAYS = 7;
+const FETCH_SESSION_RETENTION_DAYS  = 3;
 
 /**
  * Delete UsageEvents older than USAGE_EVENT_RETENTION_DAYS.
@@ -33,16 +35,37 @@ export async function purgeExpiredLoginAttempts(): Promise<{ deleted: number }> 
   return { deleted: result.count };
 }
 
+export async function purgeOldSearchSessions(): Promise<{ deleted: number }> {
+  const cutoff = new Date(Date.now() - SEARCH_SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const result = await prisma.searchSession.deleteMany({
+    where: { createdAt: { lt: cutoff } },
+  });
+  return { deleted: result.count };
+}
+
+export async function purgeOldFetchSessions(): Promise<{ deleted: number }> {
+  const cutoff = new Date(Date.now() - FETCH_SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const result = await prisma.fetchSession.deleteMany({
+    where: { createdAt: { lt: cutoff } },
+  });
+  return { deleted: result.count };
+}
+
 /**
  * Run all maintenance tasks. Safe to call on any schedule.
  */
 export async function runMaintenance(): Promise<void> {
   try {
-    const [usage, attempts] = await Promise.all([
+    const [usage, attempts, searchSessions, fetchSessions] = await Promise.all([
       purgeOldUsageEvents(),
       purgeExpiredLoginAttempts(),
+      purgeOldSearchSessions(),
+      purgeOldFetchSessions(),
     ]);
-    console.log(`[maintenance] purged ${usage.deleted} usage events, ${attempts.deleted} login attempts`);
+    console.log(
+      `[maintenance] purged ${usage.deleted} usage events, ${attempts.deleted} login attempts, ` +
+      `${searchSessions.deleted} search sessions, ${fetchSessions.deleted} fetch sessions`
+    );
   } catch (err) {
     console.error("[maintenance] failed:", err);
   }

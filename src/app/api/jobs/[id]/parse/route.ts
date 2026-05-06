@@ -49,9 +49,25 @@ export async function POST(
     const existing = safeParseJson<ParsedRole | null>(job.parsedRole, null);
     const parsedRole = await parseJobDescription(job.rawJd);
 
-    // Preserve dismissals the recruiter made on the previous analysis.
+    // Preserve all recruiter overrides from the previous analysis.
     if (existing?.dismissed_skill_notes?.length) {
       parsedRole.dismissed_skill_notes = existing.dismissed_skill_notes;
+    }
+    if (existing?.dismissed_knockout_criteria?.length) {
+      parsedRole.dismissed_knockout_criteria = existing.dismissed_knockout_criteria;
+    }
+    if (existing?.promoted_visa_flags?.length) {
+      parsedRole.promoted_visa_flags = existing.promoted_visa_flags;
+      // Re-apply promoted visa flags into must_haves so scoring stays consistent.
+      for (const flag of existing.promoted_visa_flags) {
+        const lower = flag.toLowerCase();
+        if (!parsedRole.must_haves.some((m) => m.toLowerCase() === lower)) {
+          parsedRole.must_haves = [...parsedRole.must_haves, flag];
+        }
+        if (!parsedRole.skills_required.some((s) => s.toLowerCase() === lower)) {
+          parsedRole.skills_required = [...parsedRole.skills_required, flag];
+        }
+      }
     }
 
     // Save parsed role back to job

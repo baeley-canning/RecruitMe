@@ -30,6 +30,7 @@ export async function GET() {
       }),
     },
     orderBy: { createdAt: "desc" },
+    take: 2000, // safety cap — prevents OOM on large orgs; pagination can be added when needed
     select: {
       id: true,
       name: true,

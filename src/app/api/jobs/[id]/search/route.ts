@@ -888,7 +888,7 @@ async function runSearchBackground(args: {
         if (!looksLikePersonName(r.name)) return false;
         const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
         const poolEntry = poolMap.get(normUrl);
-        const poolLoc = poolMap.get(r.linkedinUrl)?.location ?? "";
+        const poolLoc = poolMap.get(normUrl)?.location ?? "";
         const loc = poolLoc || poolEntry?.location || r.location || "";
         if (loc && isExplicitlyOverseasLocation(loc)) return false;
         if (looksUnderqualifiedForRole(r, parsedRole)) {

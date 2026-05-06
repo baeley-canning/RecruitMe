@@ -209,7 +209,15 @@ function shouldExpand(element) {
 async function waitForMain() {
   for (let i = 0; i < 30; i += 1) {
     const main = document.querySelector("main");
-    if (main && cleanText(main.innerText || "").length > 120) return main;
+    if (!main) { await sleep(400); continue; }
+    const text = cleanText(main.innerText || "");
+    // Detect login/auth walls before they pass the length check and get
+    // submitted as a "profile". The login page has a <main> with 200+ chars
+    // of form text that would otherwise pass silently.
+    if (/sign in|email or phone|forgot your password|join now/i.test(text)) {
+      throw new Error("Not logged into LinkedIn — please sign in and try again");
+    }
+    if (text.length > 120) return main;
     await sleep(400);
   }
   throw new Error("LinkedIn profile content did not finish loading");
@@ -908,8 +916,12 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   } finally {
     captureInProgress = false;
     captureInProgressSessionId = "";
-    // Restore so the setInterval doesn't immediately re-send linkedin-page-observed
-    lastObservedUrl = location.href.replace(/[?#].*$/, "");
+    // Restore so the setInterval doesn't immediately re-send linkedin-page-observed.
+    // Wrap in try/catch — if location.href throws (e.g. tab unloaded), the flag
+    // has already been reset above so we don't leave it stuck.
+    try {
+      lastObservedUrl = location.href.replace(/[?#].*$/, "");
+    } catch { /* tab navigated away — safe to ignore */ }
   }
 }
 

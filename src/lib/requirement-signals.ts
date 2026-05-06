@@ -199,44 +199,30 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
 //   ✗ Generic business terms that appear on most profiles (banking, microservices)
 //   ✗ Duplicate entries
 //   ✗ Technology already covered by a more specific entry
+// Skills used as a source-gate filter: if a role has ANY of these, only candidates
+// whose searchable text contains at least one are imported. Keep this list to
+// genuinely rare/distinctive requirements — common terms (SQL, Java, Python, Linux,
+// Azure, React) are intentionally absent because they appear on too many unrelated
+// profiles and would let completely wrong candidates pass the gate.
 export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
-  // Databases / legacy
+  // Legacy / rare databases — rare enough to be distinctive
   [/\bsybase\b/i,                                       ["Sybase"]],
   [/\bcobol\b/i,                                        ["COBOL"]],
   [/\bmainframe\b|\bas400\b/i,                          ["mainframe"]],
   [/\bdb2\b/i,                                          ["DB2"]],
+  [/\bsnowflake\b/i,                                    ["Snowflake"]],
+  // Specific database platforms (named, not generic "SQL")
   [/\boracle\b/i,                                       ["Oracle"]],
   [/\bsql server\b|\bmssql\b/i,                         ["SQL Server"]],
   [/\bpostgresql\b|\bpostgres\b/i,                      ["PostgreSQL"]],
   [/\bmysql\b/i,                                        ["MySQL"]],
-  [/\bsnowflake\b/i,                                    ["Snowflake"]],
-  [/\bsql\b|\brelational database\b|\brdbms\b/i,        ["SQL", "database"]],
-  // Languages
+  // Languages — only include those genuinely rare in NZ / strongly distinctive
   [/\bc\+\+/i,                                          ["C++"]],
-  [/\.net\b|asp\.net/i,                                 [".NET"]],
-  [/\bc#/i,                                             ["C#"]],
-  [/\bjava\b/i,                                         ["Java"]],
-  [/\bpython\b/i,                                       ["Python"]],
   [/\bruby\b|\brails\b/i,                               ["Ruby"]],
-  [/\bphp\b/i,                                          ["PHP"]],
   [/\bscala\b/i,                                        ["Scala"]],
   [/\bkotlin\b/i,                                       ["Kotlin"]],
   [/\bswift\b/i,                                        ["Swift"]],
-  // Frameworks
-  [/\breact\b/i,                                        ["React"]],
-  [/\bangular\b/i,                                      ["Angular"]],
-  [/\bvue\b/i,                                          ["Vue"]],
-  [/\bnode\.?js\b/i,                                    ["Node.js"]],
-  [/\bdjango\b/i,                                       ["Django"]],
-  [/\bspring\b/i,                                       ["Spring"]],
-  // Infrastructure / DevOps
-  [/\blinux\b|\bunix\b/i,                               ["Linux"]],
-  [/\bazure\b/i,                                        ["Azure"]],
-  [/\baws\b|amazon web services/i,                      ["AWS"]],
-  [/\bgcp\b|google cloud/i,                             ["GCP"]],
-  [/\bkubernetes\b|\bk8s\b/i,                           ["Kubernetes"]],
-  [/\bterraform\b/i,                                    ["Terraform"]],
-  // Business apps / platforms
+  // Highly specific platforms / frameworks
   [/\bsalesforce\b/i,                                   ["Salesforce"]],
   [/\bservicenow\b/i,                                   ["ServiceNow"]],
   [/\bsap\b/i,                                          ["SAP"]],

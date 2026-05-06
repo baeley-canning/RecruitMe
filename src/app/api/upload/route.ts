@@ -36,6 +36,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Supported formats: PDF, DOCX, DOC, TXT" }, { status: 400 });
   }
 
+  // Server-side MIME check — browser-supplied file.type is untrustworthy but
+  // combined with the magic-byte check below it stops obvious disguised files.
+  const allowedMimes = new Set([
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "text/plain",
+    "application/octet-stream", // some browsers send this for .docx
+  ]);
+  if (file.type && !allowedMimes.has(file.type)) {
+    return NextResponse.json({ error: "Unsupported file type" }, { status: 400 });
+  }
+
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 

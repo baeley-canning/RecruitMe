@@ -403,9 +403,11 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
 }
 
 async function maybeAutoCapture(tabId, linkedinUrl) {
-  const lastLookup = recentAutoCaptureLookups.get(linkedinUrl);
+  // Normalise trailing slash so "profile/" and "profile" share the same cooldown key.
+  const normUrl = linkedinUrl.replace(/\/$/, "");
+  const lastLookup = recentAutoCaptureLookups.get(normUrl);
   if (lastLookup && Date.now() - lastLookup < AUTO_CAPTURE_LOOKUP_COOLDOWN_MS) return;
-  recentAutoCaptureLookups.set(linkedinUrl, Date.now());
+  recentAutoCaptureLookups.set(normUrl, Date.now());
 
   const pending = await checkPendingCapture(linkedinUrl);
   console.log("[RecruitMe] maybeAutoCapture", { tabId, linkedinUrl, status: pending.data?.status, sessionId: pending.data?.sessionId });
@@ -414,10 +416,13 @@ async function maybeAutoCapture(tabId, linkedinUrl) {
   await capturePendingSessionInTab(tabId, pending.data, pending.base);
 }
 
+const MAX_AUTO_OPEN_TABS = 3;
+
 async function ensurePendingSessionTabs() {
   const { base, sessions } = await getPendingSessions();
   if (!sessions.length) return;
 
+  let autoOpened = 0;
   for (const session of sessions) {
     if (pendingSessionEnsures.has(session.sessionId)) continue;
 
@@ -432,6 +437,8 @@ async function ensurePendingSessionTabs() {
         continue;
       }
 
+      if (autoOpened >= MAX_AUTO_OPEN_TABS) continue;
+      autoOpened++;
       await openPendingProfileTab(session.linkedinUrl);
     } catch (error) {
       console.warn("RecruitMe pending-session ensure failed:", error);

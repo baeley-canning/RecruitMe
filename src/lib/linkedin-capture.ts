@@ -334,11 +334,13 @@ async function buildCapturedCandidateData(args: {
   const weights = await getOrgScoringWeights(job.orgId);
 
   // Run all three AI calls concurrently — they are independent of each other.
+  // When the profile is unchanged we skip scoring too (saves AI spend — the
+  // existing score was computed against the same text and remains valid).
   const [info, rawBreakdown, acceptance] = await Promise.all([
     !profileUnchanged
       ? extractCandidateInfo(cleanedProfileText).catch(() => null)
       : Promise.resolve(null),
-    parsedRole
+    !profileUnchanged && parsedRole
       ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights).catch(() => null)
       : Promise.resolve(null),
     !profileUnchanged && cleanedProfileText.length >= 250 && parsedRole
@@ -352,6 +354,9 @@ async function buildCapturedCandidateData(args: {
     if (!hasDirectLocation && info.location && info.location.length > 2) location = info.location;
   }
 
+  // When profileUnchanged the existing score in the DB is still valid — don't
+  // overwrite it with nulls. Only clear scores when we have new profile text
+  // but the AI scoring call hasn't run yet (e.g. no parsedRole).
   const scoreData: Record<string, unknown> = profileUnchanged
     ? {}
     : {
