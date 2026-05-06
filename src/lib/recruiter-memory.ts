@@ -152,5 +152,43 @@ export async function getRecruitingContext(
     lines.push("");
   }
 
+  // ── Score corrections — explicit "the AI got this wrong" signal ─────────────
+  // Pulled in addition to status-based examples so the AI sees not just *who*
+  // succeeded/failed but *where its own scoring drifted from the recruiter's*.
+  try {
+    const corrections = await prisma.scoreCorrection.findMany({
+      where: { orgId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: {
+        originalScore: true,
+        recruiterScore: true,
+        reason: true,
+        roleTitle: true,
+        candidate: { select: { headline: true, name: true } },
+      },
+    });
+    const relevant = corrections
+      .map((c) => ({ ...c, sim: titleSimilarity(parsedRole.title, c.roleTitle ?? "") }))
+      .filter((c) => c.sim > 0.25)
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, 4);
+
+    if (relevant.length > 0) {
+      lines.push("Score corrections (this org explicitly told us when our scoring was off — apply the same direction here):");
+      lines.push("");
+      for (const c of relevant) {
+        const direction = c.recruiterScore < c.originalScore ? "down" : "up";
+        const delta = Math.abs(c.recruiterScore - c.originalScore);
+        lines.push(`• ${initials(c.candidate.name)} (${c.roleTitle ?? "similar role"}): we said ${c.originalScore}, recruiter said ${c.recruiterScore} (${direction} ${delta} pts)`);
+        if (c.candidate.headline) lines.push(`  Headline: ${c.candidate.headline}`);
+        if (c.reason) lines.push(`  Reason: ${c.reason}`);
+      }
+      lines.push("");
+    }
+  } catch (err) {
+    console.warn("[recruiter-memory] correction query failed:", err instanceof Error ? err.message : err);
+  }
+
   return lines.join("\n");
 }

@@ -99,6 +99,7 @@ model Candidate {
   references    ReferenceCheck[]
   files         CandidateFile[]
   fetchSessions FetchSession[]
+  scoreCorrections ScoreCorrection[]
 
   @@unique([jobId, linkedinUrl])
   @@index([linkedinUrl])               // talent pool cross-job URL lookups
@@ -141,6 +142,25 @@ model FetchSession {
   @@unique([candidateId])
   @@index([jobId])
   @@index([status])
+}
+
+// Recruiter score corrections — captures explicit "this score is wrong" signals.
+// Fed back into the scoring prompt as calibration examples so similar future
+// candidates score closer to the recruiter's mental model.
+model ScoreCorrection {
+  id            String    @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobId         String?   // captured at correction time so we can match against role-similar past corrections
+  orgId         String?
+  originalScore Int       // matchScore at correction time
+  recruiterScore Int      // 0-100, what the recruiter thinks the score should be
+  reason        String?   // optional free text explanation
+  roleTitle     String?   // snapshot of parsedRole.title at correction time for similarity match
+  createdAt     DateTime  @default(now())
+
+  @@index([orgId])
+  @@index([candidateId])
 }
 
 // User-named, re-runnable search definitions — recruiters often run the same

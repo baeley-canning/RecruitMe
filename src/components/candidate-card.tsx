@@ -74,6 +74,7 @@ import { ScoreBreakdownPanel } from "./candidate/ScoreBreakdownPanel";
 import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
 import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
+import { ScoreCorrectionButton } from "./candidate/score-correction-button";
 
 interface AcceptanceSignal {
   label: string;
@@ -669,12 +670,14 @@ function ScoringDebugPanel({
 
 function ProfileDrawer({
   candidate,
+  jobId,
   onClose,
   onLinkedInChange,
   onFetchProfile,
   fetchingProfile = false,
 }: {
   candidate: Candidate;
+  jobId: string;
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
   onFetchProfile?: (id: string) => void;
@@ -790,6 +793,11 @@ function ProfileDrawer({
               {candidate.acceptanceScore != null && (
                 <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
               )}
+              <ScoreCorrectionButton
+                jobId={jobId}
+                candidateId={candidate.id}
+                currentScore={candidate.matchScore}
+              />
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
@@ -1657,6 +1665,7 @@ export const CandidateCard = memo(function CandidateCard({
       {showProfile && (
         <ProfileDrawer
           candidate={candidate}
+          jobId={jobId}
           onClose={() => setShowProfile(false)}
           onLinkedInChange={onLinkedInChange}
           onFetchProfile={onFetchProfile}
