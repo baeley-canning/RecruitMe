@@ -280,6 +280,8 @@ function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {
   return extractLegacyAnchorTerms(hardRequirements);
 }
 
+const DB_ANCHOR_RE = /\b(sql|sybase|oracle|postgres|mysql|db2|database|rdbms|snowflake|dynamo)\b/i;
+
 function buildSearchQueries(parsedRole: ParsedRole): string[] {
   const baseTitle = cleanQuery(parsedRole.title);
   const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
@@ -287,7 +289,6 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
   const distinctiveTerms = extractDistinctiveRequirementTerms(parsedRole);
   const anchorTerms = extractAnchorRequirementTerms(parsedRole);
 
-  const DB_ANCHOR_RE = /\b(sql|sybase|oracle|postgres|mysql|db2|database|rdbms|snowflake|dynamo)\b/i;
   const skillQueries: string[] = [];
   if (anchorTerms.length > 0) {
     // All anchors together — catches people who list multiple rare skills
@@ -658,45 +659,75 @@ async function runSearchBackground(args: {
             anchorTerms.length > 0 &&
             normalizeLocationText(searchLocation) !== "new zealand";
 
+          // "dba" only makes sense for database anchors — same rule as the per-city queries above
+          const nzSweepQueries = dedupeQueries([
+            anchorTerms.join(" "),
+            `${parsedRole.title || "Software Developer"} ${anchorTerms.join(" ")}`,
+            ...anchorTerms.flatMap((term) => [
+              `${term} developer`,
+              ...(DB_ANCHOR_RE.test(term) ? [`${term} dba`] : []),
+            ]),
+          ]).slice(0, 4);
+
           const specialistNzOutcomes = shouldRunSpecialistNzSweep
             ? [
                 ...(await executeSearchTaskQueue(
-                  hasSerpApi
-                    ? buildTasks("serpapi", "New Zealand", dedupeQueries([
-                        anchorTerms.join(" "),
-                        `${parsedRole.title || "Software Developer"} ${anchorTerms.join(" ")}`,
-                        ...anchorTerms.flatMap((term) => [`${term} developer`, `${term} dba`]),
-                      ]).slice(0, 4))
-                    : [],
+                  hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
                   { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
                 )),
                 ...(await executeSearchTaskQueue(
-                  hasBing
-                    ? buildTasks("bing", "New Zealand", dedupeQueries([
-                        anchorTerms.join(" "),
-                        `${parsedRole.title || "Software Developer"} ${anchorTerms.join(" ")}`,
-                        ...anchorTerms.flatMap((term) => [`${term} developer`, `${term} dba`]),
-                      ]).slice(0, 4))
-                    : [],
+                  hasBing ? buildTasks("bing", "New Zealand", nzSweepQueries) : [],
                   { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS },
                 )),
               ]
             : [];
           const primaryItems = [...primaryOutcomes, ...specialistNzOutcomes].flatMap((outcome) => outcome.items);
           const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
+          const normalizedSearch = normalizeLocationText(searchLocation);
           const shouldTryNzFallback =
             page === 0 &&
             primaryItems.length === 0 &&
             !primaryRetryable &&
-            normalizeLocationText(searchLocation) !== "new zealand";
+            normalizedSearch !== "new zealand";
 
           if (!shouldTryNzFallback) return [...primaryOutcomes, ...specialistNzOutcomes];
 
-          // Notify recruiter that the search is broadening — don't do this silently
+          // Step 1: try Auckland specifically before going all-NZ — it's the largest NZ
+          // talent pool and is worth a targeted pass for roles with scarce skills.
+          const isAucklandAlready = normalizedSearch === "auckland";
+          let aucklandOutcomes: typeof primaryOutcomes = [];
+          if (!isAucklandAlready) {
+            void prisma.searchSession.update({
+              where: { id: sessionId },
+              data: { message: `No results in ${searchLocation} — trying Auckland` },
+            }).catch(() => {});
+            const akQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
+            aucklandOutcomes = [
+              ...(await executeSearchTaskQueue(
+                hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
+                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+              )),
+              ...(await executeSearchTaskQueue(
+                hasBing ? buildTasks("bing", "Auckland", akQueries) : [],
+                { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS },
+              )),
+            ];
+          }
+          const aucklandItems = aucklandOutcomes.flatMap((o) => o.items);
+
+          // Step 2: broaden to all of New Zealand if Auckland also returned nothing
           void prisma.searchSession.update({
             where: { id: sessionId },
-            data: { message: `No results in ${searchLocation} — broadening to all of New Zealand` },
+            data: {
+              message: aucklandItems.length > 0
+                ? `No results in ${searchLocation} — found ${aucklandItems.length} in Auckland`
+                : `No results in ${searchLocation} or Auckland — broadening to all of New Zealand`,
+            },
           }).catch(() => {});
+
+          if (aucklandItems.length > 0) {
+            return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes];
+          }
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
           const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
@@ -711,7 +742,7 @@ async function runSearchBackground(args: {
               delayMs: BING_DELAY_MS,
             })),
           ];
-          return [...primaryOutcomes, ...specialistNzOutcomes, ...fallbackOutcomes];
+          return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes, ...fallbackOutcomes];
         },
         sleep,
         onPage: ({ page, attempt, added, total, retryableFailures, hardFailures }) => {
