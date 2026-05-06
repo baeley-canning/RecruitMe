@@ -61,6 +61,59 @@ describe("RecruitMe content script", () => {
     ).toBe(false);
   });
 
+  it("falls back to the page's <link rel=canonical> when slug variants don't match directly", () => {
+    // Real-world case: RecruitMe stored the numeric-suffix slug from SerpAPI,
+    // user has since changed their vanity slug to include a middle initial.
+    // The two slugs don't share a normalised alias key, so naive matching
+    // fails — but the page itself carries a canonical URL we can use.
+    const { context } = loadContentScriptContext({
+      location: { href: "https://www.linkedin.com/in/alexjwardega/" },
+      document: {
+        querySelector: (sel) =>
+          sel === 'link[rel="canonical"]'
+            ? { getAttribute: () => "https://www.linkedin.com/in/alex-wardega-2b3b16267/" }
+            : null,
+        body: null,
+      },
+    });
+
+    // Direct match fails (different slugs, the alias keys also differ).
+    expect(
+      context.linkedInProfileMatches(
+        "https://www.linkedin.com/in/alexjwardega/",
+        "https://www.linkedin.com/in/alex-wardega-2b3b16267/"
+      )
+    ).toBe(false);
+
+    // But the canonical-aware matcher succeeds because the page exposes the
+    // expected URL via <link rel="canonical">.
+    expect(
+      context.linkedInProfileMatchesWithCanonical(
+        "https://www.linkedin.com/in/alexjwardega/",
+        "https://www.linkedin.com/in/alex-wardega-2b3b16267/"
+      )
+    ).toBe(true);
+  });
+
+  it("does not match unrelated profiles even with a canonical present", () => {
+    const { context } = loadContentScriptContext({
+      location: { href: "https://www.linkedin.com/in/alexjwardega/" },
+      document: {
+        querySelector: () => ({
+          getAttribute: () => "https://www.linkedin.com/in/alex-wardega-2b3b16267/",
+        }),
+        body: null,
+      },
+    });
+
+    expect(
+      context.linkedInProfileMatchesWithCanonical(
+        "https://www.linkedin.com/in/alexjwardega/",
+        "https://www.linkedin.com/in/some-other-person/"
+      )
+    ).toBe(false);
+  });
+
   it("replaces a short root Experience section with fetched full experience details", () => {
     const { context } = loadContentScriptContext();
     const capture = {

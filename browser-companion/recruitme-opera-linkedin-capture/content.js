@@ -1072,6 +1072,35 @@ function linkedInProfileMatches(a = "", b = "") {
   return aKey.length >= 6 && aKey === bKey;
 }
 
+// Read LinkedIn's <link rel="canonical"> from the current page. LinkedIn
+// always carries one and it points at the user's currently-active vanity slug,
+// regardless of which slug the visitor arrived through. We use this as an
+// extra match candidate so the popup doesn't reject captures when:
+//   - The recruiter's stored URL uses a numeric-suffix slug
+//     (alex-wardega-2b3b16267) but the user has since edited their custom URL
+//     to a vanity one (alexjwardega), or vice versa.
+//   - Middle-initial differences (alex-wardega vs alex-j-wardega) prevent the
+//     alias-key fallback from firing.
+// Pure DOM read; no fetch, no async, no leak risk.
+function getLinkedInCanonicalUrl() {
+  if (typeof document === "undefined") return "";
+  try {
+    const link = document.querySelector('link[rel="canonical"]');
+    return link?.getAttribute("href") || "";
+  } catch {
+    return "";
+  }
+}
+
+// Like linkedInProfileMatches, but also tries the page's canonical URL.
+// Used at the capture-validation step where we have access to document.
+function linkedInProfileMatchesWithCanonical(currentUrl, expectedUrl) {
+  if (linkedInProfileMatches(currentUrl, expectedUrl)) return true;
+  const canonical = getLinkedInCanonicalUrl();
+  if (canonical && linkedInProfileMatches(canonical, expectedUrl)) return true;
+  return false;
+}
+
 // Send a message to the background service worker and await the response.
 // The SW has host permissions so it can POST to the RecruitMe server without
 // any CORS ambiguity that affects content-script fetch() calls.
@@ -1113,8 +1142,17 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
     if (expectedUrl) {
       const currentSlug = normaliseLinkedInSlug(location.href);
       const expectedSlug = normaliseLinkedInSlug(expectedUrl);
-      if (!linkedInProfileMatches(location.href, expectedUrl)) {
-        throw new Error(`LinkedIn URL mismatch (expected ${expectedSlug || "?"}, got ${currentSlug || "?"})`);
+      // Match against current URL OR the page's <link rel="canonical">. Catches
+      // the LinkedIn-vanity-slug-changed-since-discovery case where the URL we
+      // originally stored no longer matches the user's current vanity slug.
+      if (!linkedInProfileMatchesWithCanonical(location.href, expectedUrl)) {
+        const canonical = getLinkedInCanonicalUrl();
+        const canonicalSlug = canonical ? normaliseLinkedInSlug(canonical) : "";
+        throw new Error(
+          `LinkedIn URL mismatch (expected ${expectedSlug || "?"}, got ${currentSlug || "?"}` +
+          (canonicalSlug && canonicalSlug !== currentSlug ? ` / canonical ${canonicalSlug}` : "") +
+          ")"
+        );
       }
     }
 
