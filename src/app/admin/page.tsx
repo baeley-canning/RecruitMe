@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
   Users, Building2, Plus, Trash2, Loader2, Shield, User, X, Eye, EyeOff,
-  BarChart3, Search, Sparkles, FileText, Camera, ArrowLeft,
+  BarChart3, Search, Sparkles, FileText, Camera, ArrowLeft, AlertTriangle, CheckCircle2, Activity,
 } from "lucide-react";
 
 interface UserRow {
@@ -42,6 +42,37 @@ interface AnalyticsData {
   days: number;
 }
 
+interface SearchQualityData {
+  days: number;
+  totals: {
+    total: number;
+    fail: number;
+    warning: number;
+    ok: number;
+    failPct: number;
+    warningPct: number;
+    okPct: number;
+    avgScore: number | null;
+  };
+  byOrg: {
+    orgId: string | null;
+    orgName: string;
+    total: number;
+    fail: number;
+    warning: number;
+    ok: number;
+    avgScore: number | null;
+  }[];
+  problemJobs: {
+    jobId: string;
+    jobTitle: string;
+    orgName: string;
+    failedRuns: number;
+    lastEvaluation: string | null;
+    lastRunAt: string;
+  }[];
+}
+
 export default function AdminPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -51,6 +82,7 @@ export default function AdminPage() {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [analyticsDays, setAnalyticsDays] = useState(30);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [searchQuality, setSearchQuality] = useState<SearchQualityData | null>(null);
   const [loading, setLoading] = useState(true);
 
   // User form
@@ -91,8 +123,12 @@ export default function AdminPage() {
   const fetchAnalytics = async (days: number) => {
     setAnalyticsLoading(true);
     try {
-      const res = await fetch(`/api/admin/analytics?days=${days}`);
-      if (res.ok) setAnalytics(await res.json() as AnalyticsData);
+      const [usageRes, qualityRes] = await Promise.all([
+        fetch(`/api/admin/analytics?days=${days}`),
+        fetch(`/api/admin/search-quality?days=${days}`),
+      ]);
+      if (usageRes.ok) setAnalytics(await usageRes.json() as AnalyticsData);
+      if (qualityRes.ok) setSearchQuality(await qualityRes.json() as SearchQualityData);
     } catch { /* network error — leave analytics at previous state */ }
     finally { setAnalyticsLoading(false); }
   };
@@ -596,6 +632,110 @@ export default function AdminPage() {
           </div>
         ) : null}
       </div>
+
+      {/* ── Search quality ── */}
+      {searchQuality && searchQuality.totals.total > 0 && (
+        <div className="mt-10">
+          <div className="mb-5">
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-emerald-600" />
+              Search Quality
+            </h2>
+            <p className="text-slate-500 text-sm mt-0.5">
+              How searches across all orgs are evaluating — helps spot misconfigured roles before recruiters complain.
+            </p>
+          </div>
+
+          <div className="space-y-5">
+            {/* Top-level stat tiles */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: "Total runs",  value: searchQuality.totals.total.toLocaleString(),                    icon: Search,        color: "text-slate-600 bg-slate-50" },
+                { label: "OK",          value: `${searchQuality.totals.ok} (${searchQuality.totals.okPct}%)`,   icon: CheckCircle2,  color: "text-emerald-600 bg-emerald-50" },
+                { label: "Warnings",    value: `${searchQuality.totals.warning} (${searchQuality.totals.warningPct}%)`, icon: AlertTriangle, color: "text-amber-600 bg-amber-50" },
+                { label: "Failures",    value: `${searchQuality.totals.fail} (${searchQuality.totals.failPct}%)`,       icon: AlertTriangle, color: "text-red-600 bg-red-50" },
+              ].map(({ label, value, icon: Icon, color }) => (
+                <div key={label} className="bg-white rounded-xl border border-slate-200 p-4">
+                  <div className="flex items-center gap-2.5 mb-2">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color}`}>
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-medium text-slate-500">{label}</span>
+                  </div>
+                  <p className="text-2xl font-bold text-slate-900 tabular-nums">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Avg score and explanatory text */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between">
+              <span className="text-sm text-slate-500">Average match score across all completed search runs</span>
+              <span className="text-2xl font-bold text-slate-900 tabular-nums">
+                {searchQuality.totals.avgScore !== null ? `${searchQuality.totals.avgScore}%` : "—"}
+              </span>
+            </div>
+
+            {/* Per-org rollup */}
+            {searchQuality.byOrg.length > 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-900">By Org</h3>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Org</th>
+                      <th className="text-right px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Runs</th>
+                      <th className="text-right px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">OK</th>
+                      <th className="text-right px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Warn</th>
+                      <th className="text-right px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Fail</th>
+                      <th className="text-right px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Avg score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {searchQuality.byOrg.map((row, i) => (
+                      <tr key={`${row.orgId ?? "owner"}-${i}`} className="border-t border-slate-50">
+                        <td className="px-4 py-2.5 text-sm text-slate-700">{row.orgName}</td>
+                        <td className="px-4 py-2.5 text-sm text-right tabular-nums text-slate-700">{row.total}</td>
+                        <td className="px-4 py-2.5 text-sm text-right tabular-nums text-emerald-600">{row.ok || "—"}</td>
+                        <td className="px-4 py-2.5 text-sm text-right tabular-nums text-amber-600">{row.warning || "—"}</td>
+                        <td className="px-4 py-2.5 text-sm text-right tabular-nums text-red-600">{row.fail || "—"}</td>
+                        <td className="px-4 py-2.5 text-sm text-right tabular-nums text-slate-700">{row.avgScore !== null ? `${row.avgScore}%` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Problem jobs */}
+            {searchQuality.problemJobs.length > 0 && (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-500" />
+                  <h3 className="text-sm font-semibold text-slate-900">Jobs with repeated FAIL evaluations</h3>
+                </div>
+                <div className="divide-y divide-slate-50">
+                  {searchQuality.problemJobs.map((j) => (
+                    <div key={j.jobId} className="px-5 py-3 flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-700 truncate">{j.jobTitle}</p>
+                        <p className="text-[11px] text-slate-400">{j.orgName} · {j.failedRuns} failed run{j.failedRuns !== 1 ? "s" : ""}</p>
+                        {j.lastEvaluation && (
+                          <p className="text-[11px] text-red-600 mt-0.5 line-clamp-2">{j.lastEvaluation}</p>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-slate-400 tabular-nums whitespace-nowrap" suppressHydrationWarning>
+                        {new Date(j.lastRunAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   );
