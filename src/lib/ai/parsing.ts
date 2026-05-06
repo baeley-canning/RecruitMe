@@ -10,7 +10,7 @@ import {
 
 export interface SkillNote {
   skill: string;
-  type: "legacy" | "rare";
+  type: "legacy" | "rare" | "scarce";
   note: string;
   alternatives: string[];
 }
@@ -94,7 +94,7 @@ function ensureSkillNotes(value: unknown): SkillNote[] {
     .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
     .map((item) => ({
       skill: ensureString(item.skill),
-      type: item.type === "rare" ? "rare" as const : "legacy" as const,
+      type: item.type === "rare" ? "rare" as const : item.type === "scarce" ? "scarce" as const : "legacy" as const,
       note: ensureString(item.note),
       alternatives: ensureStringArray(item.alternatives),
     }))
