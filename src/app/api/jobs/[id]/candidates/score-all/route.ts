@@ -53,6 +53,11 @@ export async function POST(
     : null;
   const weights = await getOrgScoringWeights(auth.orgId);
 
+  // Pre-fetch recruiter memory once per job — avoids one DB query per candidate.
+  // Only used for full-profile candidates (snippet scores are provisional anyway).
+  const { getRecruitingContext } = await import("@/lib/recruiter-memory");
+  const recruiterContext = await getRecruitingContext(parsedRole, auth.orgId).catch(() => "");
+
   const total = candidates.length;
   let scored = 0;
   const failed: string[] = [];
@@ -83,7 +88,7 @@ export async function POST(
 
             try {
               const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-                withRetry(() => scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights)),
+                withRetry(() => scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId, recruiterContext)),
                 withRetry(() => predictAcceptance(candidate.profileText!, parsedRole, salary)),
               ]);
               if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;

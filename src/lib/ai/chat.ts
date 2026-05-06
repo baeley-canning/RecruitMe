@@ -19,6 +19,18 @@ export function getJobParsingProvider(): ChatProvider | undefined {
   return process.env.ANTHROPIC_API_KEY ? "claude" : undefined;
 }
 
+// Model tiering within Claude: Sonnet for full profiles where judgment matters,
+// Haiku for snippets (provisional scores that get replaced when a full profile
+// is captured anyway — no point spending Sonnet tokens on them).
+export function resolveModelForDataQuality(dataQuality: "full_profile" | "snippet" | "minimal"): {
+  provider: ChatProvider;
+  model?: string;
+} {
+  return dataQuality === "full_profile"
+    ? { provider: "claude", model: SONNET }
+    : { provider: "claude" }; // defaults to ANTHROPIC_MODEL env var (Haiku)
+}
+
 export async function chat(
   prompt: string,
   temperature = 0.1,

@@ -34,7 +34,7 @@ export async function POST(
     const weights = await getOrgScoringWeights(auth.orgId);
 
     const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-      scoreCandidateStructured(candidate.profileText, parsedRole, salary, weights),
+      scoreCandidateStructured(candidate.profileText, parsedRole, salary, weights, auth.orgId),
       predictAcceptance(candidate.profileText, parsedRole, salary),
     ]);
 

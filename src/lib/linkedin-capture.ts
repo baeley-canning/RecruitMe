@@ -341,7 +341,7 @@ async function buildCapturedCandidateData(args: {
       ? extractCandidateInfo(cleanedProfileText).catch(() => null)
       : Promise.resolve(null),
     !profileUnchanged && parsedRole
-      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights).catch(() => null)
+      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch(() => null)
       : Promise.resolve(null),
     !profileUnchanged && cleanedProfileText.length >= 250 && parsedRole
       ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch(() => null)
