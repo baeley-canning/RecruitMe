@@ -102,7 +102,15 @@ export async function withRetry<T>(
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status;
-      if (status !== 429 && status !== 500 && status !== 529) throw err;
+      const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      // Retry: rate limits (429), server errors (500/502/503/504/529), and
+      // network-level failures (no status property — connection reset, timeout, DNS).
+      const isRetryable =
+        status === 429 || status === 500 || status === 502 ||
+        status === 503 || status === 504 || status === 529 ||
+        status == null ||  // network error — no HTTP status
+        /econnreset|econnrefused|enotfound|network|timeout|abort/i.test(message);
+      if (!isRetryable) throw err;
       if (attempt < maxAttempts - 1) {
         await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
       }

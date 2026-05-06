@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
-import { scoreCandidateStructured, predictAcceptance, extractCandidateInfo, cleanCvText } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance, extractCandidateInfo, cleanCvText, withRetry } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
@@ -212,7 +212,7 @@ export async function POST(
   if (parsedRole) {
     try {
       const weights = await getOrgScoringWeights(auth.orgId);
-      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary, weights);
+      const rawBreakdown = await withRetry(() => scoreCandidateStructured(profileText, parsedRole!, salary, weights));
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         location,

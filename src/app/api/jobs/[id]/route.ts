@@ -13,9 +13,28 @@ export async function GET(
   const { error } = await requireJobAccess(id, auth);
   if (error) return error;
 
+  // Exclude large text fields from the candidate list — profileText, scoreBreakdown,
+  // matchReason etc. can be 10-50KB each. At 500 candidates that's 25MB+ per page load.
+  // The full candidate detail is fetched separately when a card is expanded.
   const full = await prisma.job.findUnique({
     where: { id },
-    include: { candidates: { orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }] } },
+    include: {
+      candidates: {
+        orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }],
+        select: {
+          id: true, jobId: true, orgId: true, name: true, headline: true,
+          location: true, linkedinUrl: true, source: true, status: true,
+          matchScore: true, scoreBreakdown: true, matchReason: true,
+          fetchPriorityScore: true, fetchPriorityReason: true,
+          acceptanceScore: true, acceptanceReason: true,
+          profileCapturedAt: true, profileTextHash: true,
+          jobAdderUrl: true, notes: true, createdAt: true, updatedAt: true,
+          archivedJobTitle: true, archivedJobCompany: true,
+          // profileText intentionally excluded — large field, fetched on demand
+          // interviewNotes, screeningData also excluded — fetched per-candidate
+        },
+      },
+    },
   });
   return NextResponse.json(full);
 }

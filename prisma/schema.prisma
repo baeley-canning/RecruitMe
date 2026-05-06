@@ -100,6 +100,7 @@ model Candidate {
   fetchSessions FetchSession[]
 
   @@unique([jobId, linkedinUrl])
+  @@index([linkedinUrl])               // talent pool cross-job URL lookups
   @@index([orgId])
   @@index([status])
   @@index([orgId, createdAt])          // timeline queries in candidates library

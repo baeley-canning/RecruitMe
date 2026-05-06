@@ -166,7 +166,14 @@ await step("CandidateFile table", async () => {
   `;
 });
 
-// 9. SearchSession self-evaluation columns
+// 9. Candidate.linkedinUrl index for cross-job talent pool lookups
+await step("Candidate.linkedinUrl index", async () => {
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_linkedinUrl_idx" ON "Candidate"("linkedinUrl")
+  `;
+});
+
+// 10. SearchSession self-evaluation columns
 await step("SearchSession evaluation columns", async () => {
   await prisma.$executeRaw`
     ALTER TABLE "SearchSession"

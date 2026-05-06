@@ -22,11 +22,15 @@ export async function GET() {
   const rows = await prisma.candidate.findMany({
     where: {
       profileText: { not: null },
+      // Non-owners must belong to the same org. We use an explicit orgId filter
+      // (not OR-based) to avoid a null-orgId bypass where candidates with
+      // jobId=null AND orgId=null would match no condition and leak to all users.
       ...(auth.isOwner ? {} : {
         OR: [
-          { job: { orgId: auth.orgId } },        // candidate still linked to a job
+          { job: { orgId: auth.orgId } },        // candidate still linked to a job in this org
           { jobId: null, orgId: auth.orgId },     // candidate preserved after job deletion
         ],
+        NOT: { orgId: null, jobId: null },        // never return orphaned null-org candidates
       }),
     },
     orderBy: { createdAt: "desc" },

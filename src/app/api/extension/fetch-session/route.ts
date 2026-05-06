@@ -101,18 +101,19 @@ export async function GET(req: Request) {
   }
 
   // No sessionId = extension alarm / popup status query.
-  // Try Basic auth first (configured extension). If no credentials, still return
-  // sessions so the extension can open LinkedIn tabs even before setup is complete.
+  // Require Basic auth — returning all sessions to unauthenticated callers leaks
+  // session metadata (candidateName, linkedinUrl, status) across all orgs.
   const auth = await verifyExtensionAuth(req);
+  if (!auth) {
+    // Return null rather than 401 so the popup shows "not configured" gracefully
+    // rather than an error banner. The extension should prompt for credentials.
+    return NextResponse.json(null, { headers: EXTENSION_CORS });
+  }
+
   const queue = await getSessionQueue();
-
-  // If authenticated, show only this user's sessions. Otherwise show the entire
-  // queue so the popup can still show processing/error/completed states without
-  // extra setup, and the extension can auto-open pending tabs.
-  const visible = auth
-    ? queue.filter((s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId))
-    : queue;
-
+  const visible = queue.filter(
+    (s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId)
+  );
   return NextResponse.json(visible.length > 0 ? visible : null, { headers: EXTENSION_CORS });
 }
 
@@ -120,19 +121,28 @@ export async function DELETE(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
 
-  // Auth is best-effort for DELETE. The sessionId itself is the access control
-  // for individual deletes; bulk deletes require auth.
+  // Always require auth — sessionId is a UUID but is not a secret; allowing
+  // unauthenticated deletion would let anyone cancel captures by guessing IDs.
   const auth = await verifyAnyAuth(req).catch(() => null);
+  if (!auth) return NextResponse.json({ cleared: false }, { headers: EXTENSION_CORS });
 
   if (sessionId) {
+    // Verify the session belongs to this user / org before deleting.
+    const session = await findSessionInQueue((s) => s.sessionId === sessionId);
+    if (session) {
+      const sameUser = !session.userId || session.userId === auth.userId;
+      const sameOrg  = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
+      if (!auth.isOwner && !sameUser && !sameOrg) {
+        return NextResponse.json({ cleared: false }, { headers: EXTENSION_CORS });
+      }
+    }
     await removeSessionFromQueue(sessionId);
     return NextResponse.json({ cleared: true }, { headers: EXTENSION_CORS });
   }
 
-  // No sessionId = clear this user's sessions (requires auth for bulk clear).
-  if (!auth) return NextResponse.json({ cleared: false }, { headers: EXTENSION_CORS });
+  // No sessionId = clear this user's sessions only.
   const queue = await getSessionQueue();
-  for (const s of queue.filter((s) => !s.userId || s.userId === auth.userId)) {
+  for (const s of queue.filter((s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId))) {
     await removeSessionFromQueue(s.sessionId);
   }
   return NextResponse.json({ cleared: true }, { headers: EXTENSION_CORS });
