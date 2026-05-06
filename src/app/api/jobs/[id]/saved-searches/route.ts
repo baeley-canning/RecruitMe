@@ -65,16 +65,24 @@ export async function POST(
     return NextResponse.json({ error: "queries must contain at least one non-empty string" }, { status: 400 });
   }
 
-  const saved = await prisma.savedSearch.create({
-    data: {
-      jobId: id,
-      orgId: job.orgId ?? null,
-      name: body.name.trim().slice(0, 100),
-      queries: JSON.stringify(queries),
-      location: body.location.trim().slice(0, 100),
-      target,
-    },
-  });
-
-  return NextResponse.json(saved);
+  try {
+    const saved = await prisma.savedSearch.create({
+      data: {
+        jobId: id,
+        orgId: job.orgId ?? null,
+        name: body.name.trim().slice(0, 100),
+        queries: JSON.stringify(queries),
+        location: body.location.trim().slice(0, 100),
+        target,
+      },
+    });
+    return NextResponse.json(saved);
+  } catch (err) {
+    // P2002 = Prisma unique constraint violation. We turn that into a friendly
+    // 409 instead of a 500 so the UI can show "name already used" inline.
+    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "P2002") {
+      return NextResponse.json({ error: "A saved search with this name already exists for this job." }, { status: 409 });
+    }
+    throw err;
+  }
 }

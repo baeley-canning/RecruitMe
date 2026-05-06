@@ -12,6 +12,7 @@
 
 import { prisma } from "./db";
 import { safeParseJson } from "./utils";
+import { escapeXmlForPrompt } from "./profile-excerpt";
 import type { ParsedRole } from "./ai";
 import type { ScoreBreakdown } from "./scoring";
 
@@ -21,6 +22,15 @@ const NEGATIVE_STATUSES = new Set(["rejected", "declined"]);
 // Minimum chars of profile text to use as an example — short profiles
 // don't provide enough signal for meaningful examples.
 const MIN_EXAMPLE_PROFILE_CHARS = 500;
+
+// Bound on how many corrections we pull and inject. Each correction line is ~180
+// chars; with reason-truncation that's <2k chars in the prompt — well inside
+// the budget but still useful as calibration signal. Lowered from 4 → 10
+// (top-N after similarity filter) and 50 → 20 (DB pull) to also defend against
+// recruiters or compromised accounts spamming corrections to bias scoring.
+const MAX_CORRECTIONS_PULLED = 20;
+const MAX_CORRECTIONS_INJECTED = 10;
+const MAX_CORRECTION_REASON_CHARS = 200;
 
 interface RecruiterExample {
   name: string;         // initials only e.g. "J.P."
@@ -144,22 +154,29 @@ export async function getRecruitingContext(
 
   for (const ex of formatted) {
     const sign = ex.outcome === "positive" ? "✓" : "✗";
-    lines.push(`${sign} ${ex.outcomeLabel.toUpperCase()} — ${ex.name} (${ex.roleTitle})`);
-    lines.push(`  Headline: ${ex.headline}`);
-    if (ex.summary) lines.push(`  Assessment: ${ex.summary}`);
-    if (ex.reasonsFor.length)     lines.push(`  Strengths: ${ex.reasonsFor.join("; ")}`);
-    if (ex.reasonsAgainst.length) lines.push(`  Gaps: ${ex.reasonsAgainst.join("; ")}`);
+    // All user-controlled fields are XML-escaped: a candidate name, headline,
+    // recruiter_summary, or reasons_for/against value containing prompt-injection
+    // payload (e.g. </candidate_profile> tags) would otherwise break out of the
+    // XML wrapper around the candidate-being-scored further down the prompt.
+    lines.push(`${sign} ${ex.outcomeLabel.toUpperCase()} — ${escapeXmlForPrompt(ex.name)} (${escapeXmlForPrompt(ex.roleTitle)})`);
+    lines.push(`  Headline: ${escapeXmlForPrompt(ex.headline)}`);
+    if (ex.summary) lines.push(`  Assessment: ${escapeXmlForPrompt(ex.summary)}`);
+    if (ex.reasonsFor.length)     lines.push(`  Strengths: ${ex.reasonsFor.map(escapeXmlForPrompt).join("; ")}`);
+    if (ex.reasonsAgainst.length) lines.push(`  Gaps: ${ex.reasonsAgainst.map(escapeXmlForPrompt).join("; ")}`);
     lines.push("");
   }
 
   // ── Score corrections — explicit "the AI got this wrong" signal ─────────────
   // Pulled in addition to status-based examples so the AI sees not just *who*
   // succeeded/failed but *where its own scoring drifted from the recruiter's*.
+  // All user-controlled fields (roleTitle, headline, reason) flow through
+  // escapeXmlForPrompt to prevent prompt-injection via free-text correction
+  // reasons.
   try {
     const corrections = await prisma.scoreCorrection.findMany({
       where: { orgId },
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: MAX_CORRECTIONS_PULLED,
       select: {
         originalScore: true,
         recruiterScore: true,
@@ -172,7 +189,7 @@ export async function getRecruitingContext(
       .map((c) => ({ ...c, sim: titleSimilarity(parsedRole.title, c.roleTitle ?? "") }))
       .filter((c) => c.sim > 0.25)
       .sort((a, b) => b.sim - a.sim)
-      .slice(0, 4);
+      .slice(0, MAX_CORRECTIONS_INJECTED);
 
     if (relevant.length > 0) {
       lines.push("Score corrections (this org explicitly told us when our scoring was off — apply the same direction here):");
@@ -180,9 +197,19 @@ export async function getRecruitingContext(
       for (const c of relevant) {
         const direction = c.recruiterScore < c.originalScore ? "down" : "up";
         const delta = Math.abs(c.recruiterScore - c.originalScore);
-        lines.push(`• ${initials(c.candidate.name)} (${c.roleTitle ?? "similar role"}): we said ${c.originalScore}, recruiter said ${c.recruiterScore} (${direction} ${delta} pts)`);
-        if (c.candidate.headline) lines.push(`  Headline: ${c.candidate.headline}`);
-        if (c.reason) lines.push(`  Reason: ${c.reason}`);
+        const safeRole = escapeXmlForPrompt(c.roleTitle ?? "similar role");
+        const safeName = escapeXmlForPrompt(initials(c.candidate.name));
+        lines.push(`• ${safeName} (${safeRole}): we said ${c.originalScore}, recruiter said ${c.recruiterScore} (${direction} ${delta} pts)`);
+        if (c.candidate.headline) {
+          lines.push(`  Headline: ${escapeXmlForPrompt(c.candidate.headline)}`);
+        }
+        if (c.reason) {
+          // Truncate then escape so a malicious 50KB reason can't inflate the prompt.
+          const truncated = c.reason.length > MAX_CORRECTION_REASON_CHARS
+            ? `${c.reason.slice(0, MAX_CORRECTION_REASON_CHARS)}…`
+            : c.reason;
+          lines.push(`  Reason: ${escapeXmlForPrompt(truncated)}`);
+        }
       }
       lines.push("");
     }

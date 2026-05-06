@@ -85,10 +85,15 @@ export function ShareShortlistButton({ jobId }: { jobId: string }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-10">
+        <div
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="share-shortlist-title"
+          className="absolute right-0 top-full mt-2 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-10"
+        >
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-semibold text-slate-800">Share read-only shortlist</p>
-            <button onClick={() => setOpen(false)} className="text-slate-300 hover:text-slate-500">
+            <p id="share-shortlist-title" className="text-sm font-semibold text-slate-800">Share read-only shortlist</p>
+            <button onClick={() => setOpen(false)} aria-label="Close share menu" className="text-slate-300 hover:text-slate-500">
               <X className="w-4 h-4" />
             </button>
           </div>

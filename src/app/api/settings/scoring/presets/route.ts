@@ -42,13 +42,19 @@ export async function POST(req: Request) {
   }
 
   const normalised = normaliseWeights(parsed.data.weights as ScoringWeights);
-  const preset = await prisma.scoringWeightPreset.create({
-    data: {
-      orgId: auth.orgId ?? null,
-      name: parsed.data.name,
-      weights: JSON.stringify(normalised),
-    },
-  });
-
-  return NextResponse.json(preset);
+  try {
+    const preset = await prisma.scoringWeightPreset.create({
+      data: {
+        orgId: auth.orgId ?? null,
+        name: parsed.data.name,
+        weights: JSON.stringify(normalised),
+      },
+    });
+    return NextResponse.json(preset);
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "P2002") {
+      return NextResponse.json({ error: "A preset with this name already exists." }, { status: 409 });
+    }
+    throw err;
+  }
 }

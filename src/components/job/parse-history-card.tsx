@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, History, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+type LoadState = "idle" | "loading" | "loaded" | "error";
+
 interface ParseHistoryEntry {
   id: string;
   parsedAt: string;
@@ -16,15 +18,20 @@ interface ParseHistoryEntry {
 export function ParseHistoryCard({ jobId }: { jobId: string }) {
   const [open, setOpen] = useState(false);
   const [history, setHistory] = useState<ParseHistoryEntry[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [loadState, setLoadState] = useState<LoadState>("idle");
 
   useEffect(() => {
-    if (!open || loaded) return;
+    if (!open || loadState !== "idle") return;
+    setLoadState("loading");
     fetch(`/api/jobs/${jobId}/parse-history`)
-      .then((r) => r.ok ? (r.json().catch(() => []) as Promise<ParseHistoryEntry[]>) : Promise.resolve([]))
-      .then((data) => { setHistory(Array.isArray(data) ? data : []); setLoaded(true); })
-      .catch(() => setLoaded(true));
-  }, [open, loaded, jobId]);
+      .then(async (r) => {
+        if (!r.ok) { setLoadState("error"); return; }
+        const data = await r.json().catch(() => null);
+        setHistory(Array.isArray(data) ? data : []);
+        setLoadState("loaded");
+      })
+      .catch(() => setLoadState("error"));
+  }, [open, loadState, jobId]);
 
   function evalIcon(evaluation: string) {
     if (evaluation.startsWith("FAIL"))    return <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />;
@@ -53,13 +60,19 @@ export function ParseHistoryCard({ jobId }: { jobId: string }) {
 
       {open && (
         <div className="border-t border-slate-100 px-4 py-3 space-y-3">
-          {!loaded && (
+          {loadState === "loading" && (
             <p className="text-xs text-slate-400">Loading…</p>
           )}
-          {loaded && history.length === 0 && (
+          {loadState === "error" && (
+            <p className="text-xs text-amber-700 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              Couldn&apos;t load analysis history — refresh to try again.
+            </p>
+          )}
+          {loadState === "loaded" && history.length === 0 && (
             <p className="text-xs text-slate-400">No analysis history yet — run Re-analyse to start tracking.</p>
           )}
-          {loaded && history.map((entry) => {
+          {loadState === "loaded" && history.map((entry) => {
             const parseJsonSafe = <T,>(s: string, fallback: T): T => { try { return JSON.parse(s) as T; } catch { return fallback; } };
             const anchors  = parseJsonSafe<string[]>(entry.anchorTerms, []);
             const changes  = parseJsonSafe<string[]>(entry.changes, []);

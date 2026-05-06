@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { TrendingDown, Star } from "lucide-react";
+import { TrendingDown, Star, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FunnelData {
@@ -31,18 +31,36 @@ function pct(n: number, d: number): string {
 export function SearchFunnelCard({ jobId, refreshKey }: { jobId: string; refreshKey?: unknown }) {
   const [data, setData] = useState<FunnelData | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
+    setError(false);
     fetch(`/api/jobs/${jobId}/search-funnel`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (!r.ok) { setError(true); return null; }
+        return r.json();
+      })
       .then((d: FunnelData | null) => {
         setData(d);
         setLoaded(true);
       })
-      .catch(() => setLoaded(true));
+      .catch(() => { setError(true); setLoaded(true); });
   }, [jobId, refreshKey]);
 
-  if (!loaded || !data) return null;
+  if (!loaded) return null;
+
+  // Surface the failure rather than silently rendering nothing — the funnel is
+  // a diagnostic tool, so silent failure defeats its purpose.
+  if (error) {
+    return (
+      <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 flex items-center gap-2 text-xs text-amber-700">
+        <AlertCircle className="w-3.5 h-3.5" />
+        Couldn&apos;t load discovery funnel — refresh to try again.
+      </div>
+    );
+  }
+
+  if (!data) return null;
 
   // Don't show for empty jobs — feels like noise before any work has happened.
   if (data.searchRuns === 0 && data.totalCandidates === 0) return null;

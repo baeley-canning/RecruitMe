@@ -7,6 +7,7 @@ import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getOrgScoringWeights } from "@/lib/scoring-config";
+import { reportError } from "@/lib/error-reporting";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_TYPES = [
@@ -83,7 +84,7 @@ export async function GET(
     });
     return NextResponse.json(files);
   } catch (err) {
-    console.error("[files/get] unhandled error:", err);
+    reportError(err, { route: "files:get", candidateId: id, orgId: auth.orgId });
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -218,10 +219,10 @@ export async function POST(
             }
             scored = true;
           } else {
-            console.error("[cv-upload] scoring failed:", rawBreakdown.reason);
+            reportError(rawBreakdown.reason, { route: "cv-upload:score", candidateId: id, orgId: auth.orgId });
           }
         } catch (err) {
-          console.error("[cv-upload] scoring failed:", err);
+          reportError(err, { route: "cv-upload:score", candidateId: id, orgId: auth.orgId });
         }
       }
 
@@ -233,7 +234,7 @@ export async function POST(
   const scored = false;
   return NextResponse.json({ ...created, scored }, { status: 201 });
   } catch (err) {
-    console.error("[files/post] unhandled error:", err);
+    reportError(err, { route: "files:post", candidateId: id, orgId: auth.orgId });
     return NextResponse.json({ error: "Server error — please try again" }, { status: 500 });
   }
 }

@@ -109,6 +109,7 @@ model Candidate {
   @@index([status])
   @@index([orgId, createdAt])          // timeline queries in candidates library
   @@index([orgId, profileCapturedAt])  // dashboard "needs fetch" query
+  @@index([jobId, matchScore])         // shortlist + job views frequently order by matchScore desc
 }
 
 model CandidateFile {
@@ -157,6 +158,7 @@ model ScoringWeightPreset {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([orgId, name])              // preset names are unique per org
   @@index([orgId])
 }
 
@@ -189,12 +191,13 @@ model SavedSearch {
   name            String   // recruiter-chosen label, e.g. "React leads in Auckland"
   queries         String   // JSON: string[]
   location        String
-  target          Int      @default(20)
+  target           Int     @default(20)
   lastRunAt       DateTime?
   lastResultCount Int?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  @@unique([jobId, name])              // saved-search names are unique per job
   @@index([jobId])
   @@index([orgId])
 }

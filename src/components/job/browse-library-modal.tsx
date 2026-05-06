@@ -84,15 +84,20 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="browse-library-title"
+        className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div>
-            <h3 className="font-semibold text-slate-900">Add from library</h3>
+            <h3 id="browse-library-title" className="font-semibold text-slate-900">Add from library</h3>
             <p className="text-xs text-slate-500 mt-0.5">
               Browse candidates from across your org and pick people for this job. They&apos;ll be scored automatically.
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-600">
             <X className="w-5 h-5" />
           </button>
         </div>
