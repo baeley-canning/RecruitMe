@@ -10,6 +10,7 @@ import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { isScraperConfigured, scrapeViaService } from "@/lib/server-scraper";
 
 // ---------------------------------------------------------------------------
 // Server-side LinkedIn scraper
@@ -145,11 +146,19 @@ export async function POST(
       );
     }
     try {
-      const raw = await scrapeLinkedIn(candidate.linkedinUrl);
+      let raw: string;
+      if (isScraperConfigured()) {
+        // Use the Playwright scraper service (authenticated, deep-section fetch).
+        const result = await scrapeViaService(candidate.linkedinUrl);
+        raw = result.profileText;
+      } else {
+        // Fall back to basic public-HTML scrape (limited to publicly visible sections).
+        raw = await scrapeLinkedIn(candidate.linkedinUrl);
+      }
       try {
         profileText = await cleanCvText(raw);
       } catch {
-        profileText = raw; // fall back to raw if Claude clean fails
+        profileText = raw;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "";
@@ -157,7 +166,7 @@ export async function POST(
         return NextResponse.json(
           {
             error:
-              "This profile is private — it requires LinkedIn login to view. Install the Opera extension from LinkedIn setup to capture it while you're logged in.",
+              "This profile is private — it requires LinkedIn login to view. Set up the server scraper (SCRAPER_URL) or install the browser extension.",
             private: true,
           },
           { status: 422 }
@@ -165,7 +174,9 @@ export async function POST(
       }
       return NextResponse.json(
         {
-          error: "Could not fetch the LinkedIn profile. Try again, or paste the profile text manually.",
+          error: isScraperConfigured()
+            ? "Scraper service failed to fetch this profile. Check the scraper service logs."
+            : "Could not fetch the LinkedIn profile. Set up the server scraper or paste the profile text manually.",
         },
         { status: 502 }
       );
