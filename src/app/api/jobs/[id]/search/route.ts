@@ -217,7 +217,11 @@ function buildProvisionalSearchScore(
   const breakdown = buildScoreBreakdown({
     categories: {
       skill_fit:        { score: skillScore,                    weight: weights?.skill_fit ?? CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Provisional score from LinkedIn search snippet." },
-      location_fit:     { score: candidateLocation ? 75 : 50,  weight: weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
+      // No-location snippets are NOT neutral for on-site NZ roles — "unknown"
+      // is slightly negative (25) so the location gate drops them instead of
+      // letting them through as if they might be local. Remote roles keep the
+      // neutral 50 because location genuinely doesn't matter.
+      location_fit:     { score: candidateLocation ? 75 : (isRemote ? 50 : 25),  weight: weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
       seniority_fit:    { score: seniorityScore,                weight: weights?.seniority_fit ?? CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Seniority inferred from headline only." },
       title_fit:        { score: titleScore,                    weight: weights?.title_fit ?? CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Title fit inferred from LinkedIn headline." },
       domain_fit:       { score: Math.round((50 + keywordScore) / 2), weight: weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Domain fit estimated provisionally from snippet keywords and title match." },
@@ -1069,11 +1073,20 @@ async function runSearchBackground(args: {
         if (saved.length >= maxResults) break;
         const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
-        // Hard location cutoff: drop candidates we KNOW are far out-of-area.
-        // Only applies when candidateLocation is set — if it's empty, the AI had no location
-        // data and may have defaulted to 0 (overseas assumption). Dropping a snippet with no
-        // location info would silently discard candidates we simply can't assess yet.
-        if (!job.isRemote && candidateLocation && locationFitScore !== null && locationFitScore <= 20) {
+        // Hard location cutoff: drop candidates we KNOW are out-of-area.
+        // Two cases:
+        //   1. Location is set and scores ≤ 20 — clearly overseas or wrong region.
+        //   2. Location is MISSING on a non-remote role — provisional score is 25
+        //      (skeptical, not neutral). Snippet candidates with no location info
+        //      for an on-site Wellington/Auckland role almost always turn out to be
+        //      international profiles surfaced by broad SerpAPI queries.
+        //      They can still be added manually but shouldn't bulk-import.
+        //      Pool entries (isFromPool) are exempt because they have a stored
+        //      location on their full profile row.
+        if (!job.isRemote && locationFitScore !== null && (
+          (candidateLocation  && locationFitScore <= 20) ||
+          (!candidateLocation && !isFromPool && locationFitScore <= 25)
+        )) {
           skippedScore++;
           continue;
         }

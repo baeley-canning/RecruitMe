@@ -1633,10 +1633,16 @@ ${toHtml(job.rawJd)}
           </div>
         )}
 
-        {/* Needs-profile notice — computed from live candidate list */}
+        {/* Needs-profile notice — computed from live candidate list.
+            Excludes candidates whose fetch is already in-flight so the
+            banner clears as soon as the queue drains, not only after a
+            full page reload. */}
         {(() => {
           const needsFetch = job.candidates.filter(
-            (c) => c.linkedinUrl && !hasFullCandidateProfile(c)
+            (c) => c.linkedinUrl &&
+                   !hasFullCandidateProfile(c) &&
+                   fetchStatuses[c.id]?.state !== "waiting" &&
+                   fetchStatuses[c.id]?.state !== "fetching"
           );
           const n = needsFetch.length;
           if (n === 0) return null;
