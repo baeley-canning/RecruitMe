@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, History, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ErrorPill, LoadingPill } from "@/components/ui/state-pill";
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
 
@@ -60,14 +61,9 @@ export function ParseHistoryCard({ jobId }: { jobId: string }) {
 
       {open && (
         <div className="border-t border-slate-100 px-4 py-3 space-y-3">
-          {loadState === "loading" && (
-            <p className="text-xs text-slate-400">Loading…</p>
-          )}
+          {loadState === "loading" && <LoadingPill>Loading…</LoadingPill>}
           {loadState === "error" && (
-            <p className="text-xs text-amber-700 flex items-center gap-1">
-              <AlertCircle className="w-3 h-3" />
-              Couldn&apos;t load analysis history — refresh to try again.
-            </p>
+            <ErrorPill className="text-amber-700">Couldn&apos;t load analysis history — refresh to try again.</ErrorPill>
           )}
           {loadState === "loaded" && history.length === 0 && (
             <p className="text-xs text-slate-400">No analysis history yet — run Re-analyse to start tracking.</p>

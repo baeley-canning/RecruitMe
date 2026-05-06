@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { TrendingDown, Star, AlertCircle } from "lucide-react";
+import { TrendingDown, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CardLoadError } from "@/components/ui/state-pill";
 
 interface FunnelData {
   searchRuns: number;
@@ -52,12 +53,7 @@ export function SearchFunnelCard({ jobId, refreshKey }: { jobId: string; refresh
   // Surface the failure rather than silently rendering nothing — the funnel is
   // a diagnostic tool, so silent failure defeats its purpose.
   if (error) {
-    return (
-      <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 flex items-center gap-2 text-xs text-amber-700">
-        <AlertCircle className="w-3.5 h-3.5" />
-        Couldn&apos;t load discovery funnel — refresh to try again.
-      </div>
-    );
+    return <CardLoadError message="Couldn't load discovery funnel — refresh to try again." />;
   }
 
   if (!data) return null;
@@ -93,7 +89,7 @@ export function SearchFunnelCard({ jobId, refreshKey }: { jobId: string; refresh
         )}
       </div>
 
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {stages.map((s, i) => (
           <div
             key={s.label}

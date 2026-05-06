@@ -167,7 +167,7 @@ function CandidateBrief({
 
         {/* Strengths & gaps */}
         {((breakdown?.reasons_for?.length || breakdown?.reasons_against?.length) || match?.strengths?.length || match?.gaps?.length) && (
-          <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 print:grid-cols-2">
             {((breakdown?.reasons_for?.length ?? 0) > 0 || (match?.strengths?.length ?? 0) > 0) && (
               <div>
                 <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Strengths</p>
@@ -366,7 +366,7 @@ export default function ShortlistPage({
 
       {/* Stats strip */}
       {shortlisted.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 mb-8 print:mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 print:mb-6 print:grid-cols-3">
           {[
             { icon: <Users className="w-4 h-4 text-blue-500" />, value: shortlisted.length, label: "Shortlisted" },
             { icon: <Star className="w-4 h-4 text-amber-500" />, value: avgScore != null ? `${avgScore}%` : "—", label: "Avg. match score" },

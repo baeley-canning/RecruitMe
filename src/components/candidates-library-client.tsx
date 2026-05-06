@@ -196,7 +196,7 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">
           <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center">
             <Users className="w-4 h-4 text-blue-600" />

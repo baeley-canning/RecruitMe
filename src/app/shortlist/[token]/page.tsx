@@ -50,11 +50,11 @@ export default async function PublicShortlistPage({
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="max-w-4xl mx-auto px-6 py-10">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-6 sm:mb-8">
           <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Shortlist</p>
-          <h1 className="text-3xl font-bold text-slate-900">{job.title}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 leading-tight">{job.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-500">
             {job.company && (
               <span className="flex items-center gap-1.5"><Briefcase className="w-4 h-4" />{job.company}</span>
@@ -83,7 +83,7 @@ export default async function PublicShortlistPage({
         ) : (
           <div className="space-y-4">
             {candidates.map((c) => (
-              <article key={c.id} className="bg-white rounded-xl border border-slate-200 p-5">
+              <article key={c.id} className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-4 mb-3">
                   <div className="min-w-0 flex-1">
                     <h2 className="text-lg font-semibold text-slate-900 truncate">{c.name}</h2>

@@ -429,10 +429,11 @@ export function Sidebar({ jobs }: SidebarProps) {
             </div>
             <button
               onClick={() => signOut({ callbackUrl: "/login" })}
-              className="p-1.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors flex-shrink-0"
+              className="p-2 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors flex-shrink-0"
               title="Sign out"
+              aria-label="Sign out"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <LogOut className="w-4 h-4" />
             </button>
           </div>
         </div>

@@ -1151,7 +1151,7 @@ ${toHtml(job.rawJd)}
 
       {/* Main layout once parsed */}
       {parsedRole && (
-        <div className="grid grid-cols-3 gap-5 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
           {/* Hiring brief */}
           <Card className="col-span-2">
             <CardHeader>
@@ -1212,7 +1212,7 @@ ${toHtml(job.rawJd)}
               )}
 
               {/* Meta row — seniority, location, salary */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {parsedRole.seniority_band && (
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">

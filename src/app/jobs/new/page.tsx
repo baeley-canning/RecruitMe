@@ -199,7 +199,7 @@ export default function NewJobPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">
               Company
@@ -294,7 +294,7 @@ export default function NewJobPage() {
           </button>
 
           {salaryEnabled && (
-            <div className="px-4 pb-4 grid grid-cols-2 gap-3">
+            <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-blue-700 mb-1.5">Minimum</label>
                 <select

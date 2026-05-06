@@ -397,8 +397,8 @@ export default function CandidateDetailPage({
       </div>
 
       {/* Body */}
-      <div className="max-w-5xl mx-auto px-8 py-7">
-        <div className="grid grid-cols-3 gap-6">
+      <div className="max-w-5xl mx-auto px-4 sm:px-8 py-7">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
           {/* Left — profile + notes */}
           <div className="col-span-2 space-y-5">
