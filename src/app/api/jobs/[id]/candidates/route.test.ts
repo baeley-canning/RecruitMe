@@ -35,6 +35,7 @@ const scoringConfigMocks = vi.hoisted(() => ({
     nice_to_have_fit: 0.05,
   },
   getOrgScoringWeights: vi.fn(),
+  getJobScoringWeights: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => dbMocks);
@@ -42,6 +43,7 @@ vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+  getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
 
 import { POST } from "./route";
@@ -90,6 +92,7 @@ describe("manual candidate ingestion route", () => {
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
     scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
     dbMocks.prisma.candidate.create.mockResolvedValue({
       id: "cand-3",
@@ -129,7 +132,7 @@ describe("manual candidate ingestion route", () => {
 
     expect(res.status).toBe(201);
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
-    expect(scoringConfigMocks.getOrgScoringWeights).toHaveBeenCalledWith("org-1");
+    expect(scoringConfigMocks.getJobScoringWeights).toHaveBeenCalled();
     expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Object),

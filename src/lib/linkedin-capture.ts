@@ -11,7 +11,7 @@ import { buildScoreCacheKey, safeParseJson } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isExplicitlyOverseasLocation, isNzLocation, isPlausibleLocation } from "./location";
-import { getOrgScoringWeights } from "./scoring-config";
+import { getJobScoringWeights } from "./scoring-config";
 
 export { linkedInProfileMatches, linkedInSlugAliasKey, normaliseLinkedInUrl } from "./linkedin";
 
@@ -331,7 +331,7 @@ async function buildCapturedCandidateData(args: {
     job.salaryMin || job.salaryMax
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
-  const weights = await getOrgScoringWeights(job.orgId);
+  const weights = await getJobScoringWeights(job.scoringWeights, job.orgId);
 
   // Run all three AI calls concurrently — they are independent of each other.
   // When the profile is unchanged we skip scoring too (saves AI spend — the

@@ -52,6 +52,7 @@ const scoringConfigMocks = vi.hoisted(() => ({
     nice_to_have_fit: 0.05,
   },
   getOrgScoringWeights: vi.fn(),
+  getJobScoringWeights: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => dbMocks);
@@ -66,6 +67,7 @@ vi.mock("@/lib/talent-pool", () => talentPoolMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+  getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
 
 import { POST } from "./route";
@@ -126,6 +128,7 @@ describe("search import route", () => {
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
     scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
     dbMocks.prisma.candidate.findMany
       .mockResolvedValueOnce([])
@@ -183,7 +186,7 @@ describe("search import route", () => {
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.scoreBreakdown).toContain("\"version\":2");
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityScore).toBeGreaterThanOrEqual(45);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityReason).toContain("fetch");
-    expect(scoringConfigMocks.getOrgScoringWeights).toHaveBeenCalledWith("org-1");
+    expect(scoringConfigMocks.getJobScoringWeights).toHaveBeenCalled();
   });
 
   it("upgrades an existing snippet candidate when a full talent-pool profile exists", async () => {

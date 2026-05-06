@@ -33,6 +33,7 @@ import { SearchCard } from "@/components/job/search-card";
 import { SearchFunnelCard } from "@/components/job/search-funnel-card";
 import { SavedSearchesCard } from "@/components/job/saved-searches-card";
 import { OnboardingCard } from "@/components/job/onboarding-card";
+import { JobWeightsCard } from "@/components/job/job-weights-card";
 import { PipelineCard } from "@/components/job/pipeline-card";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
@@ -1484,6 +1485,8 @@ ${toHtml(job.rawJd)}
       )}
 
       {parsedRole && <SearchFunnelCard jobId={id} refreshKey={job.candidates.length} />}
+
+      {parsedRole && <JobWeightsCard jobId={id} />}
 
       {parsedRole && <ParseHistoryCard jobId={id} />}
 

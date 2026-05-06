@@ -17,6 +17,7 @@ model Job {
   parsedRole  String?  // JSON string: parsed AI output
   salaryMin   Int?     // NZD yearly minimum (optional)
   salaryMax   Int?     // NZD yearly maximum (optional)
+  scoringWeights String? // JSON: ScoringWeights override for this job; null = use org/default
   isRemote     Boolean   @default(false)
   status       String    @default("active") // active | closed | on-hold
   lastScoredAt DateTime? // set by score-all; prevents re-runs within cooldown window

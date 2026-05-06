@@ -95,3 +95,20 @@ export async function saveOrgScoringWeights(orgId: string | null | undefined, we
     create: { key, value: JSON.stringify(normalised) },
   });
 }
+
+/**
+ * Resolve effective scoring weights for a specific job.
+ * Lookup order: job.scoringWeights → org weights → DEFAULT_SCORING_WEIGHTS.
+ * Pass `jobScoringWeights` (the raw stored JSON) and the orgId; the function
+ * handles parsing + normalisation.
+ */
+export async function getJobScoringWeights(
+  jobScoringWeights: string | null | undefined,
+  orgId: string | null | undefined,
+): Promise<ScoringWeights> {
+  if (jobScoringWeights) {
+    const parsed = safeParseJson<Partial<ScoringWeights> | null>(jobScoringWeights, null);
+    if (parsed) return normaliseWeights(parsed);
+  }
+  return getOrgScoringWeights(orgId);
+}

@@ -104,9 +104,17 @@ function WeightsRadar({ weights, defaultWeights }: { weights: ScoringWeights; de
 export function ScoringWeightsEditor({
   initialWeights,
   defaultWeights,
+  saveUrl = "/api/settings/scoring",
 }: {
   initialWeights: ScoringWeights;
   defaultWeights: ScoringWeights;
+  /**
+   * The endpoint that handles PUT/GET/DELETE for these weights. Defaults to the
+   * org-level settings endpoint; pass `/api/jobs/[id]/scoring` for per-job overrides.
+   * Endpoint contract: PUT body = ScoringWeights JSON; GET returns `{ weights }`;
+   * DELETE clears the override (per-job) or resets to defaults (org).
+   */
+  saveUrl?: string;
 }) {
   const [weights, setWeights] = useState<ScoringWeights>(initialWeights);
   const [saving, setSaving] = useState(false);
@@ -134,7 +142,7 @@ export function ScoringWeightsEditor({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/settings/scoring", {
+      const res = await fetch(saveUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(weights),
@@ -142,7 +150,7 @@ export function ScoringWeightsEditor({
       if (!res.ok) throw new Error("Save failed");
       // Re-fetch to confirm what the server actually persisted — prevents
       // showing "Saved" when the DB write silently succeeded but stored wrong values.
-      const verify = await fetch("/api/settings/scoring");
+      const verify = await fetch(saveUrl);
       if (verify.ok) {
         const { weights: confirmed } = await verify.json() as { weights: typeof weights };
         setWeights(confirmed);
@@ -159,7 +167,7 @@ export function ScoringWeightsEditor({
     setWeights(defaultWeights);
     setSaved(false);
     setError(null);
-    await fetch("/api/settings/scoring", { method: "DELETE" });
+    await fetch(saveUrl, { method: "DELETE" });
     setSaved(true);
   };
 

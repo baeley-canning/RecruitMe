@@ -26,7 +26,7 @@ import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
-import { getOrgScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
+import { getJobScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { reportError } from "@/lib/error-reporting";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
@@ -494,7 +494,7 @@ export async function POST(
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
-  const weights = await getOrgScoringWeights(auth.orgId);
+  const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
   const knownTargets = extractKnownLocationTargets(job.location, location, parsedRole.location_rules);
   const canonicalJobCity = knownTargets[0] ?? getCityCoords(locationSource)?.name ?? "";

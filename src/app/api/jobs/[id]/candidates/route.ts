@@ -7,7 +7,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { getOrgScoringWeights } from "@/lib/scoring-config";
+import { getJobScoringWeights } from "@/lib/scoring-config";
 
 export async function GET(
   _req: Request,
@@ -86,7 +86,7 @@ export async function POST(
     const salary = (job.salaryMin || job.salaryMax)
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
-    const weights = await getOrgScoringWeights(auth.orgId);
+    const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
     try {
       const rawBreakdown = await scoreCandidateStructured(body.profileText, parsedRole, salary, weights);

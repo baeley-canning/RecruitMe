@@ -21,7 +21,7 @@ import { locationMatches, expandLocationKeywords } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
-import { getOrgScoringWeights } from "@/lib/scoring-config";
+import { getJobScoringWeights } from "@/lib/scoring-config";
 
 const BodySchema = z.object({
   minScore:  z.number().int().min(0).max(100).default(0),
@@ -61,7 +61,7 @@ export async function POST(
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
-  const weights = await getOrgScoringWeights(auth.orgId);
+  const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
   const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";

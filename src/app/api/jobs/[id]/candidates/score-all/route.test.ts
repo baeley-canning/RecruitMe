@@ -46,6 +46,7 @@ const scoringConfigMocks = vi.hoisted(() => ({
     nice_to_have_fit: 0.05,
   },
   getOrgScoringWeights: vi.fn(),
+  getJobScoringWeights: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => dbMocks);
@@ -57,6 +58,7 @@ vi.mock("@/lib/ai", () => ({
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+  getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
 
 import { POST } from "./route";
@@ -117,6 +119,7 @@ describe("score-all route", () => {
     vi.clearAllMocks();
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
     dbMocks.prisma.candidate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => data);
   });
