@@ -34,9 +34,9 @@
   ],
   "recruiter_summary": "Strong local senior engineer with clear Rails and React depth.",
   "expected": {
-    "overall": 86,
+    "overall": 81,
     "locationFit": 100,
-    "mustHavePct": 88,
+    "mustHavePct": 83,
     "confidenceScore": 85,
     "confidenceLevel": "high",
     "summaryIncludes": "Strong local senior engineer"

@@ -27,6 +27,7 @@ model Job {
   candidates     Candidate[]
   fetchSessions  FetchSession[]
   searchSessions SearchSession[]
+  savedSearches  SavedSearch[]
   parseHistory   JobParseHistory[]
   orgId          String?
   org            Org?     @relation(fields: [orgId], references: [id])
@@ -140,6 +141,26 @@ model FetchSession {
   @@unique([candidateId])
   @@index([jobId])
   @@index([status])
+}
+
+// User-named, re-runnable search definitions — recruiters often run the same
+// search weekly without wanting to re-type queries/location/target.
+model SavedSearch {
+  id              String   @id @default(cuid())
+  jobId           String
+  job             Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  orgId           String?
+  name            String   // recruiter-chosen label, e.g. "React leads in Auckland"
+  queries         String   // JSON: string[]
+  location        String
+  target          Int      @default(20)
+  lastRunAt       DateTime?
+  lastResultCount Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([orgId])
 }
 
 // Persists search progress so partial results survive rate-limit interruptions.

@@ -51,16 +51,16 @@ const withNegative: MustHaveStatus[] = [
 // ─── computeMustHavePct ────────────────────────────────────────────────────────
 
 describe("computeMustHavePct", () => {
-  it("returns 100 when coverage is empty (no must-haves)", () => {
-    expect(computeMustHavePct([])).toBe(100);
+  it("returns 50 when coverage is empty (no must-haves — neutral, not inflated)", () => {
+    expect(computeMustHavePct([])).toBe(50);
   });
 
   it("returns 100 when all confirmed", () => {
     expect(computeMustHavePct(allConfirmed)).toBe(100);
   });
 
-  it("returns 65 when all likely", () => {
-    expect(computeMustHavePct(allLikely)).toBe(65);
+  it("returns 50 when all likely (full_profile likely=50)", () => {
+    expect(computeMustHavePct(allLikely)).toBe(50);
   });
 
   it("returns 0 when all negative", () => {
@@ -111,13 +111,13 @@ describe("computeMustHavePct", () => {
   });
 
   it("rounds correctly for non-integer averages", () => {
-    // confirmed=100, likely=65, missing=0 → avg = 165/3 = 55
+    // full_profile points: confirmed=100, likely=50, missing=0 → avg = 150/3 = 50
     const coverage: MustHaveStatus[] = [
       { requirement: "A", status: "confirmed", evidence: "Found" },
       { requirement: "B", status: "likely",    evidence: "Implied" },
       { requirement: "C", status: "missing",   evidence: "Not found" },
     ];
-    expect(computeMustHavePct(coverage)).toBe(55);
+    expect(computeMustHavePct(coverage)).toBe(50);
   });
 
   it("treats equivalent as 100 for full_profile (satisfies the requirement)", () => {
@@ -457,7 +457,7 @@ describe("buildScoreBreakdown", () => {
       recruiter_summary:     "",
       profileCharCount:      2500,
     });
-    expect(bd.must_have_pct).toBe(100);
+    expect(bd.must_have_pct).toBe(50);
   });
 
   it("returns evidence_coverage_score of 0 when all items missing or absent", () => {

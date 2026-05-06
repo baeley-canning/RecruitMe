@@ -139,7 +139,9 @@ describe("score-all route", () => {
       PROFILE_TEXT,
       expect.any(Object),
       { min: 90000, max: 120000 },
-      scoringConfigMocks.customWeights
+      scoringConfigMocks.customWeights,
+      "org-1",
+      ""
     );
   });
 

@@ -122,7 +122,8 @@ describe("candidate re-score route", () => {
       "Candidate profile text",
       expect.any(Object),
       null,
-      scoringConfigMocks.customWeights
+      scoringConfigMocks.customWeights,
+      "org-1"
     );
     expect(body.scoreBreakdown).toContain("\"version\":2");
   });

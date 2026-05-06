@@ -48,6 +48,11 @@ export const maxDuration = 300;
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
   locationOverride: z.string().max(100).optional(),
+  // When set, overrides parsedRole.search_queries — used by saved-search re-runs.
+  queriesOverride: z.array(z.string()).max(20).optional(),
+  // When set, the saved-search's lastRunAt is stamped at start and lastResultCount
+  // is updated when the background run completes.
+  savedSearchId: z.string().optional(),
 });
 
 const PLACEHOLDERS = new Set([
@@ -448,7 +453,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { maxResults, locationOverride } = parsed.data;
+  const { maxResults, locationOverride, queriesOverride, savedSearchId } = parsed.data;
 
   // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
   // We do NOT mutate process.env so changing a key in settings takes effect immediately
@@ -503,8 +508,24 @@ export async function POST(
 
   // Build query pool with reserved slots for rare hard-skill terms. For niche
   // roles, terms like Sybase/C++ matter more than burning every slot on titles.
-  const searchQueries = buildSearchQueries(parsedRole);
+  // queriesOverride wins when present so saved-search re-runs use exactly the
+  // queries the recruiter pinned, regardless of any later parsedRole changes.
+  const cleanedOverride = queriesOverride
+    ?.map((q) => (typeof q === "string" ? q.trim() : ""))
+    .filter(Boolean);
+  const searchQueries = cleanedOverride && cleanedOverride.length > 0
+    ? cleanedOverride
+    : buildSearchQueries(parsedRole);
   const targetRaw = Math.min(Math.max(maxResults * 3, maxResults + 15), 120);
+
+  // Stamp saved-search lastRunAt at start so the UI updates immediately. The
+  // result count is filled in once the background run completes.
+  if (savedSearchId) {
+    await prisma.savedSearch.updateMany({
+      where: { id: savedSearchId, jobId: id },
+      data: { lastRunAt: new Date() },
+    }).catch(() => {});
+  }
 
   const session = await prisma.searchSession.create({
     data: {
@@ -541,6 +562,7 @@ export async function POST(
     pdlKey,
     isOwner: auth.isOwner,
     orgId: auth.orgId,
+    savedSearchId,
   }).catch((err) => {
     reportError(err, { route: "search:background", jobId: id, orgId: auth.orgId });
     prisma.searchSession.update({
@@ -629,10 +651,11 @@ async function runSearchBackground(args: {
   pdlKey: string;
   isOwner: boolean;
   orgId: string | null;
+  savedSearchId?: string;
 }) {
   const { sessionId, jobId, job, parsedRole, salary, weights, maxResults, targetRaw,
     searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasBing, hasPDL,
-    serpApiKey, bingKey, pdlKey, isOwner, orgId } = args;
+    serpApiKey, bingKey, pdlKey, isOwner, orgId, savedSearchId } = args;
 
   try {
     const seenUrls = new Set<string>();
@@ -1186,6 +1209,13 @@ async function runSearchBackground(args: {
         message:     `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
       },
     }).catch(() => {});
+
+    if (savedSearchId) {
+      await prisma.savedSearch.updateMany({
+        where: { id: savedSearchId, jobId },
+        data: { lastResultCount: sorted.length },
+      }).catch(() => {});
+    }
   } catch (err) {
     reportError(err, { route: "search:runBackground", jobId, orgId });
     await prisma.searchSession.update({

@@ -30,6 +30,9 @@ import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueueToast } from "@/components/fetch-queue-toast";
 import { SearchCard } from "@/components/job/search-card";
+import { SearchFunnelCard } from "@/components/job/search-funnel-card";
+import { SavedSearchesCard } from "@/components/job/saved-searches-card";
+import { OnboardingCard } from "@/components/job/onboarding-card";
 import { PipelineCard } from "@/components/job/pipeline-card";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
@@ -1452,6 +1455,13 @@ ${toHtml(job.rawJd)}
         </div>
       )}
 
+      <OnboardingCard
+        jobId={id}
+        hasParsedRole={Boolean(parsedRole)}
+        candidateCount={job.candidates.length}
+        scoredCount={job.candidates.filter((c) => c.matchScore !== null).length}
+      />
+
       {parsedRole && (
         <SearchCard
           jobId={id}
@@ -1461,6 +1471,19 @@ ${toHtml(job.rawJd)}
           onComplete={fetchJob}
         />
       )}
+
+      {parsedRole && (
+        <SavedSearchesCard
+          jobId={id}
+          jobStatus={job.status}
+          defaultLocation={parsedRole.location?.trim() || job.location?.trim() || "New Zealand"}
+          defaultTarget={20}
+          defaultQueries={[...(parsedRole.search_queries ?? []), ...(parsedRole.google_queries ?? [])].slice(0, 5)}
+          onComplete={fetchJob}
+        />
+      )}
+
+      {parsedRole && <SearchFunnelCard jobId={id} refreshKey={job.candidates.length} />}
 
       {parsedRole && <ParseHistoryCard jobId={id} />}
 

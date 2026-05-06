@@ -96,6 +96,11 @@ function makeBreakdown() {
 describe("search import route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Hard-reset the mocks whose implementations are overridden inside specific
+    // tests — clearAllMocks only clears call history, so a `mockResolvedValue`
+    // set by one test would otherwise leak into the next.
+    talentPoolMocks.buildTalentPoolMap.mockReset();
+    dbMocks.prisma.candidate.findMany.mockReset();
     process.env.SERPAPI_API_KEY = "test";
     delete process.env.BING_API_KEY;
     delete process.env.PDL_API_KEY;
@@ -144,6 +149,9 @@ describe("search import route", () => {
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/taylor-morgan/",
           snippet: "Taylor Morgan - Full-stack Engineer - Wellington, New Zealand. React and Ruby on Rails delivery experience.",
+          // fullText pushes the candidate over the full_profile threshold (≥ 2000 chars),
+          // which is what triggers the structured-scoring path the mock validates.
+          fullText: "Taylor Morgan\nFull-stack Engineer\nWellington, New Zealand\nAbout\nExperienced React and Ruby on Rails engineer with 8 years building production web apps. ".repeat(20),
           source: "serpapi",
         },
       ],
@@ -302,6 +310,9 @@ describe("search import route", () => {
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/relevant-developer/",
           snippet: "C++ developer with Sybase database, Linux scripting and Azure platform experience.",
+          // fullText pushes this candidate over the full_profile threshold so the route
+          // uses the structured (mocked) score, isolating the gating logic under test.
+          fullText: "Relevant Developer\nSoftware Developer\nWellington, New Zealand\nAbout\nC++ developer with Sybase database, Linux scripting and Azure platform experience. ".repeat(20),
           source: "serpapi",
         },
       ],

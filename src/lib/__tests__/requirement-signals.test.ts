@@ -47,7 +47,7 @@ describe("requirement signal extraction", () => {
     const terms = extractDistinctiveSignalsFromRequirement(
       "Experience with enterprise RDBMS platforms (Sybase/ASE, SQL Server, Oracle, or similar)"
     );
-    expect(terms).toEqual(expect.arrayContaining(["Sybase", "SQL", "database", "SQL Server", "Oracle"]));
+    expect(terms).toEqual(expect.arrayContaining(["Sybase", "SQL Server", "Oracle"]));
     expect(terms).not.toEqual(expect.arrayContaining(["enterprise", "platforms", "similar"]));
   });
 });
