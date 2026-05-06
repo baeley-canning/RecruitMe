@@ -1,0 +1,93 @@
+/**
+ * Q2.3 server-side support — given a LinkedIn URL, tell the extension which
+ * of the user's active jobs already include this candidate, and whether the
+ * person exists in the org-wide talent pool.
+ *
+ * The extension's content script can call this when the user lands on a
+ * LinkedIn profile and surface a proactive prompt: "Already in 2 jobs (Senior
+ * Engineer · Sales Lead) — open in RecruitMe?" or "In your library but not
+ * on any active job — add to one?".
+ */
+
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { verifyExtensionAuth, jobsWhere } from "@/lib/session";
+import { extensionCorsHeaders } from "@/lib/extension-cors";
+import { normaliseLinkedInUrl } from "@/lib/linkedin";
+
+export async function OPTIONS(req: Request) {
+  return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
+}
+
+export async function GET(req: Request) {
+  const auth = await verifyExtensionAuth(req);
+  if (!auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: extensionCorsHeaders(req) });
+  }
+
+  const url = new URL(req.url);
+  const rawUrl = url.searchParams.get("url");
+  if (!rawUrl) {
+    return NextResponse.json({ error: "url query param required" }, { status: 400, headers: extensionCorsHeaders(req) });
+  }
+
+  let normUrl: string;
+  try {
+    normUrl = normaliseLinkedInUrl(rawUrl);
+  } catch {
+    return NextResponse.json({ error: "Invalid LinkedIn URL" }, { status: 400, headers: extensionCorsHeaders(req) });
+  }
+
+  // All matches by URL, scoped to caller's org (or all orgs if owner).
+  const matches = await prisma.candidate.findMany({
+    where: {
+      linkedinUrl: normUrl,
+      ...(auth.isOwner ? {} : {
+        OR: [
+          { job: { orgId: auth.orgId } },
+          { jobId: null, orgId: auth.orgId },
+        ],
+      }),
+    },
+    select: {
+      id: true,
+      name: true,
+      matchScore: true,
+      status: true,
+      jobId: true,
+      profileText: true,
+      job: { select: { id: true, title: true, company: true, status: true } },
+    },
+  });
+
+  // Split into "on an active job in the user's view" vs "in library only".
+  const allowedJobs = await prisma.job.findMany({
+    where: { status: "active", ...jobsWhere(auth) },
+    select: { id: true, title: true, company: true },
+  });
+  const activeJobIds = new Set(allowedJobs.map((j) => j.id));
+
+  const onActiveJobs = matches
+    .filter((m) => m.jobId && activeJobIds.has(m.jobId) && m.job?.status === "active")
+    .map((m) => ({
+      candidateId: m.id,
+      jobId: m.jobId,
+      jobTitle: m.job?.title ?? "Active job",
+      jobCompany: m.job?.company ?? null,
+      matchScore: m.matchScore,
+      status: m.status,
+    }));
+
+  const inLibrary = matches.some((m) => Boolean(m.profileText));
+
+  // For "add to job" suggestions: any active job the candidate is NOT yet on.
+  const jobIdsWithCandidate = new Set(onActiveJobs.map((m) => m.jobId).filter(Boolean) as string[]);
+  const suggestedJobs = allowedJobs.filter((j) => !jobIdsWithCandidate.has(j.id));
+
+  return NextResponse.json({
+    normalisedUrl: normUrl,
+    onActiveJobs,
+    inLibrary,
+    suggestedJobs: suggestedJobs.slice(0, 5),
+  }, { headers: extensionCorsHeaders(req) });
+}
