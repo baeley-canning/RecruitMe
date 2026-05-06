@@ -5,6 +5,7 @@ import {
   PARSING_JSON_SCHEMA,
   PARSING_RULES,
 } from "./prompts/parsing";
+import { buildScarceSkillsPromptBlock } from "../requirement-signals";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ function ensureSkillNotes(value: unknown): SkillNote[] {
 // ─── AI function ───────────────────────────────────────────────────────────────
 
 export async function parseJobDescription(jd: string): Promise<ParsedRole> {
+  const scarceBlock = buildScarceSkillsPromptBlock();
   const text = await chat(`${PARSING_SYSTEM_CONTEXT}
 
 Input (JD or hiring brief):
@@ -111,7 +113,10 @@ ${jd.slice(0, 8000)}
 
 ${PARSING_JSON_SCHEMA}
 
-${PARSING_RULES}`, 0.1, 2048, {
+${PARSING_RULES}
+
+NZ Scarce Skills (authoritative list — use ONLY these for type "scarce" notes):
+${scarceBlock}`, 0.1, 2048, {
     provider: getJobParsingProvider(),
     model: SONNET,
   });

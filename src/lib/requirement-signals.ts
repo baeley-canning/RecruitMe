@@ -7,6 +7,85 @@
 
 export type AliasEntry = [RegExp, string[]];
 
+// ─── NZ Scarce Skill Table ─────────────────────────────────────────────────────
+// Skills with a thin NZ talent pool that have genuinely transferable adjacent
+// skills. The AI is told about this list explicitly so "scarce" notes are
+// deterministic rather than guessed from training data.
+// Each entry: { match (regex), label (display name), alternatives, note }
+// Edit this table — not the prompt — to change what triggers a Talent Pool tip.
+
+export interface ScarceSkillEntry {
+  match: RegExp;
+  label: string;
+  alternatives: string[];
+  note: string;
+}
+
+export const NZ_SCARCE_SKILLS: ScarceSkillEntry[] = [
+  {
+    match: /\bc\+\+/i,
+    label: "C++",
+    alternatives: ["C", "Rust"],
+    note: "C++ talent pools are thin in NZ — engineers with strong C or Rust backgrounds share the same systems-programming fundamentals and can typically ramp up quickly.",
+  },
+  {
+    match: /\bembedded c\b|\bbare[- ]metal\b|\bfirmware\b/i,
+    label: "Embedded C / Firmware",
+    alternatives: ["C++", "Rust"],
+    note: "Embedded / firmware engineers are scarce in NZ — C++ or Rust developers with low-level systems experience often transfer well.",
+  },
+  {
+    match: /\bcuda\b|\bgpu programming\b|\bopencl\b/i,
+    label: "CUDA / GPU Programming",
+    alternatives: ["C++"],
+    note: "GPU/CUDA specialists are rare in NZ — strong C++ engineers from HPC or graphics backgrounds are the closest transferable pool.",
+  },
+  {
+    match: /\bhaskell\b/i,
+    label: "Haskell",
+    alternatives: ["Scala", "F#", "Clojure"],
+    note: "Haskell developers are extremely rare in NZ — engineers from Scala, F#, or other typed-functional languages share the core paradigm.",
+  },
+  {
+    match: /\berlang\b|\belixir\b/i,
+    label: "Erlang / Elixir",
+    alternatives: ["Elixir", "Erlang", "Go"],
+    note: "Erlang/Elixir practitioners are scarce in NZ — concurrent-systems engineers from Go or adjacent functional backgrounds often adapt quickly.",
+  },
+  {
+    match: /\bfortran\b/i,
+    label: "Fortran",
+    alternatives: ["C++", "Python"],
+    note: "Fortran is nearly extinct in NZ — C++ or Python engineers from scientific computing or numerical analysis are the practical alternative.",
+  },
+  {
+    match: /\bcobol\b/i,
+    label: "COBOL",
+    alternatives: ["Java", "PL/SQL"],
+    note: "COBOL developers are extremely scarce in NZ — mainframe-literate Java developers or experienced PL/SQL engineers are the closest available pool.",
+  },
+  {
+    match: /\bsap\b(?!.*hana)|\bsap abap\b|\babap\b/i,
+    label: "SAP / ABAP",
+    alternatives: ["SAP HANA", "Java"],
+    note: "Certified SAP/ABAP developers are rare in NZ — consider SAP HANA specialists or Java enterprise engineers with ERP exposure.",
+  },
+  {
+    match: /\bassembly\b|\basm\b|\bx86\b|\barm assembly\b/i,
+    label: "Assembly",
+    alternatives: ["C", "C++", "Rust"],
+    note: "Assembly expertise is extremely rare in NZ — C or C++ engineers with low-level systems or embedded experience are the realistic adjacent pool.",
+  },
+];
+
+// Serialise the table into a compact text block for prompt injection.
+// The AI is instructed to match against this list rather than guess.
+export function buildScarceSkillsPromptBlock(): string {
+  return NZ_SCARCE_SKILLS.map((e) =>
+    `- ${e.label} → ${e.alternatives.join(", ")}: "${e.note}"`
+  ).join("\n");
+}
+
 // Maps a requirement pattern to the terms a matching candidate would have
 // in their profile headline or snippet. Ordered broad → specific so that
 // more specific patterns take precedence when both match.
