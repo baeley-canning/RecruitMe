@@ -34,6 +34,7 @@ import { SearchFunnelCard } from "@/components/job/search-funnel-card";
 import { SavedSearchesCard } from "@/components/job/saved-searches-card";
 import { OnboardingCard } from "@/components/job/onboarding-card";
 import { JobWeightsCard } from "@/components/job/job-weights-card";
+import { BrowseLibraryModal } from "@/components/job/browse-library-modal";
 import { PipelineCard } from "@/components/job/pipeline-card";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
@@ -177,6 +178,7 @@ export default function JobDetailPage({
   const [parseError, setParseError] = useState("");
   const [parseChanges, setParseChanges] = useState<string[]>([]);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
+  const [showBrowseLibrary, setShowBrowseLibrary] = useState(false);
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [fetchStatuses, setFetchStatuses] = useState<Record<string, {
     state: "waiting" | "fetching" | "done" | "error";
@@ -1065,6 +1067,10 @@ ${toHtml(job.rawJd)}
             <Upload className="w-4 h-4" />
             Upload CVs
           </Button>
+          <Button variant="outline" onClick={() => setShowBrowseLibrary(true)}>
+            <Users className="w-4 h-4" />
+            From Library
+          </Button>
           <Button onClick={() => setShowAddCandidate(true)}>
             <UserPlus className="w-4 h-4" />
             Add Candidate
@@ -1759,6 +1765,10 @@ ${toHtml(job.rawJd)}
 
       {showBulkUpload && (
         <BulkUploadModal jobId={id} onClose={() => setShowBulkUpload(false)} onComplete={fetchJob} />
+      )}
+
+      {showBrowseLibrary && (
+        <BrowseLibraryModal jobId={id} onClose={() => setShowBrowseLibrary(false)} onComplete={fetchJob} />
       )}
 
       {showAddCandidate && (
