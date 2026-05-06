@@ -69,11 +69,10 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+  const { id } = await params;
   try {
-    const auth = await getAuth();
-    if (!auth) return unauthorized();
-    const { id } = await params;
-
     const candidate = await requireAccess(id, auth);
     if (!candidate) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -93,11 +92,10 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-
+  try {
   const candidate = await requireAccess(id, auth);
   if (!candidate) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
