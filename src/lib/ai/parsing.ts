@@ -53,6 +53,12 @@ export interface ParsedRole {
   // somewhere in their profile. Drives search anchoring — set by the AI at parse
   // time so it works for any technology, not just the hardcoded Sybase/C++ list.
   anchor_terms?: string[];
+  // Recruiter overrides: knockout criteria that have been dismissed (treated as
+  // informational only, not scoring gates). Persisted across re-analyses.
+  dismissed_knockout_criteria?: string[];
+  // Visa flags (e.g. clearance eligibility) that the recruiter has promoted to
+  // must_haves so they count in scoring.
+  promoted_visa_flags?: string[];
 }
 
 // ─── Private helpers ───────────────────────────────────────────────────────────

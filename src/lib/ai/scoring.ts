@@ -147,9 +147,14 @@ export async function scoreCandidateStructured(
   const clamp = (v: unknown, fallback = 50) =>
     typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : fallback;
 
-  const baseMustHaves = (parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required);
-  const niceToHaves   = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
-  const knockouts     = parsedRole.knockout_criteria ?? [];
+  const dismissedKnockouts = new Set((parsedRole.dismissed_knockout_criteria ?? []).map((k) => k.toLowerCase()));
+  const rawMustHaves   = parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required;
+  const baseMustHaves  = rawMustHaves;
+  const niceToHaves    = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
+  // Exclude recruiter-dismissed knockouts so they don't gate scoring
+  const knockouts      = (parsedRole.knockout_criteria ?? []).filter(
+    (k) => !dismissedKnockouts.has(k.toLowerCase())
+  );
   const clearanceContext = inferSecurityClearanceContext({
     title: parsedRole.title,
     company: parsedRole.company,

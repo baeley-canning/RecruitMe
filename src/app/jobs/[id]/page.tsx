@@ -20,6 +20,8 @@ import {
   Download,
   Upload,
   Pencil,
+  Plus,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
@@ -195,6 +197,7 @@ export default function JobDetailPage({
   const [savingJd, setSavingJd] = useState(false);
   const [pendingAccepted, setPendingAccepted] = useState<Set<string>>(new Set());
   const [pendingDismissed, setPendingDismissed] = useState<Set<string>>(new Set());
+  const [pendingReqAction, setPendingReqAction] = useState<Set<string>>(new Set());
 
   // Per-candidate fetch tracking.
   interface FetchEntry {
@@ -332,6 +335,24 @@ export default function JobDetailPage({
     } else {
       // Revert optimistic hide on failure
       setPendingDismissed((prev) => { const next = new Set(prev); next.delete(skill); return next; });
+    }
+  };
+
+  const handleRequirementAction = async (
+    action: "dismiss-knockout" | "restore-knockout" | "promote-visa-flag" | "demote-visa-flag",
+    item: string
+  ) => {
+    const key = `${action}:${item}`;
+    setPendingReqAction((prev) => new Set([...prev, key]));
+    try {
+      const res = await fetch(`/api/jobs/${id}/requirement-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, item }),
+      });
+      if (res.ok) await fetchJob();
+    } finally {
+      setPendingReqAction((prev) => { const next = new Set(prev); next.delete(key); return next; });
     }
   };
 
@@ -1250,13 +1271,55 @@ ${toHtml(job.rawJd)}
                 chipClassName="bg-blue-50 text-blue-700 border-blue-200"
               />
 
-              {/* Knockout criteria */}
-              <HiringBriefChipSection
-                title="Knockout Criteria"
-                items={parsedRole.knockout_criteria}
-                labelClassName="text-red-600"
-                chipClassName="bg-red-50 text-red-700 border-red-200 font-medium"
-              />
+              {/* Knockout criteria — each item can be dismissed to remove it from scoring */}
+              {(parsedRole.knockout_criteria?.length ?? 0) > 0 && (() => {
+                const dismissed = parsedRole.dismissed_knockout_criteria ?? [];
+                return (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide mb-2 text-red-600">Knockout Criteria</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {parsedRole.knockout_criteria.map((item) => {
+                        const isDismissed = dismissed.includes(item);
+                        const pendingKey = isDismissed ? `restore-knockout:${item}` : `dismiss-knockout:${item}`;
+                        const isPending = pendingReqAction.has(pendingKey);
+                        return (
+                          <span
+                            key={item}
+                            title={isDismissed ? "Click to re-enable as a scoring gate" : "Click × to disable this gate (informational only)"}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border font-medium transition-colors",
+                              isDismissed
+                                ? "bg-slate-50 text-slate-400 border-slate-200 line-through"
+                                : "bg-red-50 text-red-700 border-red-200"
+                            )}
+                          >
+                            {item}
+                            {isPending ? (
+                              <Loader2 className="w-2.5 h-2.5 animate-spin flex-shrink-0" />
+                            ) : isDismissed ? (
+                              <button
+                                onClick={() => handleRequirementAction("restore-knockout", item)}
+                                title="Re-enable as knockout gate"
+                                className="text-slate-400 hover:text-red-600 transition-colors flex-shrink-0"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleRequirementAction("dismiss-knockout", item)}
+                                title="Disable — treat as informational only"
+                                className="text-red-300 hover:text-red-600 transition-colors flex-shrink-0"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Must-haves — fall back to skills_required for old jobs */}
               <HiringBriefChipSection
@@ -1293,18 +1356,58 @@ ${toHtml(job.rawJd)}
                 chipClassName="bg-amber-50 text-amber-800 border-amber-200"
               />
 
+              {/* Work Rights / visa flags — items can be promoted into must_haves */}
               {parsedRole.visa_flags?.length > 0 && (() => {
                 const knockoutText = (parsedRole.knockout_criteria ?? []).join(" ").toLowerCase();
-                const extra = parsedRole.visa_flags.filter(
+                const items = parsedRole.visa_flags.filter(
                   (f) => !knockoutText.includes(f.toLowerCase().slice(0, 12))
                 );
+                if (items.length === 0) return null;
+                const promoted = parsedRole.promoted_visa_flags ?? [];
                 return (
-                  <HiringBriefChipSection
-                    title="Work Rights"
-                    items={extra}
-                    labelClassName="text-amber-700"
-                    chipClassName="bg-amber-50 text-amber-800 border-amber-200"
-                  />
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide mb-2 text-amber-700">Work Rights</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {items.map((item) => {
+                        const isPromoted = promoted.includes(item);
+                        const pendingKey = isPromoted ? `demote-visa-flag:${item}` : `promote-visa-flag:${item}`;
+                        const isPending = pendingReqAction.has(pendingKey);
+                        return (
+                          <span
+                            key={item}
+                            title={isPromoted ? "Enforced as a must-have — click × to relax" : "Click + to enforce as a scoring must-have"}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border transition-colors",
+                              isPromoted
+                                ? "bg-violet-50 text-violet-700 border-violet-200 font-medium"
+                                : "bg-amber-50 text-amber-800 border-amber-200"
+                            )}
+                          >
+                            {item}
+                            {isPending ? (
+                              <Loader2 className="w-2.5 h-2.5 animate-spin flex-shrink-0" />
+                            ) : isPromoted ? (
+                              <button
+                                onClick={() => handleRequirementAction("demote-visa-flag", item)}
+                                title="Remove from must-haves"
+                                className="text-violet-400 hover:text-violet-700 transition-colors flex-shrink-0"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleRequirementAction("promote-visa-flag", item)}
+                                title="Enforce as a must-have in scoring"
+                                className="text-amber-400 hover:text-amber-700 transition-colors flex-shrink-0"
+                              >
+                                <Plus className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })()}
 
