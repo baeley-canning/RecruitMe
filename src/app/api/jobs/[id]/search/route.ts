@@ -1012,8 +1012,8 @@ async function runSearchBackground(args: {
           const scoreData: Record<string, unknown> = {};
           let matchScore: number | null = null;
           let locationFitScore: number | null = null;
+          const hasFullProfile = classifyDataQuality(profileText?.length ?? 0) === "full_profile";
           try {
-            const hasFullProfile = classifyDataQuality(profileText?.length ?? 0) === "full_profile";
             const breakdown = hasFullProfile
               ? applyLocationFitOverride(
                   await scoreCandidateStructured(textToScore, parsedRole, salary, weights),
@@ -1059,7 +1059,7 @@ async function runSearchBackground(args: {
             locationFitScore = fallback.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(fallback));
           }
-          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason };
+          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile };
         })
       );
 
@@ -1067,7 +1067,7 @@ async function runSearchBackground(args: {
 
       for (const item of results) {
         if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason } = item;
+        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
         // Hard location cutoff: drop candidates we KNOW are far out-of-area.
         // Only applies when candidateLocation is set — if it's empty, the AI had no location
@@ -1079,9 +1079,16 @@ async function runSearchBackground(args: {
         }
 
         // Specialist searches should not import low-probability broad matches.
-        // If the result survives source gating but scores very low, keep it out
-        // of the job pipeline; the recruiter wants likely candidates, not cleanup.
-        if (extractDistinctiveRequirementTerms(parsedRole).length > 0 && matchScore !== null && matchScore < 45) {
+        // The threshold is data-quality aware: full-profile scores below 45 are
+        // a real "no" (Claude has all the info), but snippet-tier provisional
+        // scores are pessimistic by design and the same candidate often jumps
+        // 20–30 pts on full fetch. Dropping snippets at <45 introduced a "first
+        // fetched wins" bias — the recruiter would only see candidates whose
+        // snippets happened to be rich enough. We use 30 for snippet-tier
+        // (matches the provisional 30% floor) so borderline candidates are
+        // imported and re-evaluated when their profile is captured.
+        const scoreCutoff = hasFullProfile ? 45 : 30;
+        if (extractDistinctiveRequirementTerms(parsedRole).length > 0 && matchScore !== null && matchScore < scoreCutoff) {
           skippedScore++;
           continue;
         }
