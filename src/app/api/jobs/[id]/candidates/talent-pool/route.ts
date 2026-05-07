@@ -22,6 +22,16 @@ import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/li
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
+import { extractDistinctiveSignalsFromRequirement } from "@/lib/requirement-signals";
+
+// Re-derive distinctive terms from a parsedRole — same logic as search/route.ts.
+function distinctiveTerms(parsedRole: ParsedRole): string[] {
+  const terms = new Set<string>();
+  const musts = [...(parsedRole.must_haves ?? []), ...(parsedRole.knockout_criteria ?? [])];
+  for (const req of musts) extractDistinctiveSignalsFromRequirement(req).forEach((t) => terms.add(t.toLowerCase()));
+  return [...terms];
+}
 
 const BodySchema = z.object({
   minScore:  z.number().int().min(0).max(100).default(0),
@@ -134,6 +144,14 @@ export async function POST(
   let scored = 0;
   let skippedScore = 0;
 
+  // For specialist roles (SAFe Scrum Master, C++/Sybase developer, etc.) the pool
+  // should only import candidates who have at least one distinctive term in their
+  // full profile. Without this gate, every Wellington developer in the pool gets
+  // added to every specialist job — e.g. an Azure architect ends up on a Scrum
+  // Master candidate list because they're both Wellington-based.
+  const roleTerms = distinctiveTerms(parsedRole);
+  const isSpecialistRole = roleTerms.length > 0;
+
   for (let i = 0; i < candidates.length && saved.length < maxResults; i++) {
     const row = candidates[i];
     const loc = row.location ?? "";
@@ -141,6 +159,16 @@ export async function POST(
     // Location filter (non-fatal if location unknown)
     if (loc && locationKeywords.length > 0 && !locationMatches(loc, locationKeywords)) {
       continue;
+    }
+
+    // Pre-score text signal filter for specialist roles.
+    // If NONE of the role's distinctive terms appear in the full profile, skip
+    // scoring entirely — saves Claude API spend and keeps irrelevant candidates
+    // out of the list without paying for a full score to confirm they don't fit.
+    if (isSpecialistRole) {
+      const haystack = (row.profileText ?? "").toLowerCase();
+      const hasSignal = roleTerms.some((term) => haystack.includes(term));
+      if (!hasSignal) { skippedScore++; continue; }
     }
 
     const profileText = row.profileText!;
@@ -183,7 +211,14 @@ export async function POST(
       continue;
     }
 
-    if (minScore > 0 && matchScore !== null && matchScore < minScore) {
+    // Score floor for specialist roles — same threshold as the search route uses
+    // for full profiles. Pool candidates have full text so the score is reliable;
+    // an Azure architect scoring 8% on a Scrum Master JD is a real "no", not a
+    // data-quality issue.
+    const effectiveMinScore = isSpecialistRole
+      ? Math.max(minScore, SCORE_CUTOFF_FULL_PROFILE)
+      : minScore;
+    if (matchScore !== null && matchScore < effectiveMinScore) {
       skippedScore++;
       continue;
     }
