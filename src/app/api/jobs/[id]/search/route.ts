@@ -136,8 +136,12 @@ function looksUnderqualifiedForRole(result: SearchResult, parsedRole: ParsedRole
   const wantedSeniority = (parsedRole.seniority_band ?? "").toLowerCase();
   if (!/(mid|senior|lead|principal|manager|director|executive)/.test(wantedSeniority)) return false;
 
-  const text = normaliseText(`${result.headline} ${result.snippet}`);
-  return /\b(junior|graduate|intern|internship|trainee|student|entry level|entry-level|bootcamp|academy|dev academy|in training|seeking entry level|seeking entry-level)\b/.test(text);
+  // Only check the job title / headline — not the whole snippet. Checking full snippet
+  // text caused false positives: "I mentor junior engineers" or "Dev Academy graduate
+  // from 2019" on a mid-career candidate's snippet would incorrectly drop them.
+  // The headline is the current role title; snippet context is too broad.
+  const titleOnly = normaliseText(result.headline ?? "");
+  return /^(junior|graduate|intern|internship|trainee|student|entry.?level|bootcamp|in training|seeking entry)/i.test(titleOnly);
 }
 
 function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole, profileText?: string | null, candidateLocation?: string | null) {
@@ -340,6 +344,13 @@ function isRetryableSearchError(message: string): boolean {
     lower.includes("too many requests") ||
     lower.includes("rate limit")
   );
+}
+
+function isAuthFailure(message: string): boolean {
+  const status = message.match(/\b(\d{3})\b/)?.[1];
+  if (status && (status === "401" || status === "403")) return true;
+  const lower = message.toLowerCase();
+  return lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("forbidden");
 }
 
 async function executeSearchTask(
@@ -590,6 +601,11 @@ async function runSearchBackground(args: {
   try {
     const seenUrls = new Set<string>();
     const allRaw: SearchResult[] = [];
+    // URLs found via the scarce-skill adjacent-skill fallback (e.g. SQL Server DBA
+    // found when searching for a Sybase role). These candidates do not carry the
+    // rare original term, so they must bypass the specialist source gate — they were
+    // explicitly retrieved because of the skill substitution, not by accident.
+    const scarceSkillFallbackUrls = new Set<string>();
 
     // ── Phase 1a: PDL bulk fetch (not paginated — returns full profiles) ──────
     if (hasPDL) {
@@ -800,13 +816,34 @@ async function runSearchBackground(args: {
           }));
         const fallbackSerpTasks = hasSerpApi ? mkFallbackTasks("serpapi") : [];
         const fallbackBingTasks = hasBing   ? mkFallbackTasks("bing")    : [];
-        const fallbackResults = [
+        const fallbackOutcomes = [
           ...(await executeSearchTaskQueue(fallbackSerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS })),
           ...(await executeSearchTaskQueue(fallbackBingTasks, { concurrency: BING_CONCURRENCY,   delayMs: BING_DELAY_MS   })),
-        ].flatMap((o) => o.items);
+        ];
+
+        // Surface auth failures immediately — invalid keys look like "no results" otherwise
+        const authFailed = fallbackOutcomes.some((o) => o.error && isAuthFailure(o.error));
+        if (authFailed) {
+          const failedProvider = fallbackOutcomes.find((o) => o.error && isAuthFailure(o.error))?.provider ?? "search";
+          await prisma.searchSession.update({
+            where: { id: sessionId },
+            data: {
+              status: "complete",
+              message: `${failedProvider} API key is invalid or expired.`,
+              evaluation: `FAIL — ${failedProvider === "serpapi" ? "SerpAPI" : "Bing"} key rejected (401). Check Settings → API Keys and replace the key.`,
+            },
+          }).catch(() => {});
+          return;
+        }
+
+        const fallbackResults = fallbackOutcomes.flatMap((o) => o.items);
 
         for (const r of fallbackResults) {
-          if (!seenUrls.has(r.linkedinUrl)) { seenUrls.add(r.linkedinUrl); allRaw.push(r); }
+          if (!seenUrls.has(r.linkedinUrl)) {
+            seenUrls.add(r.linkedinUrl);
+            scarceSkillFallbackUrls.add(r.linkedinUrl);
+            allRaw.push(r);
+          }
         }
 
         if (allRaw.length > 0) {
@@ -957,11 +994,12 @@ async function runSearchBackground(args: {
           return false;
         }
         const profileText = poolEntry?.profileText ?? r.fullText ?? null;
-        if (!hasSpecialistSourceSignal(r, parsedRole, profileText, loc || null)) {
+        const isFallbackCandidate = scarceSkillFallbackUrls.has(normaliseLinkedInUrl(r.linkedinUrl));
+        if (!isFallbackCandidate && !hasSpecialistSourceSignal(r, parsedRole, profileText, loc || null)) {
           skippedSourceGate++;
           return false;
         }
-        if (!poolEntry && !r.fullText && fetchPriorityScore < 44) {
+        if (!isFallbackCandidate && !poolEntry && !r.fullText && fetchPriorityScore < 44) {
           skippedSourceGate++;
           return false;
         }
@@ -1059,14 +1097,13 @@ async function runSearchBackground(args: {
         if (saved.length >= maxResults) break;
         const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
-        // Gate 1 — location. Drop candidates clearly out-of-area:
-        //   • Known overseas location (score ≤ 20)
-        //   • No location on a non-remote on-site role (score ≤ 25, skeptical)
-        //     Pool entries are exempt — their stored profile carries a real location.
-        if (!job.isRemote && locationFitScore !== null && (
-          (candidateLocation  && locationFitScore <= 20) ||
-          (!candidateLocation && !isFromPool && locationFitScore <= 25)
-        )) {
+        // Gate 1 — location. Drop candidates with a confirmed overseas location.
+        // We do NOT drop null-location candidates here: LinkedIn NZ search returns
+        // predominantly NZ profiles even without location metadata. If they're
+        // genuinely overseas, scoring will reflect that via location_fit = 0.
+        // Explicitly overseas locations (confirmed by isExplicitlyOverseasLocation
+        // above) are already rejected before this point.
+        if (!job.isRemote && candidateLocation && locationFitScore !== null && locationFitScore <= 20) {
           skippedScore++;
           continue;
         }
@@ -1074,8 +1111,13 @@ async function runSearchBackground(args: {
         // Gate 2 — score threshold for specialist roles.
         //   Full-profile: 45 (Claude has all the info; low score is a real "no")
         //   Snippet:      30 (provisional scores are conservative; same as floor)
+        // Fallback candidates bypass this gate — they were retrieved as adjacent-skill
+        // substitutes and their provisional score will naturally be lower because they
+        // don't carry the exact rare term. Claude scoring after fetch will provide the
+        // real signal.
+        const isFallback = scarceSkillFallbackUrls.has(normUrl);
         const scoreCutoff = hasFullProfile ? SCORE_CUTOFF_FULL_PROFILE : SCORE_CUTOFF_SNIPPET;
-        if (specialistRole && matchScore !== null && matchScore < scoreCutoff) {
+        if (!isFallback && specialistRole && matchScore !== null && matchScore < scoreCutoff) {
           skippedScore++;
           continue;
         }

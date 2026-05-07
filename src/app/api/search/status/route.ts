@@ -34,12 +34,16 @@ export async function GET() {
     claudeStatus = key ? await checkClaudeKey(key) : "unconfigured";
   }
 
+  // SerpAPI and Bing keys are not tested here — making a live test request on every
+  // page load would add latency and consume quota. We return "configured" (key present,
+  // not verified) vs false (not configured). If a search returns 401/403, the search
+  // session will be marked with "invalid key" to surface the real cause.
   return NextResponse.json({
     available: Boolean(serpapi || bing),
     sources: {
-      serpapi: Boolean(serpapi),
-      bing:    Boolean(bing),
-      pdl:     Boolean(pdl),
+      serpapi: serpapi ? "configured" : false,
+      bing:    bing    ? "configured" : false,
+      pdl:     pdl     ? "configured" : false,
     },
     ai: {
       provider,

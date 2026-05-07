@@ -249,12 +249,17 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   // Testing
   [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["JMeter"]],
   [/\bselenium\b/i,                                     ["Selenium"]],
-  // Compliance / clearance
+  // Compliance / methodology
   [/\bitil\b|\bitsm\b/i,                                ["ITIL"]],
-  [/security clearance|secret vetting|confidential vetting/i, ["security clearance"]],
+  // NOTE: "security clearance" intentionally NOT in DISTINCTIVE — cleared candidates
+  // don't put clearance status in their LinkedIn profiles (it's sensitive/restricted),
+  // so any role with a clearance requirement would return 0 candidates if this gated
+  // the source check. Clearance is assessed during scoring, not at search import.
   // Agile roles — only as DISTINCTIVE when Agile/Scrum is the primary skill, not a nice-to-have.
   // Narrow patterns to avoid gating all candidates on "works in an Agile environment".
-  [/\bscrum master\b|\bagile coach\b|\bsafe practitioner\b|\bsafe (agilist|coach|scrum master)\b/i, ["Scrum Master"]],
+  [/\bscrum master\b/i,                                 ["Scrum Master"]],
+  [/\bagile coach\b/i,                                  ["Agile Coach"]],
+  [/\bsafe practitioner\b|\bsafe agilist\b|\bsafe coach\b/i, ["SAFe Practitioner"]],
   // Design
   [/\bfigma\b/i,                                        ["Figma"]],
   [/\bux\b|user experience/i,                           ["UX"]],

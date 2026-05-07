@@ -26,7 +26,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [poolResult, setPoolResult] = useState<{ count: number; message?: string } | null>(null);
   const [poolError, setPoolError] = useState("");
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
-  const [sources, setSources] = useState<{ serpapi: boolean; bing: boolean; pdl: boolean } | null>(null);
+  const [sources, setSources] = useState<{ serpapi: boolean | "configured"; bing: boolean | "configured"; pdl: boolean | "configured" } | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
   const [searchHistory, setSearchHistory] = useState<Array<{
     id: string; status: string; collected: number; location: string;
@@ -48,7 +48,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   useEffect(() => {
     fetch("/api/search/status")
       .then((r) => r.json())
-      .then((d: { available: boolean; sources: { serpapi: boolean; bing: boolean; pdl: boolean }; ai?: { provider: string; claude: "ok" | "invalid" | "error" | "unconfigured" } }) => {
+      .then((d: { available: boolean; sources: { serpapi: boolean | "configured"; bing: boolean | "configured"; pdl: boolean | "configured" }; ai?: { provider: string; claude: "ok" | "invalid" | "error" | "unconfigured" } }) => {
         setHasSerpApi(d.available);
         setSources(d.sources ?? null);
         if (d.ai?.provider === "claude") setClaudeStatus(d.ai.claude);
@@ -205,13 +205,20 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   {sources && (
                     <div className="flex items-center gap-1">
                       {[{ key: "serpapi", label: "SerpAPI" }, { key: "claude", label: "Claude" }].map(({ key, label }) => {
-                        const isOk = key === "claude" ? claudeStatus === "ok" : (sources as Record<string, boolean>)[key];
-                        const isError = key === "claude" && (claudeStatus === "invalid" || claudeStatus === "error");
+                        const rawVal = key === "claude" ? claudeStatus : (sources as Record<string, boolean | "configured">)[key];
+                        const isOk        = rawVal === "ok" || rawVal === true;
+                        const isConfigured = rawVal === "configured"; // key present but not verified
+                        const isError     = rawVal === "invalid" || rawVal === "error";
                         return (
-                          <span key={key} className={cn("text-xs px-1.5 py-0.5 rounded font-medium border",
-                            isOk ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                            isError ? "bg-red-50 text-red-600 border-red-200" : "bg-slate-50 text-slate-400 border-slate-200"
-                          )}>
+                          <span
+                            key={key}
+                            title={isConfigured ? `${label} key is set but not yet verified — will confirm on first search` : undefined}
+                            className={cn("text-xs px-1.5 py-0.5 rounded font-medium border",
+                              isOk        ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                              isConfigured? "bg-amber-50 text-amber-600 border-amber-200" :
+                              isError     ? "bg-red-50 text-red-600 border-red-200" :
+                                            "bg-slate-50 text-slate-400 border-slate-200"
+                            )}>
                             {label}
                           </span>
                         );
