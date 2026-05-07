@@ -419,6 +419,14 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
 }
 
 async function maybeAutoCapture(tabId, linkedinUrl) {
+  // Manual-only mode: skip all auto-capture. The recruiter navigates to the
+  // profile themselves and triggers capture via the popup. Toggle in Options.
+  const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: false });
+  if (manualOnlyMode) {
+    console.log("[RecruitMe] Auto-capture skipped (manual-only mode is ON)");
+    return;
+  }
+
   // Normalise trailing slash so "profile/" and "profile" share the same cooldown key.
   const normUrl = linkedinUrl.replace(/\/$/, "");
   const lastLookup = recentAutoCaptureLookups.get(normUrl);
@@ -790,7 +798,11 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== PENDING_CAPTURE_ALARM) return;
-  void ensurePendingSessionTabs().catch(() => {});
+  // Skip the background tab-opening loop when manual-only mode is on.
+  chrome.storage.local.get({ manualOnlyMode: false }, ({ manualOnlyMode }) => {
+    if (manualOnlyMode) return;
+    void ensurePendingSessionTabs().catch(() => {});
+  });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {

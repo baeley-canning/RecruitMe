@@ -6,6 +6,23 @@ const saveStatus       = document.getElementById("saveStatus");
 const connectionBadge  = document.getElementById("connectionBadge");
 const statusDot        = document.getElementById("statusDot");
 const statusText       = document.getElementById("statusText");
+const manualOnlyToggle = document.getElementById("manualOnlyToggle");
+const manualOnlyRow    = document.getElementById("manualOnlyRow");
+const manualOnlyHint   = document.getElementById("manualOnlyHint");
+
+function setManualOnlyUI(enabled) {
+  manualOnlyToggle.checked = enabled;
+  manualOnlyRow.className = "toggle-row" + (enabled ? " active" : "");
+  manualOnlyHint.innerHTML = enabled
+    ? "<strong>Manual-only is ON</strong> — auto-capture is paused. Navigate to a LinkedIn profile yourself and click the extension icon to capture manually."
+    : "Auto-capture is <strong>on</strong> — the extension opens tabs and captures profiles automatically when a fetch is queued.";
+}
+
+manualOnlyToggle.addEventListener("change", async () => {
+  const enabled = manualOnlyToggle.checked;
+  await chrome.storage.local.set({ manualOnlyMode: enabled });
+  setManualOnlyUI(enabled);
+});
 
 function setStatus(element, message, kind = "") {
   element.textContent = message;
@@ -39,6 +56,10 @@ function sendMessage(message) {
 // Load stored settings and check connection on page open.
 async function init() {
   try {
+    // Load manual-only mode separately (doesn't go through background)
+    const stored = await chrome.storage.local.get({ manualOnlyMode: false });
+    setManualOnlyUI(stored.manualOnlyMode);
+
     const response = await sendMessage({ type: "get-config" });
     serverBaseInput.value  = response.serverBase || "";
     extUsernameInput.value = response.username   || "";

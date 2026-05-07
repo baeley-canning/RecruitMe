@@ -131,6 +131,52 @@
       .dot.green  { background: #10b981; }
       .dot.red    { background: #ef4444; }
       .dot.grey   { background: #94a3b8; }
+
+      /* Manual-only toggle */
+      .toggle-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+      }
+      .toggle-row.active {
+        background: #fff7ed;
+        border-color: #fed7aa;
+      }
+      .toggle-label { font-size: 13px; font-weight: 600; color: #334155; }
+      .toggle-hint  { font-size: 12px; color: #64748b; margin-top: 3px; line-height: 1.5; }
+      .toggle-row.active .toggle-hint { color: #92400e; }
+      .toggle-switch {
+        position: relative;
+        flex-shrink: 0;
+        width: 44px; height: 24px;
+        margin-top: 1px;
+      }
+      .toggle-switch input { opacity: 0; width: 0; height: 0; }
+      .toggle-slider {
+        position: absolute;
+        inset: 0;
+        background: #cbd5e1;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .toggle-slider:before {
+        content: "";
+        position: absolute;
+        left: 3px; top: 3px;
+        width: 18px; height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.2s;
+        box-shadow: 0 1px 3px rgba(0,0,0,.2);
+      }
+      .toggle-switch input:checked + .toggle-slider { background: #f97316; }
+      .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); }
     </style>
   </head>
   <body>
@@ -167,6 +213,22 @@
         <div class="actions">
           <button id="saveBtn" class="primary">Save and test connection</button>
           <span id="saveStatus" class="status"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Capture mode</h2>
+        <div class="toggle-row" id="manualOnlyRow">
+          <div>
+            <div class="toggle-label">Manual-only mode</div>
+            <div class="toggle-hint" id="manualOnlyHint">
+              Auto-capture is <strong>on</strong> — the extension opens tabs and captures profiles automatically when a fetch is queued.
+            </div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="manualOnlyToggle" />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
       </div>
 
