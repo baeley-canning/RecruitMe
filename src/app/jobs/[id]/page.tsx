@@ -196,6 +196,7 @@ export default function JobDetailPage({
   }, [overflowOpen]);
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [fetchStatuses, setFetchStatuses] = useState<Record<string, FetchStatus>>({});
+  const [fetchPanelDismissed, setFetchPanelDismissed] = useState(false);
   // Local FIFO queue of candidateIds waiting to be fetched.
   // Only one fetch fires at a time — drainFetchQueue picks up the next
   // item whenever a fetch slot becomes free.
@@ -639,6 +640,7 @@ export default function JobDetailPage({
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
     if (fetchQueueRef.current.includes(candidateId)) return;
+    setFetchPanelDismissed(false); // show panel when a new fetch starts
 
     // If at capacity, add to queue
     if (activeFetchesRef.current.size >= MAX_CONCURRENT_FETCHES) {
@@ -1875,18 +1877,13 @@ ${toHtml(job.rawJd)}
         )}
       </div>
 
-      <FetchQueuePanel
-        statuses={fetchStatuses}
-        candidateNames={Object.fromEntries((job?.candidates ?? []).map((c) => [c.id, c.name]))}
-        onDismiss={() => setFetchStatuses((prev) => {
-          // Only clear finished rows — preserve anything still in-flight or queued
-          const next: typeof prev = {};
-          for (const [k, v] of Object.entries(prev)) {
-            if (v.state === "waiting" || v.state === "fetching" || v.state === "queued") next[k] = v;
-          }
-          return next;
-        })}
-      />
+      {!fetchPanelDismissed && (
+        <FetchQueuePanel
+          statuses={fetchStatuses}
+          candidateNames={Object.fromEntries((job?.candidates ?? []).map((c) => [c.id, c.name]))}
+          onDismiss={() => setFetchPanelDismissed(true)}
+        />
+      )}
 
       {modals.report && (
         <ClientReportModal
