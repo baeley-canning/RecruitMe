@@ -460,6 +460,23 @@ export default function JobDetailPage({
     }
   };
 
+  const handleCancelFetch = useCallback((candidateId: string) => {
+    // Stop polling
+    const entry = activeFetchesRef.current.get(candidateId);
+    if (entry?.pollInterval) clearInterval(entry.pollInterval);
+    activeFetchesRef.current.delete(candidateId);
+    // Remove from local queue
+    fetchQueueRef.current = fetchQueueRef.current.filter((id) => id !== candidateId);
+    // Cancel the session on the server
+    if (entry?.sessionId) {
+      fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
+        method: "DELETE", credentials: "include",
+      }).catch(() => {});
+    }
+    setFetchStatuses((prev) => { const next = { ...prev }; delete next[candidateId]; return next; });
+    drainFetchQueueRef.current();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleScore = useCallback(async (candidateId: string) => {
     setScoringId(candidateId);
     try {
@@ -1882,6 +1899,7 @@ ${toHtml(job.rawJd)}
           statuses={fetchStatuses}
           candidateNames={Object.fromEntries((job?.candidates ?? []).map((c) => [c.id, c.name]))}
           onDismiss={() => setFetchPanelDismissed(true)}
+          onCancel={handleCancelFetch}
         />
       )}
 

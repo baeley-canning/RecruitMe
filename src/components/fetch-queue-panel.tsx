@@ -17,6 +17,7 @@ interface FetchQueuePanelProps {
   statuses: Record<string, FetchStatus>;
   candidateNames: Record<string, string>;
   onDismiss: () => void;
+  onCancel: (candidateId: string) => void;
 }
 
 const STATE_ORDER: FetchState[] = ["fetching", "waiting", "queued", "error", "done"];
@@ -34,7 +35,7 @@ function useElapsed(startedAt?: number) {
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 }
 
-export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQueuePanelProps) {
+export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel }: FetchQueuePanelProps) {
   const [expanded, setExpanded] = useState(true);
   const [scraperOk, setScraperOk] = useState<boolean | null>(null);
 
@@ -123,7 +124,7 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQu
       {expanded && (
         <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
           {sorted.map(([candidateId, status]) => (
-            <FetchRow key={candidateId} candidateId={candidateId} status={status} name={candidateNames[candidateId] ?? "Unknown"} />
+            <FetchRow key={candidateId} candidateId={candidateId} status={status} name={candidateNames[candidateId] ?? "Unknown"} onCancel={onCancel} />
           ))}
         </div>
       )}
@@ -131,7 +132,7 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQu
   );
 }
 
-function FetchRow({ candidateId, status, name }: { candidateId: string; status: FetchStatus; name: string }) {
+function FetchRow({ candidateId, status, name, onCancel }: { candidateId: string; status: FetchStatus; name: string; onCancel: (id: string) => void }) {
   const elapsed = useElapsed(
     (status.state === "waiting" || status.state === "fetching") ? status.startedAt : undefined
   );
@@ -161,6 +162,15 @@ function FetchRow({ candidateId, status, name }: { candidateId: string; status: 
       </div>
       {isActive && elapsed && (
         <span className="text-[10px] text-slate-400 flex-shrink-0 tabular-nums">{elapsed}</span>
+      )}
+      {status.state !== "done" && (
+        <button
+          onClick={() => onCancel(candidateId)}
+          className="flex-shrink-0 text-slate-300 hover:text-red-500 transition-colors ml-1"
+          title="Remove from queue"
+        >
+          <X className="w-3 h-3" />
+        </button>
       )}
     </div>
   );

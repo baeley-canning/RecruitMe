@@ -81,7 +81,7 @@ export async function POST(req: Request) {
     await updateSessionInQueue({
       sessionId: session.sessionId,
       status:    "processing",
-      message:   "Server scraper queued — captures automatically in ~5–8 minutes",
+      message:   "Server scraper queued — captures automatically in ~60–90 seconds",
     });
 
     void scrapeViaServiceAsync({
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
       sessionId:   session.sessionId,
       callbackUrl,
     }).catch((err) => {
-      console.error("[fetch-session] scraper fire-and-forget failed:", err.message);
+      console.error("[fetch-session] scraper call failed — check SCRAPER_URL and SCRAPER_API_KEY in Railway Variables:", err.message);
     });
 
     session.status  = "processing";
