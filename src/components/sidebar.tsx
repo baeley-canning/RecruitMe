@@ -177,10 +177,10 @@ export function Sidebar({ jobs }: SidebarProps) {
         </Link>
         <div className="flex items-center gap-1">
           <Link
-            href="/jobs"
+            href="/dashboard"
             className={cn(
               "p-2 rounded-lg transition-colors",
-              pathname === "/jobs" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
+              pathname === "/dashboard" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
             )}
             title="Dashboard"
           >
@@ -233,10 +233,10 @@ export function Sidebar({ jobs }: SidebarProps) {
         {/* Nav */}
         <nav className="px-3 py-3 border-b border-slate-800">
           <Link
-            href="/jobs"
+            href="/dashboard"
             className={cn(
               "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
-              pathname === "/jobs"
+              pathname === "/dashboard"
                 ? "bg-slate-800 text-white"
                 : "text-slate-400 hover:text-white hover:bg-slate-800"
             )}

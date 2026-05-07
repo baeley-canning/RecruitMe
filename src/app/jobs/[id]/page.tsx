@@ -36,6 +36,7 @@ import { SearchFunnelCard } from "@/components/job/search-funnel-card";
 import { SavedSearchesCard } from "@/components/job/saved-searches-card";
 import { OnboardingCard } from "@/components/job/onboarding-card";
 import { JobWeightsCard } from "@/components/job/job-weights-card";
+import { TopCandidatesCard } from "@/components/job/top-candidates-card";
 import { BrowseLibraryModal } from "@/components/job/browse-library-modal";
 import { PipelineCard } from "@/components/job/pipeline-card";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
@@ -60,6 +61,7 @@ interface Candidate {
   matchScore: number | null;
   profileTextHash: string | null;
   captureMetadata: string | null;
+  _count?: { contactEvents: number };
   matchReason: string | null;
   fetchPriorityScore: number | null;
   fetchPriorityReason: string | null;
@@ -1614,6 +1616,18 @@ ${toHtml(job.rawJd)}
 
       {parsedRole && <ParseHistoryCard jobId={id} />}
 
+      {/* Top matches card — surfaces best unreviewed candidates so recruiter doesn't have to scroll */}
+      {filter === "all" && (
+        <TopCandidatesCard
+          candidates={jobCandidates}
+          onShortlist={(cid) => handleStatusChange(cid, "shortlisted")}
+          onView={(cid) => {
+            const el = document.getElementById(`candidate-${cid}`);
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}
+        />
+      )}
+
       {/* Candidates */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -1868,6 +1882,7 @@ ${toHtml(job.rawJd)}
                     }
                     fetchQueueState={fetchStatuses[candidate.id]?.state}
                     fetchQueuePosition={fetchStatuses[candidate.id]?.queuePosition}
+                    contactCount={candidate._count?.contactEvents ?? 0}
                   />
                 </div>
               </div>

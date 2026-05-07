@@ -152,6 +152,7 @@ interface CandidateCardProps {
   fetchingProfile?: boolean;
   fetchQueueState?: string;
   fetchQueuePosition?: number;
+  contactCount?: number;
 }
 
 type LegacyRadarDimensions = Partial<RadarDimensions>;
@@ -1006,6 +1007,7 @@ export const CandidateCard = memo(function CandidateCard({
   fetchingProfile = false,
   fetchQueueState,
   fetchQueuePosition,
+  contactCount = 0,
 }: CandidateCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -1205,6 +1207,15 @@ export const CandidateCard = memo(function CandidateCard({
                 <Badge className={statusBadge(candidate.status)}>
                   {statusLabel(candidate.status)}
                 </Badge>
+                {contactCount > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5 font-medium"
+                    title={`${contactCount} contact${contactCount !== 1 ? "s" : ""} logged`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-500 inline-block" />
+                    {contactCount}
+                  </span>
+                )}
               </div>
               {/* Acceptance likelihood badge */}
               <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />

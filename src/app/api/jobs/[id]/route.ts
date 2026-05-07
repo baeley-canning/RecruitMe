@@ -31,6 +31,8 @@ export async function GET(
           captureMetadata: true,
           jobAdderUrl: true, notes: true, createdAt: true, updatedAt: true,
           archivedJobTitle: true, archivedJobCompany: true,
+          // Count contact events for the indicator dot — no need to load full events here
+          _count: { select: { contactEvents: true } },
           // profileText intentionally excluded — large field, fetched on demand
           // interviewNotes, screeningData also excluded — fetched per-candidate
         },
