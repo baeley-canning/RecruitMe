@@ -84,10 +84,29 @@ export async function GET(req: Request) {
   const jobIdsWithCandidate = new Set(onActiveJobs.map((m) => m.jobId).filter(Boolean) as string[]);
   const suggestedJobs = allowedJobs.filter((j) => !jobIdsWithCandidate.has(j.id));
 
+  // Recent contact events — surfaces who last reached out so agents don't double-up.
+  const candidateIds = matches.map((m) => m.id);
+  const contactEvents = candidateIds.length > 0
+    ? await prisma.contactEvent.findMany({
+        where: { candidateId: { in: candidateIds }, ...(!auth.isOwner ? { orgId: auth.orgId } : {}) },
+        orderBy: { createdAt: "desc" },
+        take: 3,
+        select: { userName: true, type: true, note: true, createdAt: true },
+      })
+    : [];
+
+  const now = Date.now();
+  const recentContacts = contactEvents.map((e) => {
+    const diffDays = Math.round((now - new Date(e.createdAt).getTime()) / 86_400_000);
+    const relativeDate = diffDays === 0 ? "today" : diffDays === 1 ? "yesterday" : `${diffDays}d ago`;
+    return { userName: e.userName, type: e.type, note: e.note, relativeDate };
+  });
+
   return NextResponse.json({
     normalisedUrl: normUrl,
     onActiveJobs,
     inLibrary,
     suggestedJobs: suggestedJobs.slice(0, 5),
+    recentContacts,
   }, { headers: extensionCorsHeaders(req) });
 }

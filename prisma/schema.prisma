@@ -103,6 +103,7 @@ model Candidate {
   files         CandidateFile[]
   fetchSessions FetchSession[]
   scoreCorrections ScoreCorrection[]
+  contactEvents ContactEvent[]
 
   @@unique([jobId, linkedinUrl])
   @@index([linkedinUrl])               // talent pool cross-job URL lookups
@@ -160,6 +161,23 @@ model ScoringWeightPreset {
   updatedAt DateTime @updatedAt
 
   @@unique([orgId, name])              // preset names are unique per org
+  @@index([orgId])
+}
+
+// Log of every time a recruiter contacts a candidate — prevents two agents
+// messaging the same person blind and gives a shared audit trail.
+model ContactEvent {
+  id          String   @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  orgId       String?
+  userId      String   // who logged it
+  userName    String   // display name snapshot so it shows even if user is deleted
+  type        String   // "message" | "call" | "email" | "other"
+  note        String?  // optional free text
+  createdAt   DateTime @default(now())
+
+  @@index([candidateId])
   @@index([orgId])
 }
 

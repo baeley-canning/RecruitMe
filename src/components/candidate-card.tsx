@@ -76,6 +76,7 @@ import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
 import { ScoreCorrectionButton } from "./candidate/score-correction-button";
 import { CaptureMetadataPanel } from "./candidate/capture-metadata-panel";
+import { ContactLog } from "./candidate/contact-log";
 
 interface AcceptanceSignal {
   label: string;
@@ -938,6 +939,12 @@ function ProfileDrawer({
 
           {/* Files */}
           <CandidateFilesSection candidateId={candidate.id} />
+
+          {/* Contact log — shared across all recruiters in the org */}
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Contact history</p>
+            <ContactLog candidateId={candidate.id} />
+          </div>
 
           {/* Full profile text */}
           {candidate.profileText ? (

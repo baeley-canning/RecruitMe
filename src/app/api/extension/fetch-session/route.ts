@@ -72,9 +72,17 @@ export async function POST(req: Request) {
   // /api/extension/fetch-session/complete when done — the existing polling
   // UI picks it up without any changes.
   if (isScraperConfigured()) {
-    const callbackUrl = process.env.NEXTAUTH_URL ?? process.env.RAILWAY_PUBLIC_DOMAIN
-      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-      : "http://localhost:3000";
+    const callbackUrl = process.env.NEXTAUTH_URL
+      ?? (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "http://localhost:3000");
+
+    // Mark processing IMMEDIATELY so the extension alarm's getPendingSessions()
+    // (which filters to status="pending") never sees this session and won't
+    // try to open a LinkedIn tab. The scraper owns this session from here.
+    await updateSessionInQueue({
+      sessionId: session.sessionId,
+      status:    "processing",
+      message:   "Server scraper queued — captures automatically in ~5–8 minutes",
+    });
 
     void scrapeViaServiceAsync({
       linkedinUrl: session.linkedinUrl,
@@ -82,10 +90,9 @@ export async function POST(req: Request) {
       callbackUrl,
     }).catch((err) => {
       console.error("[fetch-session] scraper fire-and-forget failed:", err.message);
-      // Non-fatal — extension can still capture manually if scraper is down
     });
 
-    // Advance message so the UI shows scraper is working, not waiting for extension
+    session.status  = "processing";
     session.message = "Server scraper queued — captures automatically in ~5–8 minutes";
   }
 

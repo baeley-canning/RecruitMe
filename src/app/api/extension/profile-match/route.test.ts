@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMocks = vi.hoisted(() => ({
   prisma: {
-    candidate: { findMany: vi.fn() },
-    job:       { findMany: vi.fn() },
+    candidate:    { findMany: vi.fn() },
+    job:          { findMany: vi.fn() },
+    contactEvent: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

@@ -1294,6 +1294,15 @@ function renderOnActiveJobs(container, data, serverBase) {
     .join(", ");
   const moreCount = (data.onActiveJobs || []).length - jobs.length;
   const moreLabel = moreCount > 0 ? ` <span style="color:#64748b">(+${moreCount} more)</span>` : "";
+
+  // Contact history inline — shows who last contacted so agents don't double-up
+  const contacts = (data.recentContacts || []).slice(0, 2);
+  const contactHtml = contacts.length > 0
+    ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #f1f5f9;font-size:11px;color:#64748b">
+        ${contacts.map((c) => `<div style="margin-bottom:2px">📞 <strong>${escapeHtml(c.userName)}</strong> ${escapeHtml(c.type)}d · ${escapeHtml(c.relativeDate)}${c.note ? ` — ${escapeHtml(c.note)}` : ""}</div>`).join("")}
+      </div>`
+    : "";
+
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
       <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981"></span>
@@ -1301,6 +1310,7 @@ function renderOnActiveJobs(container, data, serverBase) {
       <button id="recruitme-overlay-close" aria-label="Close" style="margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:14px;padding:0;line-height:1">×</button>
     </div>
     <div>On ${jobs.length} active job${jobs.length !== 1 ? "s" : ""}: ${titles}${moreLabel}</div>
+    ${contactHtml}
   `;
   const closeBtn = container.querySelector("#recruitme-overlay-close");
   if (closeBtn) closeBtn.addEventListener("click", removeOverlay);
