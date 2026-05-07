@@ -115,6 +115,24 @@ interface Candidate {
   captureMetadata?: string | null;
 }
 
+// ── Pipeline action configuration ────────────────────────────────────────────
+// Maps each pipeline status to: forward action, optional back action, and
+// special document actions. Replacing 140 lines of JSX if-else chains.
+type StatusAction = { label: string; to: string; icon?: string; className: string };
+const PIPELINE_FORWARD: Record<string, StatusAction> = {
+  new:          { label: "Shortlist",       to: "shortlisted",  icon: "star",  className: "text-amber-600 hover:bg-amber-50 hover:text-amber-700" },
+  reviewing:    { label: "Shortlist",       to: "shortlisted",  icon: "star",  className: "text-amber-600 hover:bg-amber-50 hover:text-amber-700" },
+  shortlisted:  { label: "Mark Contacted",  to: "contacted",    icon: "send",  className: "text-violet-600 hover:bg-violet-50" },
+  contacted:    { label: "Interviewing",    to: "interviewing",                className: "text-indigo-600 hover:bg-indigo-50" },
+  interviewing: { label: "Send Offer",      to: "offer_sent",                  className: "text-emerald-600 hover:bg-emerald-50" },
+};
+const PIPELINE_BACK: Record<string, StatusAction> = {
+  shortlisted:  { label: "↩ Reviewing",    to: "reviewing",   className: "text-slate-400 hover:text-slate-600" },
+  contacted:    { label: "↩ Shortlist",    to: "shortlisted", className: "text-slate-400 hover:text-slate-600" },
+  interviewing: { label: "↩ Contacted",    to: "contacted",   className: "text-slate-400 hover:text-slate-600" },
+};
+const TERMINAL_STATUSES = new Set(["hired", "declined", "rejected"]);
+
 interface CandidateCardProps {
   candidate: Candidate;
   jobId: string;
@@ -1400,142 +1418,44 @@ export const CandidateCard = memo(function CandidateCard({
 
       {/* Action bar */}
       <div className="flex items-center gap-1 px-4 py-2.5 border-t border-slate-100 bg-slate-50 rounded-b-xl">
-        {/* Status actions — context-sensitive based on current pipeline stage */}
+        {/* Status actions — driven by PIPELINE_FORWARD / PIPELINE_BACK config */}
         <div className="flex items-center gap-1 flex-1 flex-wrap">
-          {/* Forward actions */}
-          {(candidate.status === "new" || candidate.status === "reviewing") && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "shortlisted")}
-              className="text-amber-600 hover:bg-amber-50 hover:text-amber-700"
-            >
-              <Star className="w-3.5 h-3.5" />
-              Shortlist
-            </Button>
-          )}
-          {candidate.status === "shortlisted" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "contacted")}
-              className="text-violet-600 hover:bg-violet-50"
-            >
-              <Send className="w-3.5 h-3.5" />
-              Mark Contacted
-            </Button>
-          )}
-          {candidate.status === "contacted" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "interviewing")}
-              className="text-indigo-600 hover:bg-indigo-50"
-            >
-              Interviewing
-            </Button>
-          )}
-          {candidate.status === "interviewing" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "offer_sent")}
-              className="text-emerald-600 hover:bg-emerald-50"
-            >
-              Send Offer
-            </Button>
-          )}
-          {candidate.status === "offer_sent" && (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onStatusChange(candidate.id, "hired")}
-                className="text-green-700 hover:bg-green-50"
-              >
-                Hired
+          {/* Forward step */}
+          {PIPELINE_FORWARD[candidate.status] && (() => {
+            const a = PIPELINE_FORWARD[candidate.status];
+            return (
+              <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, a.to)} className={a.className}>
+                {a.icon === "star" && <Star className="w-3.5 h-3.5" />}
+                {a.icon === "send" && <Send className="w-3.5 h-3.5" />}
+                {a.label}
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onStatusChange(candidate.id, "declined")}
-                className="text-orange-600 hover:bg-orange-50"
-              >
-                Declined
-              </Button>
-            </>
-          )}
-
+            );
+          })()}
+          {/* offer_sent has two forward options */}
+          {candidate.status === "offer_sent" && (<>
+            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "hired")}   className="text-green-700 hover:bg-green-50">Hired</Button>
+            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "declined")} className="text-orange-600 hover:bg-orange-50">Declined</Button>
+          </>)}
           {/* Back step */}
-          {candidate.status === "shortlisted" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "reviewing")}
-              className="text-slate-400 hover:text-slate-600"
-            >
-              ↩ Reviewing
+          {PIPELINE_BACK[candidate.status] && (() => {
+            const a = PIPELINE_BACK[candidate.status];
+            return <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, a.to)} className={a.className}>{a.label}</Button>;
+          })()}
+          {/* Reject — available on all non-terminal stages */}
+          {!TERMINAL_STATUSES.has(candidate.status) && (
+            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "rejected")} className="text-slate-400 hover:text-red-600 hover:bg-red-50">
+              <X className="w-3.5 h-3.5" />Reject
             </Button>
           )}
-          {candidate.status === "contacted" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "shortlisted")}
-              className="text-slate-400 hover:text-slate-600"
-            >
-              ↩ Shortlist
+          {/* Document actions */}
+          {["rejected","declined"].includes(candidate.status) && (
+            <Button size="sm" variant="ghost" onClick={() => setRejectionOpen(true)} className="text-slate-500 hover:text-red-700 hover:bg-red-50" title="Draft rejection email">
+              <Mail className="w-3.5 h-3.5" />Draft email
             </Button>
           )}
-          {candidate.status === "interviewing" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "contacted")}
-              className="text-slate-400 hover:text-slate-600"
-            >
-              ↩ Contacted
-            </Button>
-          )}
-
-          {/* Reject — available on all active stages */}
-          {!["hired", "declined", "rejected"].includes(candidate.status) && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onStatusChange(candidate.id, "rejected")}
-              className="text-slate-400 hover:text-red-600 hover:bg-red-50"
-            >
-              <X className="w-3.5 h-3.5" />
-              Reject
-            </Button>
-          )}
-
-          {/* Rejection email — when rejected/declined */}
-          {["rejected", "declined"].includes(candidate.status) && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setRejectionOpen(true)}
-              className="text-slate-500 hover:text-red-700 hover:bg-red-50"
-              title="Draft rejection email"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              Draft email
-            </Button>
-          )}
-
-          {/* Offer letter — when offer sent or hired */}
-          {["offer_sent", "hired"].includes(candidate.status) && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setOfferOpen(true)}
-              className="text-emerald-600 hover:bg-emerald-50"
-              title="Generate offer letter"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              Offer letter
+          {["offer_sent","hired"].includes(candidate.status) && (
+            <Button size="sm" variant="ghost" onClick={() => setOfferOpen(true)} className="text-emerald-600 hover:bg-emerald-50" title="Generate offer letter">
+              <Mail className="w-3.5 h-3.5" />Offer letter
             </Button>
           )}
         </div>

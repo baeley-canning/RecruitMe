@@ -178,8 +178,17 @@ export default function JobDetailPage({
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState("");
   const [parseChanges, setParseChanges] = useState<string[]>([]);
-  const [showAddCandidate, setShowAddCandidate] = useState(false);
-  const [showBrowseLibrary, setShowBrowseLibrary] = useState(false);
+  // Modal open/close state consolidated into one object so toggling two at
+  // once (e.g. close A, open B) is a single setState instead of two async
+  // batches that can fire in wrong order.
+  const [modals, setModals] = useState({
+    addCandidate: false,
+    browseLibrary: false,
+    bulkUpload:    false,
+    report:        false,
+  });
+  const openModal  = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: true  })), []);
+  const closeModal = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: false })), []);
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [fetchStatuses, setFetchStatuses] = useState<Record<string, {
     state: "waiting" | "fetching" | "done" | "error";
@@ -193,15 +202,12 @@ export default function JobDetailPage({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
-  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [salaryMin, setSalaryMin] = useState<string>("");
   const [salaryMax, setSalaryMax] = useState<string>("");
   const [editingSalary, setEditingSalary] = useState(false);
   const [savingSalary, setSavingSalary] = useState(false);
   const [salaryError, setSalaryError] = useState("");
   const [togglingStatus, setTogglingStatus] = useState(false);
-  const [showReport, setShowReport] = useState(false);
-  const [showJobAd, setShowJobAd] = useState(false);
   const [editingJd, setEditingJd] = useState(false);
   const [jdDraft, setJdDraft] = useState("");
   const [savingJd, setSavingJd] = useState(false);
@@ -1043,7 +1049,7 @@ ${toHtml(job.rawJd)}
           </button>
           {shortlistCount > 0 && (
             <>
-              <ClientReportButton shortlistCount={shortlistCount} onClick={() => setShowReport(true)} />
+              <ClientReportButton shortlistCount={shortlistCount} onClick={() => openModal("report")} />
               <Link
                 href={`/jobs/${id}/shortlist`}
                 className="inline-flex items-center gap-2 px-3 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
@@ -1064,15 +1070,15 @@ ${toHtml(job.rawJd)}
               {togglingStatus ? "Closing…" : "Close job"}
             </button>
           )}
-          <Button variant="outline" onClick={() => setShowBulkUpload(true)}>
+          <Button variant="outline" onClick={() => openModal("bulkUpload")}>
             <Upload className="w-4 h-4" />
             Upload CVs
           </Button>
-          <Button variant="outline" onClick={() => setShowBrowseLibrary(true)}>
+          <Button variant="outline" onClick={() => openModal("browseLibrary")}>
             <Users className="w-4 h-4" />
             From Library
           </Button>
-          <Button onClick={() => setShowAddCandidate(true)}>
+          <Button onClick={() => openModal("addCandidate")}>
             <UserPlus className="w-4 h-4" />
             Add Candidate
           </Button>
@@ -1602,7 +1608,7 @@ ${toHtml(job.rawJd)}
                     Export CSV
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={() => setShowAddCandidate(true)}>
+                <Button size="sm" variant="outline" onClick={() => openModal("addCandidate")}>
                   <UserPlus className="w-3.5 h-3.5" />
                   Add manually
                 </Button>
@@ -1766,35 +1772,31 @@ ${toHtml(job.rawJd)}
         onDismiss={() => setFetchStatuses({})}
       />
 
-      {showReport && (
+      {modals.report && (
         <ClientReportModal
           jobId={id}
           jobTitle={job.title}
           jobParsedRole={job.parsedRole}
           candidates={job.candidates}
-          onClose={() => setShowReport(false)}
+          onClose={() => closeModal("report")}
         />
       )}
 
-      {showJobAd && (
-        <JobAdModal jobId={id} onClose={() => setShowJobAd(false)} />
+      {modals.bulkUpload && (
+        <BulkUploadModal jobId={id} onClose={() => closeModal("bulkUpload")} onComplete={fetchJob} />
       )}
 
-      {showBulkUpload && (
-        <BulkUploadModal jobId={id} onClose={() => setShowBulkUpload(false)} onComplete={fetchJob} />
+      {modals.browseLibrary && (
+        <BrowseLibraryModal jobId={id} onClose={() => closeModal("browseLibrary")} onComplete={fetchJob} />
       )}
 
-      {showBrowseLibrary && (
-        <BrowseLibraryModal jobId={id} onClose={() => setShowBrowseLibrary(false)} onComplete={fetchJob} />
-      )}
-
-      {showAddCandidate && (
+      {modals.addCandidate && (
         <AddCandidateModal
           jobId={id}
           parsedRole={parsedRole}
-          onClose={() => setShowAddCandidate(false)}
+          onClose={() => closeModal("addCandidate")}
           onComplete={(createdId) => {
-            setShowAddCandidate(false);
+            closeModal("addCandidate");
             fetchJob().then(() => {
               if (createdId) handleFetchProfile(createdId);
             });
