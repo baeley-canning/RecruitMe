@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Loader2, CheckCircle2, AlertCircle, Clock, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,7 @@ export interface FetchStatus {
   state: FetchState;
   message: string;
   queuePosition?: number;
+  startedAt?: number; // epoch ms — set when fetch begins
 }
 
 interface FetchQueuePanelProps {
@@ -20,8 +21,29 @@ interface FetchQueuePanelProps {
 
 const STATE_ORDER: FetchState[] = ["fetching", "waiting", "queued", "error", "done"];
 
+function useElapsed(startedAt?: number) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  if (!startedAt) return null;
+  const mins = Math.floor((now - startedAt) / 60_000);
+  const secs = Math.floor(((now - startedAt) % 60_000) / 1_000);
+  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+}
+
 export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQueuePanelProps) {
   const [expanded, setExpanded] = useState(true);
+  const [scraperOk, setScraperOk] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/scraper/status")
+      .then((r) => r.json())
+      .then((d: { ok?: boolean }) => setScraperOk(d.ok ?? false))
+      .catch(() => setScraperOk(false));
+  }, []);
 
   const entries = Object.entries(statuses);
   if (entries.length === 0) return null;
@@ -49,6 +71,13 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQu
 
   return (
     <div className="fixed bottom-6 right-6 z-[1100] w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
+      {/* Scraper health — shows if something is wrong */}
+      {scraperOk === false && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-100">
+          <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+          <p className="text-[11px] text-red-600">Scraper service unreachable — check Railway logs</p>
+        </div>
+      )}
       {/* Header */}
       <div className={cn(
         "flex items-center gap-2 px-4 py-3 border-b border-slate-100",
@@ -93,32 +122,44 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQu
       {expanded && (
         <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
           {sorted.map(([candidateId, status]) => (
-            <div key={candidateId} className="flex items-center gap-3 px-4 py-2.5">
-              <div className="flex-shrink-0">
-                {(status.state === "fetching") && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
-                {(status.state === "waiting")  && <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />}
-                {(status.state === "queued")   && <Clock   className="w-4 h-4 text-slate-300" />}
-                {(status.state === "done")     && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-                {(status.state === "error")    && <AlertCircle  className="w-4 h-4 text-red-400" />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-slate-800 truncate">
-                  {candidateNames[candidateId] ?? "Unknown"}
-                </p>
-                <p className={cn(
-                  "text-[11px] truncate",
-                  status.state === "error" ? "text-red-500" :
-                  status.state === "done"  ? "text-emerald-600" :
-                  status.state === "queued"? "text-slate-400" : "text-slate-500"
-                )}>
-                  {status.state === "queued" && status.queuePosition
-                    ? `#${status.queuePosition} in queue`
-                    : status.message}
-                </p>
-              </div>
-            </div>
+            <FetchRow key={candidateId} candidateId={candidateId} status={status} name={candidateNames[candidateId] ?? "Unknown"} />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+function FetchRow({ candidateId, status, name }: { candidateId: string; status: FetchStatus; name: string }) {
+  const elapsed = useElapsed(
+    (status.state === "waiting" || status.state === "fetching") ? status.startedAt : undefined
+  );
+  const isActive = status.state === "fetching" || status.state === "waiting";
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="flex-shrink-0">
+        {status.state === "fetching" && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
+        {status.state === "waiting"  && <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />}
+        {status.state === "queued"   && <Clock   className="w-4 h-4 text-slate-300" />}
+        {status.state === "done"     && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+        {status.state === "error"    && <AlertCircle  className="w-4 h-4 text-red-400" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium text-slate-800 truncate">{name}</p>
+        <p className={cn(
+          "text-[11px] truncate",
+          status.state === "error"  ? "text-red-500" :
+          status.state === "done"   ? "text-emerald-600" :
+          status.state === "queued" ? "text-slate-400" : "text-slate-500"
+        )}>
+          {status.state === "queued" && status.queuePosition
+            ? `#${status.queuePosition} in queue`
+            : status.message}
+        </p>
+      </div>
+      {isActive && elapsed && (
+        <span className="text-[10px] text-slate-400 flex-shrink-0 tabular-nums">{elapsed}</span>
       )}
     </div>
   );

@@ -668,6 +668,7 @@ export default function JobDetailPage({
           [candidateId]: {
             state: "waiting",
             message: "Scraper is fetching the profile...",
+            startedAt: Date.now(),
           },
         }));
 
