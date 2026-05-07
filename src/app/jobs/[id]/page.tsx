@@ -41,8 +41,7 @@ import { BrowseLibraryModal } from "@/components/job/browse-library-modal";
 import { PipelineCard } from "@/components/job/pipeline-card";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
-import { ClientReportModal, ClientReportButton } from "@/components/job/client-report-modal";
-import { JobAdModal } from "@/components/job/job-ad-modal";
+import { ClientReportModal } from "@/components/job/client-report-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
 import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
@@ -90,16 +89,6 @@ interface Job {
   lastScoredAt: string | null;
   lastParsedAt: string | null;
   candidates: Candidate[];
-}
-
-interface ElectronBridge {
-  platform?: string;
-  openExternal?: (url: string) => Promise<{ ok: boolean; browser?: string | null } | boolean>;
-}
-
-function getElectronBridge(): ElectronBridge | null {
-  if (typeof window === "undefined") return null;
-  return (window as Window & { electron?: ElectronBridge }).electron ?? null;
 }
 
 type ParsedRoleSource = ParsedRole["title_source"];
@@ -237,16 +226,12 @@ export default function JobDetailPage({
   interface FetchEntry {
     sessionId: string;
     candidateId: string;
-    tab: Window | null;
     startedAt: number;
     processingStartedAt: number | null;
     lastKnownStatus: "pending" | "processing";
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
     consecutiveNetworkErrors: number;
-    // True when the server-side scraper is handling this session — scraper
-    // takes 5–9 minutes so both the pending and processing timeouts need
-    // to be extended to avoid premature "timed out" errors.
     scraperActive: boolean;
   }
   const jobRef = useRef<Job | null>(null);
@@ -298,7 +283,6 @@ export default function JobDetailPage({
         const entry = {
           sessionId: s.sessionId,
           candidateId: s.candidateId,
-          tab: null,
           startedAt: resumedAt,
           processingStartedAt: s.status === "processing" ? resumedAt : null,
           lastKnownStatus: s.status as "pending" | "processing",
@@ -717,7 +701,6 @@ export default function JobDetailPage({
         const entry: FetchEntry = {
           sessionId: session.sessionId,
           candidateId,
-          tab: null,
           startedAt: Date.now(),
           processingStartedAt: null,
           lastKnownStatus: "pending",
@@ -1086,12 +1069,8 @@ ${toHtml(job.rawJd)}
   }
 
   if (!job) {
-    return <div className="p-8 text-center text-slate-500">Job not found.</div>;
+    return <div className="px-4 py-6 text-center text-slate-500">Job not found.</div>;
   }
-
-
-      // Tiebreaker: acceptance score descending — "likely open" ranks above "may consider"
-
 
   return (
     <div className="px-4 py-6 sm:px-6 md:p-8 max-w-5xl mx-auto">

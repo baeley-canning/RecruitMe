@@ -116,14 +116,3 @@ export function ClientReportModal({ jobId, jobTitle, jobParsedRole, candidates, 
   );
 }
 
-// Trigger button that lives in the header — exported separately so the page can use it.
-export function ClientReportButton({ shortlistCount, onClick }: { shortlistCount: number; onClick: () => void }) {
-  if (shortlistCount === 0) return null;
-  return (
-    <button onClick={onClick}
-      className="inline-flex items-center gap-2 px-3 py-2 border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-lg text-sm font-medium transition-colors">
-      <FileText className="w-4 h-4" />
-      Client Report
-    </button>
-  );
-}

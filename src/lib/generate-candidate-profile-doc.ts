@@ -35,7 +35,7 @@ const PAGE = {
 const LEGAL_TEXT =
   "Interview of candidates referred by placeMe Recruitment Ltd. shall be deemed acceptance of our standard terms of business or agreed terms of business and agreement to pay the relevant agency fee for such candidates employed by the organisation to whom the referral was made or any other organisation or person associated with it.";
 
-export interface ProfileDocData {
+interface ProfileDocData {
   candidateName: string;
   role: string;
   dateReferred: string;
