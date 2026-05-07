@@ -32,14 +32,18 @@ describe("scoring preset delete route", () => {
     });
   });
 
-  it("owner can delete any preset (no org scope)", async () => {
-    sessionMocks.getAuth.mockResolvedValue({ userId: "owner", orgId: null, isOwner: true });
+  it("owner is still scoped to their own org (no cross-org deletion)", async () => {
+    sessionMocks.getAuth.mockResolvedValue({ userId: "owner", orgId: "owner-org", isOwner: true });
     dbMocks.prisma.scoringWeightPreset.deleteMany.mockResolvedValue({ count: 1 });
     const res = await DELETE(new Request("http://localhost/"), {
       params: Promise.resolve({ presetId: "p1" }),
     });
     expect(res.status).toBe(200);
-    expect(dbMocks.prisma.scoringWeightPreset.deleteMany.mock.calls[0][0].where).toEqual({ id: "p1" });
+    // orgId must always be in the WHERE — owners cannot delete another org's preset by ID alone
+    expect(dbMocks.prisma.scoringWeightPreset.deleteMany.mock.calls[0][0].where).toEqual({
+      id: "p1",
+      orgId: "owner-org",
+    });
   });
 
   it("returns 404 when not found / not in caller's org", async () => {
