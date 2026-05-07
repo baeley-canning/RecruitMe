@@ -637,21 +637,11 @@ export default function JobDetailPage({
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
 
-    const electron = getElectronBridge();
-    const useExternalBrowser = typeof electron?.openExternal === "function";
-    const tab = useExternalBrowser ? null : window.open("about:blank", `_rm-fetch-${candidateId}`);
-    if (!useExternalBrowser && !tab) {
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: { state: "error", message: "Popup blocked - allow popups for this site and try again" },
-      }));
-      clearCandidateStatus(candidateId, 6000, "error");
-      return;
-    }
-
+    // The scraper service (Railway) handles profile capture server-side —
+    // no browser tab needs to open. We just create a fetch session and poll.
     setFetchStatuses((prev) => ({
       ...prev,
-      [candidateId]: { state: "waiting", message: "Queueing LinkedIn capture..." },
+      [candidateId]: { state: "waiting", message: "Queuing for scraper..." },
     }));
 
     void (async () => {
@@ -665,7 +655,6 @@ export default function JobDetailPage({
         const session = (await start.json()) as { sessionId?: string; error?: string; message?: string; status?: string };
 
         if (!start.ok || !session.sessionId) {
-          try { tab?.close(); } catch { /* ignore */ }
           setFetchStatuses((prev) => ({
             ...prev,
             [candidateId]: { state: "error", message: session.error ?? "Could not start capture" },
@@ -674,50 +663,25 @@ export default function JobDetailPage({
           return;
         }
 
-        if (useExternalBrowser) {
-          const launchResult = await electron?.openExternal?.(candidate.linkedinUrl!);
-          const opened = typeof launchResult === "boolean" ? launchResult : Boolean(launchResult?.ok);
-          if (!opened) {
-            await fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(session.sessionId)}`, {
-              method: "DELETE",
-              credentials: "include",
-            }).catch(() => {});
-            setFetchStatuses((prev) => ({
-              ...prev,
-              [candidateId]: {
-                state: "error",
-                message: "No supported browser found — install Chrome, Opera, Edge, or Brave and load the RecruitMe extension (see LinkedIn Setup)",
-              },
-            }));
-            clearCandidateStatus(candidateId, 6000, "error");
-            return;
-          }
-        } else if (tab && !tab.closed) {
-          tab.location.href = candidate.linkedinUrl!;
-        }
-
         setFetchStatuses((prev) => ({
           ...prev,
           [candidateId]: {
             state: "waiting",
-            message: useExternalBrowser
-              ? "Queued - waiting for the extension to open and capture the LinkedIn profile..."
-              : "LinkedIn tab requested - waiting for the extension to confirm capture...",
+            message: "Scraper is fetching the profile...",
           },
         }));
 
         const entry: FetchEntry = {
           sessionId: session.sessionId,
           candidateId,
-          tab,
+          tab: null,
           startedAt: Date.now(),
           processingStartedAt: null,
           lastKnownStatus: "pending",
           done: false,
           pollInterval: null,
           consecutiveNetworkErrors: 0,
-          // Detected from session message on first successful poll.
-          scraperActive: session.message?.toLowerCase().includes("scraper") ?? false,
+          scraperActive: true, // scraper service always handles captures now
         };
         activeFetchesRef.current.set(candidateId, entry);
         entry.pollInterval = setInterval(() => {

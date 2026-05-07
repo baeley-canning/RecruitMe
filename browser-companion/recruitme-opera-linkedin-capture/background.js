@@ -792,6 +792,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "log-contact") {
+    const { candidateId, contactType, note } = message;
+    if (!candidateId || !contactType) {
+      sendResponse({ ok: false, error: "candidateId and contactType required" });
+      return false;
+    }
+    void requestRecruitMe(
+      `/api/candidates/${encodeURIComponent(candidateId)}/contacts`,
+      {
+        method: "POST",
+        timeoutMs: 10000,
+        body: JSON.stringify({ type: contactType, note: note || undefined }),
+      },
+      "",
+      { rememberFailure: false }
+    )
+      .then(({ data }) => sendResponse({ ok: true, data }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === "manual-capture-pending") {
     void (async () => {
       const tab = await getActiveLinkedInTab();

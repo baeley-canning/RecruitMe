@@ -1382,6 +1382,8 @@ function renderOnActiveJobs(container, data, serverBase) {
   const base = getOverlayServerBase(serverBase);
   const jobs = (data.onActiveJobs || []).slice(0, 4);
   const moreCount = (data.onActiveJobs || []).length - jobs.length;
+  // Use first candidateId for contact logging (all jobs have same candidate)
+  const firstCandidateId = jobs[0]?.candidateId || "";
 
   const jobPills = jobs.map((j) =>
     `<a href="${base}/jobs/${encodeURIComponent(j.jobId)}" target="_blank" rel="noopener" style="
@@ -1400,6 +1402,22 @@ function renderOnActiveJobs(container, data, serverBase) {
     </div>`
   ).join("");
 
+  const logButtons = firstCandidateId ? `
+    <div style="display:flex;gap:6px;margin-top:10px;border-top:1px solid #f1f5f9;padding-top:10px">
+      <button class="recruitme-log-contact" data-type="message" data-candidate-id="${escapeHtml(firstCandidateId)}" style="
+        flex:1;display:flex;align-items:center;justify-content:center;gap:4px;
+        background:#f0fdf4;border:1px solid #86efac;color:#15803d;
+        border-radius:8px;padding:5px 8px;font-size:11px;font-weight:500;cursor:pointer;
+      ">💬 Messaged</button>
+      <button class="recruitme-log-contact" data-type="call" data-candidate-id="${escapeHtml(firstCandidateId)}" style="
+        flex:1;display:flex;align-items:center;justify-content:center;gap:4px;
+        background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;
+        border-radius:8px;padding:5px 8px;font-size:11px;font-weight:500;cursor:pointer;
+      ">📞 Called</button>
+    </div>
+    <div id="recruitme-contact-status" style="font-size:11px;color:#64748b;text-align:center;display:none;padding-top:4px"></div>
+  ` : "";
+
   container.innerHTML = `
     ${buildHeader("Already in RecruitMe", "#10b981")}
     <div style="padding:10px 14px 12px">
@@ -1412,8 +1430,30 @@ function renderOnActiveJobs(container, data, serverBase) {
           <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:4px">Contact history</div>
           ${contactRows}
         </div>` : ""}
+      ${logButtons}
     </div>
   `;
+
+  container.querySelectorAll(".recruitme-log-contact").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const candidateId = btn.getAttribute("data-candidate-id");
+      const contactType = btn.getAttribute("data-type");
+      const statusEl = container.querySelector("#recruitme-contact-status");
+      container.querySelectorAll(".recruitme-log-contact").forEach((b) => { b.disabled = true; b.style.opacity = "0.6"; });
+      if (statusEl) { statusEl.style.display = "block"; statusEl.textContent = "Logging…"; }
+      try {
+        const res = await sendToServiceWorker({ type: "log-contact", candidateId, contactType }, 8000);
+        if (!res?.ok) throw new Error(res?.error || "Failed");
+        if (statusEl) { statusEl.style.color = "#059669"; statusEl.textContent = `✓ ${contactType === "call" ? "Call" : "Message"} logged`; }
+        // Refresh overlay after 1.5s to show updated contact history
+        setTimeout(() => { removeOverlay(); lastMatchQueriedUrl = ""; renderProfileMatchOverlay(location.href.replace(/[?#].*$/, "")); }, 1500);
+      } catch (e) {
+        if (statusEl) { statusEl.style.color = "#dc2626"; statusEl.textContent = e.message || "Error logging contact"; }
+        container.querySelectorAll(".recruitme-log-contact").forEach((b) => { b.disabled = false; b.style.opacity = "1"; });
+      }
+    });
+  });
+
   container.querySelector("#recruitme-overlay-close")?.addEventListener("click", removeOverlay);
   makeDraggable(container, container.querySelector("#recruitme-drag-handle"));
 }

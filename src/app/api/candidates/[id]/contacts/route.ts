@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getAuth, unauthorized } from "@/lib/session";
+import { getAuth, verifyAnyAuth, unauthorized } from "@/lib/session";
 
 async function requireAccess(candidateId: string, orgId: string | null, isOwner: boolean) {
   const c = await prisma.candidate.findUnique({ where: { id: candidateId }, select: { orgId: true } });
@@ -37,7 +37,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await getAuth();
+  // Accept both NextAuth session (web UI) and Basic auth (browser extension)
+  const auth = await verifyAnyAuth(req) ?? await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
   if (!await requireAccess(id, auth.orgId, auth.isOwner)) {
