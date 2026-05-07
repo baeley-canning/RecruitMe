@@ -846,16 +846,26 @@ async function checkForExtensionUpdate() {
   } catch { /* non-fatal */ }
 }
 
+// Run ensurePendingSessionTabs only when auto-capture is enabled.
+// Calling it unconditionally would trigger captures on startup even when
+// manual-only mode is on, marking sessions "processing" before the user
+// has a chance to click Capture in the popup.
+async function maybeEnsurePendingSessionTabs() {
+  const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
+  if (manualOnlyMode) return;
+  void ensurePendingSessionTabs().catch(() => {});
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   void ensurePendingCaptureAlarm();
   void clearExtensionError().catch(() => {});
-  void ensurePendingSessionTabs().catch(() => {});
+  void maybeEnsurePendingSessionTabs();
   void checkForExtensionUpdate().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensurePendingCaptureAlarm();
-  void ensurePendingSessionTabs().catch(() => {});
+  void maybeEnsurePendingSessionTabs();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -878,4 +888,4 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 void ensurePendingCaptureAlarm();
-void ensurePendingSessionTabs().catch(() => {});
+void maybeEnsurePendingSessionTabs();
