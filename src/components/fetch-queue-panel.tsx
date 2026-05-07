@@ -79,7 +79,12 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQu
         >
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
         </button>
-        <button onClick={onDismiss} className="text-slate-400 hover:text-slate-600 flex-shrink-0" aria-label="Dismiss">
+        <button
+          onClick={onDismiss}
+          className="text-slate-400 hover:text-slate-600 flex-shrink-0"
+          aria-label="Dismiss completed"
+          title="Dismiss — in-progress fetches keep running"
+        >
           <X className="w-3.5 h-3.5" />
         </button>
       </div>

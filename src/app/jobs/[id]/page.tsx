@@ -1879,7 +1879,14 @@ ${toHtml(job.rawJd)}
       <FetchQueuePanel
         statuses={fetchStatuses}
         candidateNames={Object.fromEntries((job?.candidates ?? []).map((c) => [c.id, c.name]))}
-        onDismiss={() => setFetchStatuses({})}
+        onDismiss={() => setFetchStatuses((prev) => {
+          // Only clear finished rows — preserve anything still in-flight or queued
+          const next: typeof prev = {};
+          for (const [k, v] of Object.entries(prev)) {
+            if (v.state === "waiting" || v.state === "fetching" || v.state === "queued") next[k] = v;
+          }
+          return next;
+        })}
       />
 
       {modals.report && (
