@@ -69,6 +69,7 @@ function claudeResponse(overrides: {
 
 const baseParsedRole = {
   title: "Senior Frontend Engineer",
+  title_source: "explicit" as const,
   location: "Wellington",
   location_source: "explicit" as const,
   company: "TestCo",

@@ -352,13 +352,20 @@ ${SCORING_EQUIVALENCY_RULES}`,
   }
 
   // Consistency guard: cap scores when Claude identifies a genuine blocker but
-  // doesn't enforce it numerically. Only fires on unambiguous fatal phrases —
-  // NOT on "no evidence of X" (too broad; fires on nice-to-haves) or "lack of"
-  // (fires on almost anything). The cap target of 45 is still permissive enough
-  // that a mostly-good candidate who fails one thing can still show as moderate.
+  // doesn't enforce it numerically. The cap target of 45 is still permissive
+  // enough that a mostly-good candidate who fails one thing can still show as
+  // moderate. Two pattern groups:
+  //   A — unambiguous fatal verdicts (always fire)
+  //   B — evidence-of-absence phrases tied to experience/background nouns
+  //       (fire when Claude says "no evidence of X experience" — specific enough
+  //       to avoid false positives on incidental nice-to-have gaps)
   const reasonsAgainst = stringArray(raw.reasons_against);
   const hasExplicitBlocker = reasonsAgainst.some((r) =>
-    /\b(entirely absent|completely absent|fundamental mismatch|wrong domain entirely|not a match|critical requirement.*missing|missing.*critical|clearly unsuitable|unsuitable for|completely wrong|domain mismatch|level mismatch|(?:dis|un)qualif\w*|ruled out)\b/i.test(r)
+    /\b(entirely absent|completely absent|fundamental mismatch|wrong domain entirely|not a match|critical requirement.*missing|missing.*critical|clearly unsuitable|unsuitable for|completely wrong|domain mismatch|level mismatch|(?:dis|un)qualif\w*|ruled out)\b/i.test(r) ||
+    /\bno evidence (?:of|for) .{0,50}(?:experience|background|expertise|skills?|usage|history|exposure)\b/i.test(r) ||
+    /\blacks? (?:the |any |a )?(?:required|critical|core|key|necessary|essential) /i.test(r) ||
+    /\bno .{0,20}background in\b/i.test(r) ||
+    /\b(?:clearly|completely|entirely) (?:lacks?|missing|absent)\b/i.test(r)
   );
   if (claudeOverallScore !== null && claudeOverallScore > 45 && hasExplicitBlocker) {
     console.warn(`[scoring] Claude gave ${claudeOverallScore} but reasons_against contains blocker — capping to 45`);

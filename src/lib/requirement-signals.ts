@@ -240,6 +240,9 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   // Compliance / clearance
   [/\bitil\b|\bitsm\b/i,                                ["ITIL"]],
   [/security clearance|secret vetting|confidential vetting/i, ["security clearance"]],
+  // Agile roles — only as DISTINCTIVE when Agile/Scrum is the primary skill, not a nice-to-have.
+  // Narrow patterns to avoid gating all candidates on "works in an Agile environment".
+  [/\bscrum master\b|\bagile coach\b|\bsafe practitioner\b|\bsafe (agilist|coach|scrum master)\b/i, ["Scrum Master"]],
   // Design
   [/\bfigma\b/i,                                        ["Figma"]],
   [/\bux\b|user experience/i,                           ["UX"]],

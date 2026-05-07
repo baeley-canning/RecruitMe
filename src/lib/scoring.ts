@@ -374,14 +374,21 @@ export function buildScoreBreakdown(params: {
     }
   }
 
-  // Critical gate for full profiles: if a 1.5× must-have is *confirmed* missing or negative,
-  // no amount of location/seniority/domain alignment should produce a match-level score.
-  // We use 50 (not 45) because full-profile absence is a cleaner signal than snippet-unknown.
+  // Critical gate for full profiles: if a 1.5× must-have is confirmed missing,
+  // negative, OR unknown on a detailed profile (>2500 chars), cap the score.
+  // "unknown" is included because on a detailed profile absence is informative —
+  // the prompt instructs Claude to use "missing" not "unknown" when a named
+  // tech domain is simply absent from a long profile, but Claude occasionally
+  // returns "unknown" anyway (e.g. "no evidence of Sybase"). Both are treated
+  // identically here: a recruiter should not see 65%+ when the most critical
+  // requirement cannot be confirmed from a full profile.
   if (dataQuality === "full_profile") {
+    const charCountIsDetailed = params.profileCharCount >= 2500;
     const criticalMissing = params.must_have_coverage.filter(
       (c) =>
         getMustHaveImportance(c.requirement) >= 1.5 &&
-        (c.status === "missing" || c.status === "negative")
+        (c.status === "missing" || c.status === "negative" ||
+         (c.status === "unknown" && charCountIsDetailed))
     );
     if (criticalMissing.length > 0) {
       cap = Math.min(cap, 50);
@@ -395,6 +402,14 @@ export function buildScoreBreakdown(params: {
   // score is kept as a floor reference: we still apply the data-quality cap
   // so snippet candidates can't be boosted above their information ceiling,
   // but within that cap Claude's verdict wins over the formula's arithmetic.
+  if (params.claudeOverallScore != null) {
+    const delta = Math.abs(params.claudeOverallScore - formulaOverall);
+    if (delta > 15) {
+      console.warn(
+        `[scoring] formula/Claude divergence ${delta}pt — formula=${formulaOverall} Claude=${params.claudeOverallScore} cap=${cap} quality=${dataQuality}`
+      );
+    }
+  }
   const overall = params.claudeOverallScore != null
     ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
     : formulaOverall;
