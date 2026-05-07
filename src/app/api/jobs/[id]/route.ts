@@ -31,8 +31,13 @@ export async function GET(
           captureMetadata: true,
           jobAdderUrl: true, notes: true, createdAt: true, updatedAt: true,
           archivedJobTitle: true, archivedJobCompany: true,
-          // Count contact events for the indicator dot — no need to load full events here
+          // Count + most recent event for the hover tooltip on the contact dot
           _count: { select: { contactEvents: true } },
+          contactEvents: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { type: true, userName: true, createdAt: true },
+          },
           // profileText intentionally excluded — large field, fetched on demand
           // interviewNotes, screeningData also excluded — fetched per-candidate
         },

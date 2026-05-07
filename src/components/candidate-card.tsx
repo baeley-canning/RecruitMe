@@ -115,6 +115,7 @@ interface Candidate {
   statusHistory: string | null;
   source: string;
   captureMetadata?: string | null;
+  contactEvents?: Array<{ type: string; userName: string; createdAt: string }>;
 }
 
 // ── Pipeline action configuration ────────────────────────────────────────────
@@ -1219,15 +1220,25 @@ export const CandidateCard = memo(function CandidateCard({
                 <Badge className={statusBadge(candidate.status)}>
                   {statusLabel(candidate.status)}
                 </Badge>
-                {contactCount > 0 && (
-                  <span
-                    className="inline-flex items-center gap-1 text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5 font-medium"
-                    title={`${contactCount} contact${contactCount !== 1 ? "s" : ""} logged`}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-500 inline-block" />
-                    {contactCount}
-                  </span>
-                )}
+                {contactCount > 0 && (() => {
+                  const latest = candidate.contactEvents?.[0];
+                  const tooltipParts: string[] = [];
+                  if (latest) {
+                    const typeLabel = latest.type === "call" ? "Called" : latest.type === "email" ? "Emailed" : "Messaged";
+                    const date = new Date(latest.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+                    tooltipParts.push(`${typeLabel} by ${latest.userName} · ${date}`);
+                  }
+                  if (contactCount > 1) tooltipParts.push(`+${contactCount - 1} more contact${contactCount - 1 !== 1 ? "s" : ""}`);
+                  return (
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5 font-medium cursor-default"
+                      title={tooltipParts.join("\n")}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500 inline-block" />
+                      {contactCount}
+                    </span>
+                  );
+                })()}
               </div>
               {/* Acceptance likelihood badge */}
               <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
