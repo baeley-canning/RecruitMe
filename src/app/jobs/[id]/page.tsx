@@ -291,12 +291,16 @@ export default function JobDetailPage({
         if (!s.candidateId || activeFetchesRef.current.has(s.candidateId)) continue;
         if (s.status !== "pending" && s.status !== "processing") continue;
         // Resume polling for this in-progress session
+        // Use a processing start time well in the past so the 11-min timeout
+        // fires quickly if the session is already stale. Resumed sessions that
+        // are genuinely new will pass the timeout check fine.
+        const resumedAt = Date.now() - 60_000; // treat as 1 min old when resumed
         const entry = {
           sessionId: s.sessionId,
           candidateId: s.candidateId,
           tab: null,
-          startedAt: Date.now(),
-          processingStartedAt: s.status === "processing" ? Date.now() : null,
+          startedAt: resumedAt,
+          processingStartedAt: s.status === "processing" ? resumedAt : null,
           lastKnownStatus: s.status as "pending" | "processing",
           done: false,
           pollInterval: null as ReturnType<typeof setInterval> | null,
@@ -306,7 +310,7 @@ export default function JobDetailPage({
         activeFetchesRef.current.set(s.candidateId, entry);
         setFetchStatuses((prev) => ({
           ...prev,
-          [s.candidateId]: { state: "waiting", message: s.message ?? "Scraper still running — resumed tracking", startedAt: Date.now() },
+          [s.candidateId]: { state: "waiting", message: s.message ?? "Scraper still running — resumed tracking", startedAt: resumedAt },
         }));
         entry.pollInterval = setInterval(() => {
           void pollCandidateFetchRef.current(s.candidateId);

@@ -116,9 +116,10 @@ export async function scrapeProfile(job: ScrapeJob): Promise<string> {
       timeout: 30_000,
     });
 
+    console.log(`[scraper] page loaded: ${page.url().slice(0, 80)}`);
     if (!res || !res.ok()) throw new Error(`LinkedIn returned HTTP ${res?.status() ?? "?"}`);
     if (page.url().includes("/authwall") || page.url().includes("/checkpoint") || page.url().includes("/login")) {
-      throw new Error("LinkedIn requires login — session may have expired");
+      throw new Error(`LinkedIn requires login — session expired or invalid. Landed on: ${page.url()}`);
     }
 
     // Human pause — reading the header and about section
@@ -182,13 +183,21 @@ export async function postResultToApp(job: ScrapeJob, profileText: string): Prom
 
 export async function postErrorToApp(job: ScrapeJob, error: string): Promise<void> {
   const url = `${job.callbackUrl.replace(/\/$/, "")}/api/extension/fetch-session/error`;
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Basic ${btoa(`scraper:${job.apiKey}`)}`,
-    },
-    body: JSON.stringify({ sessionId: job.sessionId, error }),
-    signal: AbortSignal.timeout(15_000),
-  }).catch(() => {});
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Basic ${btoa(`scraper:${job.apiKey}`)}`,
+      },
+      body: JSON.stringify({ sessionId: job.sessionId, error }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`[scraper] error callback failed: ${res.status} ${body.slice(0, 200)}`);
+    }
+  } catch (err) {
+    console.error("[scraper] error callback threw:", err instanceof Error ? err.message : err);
+  }
 }
