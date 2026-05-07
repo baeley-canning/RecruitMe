@@ -22,6 +22,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
@@ -189,6 +190,18 @@ export default function JobDetailPage({
   });
   const openModal  = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: true  })), []);
   const closeModal = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: false })), []);
+
+  // Overflow (⋯) menu for low-frequency header actions
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const close = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) setOverflowOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [overflowOpen]);
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [fetchStatuses, setFetchStatuses] = useState<Record<string, {
     state: "waiting" | "fetching" | "done" | "error";
@@ -1039,49 +1052,79 @@ ${toHtml(job.rawJd)}
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportJdPdf}
-            title="Export job description as PDF"
-            className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export JD
-          </button>
+          {/* Shortlist link — only surfaces when there's something to see */}
           {shortlistCount > 0 && (
-            <>
-              <ClientReportButton shortlistCount={shortlistCount} onClick={() => openModal("report")} />
-              <Link
-                href={`/jobs/${id}/shortlist`}
-                className="inline-flex items-center gap-2 px-3 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
-              >
-                <Star className="w-4 h-4 text-amber-500" />
-                View Shortlist ({shortlistCount})
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
-            </>
-          )}
-          {job.status === "active" && (
-            <button
-              onClick={handleToggleStatus}
-              disabled={togglingStatus}
-              className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            <Link
+              href={`/jobs/${id}/shortlist`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
             >
-              {togglingStatus ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              {togglingStatus ? "Closing…" : "Close job"}
-            </button>
+              <Star className="w-3.5 h-3.5" />
+              Shortlist ({shortlistCount})
+            </Link>
           )}
-          <Button variant="outline" onClick={() => openModal("bulkUpload")}>
-            <Upload className="w-4 h-4" />
+
+          {/* Secondary candidate-add actions */}
+          <Button variant="outline" size="sm" onClick={() => openModal("bulkUpload")}>
+            <Upload className="w-3.5 h-3.5" />
             Upload CVs
           </Button>
-          <Button variant="outline" onClick={() => openModal("browseLibrary")}>
-            <Users className="w-4 h-4" />
+          <Button variant="outline" size="sm" onClick={() => openModal("browseLibrary")}>
+            <Users className="w-3.5 h-3.5" />
             From Library
           </Button>
+
+          {/* Primary CTA */}
           <Button onClick={() => openModal("addCandidate")}>
             <UserPlus className="w-4 h-4" />
             Add Candidate
           </Button>
+
+          {/* Overflow ⋯ — low-frequency: export, close, client report */}
+          <div className="relative" ref={overflowRef}>
+            <button
+              onClick={() => setOverflowOpen((o) => !o)}
+              className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+              title="More options"
+              aria-label="More options"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+            {overflowOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-20">
+                <button
+                  onClick={() => { handleExportJdPdf(); setOverflowOpen(false); }}
+                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-400" />
+                  Export JD as PDF
+                </button>
+                {shortlistCount > 0 && (
+                  <button
+                    onClick={() => { openModal("report"); setOverflowOpen(false); }}
+                    className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    <Star className="w-3.5 h-3.5 text-slate-400" />
+                    Client report
+                  </button>
+                )}
+                {job.status === "active" && (
+                  <>
+                    <div className="my-1 border-t border-slate-100" />
+                    <button
+                      onClick={() => { handleToggleStatus(); setOverflowOpen(false); }}
+                      disabled={togglingStatus}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {togglingStatus
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <X className="w-3.5 h-3.5" />}
+                      {togglingStatus ? "Closing…" : "Close job"}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
