@@ -351,12 +351,14 @@ ${SCORING_EQUIVALENCY_RULES}`,
     console.warn("[scoring] Claude did not return overall_score — falling back to formula");
   }
 
-  // Consistency guard: if Claude wrote blocker-level reasons_against but still
-  // gave a high score, cap it. This catches the common case where the model
-  // correctly identifies mismatches in text but doesn't enforce it numerically.
+  // Consistency guard: cap scores when Claude identifies a genuine blocker but
+  // doesn't enforce it numerically. Only fires on unambiguous fatal phrases —
+  // NOT on "no evidence of X" (too broad; fires on nice-to-haves) or "lack of"
+  // (fires on almost anything). The cap target of 45 is still permissive enough
+  // that a mostly-good candidate who fails one thing can still show as moderate.
   const reasonsAgainst = stringArray(raw.reasons_against);
   const hasExplicitBlocker = reasonsAgainst.some((r) =>
-    /\b(entirely absent|completely absent|no evidence|fundamental mismatch|wrong domain|wrong level|not a match|critical requirement.*missing|missing.*critical|clearly unsuitable|unsuitable for|does not meet|no background in|completely wrong|domain mismatch|level mismatch|(?:dis|un)qualif\w*|ruled out|lack of)\b/i.test(r)
+    /\b(entirely absent|completely absent|fundamental mismatch|wrong domain entirely|not a match|critical requirement.*missing|missing.*critical|clearly unsuitable|unsuitable for|completely wrong|domain mismatch|level mismatch|(?:dis|un)qualif\w*|ruled out)\b/i.test(r)
   );
   if (claudeOverallScore !== null && claudeOverallScore > 45 && hasExplicitBlocker) {
     console.warn(`[scoring] Claude gave ${claudeOverallScore} but reasons_against contains blocker — capping to 45`);

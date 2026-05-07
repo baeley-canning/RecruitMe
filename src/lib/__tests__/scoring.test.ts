@@ -190,9 +190,24 @@ describe("getMustHaveImportance — degree requirements", () => {
     expect(getMustHaveImportance("Right to work in New Zealand")).toBe(1.5);
   });
 
-  it("returns 1.5 for security clearance and vetting requirements", () => {
-    expect(getMustHaveImportance("Eligibility for Secret Vetting (SV) security clearance")).toBe(1.5);
+  it("returns 1.5 for held / active security clearance requirements", () => {
+    // Active or required clearances — real credentials, not residency checks
+    expect(getMustHaveImportance("Secret Vetting clearance required")).toBe(1.5);
     expect(getMustHaveImportance("Current Confidential Vetting (CV) with upgrade pathway")).toBe(1.5);
+    expect(getMustHaveImportance("Security vetting required for this role")).toBe(1.5);
+    expect(getMustHaveImportance("National security clearance — baseline level")).toBe(1.5);
+    expect(getMustHaveImportance("Security clearance required")).toBe(1.5);
+    expect(getMustHaveImportance("Must hold current security clearance")).toBe(1.5);
+  });
+
+  it("returns 1.0 for eligibility-only clearance phrases (residency check, not a held credential)", () => {
+    // "Eligible for clearance" just means NZ citizen/PR — already handled by
+    // the work-rights rule if the requirement spells it out. Should not give
+    // the same 1.5× weight as actually holding a clearance.
+    expect(getMustHaveImportance("Eligible for NZ security clearance (NZ citizen or permanent resident)")).toBe(1.5); // NZ citizen triggers work-rights rule first
+    expect(getMustHaveImportance("Security clearance eligibility or existing clearance relevant to sensitive government systems")).toBe(1.0);
+    expect(getMustHaveImportance("Ability to obtain NZ security clearance")).toBe(1.0);
+    expect(getMustHaveImportance("Must be eligible for security clearance")).toBe(1.0);
   });
 });
 

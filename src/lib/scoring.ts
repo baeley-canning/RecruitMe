@@ -149,7 +149,15 @@ export function getMustHaveImportance(requirement: string): number {
   // Critical — cannot be compensated for by location or title alone
   if (/wordpress|content management system|\bcms\b/i.test(r))                return 1.5;
   if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(r)) return 1.5;
-  if (/security clearance|clearance eligibility|security vetting|secret vetting|confidential vetting|\bsv\b|\bcv\b|nzsis|national security clearance|baseline clearance|secret clearance/i.test(r)) return 1.5;
+  // Active / held clearance — a real credential that cannot be substituted.
+  // Matched first so it wins over the eligibility check below.
+  if (/security vetting|secret vetting|confidential vetting|nzsis|national security clearance|baseline clearance|secret clearance|top secret|must hold.*clearance|holds.*clearance|current.*clearance/i.test(r)) return 1.5;
+  // "Eligible for security clearance" / "clearance eligibility" phrases mean the candidate
+  // must be an NZ citizen or permanent resident — a residency check, not a held credential.
+  // That is already captured by the "nz citizen|nz resident" rule above (1.5×) whenever
+  // the requirement spells it out. Drop the pure eligibility phrasing to 1.0× so it does
+  // not double-penalise candidates who simply haven't listed citizenship on LinkedIn.
+  if (/\bsecurity clearance\b/i.test(r) && !/eligible for|eligibility|ability to obtain|must be eligible/i.test(r)) return 1.5;
   // Regulated-profession qualifications: degree is a legal/professional prerequisite
   if (/\b(chartered accountant|cpa|ca qualification|cfa)\b/i.test(r))        return 1.5;
   if (/\b(registered nurse|nursing registration|nzrn|nursing council)\b/i.test(r)) return 1.5;
