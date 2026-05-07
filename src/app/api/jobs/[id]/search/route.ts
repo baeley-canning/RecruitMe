@@ -32,6 +32,11 @@ import { reportError } from "@/lib/error-reporting";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
 import {
+  buildProvisionalSearchScore as buildProvisionalSearchScoreLib,
+  SCORE_CUTOFF_FULL_PROFILE,
+  SCORE_CUTOFF_SNIPPET,
+} from "@/lib/provisional-scoring";
+import {
   extractDistinctiveSignalsFromRequirement,
   extractSignalsFromRequirement,
   normalizeSignalText,
@@ -146,6 +151,8 @@ function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole,
   return terms.some((term) => textHasTerm(text, term));
 }
 
+// Thin wrapper that binds the local signal helpers to the extracted library
+// function. Keeps all callers in this file unchanged.
 function buildProvisionalSearchScore(
   result: SearchResult,
   parsedRole: ParsedRole,
@@ -155,99 +162,12 @@ function buildProvisionalSearchScore(
   isRemote: boolean,
   weights?: ScoringWeights,
 ): ScoreBreakdown {
-  const baseMustHaves = parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required;
-  const knockouts = parsedRole.knockout_criteria ?? [];
-  const mustHaves = [
-    ...baseMustHaves,
-    ...knockouts.filter((ko) => !baseMustHaves.some((mh) => mh.toLowerCase().includes(ko.toLowerCase().slice(0, 25)))),
-  ].slice(0, 14);
-  const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
-  const profileText = [result.name, result.headline, candidateLocation, result.snippet].filter(Boolean).join("\n");
-  const haystack = normaliseText(profileText);
-
-  const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
-    if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(requirement)) {
-      const nzBased = Boolean(candidateLocation && isNzLocation(candidateLocation));
-      return {
-        requirement,
-        status: nzBased ? "likely" : "unknown",
-        evidence: nzBased
-          ? `Candidate appears NZ-based from the search location (${candidateLocation}); work rights still need confirmation.`
-          : "Search snippet does not verify work rights.",
-      };
-    }
-
-    const signals = requirementSignals(requirement);
-    const matched = signals.filter((signal) => hasSignal(haystack, signal));
-    return {
-      requirement,
-      status: matched.length > 0 ? "likely" : "missing",
-      evidence: matched.length > 0
-        ? `Snippet/headline mentions ${matched.slice(0, 3).join(", ")}.`
-        : "Not found in search snippet.",
-    };
-  });
-
-  const niceToHaveCoverage: NiceToHaveStatus[] = niceToHaves.map((requirement) => {
-    const signals = requirementSignals(requirement);
-    const matched = signals.filter((signal) => hasSignal(haystack, signal));
-    return {
-      requirement,
-      status: matched.length > 0 ? "likely" : "absent",
-      evidence: matched.length > 0
-        ? `Snippet/headline mentions ${matched.slice(0, 3).join(", ")}.`
-        : "Not mentioned in search snippet.",
-    };
-  });
-
-  const supported = mustHaveCoverage.filter((c) => c.status === "confirmed" || c.status === "equivalent" || c.status === "likely").length;
-  const mustHaveRatio = mustHaveCoverage.length ? supported / mustHaveCoverage.length : 0.5;
-  const titleSignals = requirementSignals(parsedRole.title);
-  const titleMatches = titleSignals.filter((signal) => hasSignal(normaliseText(`${result.headline} ${result.name}`), signal)).length;
-  const titleScore = Math.min(85, Math.max(35, 45 + titleMatches * 15));
-  const skillScore = Math.min(75, Math.round(35 + mustHaveRatio * 45));
-  const keywordScore = Math.min(80, Math.round(35 + mustHaveRatio * 50));
-  const seniorityText = normaliseText(result.headline);
-  const wantedSeniority = (parsedRole.seniority_band ?? "").toLowerCase();
-  const seniorityScore =
-    wantedSeniority.includes("junior") && /\b(senior|lead|principal|head|manager|director)\b/.test(seniorityText) ? 45 :
-    wantedSeniority.includes("senior") && /\b(junior|graduate|intern)\b/.test(seniorityText) ? 45 :
-    70;
-
-  const breakdown = buildScoreBreakdown({
-    categories: {
-      skill_fit:        { score: skillScore,                    weight: weights?.skill_fit ?? CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Provisional score from LinkedIn search snippet." },
-      // No-location snippets are NOT neutral for on-site NZ roles — "unknown"
-      // is slightly negative (25) so the location gate drops them instead of
-      // letting them through as if they might be local. Remote roles keep the
-      // neutral 50 because location genuinely doesn't matter.
-      location_fit:     { score: candidateLocation ? 75 : (isRemote ? 50 : 25),  weight: weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
-      seniority_fit:    { score: seniorityScore,                weight: weights?.seniority_fit ?? CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Seniority inferred from headline only." },
-      title_fit:        { score: titleScore,                    weight: weights?.title_fit ?? CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Title fit inferred from LinkedIn headline." },
-      domain_fit:       { score: Math.round((50 + keywordScore) / 2), weight: weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Domain fit estimated provisionally from snippet keywords and title match." },
-      nice_to_have_fit: { score: 45,                           weight: weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Nice-to-haves are provisional until the full profile is captured." },
-    },
-    must_have_coverage: mustHaveCoverage,
-    nice_to_have_coverage: niceToHaveCoverage,
-    reasons_for: [
-      `${result.name} appears in LinkedIn search for this role.`,
-      result.headline ? `Headline: ${result.headline}.` : "Search result includes a candidate profile.",
-    ],
-    reasons_against: ["Only a LinkedIn search snippet is available; fetch the full profile for reliable scoring."],
-    missing_evidence: ["Full LinkedIn profile text", "Detailed experience history", "Confirmed work rights"],
-    recruiter_summary: "Provisional search match from a LinkedIn snippet. Fetch the full profile before treating the score as reliable.",
-    profileCharCount: profileText.length,
-    weights,
-  });
-
-  const provisionalScore = applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote, weights);
-  // 30% floor: a snippet candidate that passed the source gate has enough signal to be worth
-  // importing. Don't let missing fields collapse the score below 30.
-  if (provisionalScore.overall < 30) {
-    (provisionalScore as { overall: number }).overall = 30;
-  }
-  return provisionalScore;
+  return buildProvisionalSearchScoreLib(
+    result, parsedRole, candidateLocation, targetLocation, locationRules, isRemote, weights,
+    { requirementSignals, hasSignal, normaliseText },
+  );
 }
+
 
 const PAGE_SIZE = 10;
 const MAX_PAGES = 8;
@@ -1100,7 +1020,7 @@ async function runSearchBackground(args: {
         // snippets happened to be rich enough. We use 30 for snippet-tier
         // (matches the provisional 30% floor) so borderline candidates are
         // imported and re-evaluated when their profile is captured.
-        const scoreCutoff = hasFullProfile ? 45 : 30;
+        const scoreCutoff = hasFullProfile ? SCORE_CUTOFF_FULL_PROFILE : SCORE_CUTOFF_SNIPPET;
         if (extractDistinctiveRequirementTerms(parsedRole).length > 0 && matchScore !== null && matchScore < scoreCutoff) {
           skippedScore++;
           continue;
