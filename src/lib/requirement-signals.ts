@@ -23,6 +23,18 @@ export interface ScarceSkillEntry {
 
 export const NZ_SCARCE_SKILLS: ScarceSkillEntry[] = [
   {
+    match: /\bsybase\b/i,
+    label: "Sybase",
+    alternatives: ["SQL Server", "Oracle", "MySQL"],
+    note: "Sybase practitioners are extremely rare in NZ — SQL Server DBAs and Oracle developers share the same relational fundamentals and can typically ramp up quickly on Sybase ASE.",
+  },
+  {
+    match: /\bdb2\b/i,
+    label: "DB2",
+    alternatives: ["Oracle", "SQL Server", "PostgreSQL"],
+    note: "DB2 expertise is scarce in NZ — Oracle and SQL Server professionals are the closest adjacent pool.",
+  },
+  {
     match: /\bc\+\+/i,
     label: "C++",
     alternatives: ["C", "Rust"],
@@ -354,6 +366,39 @@ export function extractLegacyAnchorTerms(requirements: string[]): string[] {
 
 export function normalizeSignalText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * When a search returns 0 results, build substitute query strings by replacing
+ * scarce/rare anchor terms with their adjacent-skill alternatives.
+ *
+ * Example: anchors ["C++", "Sybase", "AKS"]
+ *   → Sybase matches NZ_SCARCE_SKILLS → substitutes: SQL Server, Oracle, MySQL
+ *   → returns ["C++ SQL Server AKS", "C++ Oracle AKS", "C++ MySQL developer"]
+ *
+ * Only substitutes ONE scarce term at a time — replacing all scarce anchors
+ * simultaneously would produce queries so generic they'd flood the list with noise.
+ */
+export function buildScarceSkillFallbackQueries(anchorTerms: string[]): string[] {
+  if (anchorTerms.length === 0) return [];
+
+  const queries: string[] = [];
+
+  for (let i = 0; i < anchorTerms.length; i++) {
+    const term = anchorTerms[i];
+    const match = NZ_SCARCE_SKILLS.find((e) => e.match.test(term));
+    if (!match) continue;
+
+    const others = anchorTerms.filter((_, j) => j !== i);
+    for (const alt of match.alternatives.slice(0, 3)) {
+      const parts = others.length > 0 ? [...others, alt] : [alt, "developer"];
+      queries.push(parts.join(" "));
+    }
+    // Only substitute the first matching scarce term — keeps queries specific
+    break;
+  }
+
+  return queries.slice(0, 4);
 }
 
 /**

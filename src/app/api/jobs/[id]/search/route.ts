@@ -42,6 +42,7 @@ import {
   normalizeSignalText,
   signalMatchesText,
   extractLegacyAnchorTerms,
+  buildScarceSkillFallbackQueries,
 } from "@/lib/requirement-signals";
 
 // Allow up to 5 minutes for large search runs. Without this, Vercel and some
@@ -583,6 +584,9 @@ async function runSearchBackground(args: {
     searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasBing, hasPDL,
     serpApiKey, bingKey, pdlKey, isOwner, orgId, savedSearchId } = args;
 
+  // Compute once at the top so we can use anchor terms in the fallback pass below.
+  const anchorTermsForFallback = extractAnchorRequirementTerms(parsedRole);
+
   try {
     const seenUrls = new Set<string>();
     const allRaw: SearchResult[] = [];
@@ -775,15 +779,56 @@ async function runSearchBackground(args: {
         }).catch(() => {});
         return;
       }
-      await prisma.searchSession.update({
-        where: { id: sessionId },
-        data: {
-          status: "complete",
-          message: "No profiles found.",
-          evaluation: "FAIL — No candidates found. Try: set Location to 'New Zealand', click Re-analyse to refresh search terms, or broaden requirements in the JD.",
-        },
-      }).catch(() => {});
-      return;
+
+      // ── Scarce-skill fallback: if anchors include rare tech (Sybase, COBOL, …)
+      // build substitute queries using adjacent-skill alternatives and try once
+      // before giving up. Sybase → SQL Server, COBOL → Java, etc.
+      const fallbackQueries = buildScarceSkillFallbackQueries(anchorTermsForFallback);
+      if (fallbackQueries.length > 0) {
+        void prisma.searchSession.update({
+          where: { id: sessionId },
+          data: { message: `No exact matches — trying adjacent skills (${anchorTermsForFallback.join(", ")} substitutes)` },
+        }).catch(() => {});
+
+        const mkFallbackTasks = (provider: SearchProvider) =>
+          fallbackQueries.map((q) => ({
+            provider,
+            query: q,
+            location: "New Zealand",
+            offset: 0,
+            resolvedKey: provider === "serpapi" ? serpApiKey : bingKey,
+          }));
+        const fallbackSerpTasks = hasSerpApi ? mkFallbackTasks("serpapi") : [];
+        const fallbackBingTasks = hasBing   ? mkFallbackTasks("bing")    : [];
+        const fallbackResults = [
+          ...(await executeSearchTaskQueue(fallbackSerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS })),
+          ...(await executeSearchTaskQueue(fallbackBingTasks, { concurrency: BING_CONCURRENCY,   delayMs: BING_DELAY_MS   })),
+        ].flatMap((o) => o.items);
+
+        for (const r of fallbackResults) {
+          if (!seenUrls.has(r.linkedinUrl)) { seenUrls.add(r.linkedinUrl); allRaw.push(r); }
+        }
+
+        if (allRaw.length > 0) {
+          void prisma.searchSession.update({
+            where: { id: sessionId },
+            data: { message: `No exact ${anchorTermsForFallback.join("/")} matches — showing ${allRaw.length} adjacent-skill candidates` },
+          }).catch(() => {});
+          // Fall through to Phase 2 with the adjacent-skill results
+        }
+      }
+
+      if (allRaw.length === 0) {
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "complete",
+            message: "No profiles found.",
+            evaluation: "FAIL — No candidates found. Try: set Location to 'New Zealand', click Re-analyse to refresh search terms, or broaden requirements in the JD.",
+          },
+        }).catch(() => {});
+        return;
+      }
     }
 
     // ── Phase 2: Skip already-imported profiles ──────────────────────────────
