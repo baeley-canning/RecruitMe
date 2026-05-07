@@ -19,11 +19,14 @@ import type { ScrapeJob } from "./queue.js";
 
 // ── Timing config (seconds) ───────────────────────────────────────────────
 // Each value is a [min, max] range. Actual delay = random within range.
+// Calibrated to look like a recruiter spending ~60-90 seconds per profile —
+// fast enough to be useful, varied enough to avoid bot fingerprinting.
+// The randomisation matters more than the duration itself.
 const TIMING: Record<string, [number, number]> = {
-  afterPageLoad:      [60, 120],   // reading the header + about section
-  scroll:             [15,  30],   // scrolling down the profile
-  beforeDetailFetch:  [45,  90],   // pause before opening each sub-page
-  afterDetailFetch:   [30,  60],   // pause after processing each sub-page
+  afterPageLoad:      [ 8,  18],   // reading the header + about section
+  scroll:             [ 3,   7],   // scrolling down the profile
+  beforeDetailFetch:  [ 6,  14],   // pause before opening each sub-page
+  afterDetailFetch:   [ 4,  10],   // pause after processing each sub-page
 };
 
 function randMs([min, max]: [number, number]): number {

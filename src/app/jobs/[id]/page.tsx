@@ -278,6 +278,44 @@ export default function JobDetailPage({
     fetchJob();
   }, [fetchJob]);
 
+  // On mount: resume polling for any candidates whose scraper sessions are still
+  // in-progress. This recovers tracking state after the user closes/refreshes the tab —
+  // the scraper keeps running server-side but the client-side activeFetchesRef was cleared.
+  useEffect(() => {
+    void (async () => {
+      const res = await fetch(`/api/extension/fetch-session?jobId=${encodeURIComponent(id)}`, { credentials: "include" }).catch(() => null);
+      if (!res?.ok) return;
+      const data = await res.json().catch(() => null) as { sessions?: Array<{ sessionId: string; candidateId: string; status: string; message?: string }> } | null;
+      if (!data?.sessions) return;
+      for (const s of data.sessions) {
+        if (!s.candidateId || activeFetchesRef.current.has(s.candidateId)) continue;
+        if (s.status !== "pending" && s.status !== "processing") continue;
+        // Resume polling for this in-progress session
+        const entry = {
+          sessionId: s.sessionId,
+          candidateId: s.candidateId,
+          tab: null,
+          startedAt: Date.now(),
+          processingStartedAt: s.status === "processing" ? Date.now() : null,
+          lastKnownStatus: s.status as "pending" | "processing",
+          done: false,
+          pollInterval: null as ReturnType<typeof setInterval> | null,
+          consecutiveNetworkErrors: 0,
+          scraperActive: true,
+        };
+        activeFetchesRef.current.set(s.candidateId, entry);
+        setFetchStatuses((prev) => ({
+          ...prev,
+          [s.candidateId]: { state: "waiting", message: s.message ?? "Scraper still running — resumed tracking", startedAt: Date.now() },
+        }));
+        entry.pollInterval = setInterval(() => {
+          void pollCandidateFetchRef.current(s.candidateId);
+        }, 3000);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   // Keep jobRef in sync so poll callbacks can read the latest job without stale closures.
   useEffect(() => { jobRef.current = job; }, [job]);
 

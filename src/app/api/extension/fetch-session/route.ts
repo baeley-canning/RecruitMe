@@ -102,6 +102,20 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
+  const jobId = url.searchParams.get("jobId");
+
+  // ?jobId= — web UI on page load, recover in-progress scraper sessions
+  if (jobId && !sessionId) {
+    const auth = await verifyAnyAuth(req);
+    if (!auth) return NextResponse.json({ sessions: [] }, { status: 401, headers: EXTENSION_CORS });
+    const all = await getSessionQueue();
+    const sessions = all.filter((s) =>
+      s.jobId === jobId &&
+      (s.status === "pending" || s.status === "processing") &&
+      (auth.isOwner || s.orgId === auth.orgId || s.userId === auth.userId)
+    );
+    return NextResponse.json({ sessions }, { headers: EXTENSION_CORS });
+  }
 
   if (sessionId) {
     const session = await findSessionInQueue((s) => s.sessionId === sessionId);
