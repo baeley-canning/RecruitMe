@@ -22,6 +22,7 @@ import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/li
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
 import { extractDistinctiveSignalsFromRequirement } from "@/lib/requirement-signals";
 
@@ -57,6 +58,12 @@ export async function POST(
 
   const { job, error } = await requireJobAccess(jobId, auth);
   if (error || !job) return error;
+
+  const rateCheck = await checkRateLimit(auth.orgId, "score_all");
+  if (!rateCheck.allowed) {
+    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
+    return NextResponse.json({ error: `Talent pool rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) {
@@ -225,10 +232,16 @@ export async function POST(
 
     try {
       const normUrl = normaliseLinkedInUrl(row.linkedinUrl!);
-      const candidate = await prisma.candidate.create({
-        data: {
+      // Upsert rather than create: the search route and this route can both
+      // fire for the same job simultaneously (Q1.3 parallel pool+LinkedIn).
+      // Using create causes a P2002 unique-constraint crash when they race
+      // on the same (jobId, linkedinUrl). Upsert merges gracefully; the
+      // score data always overwrites so the freshest result wins.
+      const candidate = await prisma.candidate.upsert({
+        where: { jobId_linkedinUrl: { jobId, linkedinUrl: normUrl } },
+        create: {
           jobId,
-          orgId: job.orgId ?? null,   // inherit org from the job — prevents null-org data leaks
+          orgId: job.orgId ?? null,
           name: row.name,
           headline: row.headline,
           location: row.location || null,
@@ -239,6 +252,12 @@ export async function POST(
           ...(row.profileCapturedAt ? { profileCapturedAt: row.profileCapturedAt } : {}),
           ...scoreData,
         },
+        update: {
+          // Only update score-related fields so we don't clobber recruiter notes/status.
+          ...scoreData,
+          source: "talent_pool",
+          ...(row.profileCapturedAt ? { profileCapturedAt: row.profileCapturedAt } : {}),
+        },
       });
       saved.push(candidate as SavedCandidate);
     } catch (err) {
@@ -247,6 +266,7 @@ export async function POST(
   }
 
   console.log(`[talent-pool] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore}`);
+  void recordUsage(auth.orgId, auth.userId, "score_all", { jobId, scored: saved.length, source: "talent_pool" });
 
   const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 

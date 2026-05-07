@@ -80,6 +80,13 @@ export async function POST(req: Request) {
     }
   }
 
+  // Surface a warning if the score is low — recruiter chose this person
+  // deliberately so we don't block, but make the low match visible.
+  const finalScore = scoreData.matchScore as number | null ?? null;
+  const lowScoreWarning = finalScore !== null && finalScore < 40
+    ? `Score is ${finalScore}% — this candidate may not match the role. Check the hiring brief.`
+    : null;
+
   const candidate = await prisma.candidate.create({
     data: {
       jobId,
@@ -98,5 +105,5 @@ export async function POST(req: Request) {
     },
   });
 
-  return NextResponse.json(candidate, { status: 201 });
+  return NextResponse.json({ ...candidate, lowScoreWarning }, { status: 201 });
 }

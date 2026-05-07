@@ -7,7 +7,13 @@ const dbMocks = vi.hoisted(() => ({
     candidate: {
       findMany: vi.fn(),
       create: vi.fn(),
+      upsert: vi.fn(),
       findFirst: vi.fn(),
+    },
+    usageEvent: {
+      count:  vi.fn().mockResolvedValue(0),
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
     },
   },
 }));
@@ -106,10 +112,10 @@ describe("talent-pool ingestion route", () => {
           createdAt: new Date().toISOString(),
         },
       ]);
-    dbMocks.prisma.candidate.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
       id: "cand-2",
       createdAt: new Date(),
-      ...data,
+      ...create,
     }));
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
   });
@@ -132,7 +138,7 @@ describe("talent-pool ingestion route", () => {
       null,
       scoringConfigMocks.customWeights
     );
-    expect(dbMocks.prisma.candidate.create).toHaveBeenCalledTimes(1);
-    expect(dbMocks.prisma.candidate.create.mock.calls[0][0].data.source).toBe("talent_pool");
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
+    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("talent_pool");
   });
 });

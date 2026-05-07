@@ -120,6 +120,13 @@ export function SearchFunnelCard({ jobId, refreshKey }: { jobId: string; refresh
         </p>
       )}
 
+      {/* When searches ran but zero candidates passed scoring — very different from "no searches yet" */}
+      {data.searchRuns > 0 && data.imported > 0 && data.scored > 0 && data.shortlisted === 0 && !noisyQueries && (
+        <p className="mt-3 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-2 py-1.5">
+          No candidates shortlisted yet — {data.scored} scored, avg {data.avgScore !== null ? `${data.avgScore}%` : "n/a"}. Shortlist the best fits or try Re-analyse to refine requirements.
+        </p>
+      )}
+
       {data.rejectedByRecruiter > 0 && (
         <p className="mt-2 text-[11px] text-slate-400">
           {data.rejectedByRecruiter} candidate{data.rejectedByRecruiter !== 1 ? "s" : ""} marked rejected after review.

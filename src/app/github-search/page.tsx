@@ -33,7 +33,7 @@ function langClass(lang: string) {
 }
 
 interface Job { id: string; title: string; company: string | null; }
-interface ImportState { jobId: string; status: "loading" | "done" | "exists" | "error"; }
+interface ImportState { jobId: string; status: "loading" | "done" | "exists" | "error"; warning?: string | null; }
 
 export default function GitHubSearchPage() {
   const [location, setLocation]   = useState("New Zealand");
@@ -102,13 +102,17 @@ export default function GitHubSearchPage() {
           profileText,
         }),
       });
-      const data = await res.json() as { alreadyExists?: boolean; error?: string };
+      const data = await res.json() as { alreadyExists?: boolean; error?: string; lowScoreWarning?: string | null };
       if (res.status === 409) {
         setImports((prev) => ({ ...prev, [key]: { jobId, status: "exists" } }));
       } else if (!res.ok) {
         setImports((prev) => ({ ...prev, [key]: { jobId, status: "error" } }));
       } else {
-        setImports((prev) => ({ ...prev, [key]: { jobId, status: "done" } }));
+        setImports((prev) => ({ ...prev, [key]: {
+          jobId,
+          status: "done",
+          warning: data.lowScoreWarning ?? null,
+        } }));
       }
     } catch {
       setImports((prev) => ({ ...prev, [key]: { jobId, status: "error" } }));
@@ -291,27 +295,39 @@ export default function GitHubSearchPage() {
                         const key = `${user.login}:${job.id}`;
                         const imp = imports[key];
                         return (
-                          <button
-                            key={job.id}
-                            onClick={() => !imp && handleImport(user, job.id)}
-                            disabled={Boolean(imp)}
-                            className={cn(
-                              "text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors inline-flex items-center gap-1.5",
-                              imp?.status === "done"   ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                              imp?.status === "exists" ? "bg-slate-100 text-slate-500 border-slate-200" :
-                              imp?.status === "error"  ? "bg-red-50 text-red-600 border-red-200" :
-                              imp?.status === "loading"? "bg-slate-100 text-slate-500 border-slate-200" :
-                              "bg-white text-slate-700 border-slate-300 hover:border-blue-400 hover:text-blue-700"
+                          <div key={job.id} className="flex flex-col">
+                            <button
+                              onClick={() => !imp && handleImport(user, job.id)}
+                              disabled={Boolean(imp)}
+                              className={cn(
+                                "text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors inline-flex items-center gap-1.5",
+                                imp?.status === "done"   ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                imp?.status === "exists" ? "bg-slate-100 text-slate-500 border-slate-200" :
+                                imp?.status === "error"  ? "bg-red-50 text-red-600 border-red-200" :
+                                imp?.status === "loading"? "bg-slate-100 text-slate-500 border-slate-200" :
+                                "bg-white text-slate-700 border-slate-300 hover:border-blue-400 hover:text-blue-700"
+                              )}
+                            >
+                              {imp?.status === "loading" && <Loader2 className="w-3 h-3 animate-spin" />}
+                              {imp?.status === "done"    && <CheckCircle2 className="w-3 h-3" />}
+                              {imp?.status === "exists"  && <CheckCircle2 className="w-3 h-3" />}
+                              {imp?.status === "error"   && <AlertCircle className="w-3 h-3" />}
+                              <span className="truncate max-w-[160px]">{job.title}{job.company ? ` · ${job.company}` : ""}</span>
+                              {imp?.status === "done"    && <span className="text-[10px]">Added</span>}
+                              {imp?.status === "exists"  && <span className="text-[10px]">Already in</span>}
+                            </button>
+                            {imp?.status === "done" && imp.warning && (
+                              <p className="text-[10px] text-amber-700 mt-1 flex items-start gap-1">
+                                <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                {imp.warning}
+                              </p>
                             )}
-                          >
-                            {imp?.status === "loading" && <Loader2 className="w-3 h-3 animate-spin" />}
-                            {imp?.status === "done"    && <CheckCircle2 className="w-3 h-3" />}
-                            {imp?.status === "exists"  && <CheckCircle2 className="w-3 h-3" />}
-                            {imp?.status === "error"   && <AlertCircle className="w-3 h-3" />}
-                            <span className="truncate max-w-[160px]">{job.title}{job.company ? ` · ${job.company}` : ""}</span>
-                            {imp?.status === "done"    && <span className="text-[10px]">Added</span>}
-                            {imp?.status === "exists"  && <span className="text-[10px]">Already in</span>}
-                          </button>
+                            {imp?.status === "done" && (
+                              <a href={`/jobs/${job.id}`} className="text-[10px] text-emerald-700 underline underline-offset-1 mt-0.5">
+                                Open in {job.title} →
+                              </a>
+                            )}
+                          </div>
                         );
                       })}
                     </div>

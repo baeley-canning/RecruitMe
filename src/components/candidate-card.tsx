@@ -125,7 +125,9 @@ const PIPELINE_FORWARD: Record<string, StatusAction> = {
   shortlisted:  { label: "Mark Contacted",  to: "contacted",    icon: "send",  className: "text-violet-600 hover:bg-violet-50" },
   contacted:    { label: "Interviewing",    to: "interviewing",                className: "text-indigo-600 hover:bg-indigo-50" },
   interviewing: { label: "Send Offer",      to: "offer_sent",                  className: "text-emerald-600 hover:bg-emerald-50" },
-};
+  // offer_sent is intentionally absent — it has two forward options (Hired / Declined)
+  // which are handled explicitly below. Never add offer_sent here or both paths will render.
+} as const satisfies Partial<Record<string, StatusAction>>;
 const PIPELINE_BACK: Record<string, StatusAction> = {
   shortlisted:  { label: "↩ Reviewing",    to: "reviewing",   className: "text-slate-400 hover:text-slate-600" },
   contacted:    { label: "↩ Shortlist",    to: "shortlisted", className: "text-slate-400 hover:text-slate-600" },
