@@ -46,6 +46,11 @@ async function getStoredSettings() {
     lastError: "",
     extUsername: "",
     extPassword: "",
+    // Default ON for new installs — protects users' LinkedIn accounts.
+    // Auto-capture fires on every LinkedIn profile tab load, which LinkedIn
+    // detects as automation. Manual-only means the user triggers each capture
+    // deliberately from the popup; one profile at a time, human-paced.
+    manualOnlyMode: true,
   });
 }
 
