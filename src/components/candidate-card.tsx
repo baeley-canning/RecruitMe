@@ -1172,21 +1172,6 @@ export const CandidateCard = memo(function CandidateCard({
                   Provisional
                 </span>
               )}
-              {/* Score delta: shown after full-profile scoring when the provisional snapshot exists */}
-              {hasFetchedProfile && candidate.provisionalScore != null && candidate.matchScore != null &&
-               Math.abs(candidate.matchScore - candidate.provisionalScore) >= 8 && (
-                <span
-                  title={`Provisional score was ${candidate.provisionalScore}% at import`}
-                  className={cn(
-                    "text-[9px] font-semibold px-1 py-0.5 rounded border",
-                    candidate.matchScore > candidate.provisionalScore
-                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                      : "text-rose-700 bg-rose-50 border-rose-200"
-                  )}
-                >
-                  {candidate.matchScore > candidate.provisionalScore ? "▲" : "▼"} was {candidate.provisionalScore}%
-                </span>
-              )}
               <div className="flex items-center gap-2">
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
@@ -1493,17 +1478,17 @@ export const CandidateCard = memo(function CandidateCard({
           })()}
           {/* offer_sent has two forward options */}
           {candidate.status === "offer_sent" && (<>
-            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Hired? This finalises their pipeline stage.`)) onStatusChange(candidate.id, "hired"); }}   className="text-green-700 hover:bg-green-50">Hired</Button>
-            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Declined?`)) onStatusChange(candidate.id, "declined"); }} className="text-orange-600 hover:bg-orange-50">Declined</Button>
+            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Hired?`)) onStatusChange(candidate.id, "hired"); }} className="text-green-700 hover:bg-green-50">Hired</Button>
+            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "declined")} className="text-orange-600 hover:bg-orange-50">Declined</Button>
           </>)}
           {/* Back step */}
           {PIPELINE_BACK[candidate.status] && (() => {
             const a = PIPELINE_BACK[candidate.status];
             return <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, a.to)} className={a.className}>{a.label}</Button>;
           })()}
-          {/* Reject — available on all non-terminal stages */}
+          {/* Reject — available on all non-terminal stages. ↩ Undo button handles recovery. */}
           {!TERMINAL_STATUSES.has(candidate.status) && (
-            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Reject ${candidate.name}? You can undo this from the candidate card.`)) onStatusChange(candidate.id, "rejected"); }} className="text-slate-400 hover:text-red-600 hover:bg-red-50">
+            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "rejected")} className="text-slate-400 hover:text-red-600 hover:bg-red-50">
               <X className="w-3.5 h-3.5" />Reject
             </Button>
           )}

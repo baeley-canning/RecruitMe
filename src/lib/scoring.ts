@@ -383,7 +383,9 @@ export function buildScoreBreakdown(params: {
   // identically here: a recruiter should not see 65%+ when the most critical
   // requirement cannot be confirmed from a full profile.
   if (dataQuality === "full_profile") {
-    const charCountIsDetailed = params.profileCharCount >= 2500;
+    // Match the full_profile classification threshold (≥2000) so there's no gap
+    // between "classified as full_profile" and "absence is treated as informative".
+    const charCountIsDetailed = params.profileCharCount >= 2000;
     const criticalMissing = params.must_have_coverage.filter(
       (c) =>
         getMustHaveImportance(c.requirement) >= 1.5 &&

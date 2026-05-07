@@ -16,26 +16,30 @@ const LIMITS: Record<UsageType, { max: number; windowMs: number }> = {
 /**
  * Check if an org is within rate limit for a given usage type.
  * Returns { allowed: true } or { allowed: false, retryAfterMs }.
- * Orgs without an orgId (owner accounts) are never rate-limited.
+ * Owner accounts (orgId null) get 5× the normal limit so they can operate freely
+ * but a runaway script or compromised account still can't exhaust API quotas.
  */
 export async function checkRateLimit(
   orgId: string | null | undefined,
   type: UsageType,
 ): Promise<{ allowed: boolean; retryAfterMs?: number }> {
-  if (!orgId) return { allowed: true }; // owner is never limited
+  // Use a synthetic key for owner accounts so their usage is tracked separately.
+  const trackingKey = orgId ?? "__owner__";
+  const ownerMultiplier = orgId ? 1 : 5;
 
   const { max, windowMs } = LIMITS[type];
+  const effectiveMax = max * ownerMultiplier;
   const since = new Date(Date.now() - windowMs);
 
   const count = await prisma.usageEvent.count({
-    where: { orgId, type, createdAt: { gte: since } },
+    where: { orgId: orgId ?? null, type, createdAt: { gte: since } },
   });
 
-  if (count < max) return { allowed: true };
+  if (count < effectiveMax) return { allowed: true };
 
   // Find the oldest event in the window to compute retry-after.
   const oldest = await prisma.usageEvent.findFirst({
-    where: { orgId, type, createdAt: { gte: since } },
+    where: { orgId: orgId ?? null, type, createdAt: { gte: since } },
     orderBy: { createdAt: "asc" },
   });
   const retryAfterMs = oldest

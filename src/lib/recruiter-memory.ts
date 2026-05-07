@@ -138,9 +138,11 @@ export async function getRecruitingContext(
   const seenCompany = new Set<string>();
   const positives: typeof scored = [];
   for (const c of scored.filter((c) => POSITIVE_STATUSES.has(c.status))) {
-    const company = (c.job?.company ?? "").toLowerCase().trim();
-    if (company && seenCompany.has(company)) continue;
-    if (company) seenCompany.add(company);
+    // Use a sentinel for null/empty company so anonymous-company candidates
+    // also get deduplicated (only 1 positive example per "unknown" employer).
+    const company = (c.job?.company?.trim() ? c.job.company.toLowerCase().trim() : "__unknown__");
+    if (seenCompany.has(company)) continue;
+    seenCompany.add(company);
     positives.push(c);
     if (positives.length >= 3) break;
   }

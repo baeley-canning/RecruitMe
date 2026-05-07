@@ -15,9 +15,14 @@ export async function DELETE(req: Request) {
     );
   }
 
-  // Scope to the owner's org — never wipe across all orgs.
-  const where = auth.orgId ? { orgId: auth.orgId } : {};
-  const { count } = await prisma.candidate.deleteMany({ where });
+  // Require an org scope — refuse to wipe without one to prevent accidental all-org destruction.
+  if (!auth.orgId) {
+    return NextResponse.json(
+      { error: "This account has no organisation assigned. Cannot scope the deletion safely." },
+      { status: 400 }
+    );
+  }
+  const { count } = await prisma.candidate.deleteMany({ where: { orgId: auth.orgId } });
 
   console.warn(`[admin] wipe-candidates: ${count} records deleted by orgId=${auth.orgId ?? "owner"}`);
   return NextResponse.json({ deleted: count });

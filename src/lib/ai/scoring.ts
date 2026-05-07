@@ -363,7 +363,7 @@ ${SCORING_EQUIVALENCY_RULES}`,
   const hasExplicitBlocker = reasonsAgainst.some((r) =>
     /\b(entirely absent|completely absent|fundamental mismatch|wrong domain entirely|not a match|critical requirement.*missing|missing.*critical|clearly unsuitable|unsuitable for|completely wrong|domain mismatch|level mismatch|(?:dis|un)qualif\w*|ruled out)\b/i.test(r) ||
     /\bno evidence (?:of|for) .{0,50}(?:experience|background|expertise|skills?|usage|history|exposure)\b/i.test(r) ||
-    /\blacks? (?:the |any |a )?(?:required|critical|core|key|necessary|essential) /i.test(r) ||
+    /\blacks? (?:the |any |a )?(?:required|critical|core|key|necessary|essential)(?:\s|$)/i.test(r) ||
     /\bno .{0,20}background in\b/i.test(r) ||
     /\b(?:clearly|completely|entirely) (?:lacks?|missing|absent)\b/i.test(r)
   );

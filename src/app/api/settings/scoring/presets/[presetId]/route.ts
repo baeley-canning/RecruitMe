@@ -10,11 +10,11 @@ export async function DELETE(
   if (!auth) return unauthorized();
   const { presetId } = await params;
 
-  // Scope by orgId so a malicious user can't delete another org's preset by ID.
+  // Always scope by orgId — even owners can only delete presets in their own org.
   const result = await prisma.scoringWeightPreset.deleteMany({
     where: {
       id: presetId,
-      ...(auth.isOwner ? {} : { orgId: auth.orgId }),
+      orgId: auth.orgId,
     },
   });
 
