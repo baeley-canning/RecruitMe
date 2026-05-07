@@ -74,10 +74,9 @@ export async function POST(
     const existing = safeParseJson<ParsedRole | null>(job.parsedRole, null);
     const parsedRole = await parseJobDescription(job.rawJd);
 
-    // Preserve all recruiter overrides from the previous analysis.
-    if (existing?.dismissed_skill_notes?.length) {
-      parsedRole.dismissed_skill_notes = existing.dismissed_skill_notes;
-    }
+    // Preserve recruiter overrides that represent deliberate decisions.
+    // dismissed_skill_notes is intentionally NOT preserved — tips are
+    // informational and should reappear after a fresh re-analyse.
     if (existing?.dismissed_knockout_criteria?.length) {
       parsedRole.dismissed_knockout_criteria = existing.dismissed_knockout_criteria;
     }

@@ -361,19 +361,10 @@ export default function JobDetailPage({
     }
   };
 
-  const handleDismissNote = async (skill: string) => {
+  // Dismiss is session-only — tips come back on reload or re-analyse.
+  // Clicking X just means "not right now", not "never show this again".
+  const handleDismissNote = (skill: string) => {
     setPendingDismissed((prev) => new Set([...prev, skill]));
-    const res = await fetch(`/api/jobs/${id}/skill-note-action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skill, action: "dismiss" }),
-    });
-    if (res.ok) {
-      await fetchJob();
-    } else {
-      // Revert optimistic hide on failure
-      setPendingDismissed((prev) => { const next = new Set(prev); next.delete(skill); return next; });
-    }
   };
 
   const handleRequirementAction = async (
@@ -1486,11 +1477,12 @@ ${toHtml(job.rawJd)}
                 chipClassName="bg-slate-100 text-slate-600 border-slate-200"
               />
 
-              {/* AI search tips — legacy/rare tech with suggested modern alternatives */}
+              {/* AI search tips — legacy/rare tech with suggested modern alternatives.
+                  Dismissal is session-only (tips reappear on reload / re-analyse). */}
               {(parsedRole.skill_notes?.length ?? 0) > 0 && (
                 <SkillNotesSection
                   notes={parsedRole.skill_notes ?? []}
-                  dismissedSkills={parsedRole.dismissed_skill_notes ?? []}
+                  dismissedSkills={[]}
                   niceToHaves={niceToHaves}
                   pendingAccepted={pendingAccepted}
                   pendingDismissed={pendingDismissed}
