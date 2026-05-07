@@ -239,6 +239,10 @@ export default function JobDetailPage({
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
     consecutiveNetworkErrors: number;
+    // True when the server-side scraper is handling this session — scraper
+    // takes 5–9 minutes so both the pending and processing timeouts need
+    // to be extended to avoid premature "timed out" errors.
+    scraperActive: boolean;
   }
   const jobRef = useRef<Job | null>(null);
   const activeFetchesRef = useRef<Map<string, FetchEntry>>(new Map());
@@ -484,21 +488,29 @@ export default function JobDetailPage({
     const entry = activeFetchesRef.current.get(candidateId);
     if (!entry || entry.done) return;
     const now = Date.now();
+    // Scraper jobs take 5–9 minutes; use extended timeouts so they don't
+    // false-alarm. Regular extension captures keep the original tight window.
+    const processingLimit = entry.scraperActive ? 660_000 : 300_000;  // 11 min vs 5 min
+    const pendingLimit    = entry.scraperActive ? 600_000 : 120_000;  // 10 min vs 2 min
     if (entry.lastKnownStatus === "processing") {
       const processingStartedAt = entry.processingStartedAt ?? now;
-      if (now - processingStartedAt > 300_000) {
+      if (now - processingStartedAt > processingLimit) {
         finishFetchRef.current(
           candidateId,
           "error",
-          "Profile reached RecruitMe but AI scoring took too long - refresh the job and re-score if needed."
+          entry.scraperActive
+            ? "Scraper is taking longer than expected — it may still be running. Refresh the job in a few minutes."
+            : "Profile reached RecruitMe but AI scoring took too long - refresh the job and re-score if needed."
         );
         return;
       }
-    } else if (now - entry.startedAt > 120_000) {
+    } else if (now - entry.startedAt > pendingLimit) {
       finishFetchRef.current(
         candidateId,
         "error",
-        "Capture timed out - try again. If it keeps failing, reload the extension and check the extension popup for the real error."
+        entry.scraperActive
+          ? "Scraper did not respond in time — check the scraper service logs."
+          : "Capture timed out - try again. If it keeps failing, reload the extension and check the extension popup for the real error."
       );
       return;
     }
@@ -532,6 +544,8 @@ export default function JobDetailPage({
         error?: string;
       };
       entry.consecutiveNetworkErrors = 0; // reset on any successful response
+      // Detect scraper session from message so we apply the right timeout.
+      if (data.message?.toLowerCase().includes("scraper")) entry.scraperActive = true;
       if (data.status === "processing") {
         entry.lastKnownStatus = "processing";
         entry.processingStartedAt ??= Date.now();
@@ -606,7 +620,7 @@ export default function JobDetailPage({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ jobId: id, candidateId }),
         });
-        const session = (await start.json()) as { sessionId?: string; error?: string };
+        const session = (await start.json()) as { sessionId?: string; error?: string; message?: string; status?: string };
 
         if (!start.ok || !session.sessionId) {
           try { tab?.close(); } catch { /* ignore */ }
@@ -660,6 +674,8 @@ export default function JobDetailPage({
           done: false,
           pollInterval: null,
           consecutiveNetworkErrors: 0,
+          // Detected from session message on first successful poll.
+          scraperActive: session.message?.toLowerCase().includes("scraper") ?? false,
         };
         activeFetchesRef.current.set(candidateId, entry);
         entry.pollInterval = setInterval(() => {
