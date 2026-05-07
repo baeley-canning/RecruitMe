@@ -106,6 +106,26 @@ export default function AdminPage() {
   const [orgError, setOrgError] = useState("");
   const [deletingOrgId, setDeletingOrgId] = useState<string | null>(null);
 
+  // System stats banner
+  const [stats, setStats] = useState<{ candidates: number; jobs: number; searches7d: number } | null>(null);
+  useEffect(() => {
+    fetch("/api/dashboard").then(r => r.ok ? r.json() : null).then(d => {
+      if (d) setStats({ candidates: d.totals.totalCandidates, jobs: d.totals.activeJobs, searches7d: d.recentSearches?.length ?? 0 });
+    }).catch(() => {});
+  }, []);
+
+  // Danger zone
+  const [wiping, setWiping] = useState<string | null>(null);
+  const handleWipeCandidates = async (jobId?: string) => {
+    const label = jobId ? "all candidates for this job" : "ALL candidates";
+    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    setWiping(jobId ?? "all");
+    const url = jobId ? `/api/jobs/${jobId}/candidates/wipe` : "/api/admin/wipe-candidates";
+    await fetch(url, { method: "DELETE" }).catch(() => {});
+    setWiping(null);
+    setStats(s => s ? { ...s, candidates: 0 } : s);
+  };
+
   const isOwner = (session?.user as { role?: string })?.role === "owner";
 
   useEffect(() => {
@@ -253,11 +273,35 @@ export default function AdminPage() {
   const currentId = (session?.user as { id?: string })?.id;
 
   return (
-    <div className="p-8 max-w-3xl mx-auto space-y-10">
-      <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-700 transition-colors">
-        <ArrowLeft className="w-4 h-4" />
-        Back
-      </button>
+    <div className="p-8 max-w-5xl mx-auto space-y-10">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Shield className="w-6 h-6 text-blue-600" />
+            Admin
+          </h1>
+          <p className="text-sm text-slate-500 mt-0.5">System management and monitoring.</p>
+        </div>
+        <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-700">
+          <ArrowLeft className="w-4 h-4" />Back
+        </button>
+      </div>
+
+      {/* ── System stats ── */}
+      {stats && (
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: "Active jobs",   value: stats.jobs,         colour: "bg-blue-50 text-blue-700 border-blue-100" },
+            { label: "Candidates",    value: stats.candidates,   colour: "bg-slate-50 text-slate-700 border-slate-200" },
+            { label: "Searches (7d)", value: stats.searches7d,   colour: "bg-emerald-50 text-emerald-700 border-emerald-100" },
+          ].map(({ label, value, colour }) => (
+            <div key={label} className={`rounded-xl border p-4 ${colour}`}>
+              <p className="text-2xl font-bold">{value}</p>
+              <p className="text-xs mt-0.5 opacity-70">{label}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Users ── */}
       <div>
@@ -855,6 +899,31 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* ── Danger zone ── */}
+      <div>
+        <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2 mb-2">
+          <AlertTriangle className="w-5 h-5 text-red-500" />
+          Danger zone
+        </h2>
+        <p className="text-sm text-slate-500 mb-4">Destructive actions. These cannot be undone.</p>
+        <div className="rounded-xl border border-red-200 bg-red-50 divide-y divide-red-100">
+          <div className="flex items-center justify-between gap-4 px-5 py-4">
+            <div>
+              <p className="text-sm font-medium text-slate-800">Delete all candidates</p>
+              <p className="text-xs text-slate-500 mt-0.5">Removes every candidate across all jobs. Jobs and parsed roles are kept.</p>
+            </div>
+            <button
+              onClick={() => handleWipeCandidates()}
+              disabled={wiping === "all"}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50 flex-shrink-0"
+            >
+              {wiping === "all" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {wiping === "all" ? "Deleting…" : "Delete all candidates"}
+            </button>
+          </div>
+        </div>
+      </div>
 
     </div>
   );
