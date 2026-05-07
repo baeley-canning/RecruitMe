@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
   Users, Building2, Plus, Trash2, Loader2, Shield, User, X, Eye, EyeOff,
-  BarChart3, Search, Sparkles, FileText, Camera, ArrowLeft, AlertTriangle, CheckCircle2, Activity,
+  BarChart3, Search, Sparkles, FileText, Camera, ArrowLeft, AlertTriangle, CheckCircle2, Activity, Pencil,
 } from "lucide-react";
 
 interface UserRow {
@@ -93,6 +93,12 @@ export default function AdminPage() {
   const [createError, setCreateError] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Inline edit state
+  const [editingId, setEditingId]   = useState<string | null>(null);
+  const [editForm, setEditForm]     = useState({ username: "", newPassword: "", role: "user" as "user" | "owner", orgId: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError]   = useState("");
+
   // Org form
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [orgForm, setOrgForm] = useState({ name: "" });
@@ -156,6 +162,38 @@ export default function AdminPage() {
       await fetchAll();
     }
     setCreating(false);
+  };
+
+  const startEdit = (user: UserRow) => {
+    setEditingId(user.id);
+    setEditForm({ username: user.username, newPassword: "", role: user.role, orgId: user.orgId ?? "" });
+    setEditError("");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingId) return;
+    setEditSaving(true);
+    setEditError("");
+    const body: Record<string, unknown> = { id: editingId };
+    const orig = users.find((u) => u.id === editingId);
+    if (editForm.username !== orig?.username) body.username = editForm.username;
+    if (editForm.newPassword.trim())          body.password = editForm.newPassword;
+    if (editForm.role !== orig?.role)         body.role     = editForm.role;
+    if (editForm.orgId !== (orig?.orgId ?? "")) body.orgId  = editForm.orgId || null;
+    const res = await fetch("/api/admin/users", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json() as { error?: unknown };
+    if (!res.ok) {
+      const msg = typeof data.error === "string" ? data.error : JSON.stringify(data.error);
+      setEditError(msg);
+    } else {
+      setEditingId(null);
+      await fetchAll();
+    }
+    setEditSaving(false);
   };
 
   const handleDelete = async (id: string, username: string) => {
@@ -257,7 +295,8 @@ export default function AdminPage() {
               </thead>
               <tbody>
                 {users.map((user) => (
-                  <tr key={user.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
+                  <React.Fragment key={user.id}>
+                  <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2.5">
                         <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
@@ -288,21 +327,97 @@ export default function AdminPage() {
                       {new Date(user.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-5 py-3.5 text-right">
-                      {user.id !== currentId && (
+                      <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => handleDelete(user.id, user.username)}
-                          disabled={deletingId === user.id}
-                          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                          title="Delete user"
+                          onClick={() => editingId === user.id ? setEditingId(null) : startEdit(user)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Edit user"
                         >
-                          {deletingId === user.id
-                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            : <Trash2 className="w-3.5 h-3.5" />
-                          }
+                          <Pencil className="w-3.5 h-3.5" />
                         </button>
-                      )}
+                        {user.id !== currentId && (
+                          <button
+                            onClick={() => handleDelete(user.id, user.username)}
+                            disabled={deletingId === user.id}
+                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Delete user"
+                          >
+                            {deletingId === user.id
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <Trash2 className="w-3.5 h-3.5" />
+                            }
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
+                  {editingId === user.id && (
+                    <tr className="bg-blue-50/50 border-t border-blue-100">
+                      <td colSpan={6} className="px-5 py-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs font-medium text-slate-600 mb-1 block">Username</label>
+                            <input
+                              type="text"
+                              value={editForm.username}
+                              onChange={(e) => setEditForm((f) => ({ ...f, username: e.target.value }))}
+                              className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-slate-600 mb-1 block">New password <span className="font-normal text-slate-400">(leave blank to keep current)</span></label>
+                            <input
+                              type="password"
+                              value={editForm.newPassword}
+                              onChange={(e) => setEditForm((f) => ({ ...f, newPassword: e.target.value }))}
+                              placeholder="Enter new password…"
+                              className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-slate-600 mb-1 block">Role</label>
+                            <select
+                              value={editForm.role}
+                              onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value as "user" | "owner" }))}
+                              className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            >
+                              <option value="user">user</option>
+                              <option value="owner">owner</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-slate-600 mb-1 block">Organisation</label>
+                            <select
+                              value={editForm.orgId}
+                              onChange={(e) => setEditForm((f) => ({ ...f, orgId: e.target.value }))}
+                              className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            >
+                              <option value="">None</option>
+                              {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        {editError && <p className="text-xs text-red-600 mt-2">{editError}</p>}
+                        <div className="flex items-center gap-2 mt-3">
+                          <button
+                            onClick={handleSaveEdit}
+                            disabled={editSaving}
+                            className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
+                          >
+                            {editSaving && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Save changes
+                          </button>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="px-3 py-1.5 border border-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
