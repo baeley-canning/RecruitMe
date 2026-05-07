@@ -1263,87 +1263,199 @@ function removeOverlay() {
   if (existing) existing.remove();
 }
 
+// ── Draggable bubble shell ─────────────────────────────────────────────────
+// Fluffy cloud aesthetic — soft white, generous rounding, layered shadows.
+// Draggable by the header bar; position persists within the page session.
+let overlayPos = { right: 20, bottom: 20 }; // remembered across re-renders
+
+function makeDraggable(container, handle) {
+  let dragging = false, startX, startY, startLeft, startTop;
+  handle.style.cursor = "grab";
+  handle.addEventListener("mousedown", (e) => {
+    if (e.target.closest("a, button")) return; // don't hijack clicks
+    dragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = container.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop  = rect.top;
+    container.style.transition = "none";
+    handle.style.cursor = "grabbing";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const newLeft = Math.max(0, Math.min(window.innerWidth  - container.offsetWidth,  startLeft + dx));
+    const newTop  = Math.max(0, Math.min(window.innerHeight - container.offsetHeight, startTop  + dy));
+    container.style.left   = newLeft + "px";
+    container.style.top    = newTop  + "px";
+    container.style.right  = "auto";
+    container.style.bottom = "auto";
+    overlayPos = { left: newLeft, top: newTop };
+  });
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.style.cursor = "grab";
+  });
+}
+
 function buildOverlayShell() {
   removeOverlay();
   const container = document.createElement("div");
   container.id = OVERLAY_ID;
-  container.style.cssText = [
-    "position: fixed",
-    "right: 16px",
-    "bottom: 16px",
-    "z-index: 2147483647",
-    "max-width: 320px",
-    "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    "font-size: 13px",
-    "color: #0f172a",
-    "background: #ffffff",
-    "border: 1px solid #e2e8f0",
-    "border-radius: 12px",
-    "box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12)",
-    "padding: 12px 14px",
-    "line-height: 1.4",
-  ].join(";");
+
+  // Base position — use remembered pos or default bottom-right
+  const posStyle = overlayPos.left !== undefined
+    ? `left:${overlayPos.left}px;top:${overlayPos.top}px`
+    : `right:${overlayPos.right}px;bottom:${overlayPos.bottom}px`;
+
+  container.style.cssText = `
+    position:fixed;${posStyle};
+    z-index:2147483647;
+    width:300px;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    font-size:13px;
+    color:#1e293b;
+    background:linear-gradient(135deg,rgba(255,255,255,0.98) 0%,rgba(248,250,255,0.98) 100%);
+    border:1px solid rgba(148,163,184,0.25);
+    border-radius:20px;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.8) inset,
+      0 4px 6px rgba(15,23,42,0.04),
+      0 12px 28px rgba(15,23,42,0.10),
+      0 32px 48px rgba(15,23,42,0.06);
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    overflow:hidden;
+    animation:recruitme-pop 0.18s cubic-bezier(0.34,1.56,0.64,1) both;
+    line-height:1.45;
+  `;
+
+  // Inject animation keyframes once
+  if (!document.getElementById("recruitme-styles")) {
+    const style = document.createElement("style");
+    style.id = "recruitme-styles";
+    style.textContent = `
+      @keyframes recruitme-pop {
+        from { opacity:0; transform:scale(0.88) translateY(6px); }
+        to   { opacity:1; transform:scale(1)    translateY(0);   }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   return container;
+}
+
+// Shared header bar used by all overlay states — draggable + close button.
+function buildHeader(label, accent) {
+  return `
+    <div id="recruitme-drag-handle" style="
+      display:flex;align-items:center;gap:8px;
+      padding:10px 14px 8px;
+      background:linear-gradient(135deg,${accent}18 0%,${accent}08 100%);
+      border-bottom:1px solid ${accent}20;
+    ">
+      <span style="
+        display:inline-flex;align-items:center;justify-content:center;
+        width:22px;height:22px;border-radius:50%;
+        background:${accent};color:#fff;
+        font-size:11px;font-weight:700;flex-shrink:0;
+        box-shadow:0 2px 6px ${accent}50;
+      ">R</span>
+      <span style="font-weight:600;font-size:12px;color:#334155;flex:1">${label}</span>
+      <button id="recruitme-overlay-close" aria-label="Close" style="
+        background:none;border:none;color:#94a3b8;cursor:pointer;
+        width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+        border-radius:50%;font-size:16px;line-height:1;padding:0;
+        transition:background 0.15s,color 0.15s;
+      " onmouseover="this.style.background='#f1f5f9';this.style.color='#475569'"
+         onmouseout="this.style.background='none';this.style.color='#94a3b8'">×</button>
+    </div>
+  `;
 }
 
 function renderOnActiveJobs(container, data, serverBase) {
   const base = getOverlayServerBase(serverBase);
-  const jobs = (data.onActiveJobs || []).slice(0, 3);
-  const titles = jobs
-    .map((j) => `<a href="${base}/jobs/${encodeURIComponent(j.jobId)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:500">${escapeHtml(j.jobTitle)}</a>`)
-    .join(", ");
+  const jobs = (data.onActiveJobs || []).slice(0, 4);
   const moreCount = (data.onActiveJobs || []).length - jobs.length;
-  const moreLabel = moreCount > 0 ? ` <span style="color:#64748b">(+${moreCount} more)</span>` : "";
 
-  // Contact history inline — shows who last contacted so agents don't double-up
+  const jobPills = jobs.map((j) =>
+    `<a href="${base}/jobs/${encodeURIComponent(j.jobId)}" target="_blank" rel="noopener" style="
+      display:inline-flex;align-items:center;gap:4px;
+      background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;
+      border-radius:20px;padding:3px 10px;font-size:11px;font-weight:500;
+      text-decoration:none;white-space:nowrap;
+    ">${escapeHtml(j.jobTitle)}</a>`
+  ).join(" ");
+
   const contacts = (data.recentContacts || []).slice(0, 2);
-  const contactHtml = contacts.length > 0
-    ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #f1f5f9;font-size:11px;color:#64748b">
-        ${contacts.map((c) => `<div style="margin-bottom:2px">📞 <strong>${escapeHtml(c.userName)}</strong> ${escapeHtml(c.type)}d · ${escapeHtml(c.relativeDate)}${c.note ? ` — ${escapeHtml(c.note)}` : ""}</div>`).join("")}
-      </div>`
-    : "";
+  const contactRows = contacts.map((c) =>
+    `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#64748b;padding:3px 0">
+      <span style="font-size:13px">${c.type === "call" ? "📞" : c.type === "email" ? "✉️" : "💬"}</span>
+      <span><strong style="color:#475569">${escapeHtml(c.userName)}</strong> ${escapeHtml(c.type)}d <span style="color:#94a3b8">· ${escapeHtml(c.relativeDate)}</span>${c.note ? `<br><span style="color:#94a3b8;padding-left:19px;display:block">${escapeHtml(c.note)}</span>` : ""}</span>
+    </div>`
+  ).join("");
 
   container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981"></span>
-      <strong style="font-weight:600">Already in RecruitMe</strong>
-      <button id="recruitme-overlay-close" aria-label="Close" style="margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:14px;padding:0;line-height:1">×</button>
+    ${buildHeader("Already in RecruitMe", "#10b981")}
+    <div style="padding:10px 14px 12px">
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:${contactRows ? 10 : 0}px">
+        ${jobPills}
+        ${moreCount > 0 ? `<span style="font-size:11px;color:#94a3b8;align-self:center">+${moreCount} more</span>` : ""}
+      </div>
+      ${contactRows ? `
+        <div style="border-top:1px solid #f1f5f9;padding-top:8px">
+          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:4px">Contact history</div>
+          ${contactRows}
+        </div>` : ""}
     </div>
-    <div>On ${jobs.length} active job${jobs.length !== 1 ? "s" : ""}: ${titles}${moreLabel}</div>
-    ${contactHtml}
   `;
-  const closeBtn = container.querySelector("#recruitme-overlay-close");
-  if (closeBtn) closeBtn.addEventListener("click", removeOverlay);
+  container.querySelector("#recruitme-overlay-close")?.addEventListener("click", removeOverlay);
+  makeDraggable(container, container.querySelector("#recruitme-drag-handle"));
 }
 
 function renderSuggestedJobs(container, data, linkedinUrl, serverBase) {
   const suggested = (data.suggestedJobs || []).slice(0, 3);
-  if (suggested.length === 0) {
-    // No active jobs to add to — keep the overlay tidy.
-    removeOverlay();
-    return;
-  }
-  const inLibraryNote = data.inLibrary ? "In your library" : "Not yet in RecruitMe";
-  const jobButtons = suggested
-    .map(
-      (j) => `<button class="recruitme-add-to-job" data-job-id="${escapeHtml(j.id)}" data-job-title="${escapeHtml(j.title)}" style="display:block;width:100%;text-align:left;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;margin-top:6px;cursor:pointer;color:#0f172a;font-size:12px">+ Add to <strong>${escapeHtml(j.title)}</strong>${j.company ? ` <span style="color:#64748b">· ${escapeHtml(j.company)}</span>` : ""}</button>`
-    )
-    .join("");
+  if (suggested.length === 0) { removeOverlay(); return; }
+
+  const accent = data.inLibrary ? "#3b82f6" : "#8b5cf6";
+  const label  = data.inLibrary ? "In your library" : "Not yet tracked";
+
+  const jobButtons = suggested.map((j) =>
+    `<button class="recruitme-add-to-job"
+      data-job-id="${escapeHtml(j.id)}"
+      data-job-title="${escapeHtml(j.title)}"
+      style="
+        display:flex;align-items:center;gap:6px;width:100%;text-align:left;
+        background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+        padding:7px 10px;margin-top:5px;cursor:pointer;color:#1e293b;font-size:12px;
+        transition:background 0.12s,border-color 0.12s;
+      "
+      onmouseover="this.style.background='#eff6ff';this.style.borderColor='#bfdbfe'"
+      onmouseout="this.style.background='#f8fafc';this.style.borderColor='#e2e8f0'"
+    >
+      <span style="color:#3b82f6;font-size:14px">+</span>
+      <span><strong>${escapeHtml(j.title)}</strong>${j.company ? ` <span style="color:#94a3b8;font-size:11px">· ${escapeHtml(j.company)}</span>` : ""}</span>
+    </button>`
+  ).join("");
+
   container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${data.inLibrary ? "#3b82f6" : "#94a3b8"}"></span>
-      <strong style="font-weight:600">${escapeHtml(inLibraryNote)}</strong>
-      <button id="recruitme-overlay-close" aria-label="Close" style="margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:14px;padding:0;line-height:1">×</button>
+    ${buildHeader(label, accent)}
+    <div style="padding:10px 14px 12px">
+      <div style="font-size:11px;color:#64748b;margin-bottom:2px">Add to one of your active jobs:</div>
+      ${jobButtons}
+      <div id="recruitme-overlay-status" style="margin-top:8px;font-size:11px;color:#64748b;display:none"></div>
     </div>
-    <div style="color:#475569;font-size:12px;margin-bottom:2px">Add to one of your active jobs:</div>
-    ${jobButtons}
-    <div id="recruitme-overlay-status" style="margin-top:8px;font-size:11px;color:#64748b;display:none"></div>
   `;
-  container.querySelectorAll(".recruitme-add-to-job").forEach((btn) => {
-    btn.addEventListener("click", (e) => handleAddToJobClick(e.currentTarget, linkedinUrl, serverBase));
-  });
-  const closeBtn = container.querySelector("#recruitme-overlay-close");
-  if (closeBtn) closeBtn.addEventListener("click", removeOverlay);
+  container.querySelectorAll(".recruitme-add-to-job").forEach((btn) =>
+    btn.addEventListener("click", (e) => handleAddToJobClick(e.currentTarget, linkedinUrl, serverBase))
+  );
+  container.querySelector("#recruitme-overlay-close")?.addEventListener("click", removeOverlay);
+  makeDraggable(container, container.querySelector("#recruitme-drag-handle"));
 }
 
 async function handleAddToJobClick(button, linkedinUrl, serverBase) {
