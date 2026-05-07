@@ -59,7 +59,14 @@ const SearchSchema = z.object({
   // When set, the saved-search's lastRunAt is stamped at start and lastResultCount
   // is updated when the background run completes.
   savedSearchId: z.string().optional(),
+  // When true, security clearance and NZ work-rights requirements are removed from
+  // scoring for this search run so technically-qualified candidates aren't penalised
+  // for missing clearance data that never appears on LinkedIn profiles.
+  relaxClearance: z.boolean().optional().default(false),
 });
+
+// Regex matching requirements that should be excluded when relaxClearance is set.
+const CLEARANCE_WORK_RIGHTS_RE = /security clearance|secret vetting|confidential vetting|nzsis|nz clearance|clearance eligib|work rights|right to work|nz citizen|nz resident|\bvisa\b|work in new zealand/i;
 
 const PLACEHOLDERS = new Set([
   "full name", "job title at company", "city, country", "unknown",
@@ -389,7 +396,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { maxResults, locationOverride, queriesOverride, savedSearchId } = parsed.data;
+  const { maxResults, locationOverride, queriesOverride, savedSearchId, relaxClearance } = parsed.data;
 
   // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
   // We do NOT mutate process.env so changing a key in settings takes effect immediately
@@ -501,6 +508,7 @@ export async function POST(
     isOwner: auth.isOwner,
     orgId: auth.orgId,
     savedSearchId,
+    relaxClearance: relaxClearance ?? false,
   }).catch((err) => {
     reportError(err, { route: "search:background", jobId: id, orgId: auth.orgId });
     prisma.searchSession.update({
@@ -590,10 +598,23 @@ async function runSearchBackground(args: {
   isOwner: boolean;
   orgId: string | null;
   savedSearchId?: string;
+  relaxClearance: boolean;
 }) {
   const { sessionId, jobId, job, parsedRole, salary, weights, maxResults, targetRaw,
     searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasBing, hasPDL,
-    serpApiKey, bingKey, pdlKey, isOwner, orgId, savedSearchId } = args;
+    serpApiKey, bingKey, pdlKey, isOwner, orgId, savedSearchId, relaxClearance } = args;
+
+  // When relaxClearance=true, remove clearance/work-rights requirements from scoring
+  // for this search run. Candidates aren't penalised for not listing clearance on
+  // LinkedIn — the recruiter handles eligibility verification separately.
+  const parsedRoleForScoring: ParsedRole = relaxClearance
+    ? {
+        ...parsedRole,
+        must_haves: parsedRole.must_haves.filter((r) => !CLEARANCE_WORK_RIGHTS_RE.test(r)),
+        skills_required: parsedRole.skills_required.filter((r) => !CLEARANCE_WORK_RIGHTS_RE.test(r)),
+        knockout_criteria: (parsedRole.knockout_criteria ?? []).filter((r) => !CLEARANCE_WORK_RIGHTS_RE.test(r)),
+      }
+    : parsedRole;
 
   // Compute once at the top so we can use anchor terms in the fallback pass below.
   const anchorTermsForFallback = extractAnchorRequirementTerms(parsedRole);
@@ -1039,19 +1060,19 @@ async function runSearchBackground(args: {
           try {
             const breakdown = hasFullProfile
               ? applyLocationFitOverride(
-                  await scoreCandidateStructured(textToScore, parsedRole, salary, weights),
+                  await scoreCandidateStructured(textToScore, parsedRoleForScoring, salary, weights),
                   candidateLocation,
                   targetLocation,
-                  parsedRole.location_rules,
+                  parsedRoleForScoring.location_rules,
                   job.isRemote,
                   weights,
                 )
               : buildProvisionalSearchScore(
                   r,
-                  parsedRole,
+                  parsedRoleForScoring,
                   candidateLocation,
                   targetLocation,
-                  parsedRole.location_rules,
+                  parsedRoleForScoring.location_rules,
                   job.isRemote,
                   weights,
                 );
@@ -1071,10 +1092,10 @@ async function runSearchBackground(args: {
             reportError(err, { route: "search:score", jobId, orgId, candidateUrl: r.linkedinUrl ?? "unknown" });
             const fallback = buildProvisionalSearchScore(
               r,
-              parsedRole,
+              parsedRoleForScoring,
               candidateLocation,
               targetLocation,
-              parsedRole.location_rules,
+              parsedRoleForScoring.location_rules,
               job.isRemote,
               weights,
             );

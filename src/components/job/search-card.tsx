@@ -36,8 +36,17 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   }>>([]);
   const [maxResults, setMaxResults] = useState(20);
   const [locationOverride, setLocationOverride] = useState<string | null>(null);
+  const [relaxClearance, setRelaxClearance] = useState(false);
 
   const searchResultDisplay = searchResult ? getSearchResultDisplay(searchResult) : null;
+
+  // Show the clearance toggle when the role has clearance/work-rights in its requirements
+  const CLEARANCE_RE = /security clearance|secret vetting|nz citizen|nz resident|work rights|right to work|\bvisa\b/i;
+  const hasClearanceRequirement = [
+    ...(parsedRole.must_haves ?? []),
+    ...(parsedRole.knockout_criteria ?? []),
+    ...(parsedRole.skills_required ?? []),
+  ].some((r) => CLEARANCE_RE.test(r));
   const defaultSearchLocation =
     parsedRole.location?.trim() ||
     jobLocation?.trim() ||
@@ -97,7 +106,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       const res = await fetch(`/api/jobs/${jobId}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxResults, locationOverride: activeSearchLocation }),
+        body: JSON.stringify({ maxResults, locationOverride: activeSearchLocation, relaxClearance }),
       });
       const data = await res.json() as { sessionId?: string; error?: string };
       if (!res.ok || data.error) { setSearchError(data.error ?? "Search failed"); setSearching(false); return; }
@@ -341,6 +350,24 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                     <button onClick={() => setLocationOverride(null)} className="text-[10px] text-slate-400 hover:text-slate-600 underline">reset</button>
                   )}
                 </div>
+              )}
+              {hasClearanceRequirement && (
+                <label className="flex items-center gap-2 cursor-pointer select-none" title="Exclude clearance and work-rights requirements from scoring — find technically qualified candidates and handle eligibility checks separately">
+                  <div
+                    onClick={() => !searching && setRelaxClearance((v) => !v)}
+                    className={cn(
+                      "relative w-8 h-4 rounded-full transition-colors flex-shrink-0",
+                      relaxClearance ? "bg-blue-500" : "bg-slate-300",
+                      searching ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
+                    )}
+                  >
+                    <span className={cn(
+                      "absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform",
+                      relaxClearance ? "translate-x-4" : "translate-x-0.5"
+                    )} />
+                  </div>
+                  <span className="text-xs text-slate-500">Ignore clearance for this search</span>
+                </label>
               )}
             </div>
           </div>
