@@ -29,7 +29,8 @@ import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { CandidateCard } from "@/components/candidate-card";
 import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
-import { FetchQueueToast } from "@/components/fetch-queue-toast";
+import { FetchQueuePanel } from "@/components/fetch-queue-panel";
+import type { FetchStatus } from "@/components/fetch-queue-panel";
 import { SearchCard } from "@/components/job/search-card";
 import { SearchFunnelCard } from "@/components/job/search-funnel-card";
 import { SavedSearchesCard } from "@/components/job/saved-searches-card";
@@ -203,10 +204,12 @@ export default function JobDetailPage({
     return () => document.removeEventListener("mousedown", close);
   }, [overflowOpen]);
   const [scoringId, setScoringId] = useState<string | null>(null);
-  const [fetchStatuses, setFetchStatuses] = useState<Record<string, {
-    state: "waiting" | "fetching" | "done" | "error";
-    message: string;
-  }>>({});
+  const [fetchStatuses, setFetchStatuses] = useState<Record<string, FetchStatus>>({});
+  // Local FIFO queue of candidateIds waiting to be fetched.
+  // Only one fetch fires at a time — drainFetchQueue picks up the next
+  // item whenever a fetch slot becomes free.
+  const fetchQueueRef = useRef<string[]>([]);
+  const MAX_CONCURRENT_FETCHES = 1;
   const [filter, setFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
@@ -482,6 +485,8 @@ export default function JobDetailPage({
     }).catch(() => {});
     setFetchStatuses((prev) => ({ ...prev, [candidateId]: { state, message } }));
     clearCandidateStatus(candidateId, state === "done" ? 4000 : 6000, state);
+    // Slot freed — start next item from the queue
+    drainFetchQueueRef.current();
   };
 
   const pollCandidateFetch = async (candidateId: string) => {
@@ -590,7 +595,47 @@ export default function JobDetailPage({
   finishFetchRef.current = finishFetch;
 
   // Must NOT be async — window.open is blocked after an await.
+  // Drain: if a fetch slot is free and the queue has items, start the next one.
+  const drainFetchQueueRef = useRef<() => void>(() => {});
+  drainFetchQueueRef.current = () => {
+    const active = activeFetchesRef.current.size;
+    while (active < MAX_CONCURRENT_FETCHES && fetchQueueRef.current.length > 0) {
+      const nextId = fetchQueueRef.current.shift()!;
+      // Update queue positions for remaining items
+      fetchQueueRef.current.forEach((id, i) => {
+        setFetchStatuses((prev) => prev[id] ? { ...prev, [id]: { ...prev[id], queuePosition: i + 1 } } : prev);
+      });
+      // Fire the actual fetch
+      startFetchRef.current(nextId);
+    }
+  };
+  const startFetchRef = useRef<(candidateId: string) => void>(() => {});
+
   const handleFetchProfile = useCallback((candidateId: string) => {
+    const candidate = job?.candidates.find((c) => c.id === candidateId);
+    if (!candidate?.linkedinUrl) return;
+    if (activeFetchesRef.current.has(candidateId)) return;
+    if (fetchQueueRef.current.includes(candidateId)) return;
+
+    // If at capacity, add to queue
+    if (activeFetchesRef.current.size >= MAX_CONCURRENT_FETCHES) {
+      const pos = fetchQueueRef.current.length + 1;
+      fetchQueueRef.current.push(candidateId);
+      setFetchStatuses((prev) => ({
+        ...prev,
+        [candidateId]: { state: "queued", message: "Waiting in queue", queuePosition: pos },
+      }));
+      return;
+    }
+    // Slot free — start immediately
+    startFetchRef.current(candidateId);
+  }, [job]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The real fetch logic, extracted so drainFetchQueue can also call it.
+  const handleFetchProfileImplRef = useRef<(candidateId: string) => void>(() => {});
+  startFetchRef.current = (candidateId: string) => handleFetchProfileImplRef.current(candidateId);
+
+  const handleFetchProfileImpl = useCallback((candidateId: string) => {
     const candidate = job?.candidates.find((c) => c.id === candidateId);
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
@@ -687,9 +732,12 @@ export default function JobDetailPage({
           [candidateId]: { state: "error", message: "Network error starting capture" },
         }));
         clearCandidateStatus(candidateId, 6000, "error");
+        // Free the slot even on error so the queue can continue
+        drainFetchQueueRef.current();
       }
     })();
   }, [id, job]);
+  handleFetchProfileImplRef.current = handleFetchProfileImpl;
 
   const handleStatusChange = useCallback(async (candidateId: string, status: string) => {
     await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
@@ -1815,8 +1863,11 @@ ${toHtml(job.rawJd)}
                     scoring={scoringId === candidate.id}
                     fetchingProfile={
                       fetchStatuses[candidate.id]?.state === "waiting" ||
-                      fetchStatuses[candidate.id]?.state === "fetching"
+                      fetchStatuses[candidate.id]?.state === "fetching" ||
+                      fetchStatuses[candidate.id]?.state === "queued"
                     }
+                    fetchQueueState={fetchStatuses[candidate.id]?.state}
+                    fetchQueuePosition={fetchStatuses[candidate.id]?.queuePosition}
                   />
                 </div>
               </div>
@@ -1825,7 +1876,7 @@ ${toHtml(job.rawJd)}
         )}
       </div>
 
-      <FetchQueueToast
+      <FetchQueuePanel
         statuses={fetchStatuses}
         candidateNames={Object.fromEntries((job?.candidates ?? []).map((c) => [c.id, c.name]))}
         onDismiss={() => setFetchStatuses({})}

@@ -150,6 +150,8 @@ interface CandidateCardProps {
   onDelete: (id: string) => void;
   scoring?: boolean;
   fetchingProfile?: boolean;
+  fetchQueueState?: string;
+  fetchQueuePosition?: number;
 }
 
 type LegacyRadarDimensions = Partial<RadarDimensions>;
@@ -698,6 +700,8 @@ function ProfileDrawer({
   onLinkedInChange,
   onFetchProfile,
   fetchingProfile = false,
+  fetchQueueState,
+  fetchQueuePosition,
 }: {
   candidate: Candidate;
   jobId: string;
@@ -705,6 +709,8 @@ function ProfileDrawer({
   onLinkedInChange?: (id: string, url: string) => void;
   onFetchProfile?: (id: string) => void;
   fetchingProfile?: boolean;
+  fetchQueueState?: string;
+  fetchQueuePosition?: number;
 }) {
   const breakdown = useMemo(
     () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
@@ -831,8 +837,13 @@ function ProfileDrawer({
               <X className="w-5 h-5" />
             </button>
             {onFetchProfile && candidate.linkedinUrl && (
-              fetchingProfile ? (
-                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+              fetchQueueState === "queued" ? (
+                <span className="text-[11px] text-amber-500 flex items-center gap-1 font-medium">
+                  <span className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin inline-block" />
+                  Queued{fetchQueuePosition ? ` #${fetchQueuePosition}` : ""}
+                </span>
+              ) : (fetchQueueState === "waiting" || fetchQueueState === "fetching") ? (
+                <span className="text-[11px] text-blue-500 flex items-center gap-1">
                   <Loader2 className="w-3 h-3 animate-spin" />Fetching…
                 </span>
               ) : hasFetchedProfile ? (
@@ -993,6 +1004,8 @@ export const CandidateCard = memo(function CandidateCard({
   onDelete,
   scoring = false,
   fetchingProfile = false,
+  fetchQueueState,
+  fetchQueuePosition,
 }: CandidateCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -1490,8 +1503,13 @@ export const CandidateCard = memo(function CandidateCard({
 
                 {/* Fetch profile button — prominent until first successful capture, subtle afterwards */}
                 {candidate.linkedinUrl && (
-                  fetchingProfile ? (
-                    <Button size="sm" variant="ghost" loading disabled className="text-slate-400">
+                  fetchQueueState === "queued" ? (
+                    <Button size="sm" variant="ghost" disabled className="text-amber-500 font-medium">
+                      <span className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin inline-block mr-1" />
+                      #{fetchQueuePosition ?? "Q"}
+                    </Button>
+                  ) : (fetchQueueState === "waiting" || fetchQueueState === "fetching") ? (
+                    <Button size="sm" variant="ghost" loading disabled className="text-blue-500">
                       Fetching…
                     </Button>
                   ) : hasFetchedProfile ? (
@@ -1606,6 +1624,8 @@ export const CandidateCard = memo(function CandidateCard({
           onLinkedInChange={onLinkedInChange}
           onFetchProfile={onFetchProfile}
           fetchingProfile={fetchingProfile}
+          fetchQueueState={fetchQueueState}
+          fetchQueuePosition={fetchQueuePosition}
         />
       )}
     </div>
