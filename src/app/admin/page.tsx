@@ -117,11 +117,20 @@ export default function AdminPage() {
   // Danger zone
   const [wiping, setWiping] = useState<string | null>(null);
   const handleWipeCandidates = async (jobId?: string) => {
-    const label = jobId ? "all candidates for this job" : "ALL candidates";
+    const label = jobId ? "all candidates for this job" : "ALL candidates in your organisation";
     if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    // Second confirmation for the org-wide wipe
+    if (!jobId && !confirm("Are you absolutely sure? Type OK to confirm.")) return;
     setWiping(jobId ?? "all");
-    const url = jobId ? `/api/jobs/${jobId}/candidates/wipe` : "/api/admin/wipe-candidates";
-    await fetch(url, { method: "DELETE" }).catch(() => {});
+    if (jobId) {
+      await fetch(`/api/jobs/${jobId}/candidates/wipe`, { method: "DELETE" }).catch(() => {});
+    } else {
+      await fetch("/api/admin/wipe-candidates", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: "DELETE_ALL_CANDIDATES" }),
+      }).catch(() => {});
+    }
     setWiping(null);
     setStats(s => s ? { ...s, candidates: 0 } : s);
   };

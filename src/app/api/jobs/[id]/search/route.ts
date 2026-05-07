@@ -231,9 +231,9 @@ function buildSearchEvaluation(opts: {
   const rejectionRate = totalExamined > 0 ? totalFiltered / totalExamined : 0;
 
   if (collected === 0 && sawRetryableSearchFailure)
-    return "FAIL — rate limited; try again (already-imported candidates won't duplicate)";
+    return "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.";
   if (collected === 0)
-    return "FAIL — 0 candidates found. Next steps: (1) try a different location, (2) click Re-analyse and Search Again, (3) add more detail to the JD";
+    return "FAIL — No candidates found. Try: broader location (e.g. 'New Zealand' instead of a specific city), Re-analyse to refresh search terms, or add more skills to the job description.";
   if (rejectionRate >= 0.80 && totalExamined >= 10)
     return `WARNING — ${Math.round(rejectionRate * 100)}% of search results filtered out before scoring. The role's required skills may be too narrow for the available pool — try Re-analyse, then Search Again`;
   if (collected <= 2)

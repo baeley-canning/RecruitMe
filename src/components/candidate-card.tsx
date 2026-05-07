@@ -320,6 +320,7 @@ function AcceptanceBadge({
         ref={badgeRef}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={() => setShowDetail(false)}
+        title="Offer acceptance likelihood — how likely this candidate is to accept an offer based on their career signals"
         className={cn(
           "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium cursor-default select-none",
           config.pill
@@ -1156,7 +1157,17 @@ export const CandidateCard = memo(function CandidateCard({
             </div>
 
             <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-              {!hasFetchedProfile && candidate.matchScore != null && (
+              {candidate.matchScore != null && breakdown?.data_quality === "minimal" && (
+                <span title="Very little profile data — score is speculative until the full profile is fetched" className="text-[9px] font-semibold uppercase tracking-wide text-red-500 bg-red-50 border border-red-200 rounded px-1 py-0.5">
+                  Minimal data
+                </span>
+              )}
+              {candidate.matchScore != null && breakdown?.data_quality === "snippet" && (
+                <span title="Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" className="text-[9px] font-semibold uppercase tracking-wide text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">
+                  Snippet score
+                </span>
+              )}
+              {!hasFetchedProfile && candidate.matchScore != null && !breakdown?.data_quality && (
                 <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">
                   Provisional
                 </span>
@@ -1482,8 +1493,8 @@ export const CandidateCard = memo(function CandidateCard({
           })()}
           {/* offer_sent has two forward options */}
           {candidate.status === "offer_sent" && (<>
-            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "hired")}   className="text-green-700 hover:bg-green-50">Hired</Button>
-            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "declined")} className="text-orange-600 hover:bg-orange-50">Declined</Button>
+            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Hired? This finalises their pipeline stage.`)) onStatusChange(candidate.id, "hired"); }}   className="text-green-700 hover:bg-green-50">Hired</Button>
+            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Declined?`)) onStatusChange(candidate.id, "declined"); }} className="text-orange-600 hover:bg-orange-50">Declined</Button>
           </>)}
           {/* Back step */}
           {PIPELINE_BACK[candidate.status] && (() => {
@@ -1492,15 +1503,20 @@ export const CandidateCard = memo(function CandidateCard({
           })()}
           {/* Reject — available on all non-terminal stages */}
           {!TERMINAL_STATUSES.has(candidate.status) && (
-            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "rejected")} className="text-slate-400 hover:text-red-600 hover:bg-red-50">
+            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Reject ${candidate.name}? You can undo this from the candidate card.`)) onStatusChange(candidate.id, "rejected"); }} className="text-slate-400 hover:text-red-600 hover:bg-red-50">
               <X className="w-3.5 h-3.5" />Reject
             </Button>
           )}
-          {/* Document actions */}
+          {/* Document actions + undo for terminal statuses */}
           {["rejected","declined"].includes(candidate.status) && (
-            <Button size="sm" variant="ghost" onClick={() => setRejectionOpen(true)} className="text-slate-500 hover:text-red-700 hover:bg-red-50" title="Draft rejection email">
-              <Mail className="w-3.5 h-3.5" />Draft email
-            </Button>
+            <>
+              <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "reviewing")} className="text-slate-400 hover:text-slate-600 hover:bg-slate-50" title="Move back to reviewing">
+                ↩ Undo
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setRejectionOpen(true)} className="text-slate-500 hover:text-red-700 hover:bg-red-50" title="Draft rejection email">
+                <Mail className="w-3.5 h-3.5" />Draft email
+              </Button>
+            </>
           )}
           {["offer_sent","hired"].includes(candidate.status) && (
             <Button size="sm" variant="ghost" onClick={() => setOfferOpen(true)} className="text-emerald-600 hover:bg-emerald-50" title="Generate offer letter">

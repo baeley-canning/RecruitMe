@@ -6,7 +6,7 @@ import { Share2, Copy, Check, X, Trash2, Loader2 } from "lucide-react";
 // "Share with client" affordance for the shortlist page. Generates an opaque
 // token, returns the public URL, lets the recruiter copy or revoke. The token
 // is regenerated on each rotation — old links stop working immediately.
-export function ShareShortlistButton({ jobId }: { jobId: string }) {
+export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: string; shortlistCount?: number }) {
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -98,6 +98,12 @@ export function ShareShortlistButton({ jobId }: { jobId: string }) {
             </button>
           </div>
 
+          {shortlistCount === 0 && (
+            <div className="mb-3 flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <span className="mt-0.5">⚠</span>
+              <span>No candidates have been shortlisted yet. The link will show a "being evaluated" message to clients until you shortlist candidates.</span>
+            </div>
+          )}
           <p className="text-[11px] text-slate-500 mb-3">
             Anyone with this link can see the shortlisted candidates and their scoring summary. No login required. Notes and contact details are not shared.
           </p>

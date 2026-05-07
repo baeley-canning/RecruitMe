@@ -84,8 +84,8 @@ export function BulkUploadModal({ jobId, onClose, onComplete }: BulkUploadModalP
   const queued = files.filter((e) => e.status === "queued").length;
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={() => { if (!processing) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
           <div>
             <h3 className="font-semibold text-slate-900">Upload CVs</h3>

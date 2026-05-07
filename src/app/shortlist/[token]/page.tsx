@@ -78,7 +78,9 @@ export default async function PublicShortlistPage({
         {/* Candidates */}
         {candidates.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 border-dashed p-10 text-center">
-            <p className="text-slate-500 text-sm">No candidates have been shortlisted yet.</p>
+            <Briefcase className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+            <p className="text-slate-700 font-medium text-sm">Candidates are being evaluated</p>
+            <p className="text-slate-400 text-xs mt-1">Check back soon — your recruiter is actively reviewing profiles for this role.</p>
           </div>
         ) : (
           <div className="space-y-4">

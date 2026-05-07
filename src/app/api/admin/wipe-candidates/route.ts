@@ -1,16 +1,24 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getAuth, unauthorized } from "@/lib/session";
 import { prisma } from "@/lib/db";
 
-type AnySession = { user?: { role?: string } } | null;
+export async function DELETE(req: Request) {
+  const auth = await getAuth();
+  if (!auth?.isOwner) return unauthorized();
 
-export async function DELETE() {
-  const session = await getServerSession(authOptions) as AnySession;
-  if (session?.user?.role !== "owner") {
-    return NextResponse.json({ error: "Owner only" }, { status: 403 });
+  // Require explicit confirmation in the request body to prevent accidental wipes.
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+  if (body.confirm !== "DELETE_ALL_CANDIDATES") {
+    return NextResponse.json(
+      { error: "Pass { confirm: 'DELETE_ALL_CANDIDATES' } in the request body to confirm." },
+      { status: 400 }
+    );
   }
 
-  const { count } = await prisma.candidate.deleteMany({});
+  // Scope to the owner's org — never wipe across all orgs.
+  const where = auth.orgId ? { orgId: auth.orgId } : {};
+  const { count } = await prisma.candidate.deleteMany({ where });
+
+  console.warn(`[admin] wipe-candidates: ${count} records deleted by orgId=${auth.orgId ?? "owner"}`);
   return NextResponse.json({ deleted: count });
 }

@@ -432,7 +432,7 @@ export default function JobDetailPage({
         await fetchJob();
       }
     } catch {
-      setParseError("Parsing failed. Make sure Ollama is running.");
+      setParseError("Parsing failed — check that your Claude API key is set in Settings and try again.");
     } finally {
       setParsing(false);
     }

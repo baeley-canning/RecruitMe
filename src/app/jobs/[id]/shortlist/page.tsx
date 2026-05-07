@@ -317,7 +317,7 @@ export default function ShortlistPage({
           Back to {job.title}
         </Link>
         <div className="flex items-center gap-2">
-          <ShareShortlistButton jobId={id} />
+          <ShareShortlistButton jobId={id} shortlistCount={shortlisted.length} />
           <button
             onClick={() => window.print()}
             className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
