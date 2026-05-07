@@ -96,7 +96,8 @@ export async function getRecruitingContext(
       status: true,
       scoreBreakdown: true,
       profileText: true,
-      job: { select: { parsedRole: true, title: true } },
+      updatedAt: true,
+      job: { select: { parsedRole: true, title: true, company: true } },
     },
     orderBy: { updatedAt: "desc" },
     take: 200, // look at the last 200 decisions, then rank by similarity
@@ -108,23 +109,41 @@ export async function getRecruitingContext(
 
   if (candidates.length === 0) return "";
 
-  // Score each candidate by role similarity
+  const now = Date.now();
+  const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+
+  // Score each candidate by role similarity with recency decay.
+  // Examples older than 60 days are down-weighted (0.75×) so stale patterns
+  // don't lock in company or domain preferences from old roles.
   const mustHaves = parsedRole.must_haves ?? [];
   const scored = candidates
     .filter((c) => (c.profileText?.length ?? 0) >= MIN_EXAMPLE_PROFILE_CHARS)
     .map((c) => {
-      const jobParsed = safeParseJson<ParsedRole | null>(c.job?.parsedRole ?? null, null);
-      const titleSim  = titleSimilarity(parsedRole.title, c.job?.title ?? "");
-      const skillSim  = mustHaveSimilarity(mustHaves, jobParsed?.must_haves ?? []);
-      return { ...c, similarity: titleSim * 0.4 + skillSim * 0.6 };
+      const jobParsed  = safeParseJson<ParsedRole | null>(c.job?.parsedRole ?? null, null);
+      const titleSim   = titleSimilarity(parsedRole.title, c.job?.title ?? "");
+      const skillSim   = mustHaveSimilarity(mustHaves, jobParsed?.must_haves ?? []);
+      const ageMs      = now - new Date(c.updatedAt).getTime();
+      const recencyMod = ageMs > SIXTY_DAYS_MS ? 0.75 : 1.0;
+      return { ...c, similarity: (titleSim * 0.4 + skillSim * 0.6) * recencyMod };
     })
     .filter((c) => c.similarity > 0.25) // meaningful overlap required — 0.1 was too permissive
     .sort((a, b) => b.similarity - a.similarity);
 
   if (scored.length === 0) return "";
 
-  // Take up to 3 positive and 2 negative examples
-  const positives = scored.filter((c) => POSITIVE_STATUSES.has(c.status)).slice(0, 3);
+  // Take up to 3 positive and 2 negative examples.
+  // Deduplication: cap to 1 positive per company so a single employer that
+  // the org consistently hires from doesn't dominate the context and introduce
+  // employer bias into future scoring.
+  const seenCompany = new Set<string>();
+  const positives: typeof scored = [];
+  for (const c of scored.filter((c) => POSITIVE_STATUSES.has(c.status))) {
+    const company = (c.job?.company ?? "").toLowerCase().trim();
+    if (company && seenCompany.has(company)) continue;
+    if (company) seenCompany.add(company);
+    positives.push(c);
+    if (positives.length >= 3) break;
+  }
   const negatives = scored.filter((c) => NEGATIVE_STATUSES.has(c.status)).slice(0, 2);
   const examples  = [...positives, ...negatives];
 
