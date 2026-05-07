@@ -35,6 +35,30 @@ export const NZ_SCARCE_SKILLS: ScarceSkillEntry[] = [
     note: "DB2 expertise is scarce in NZ — Oracle and SQL Server professionals are the closest adjacent pool.",
   },
   {
+    match: /\bsnowflake\b/i,
+    label: "Snowflake",
+    alternatives: ["BigQuery", "Redshift", "Azure Synapse"],
+    note: "Snowflake specialists are thin in NZ — engineers with BigQuery, Redshift, or Azure Synapse experience share the same cloud data warehouse fundamentals.",
+  },
+  {
+    match: /\bdbt\b/i,
+    label: "dbt",
+    alternatives: ["Fivetran", "data pipeline", "ELT"],
+    note: "dbt practitioners are a small but growing pool in NZ — data engineers with Fivetran, Airbyte, or ELT pipeline experience can typically adapt quickly.",
+  },
+  {
+    match: /\bsplunk\b|\bqradar\b|\bsiem\b/i,
+    label: "SIEM (Splunk/QRadar)",
+    alternatives: ["Microsoft Sentinel", "Elastic SIEM", "security operations"],
+    note: "Splunk/QRadar specialists are scarce in NZ — Microsoft Sentinel and Elastic SIEM engineers cover the same threat-detection fundamentals.",
+  },
+  {
+    match: /\bpenetration test|\bpentest|\bethical hack/i,
+    label: "Penetration Testing",
+    alternatives: ["security consultant", "red team", "vulnerability assessment"],
+    note: "Dedicated pen testers are rare in NZ — security consultants and red team practitioners cover adjacent offensive security skills.",
+  },
+  {
     match: /\bc\+\+/i,
     label: "C++",
     alternatives: ["C", "Rust"],
@@ -249,17 +273,30 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   // Testing
   [/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i, ["JMeter"]],
   [/\bselenium\b/i,                                     ["Selenium"]],
+  [/\bcypress\b/i,                                      ["Cypress"]],
+  // DevOps / infrastructure — specific enough to gate meaningfully
+  [/\bkubernetes\b|\bk8s\b|\baks\b|\beks\b|\bgke\b/i,  ["Kubernetes"]],
+  [/\bterraform\b/i,                                    ["Terraform"]],
+  [/\bansible\b/i,                                      ["Ansible"]],
+  // Data engineering platforms
+  [/\bdbt\b/i,                                          ["dbt"]],
+  [/\bairflow\b/i,                                      ["Airflow"]],
+  // Security specialisations — specific enough to appear in profiles
+  [/\bpenetration test|\bpen test|\bpentest|\bethical hack/i, ["penetration testing"]],
+  [/\bsiem\b|\bsplunk\b|\bqradar\b/i,                   ["SIEM"]],
+  [/\biso 27001\b/i,                                    ["ISO 27001"]],
   // Compliance / methodology
   [/\bitil\b|\bitsm\b/i,                                ["ITIL"]],
   // NOTE: "security clearance" intentionally NOT in DISTINCTIVE — cleared candidates
   // don't put clearance status in their LinkedIn profiles (it's sensitive/restricted),
   // so any role with a clearance requirement would return 0 candidates if this gated
   // the source check. Clearance is assessed during scoring, not at search import.
-  // Agile roles — only as DISTINCTIVE when Agile/Scrum is the primary skill, not a nice-to-have.
-  // Narrow patterns to avoid gating all candidates on "works in an Agile environment".
-  [/\bscrum master\b/i,                                 ["Scrum Master"]],
-  [/\bagile coach\b/i,                                  ["Agile Coach"]],
-  [/\bsafe practitioner\b|\bsafe agilist\b|\bsafe coach\b/i, ["SAFe Practitioner"]],
+  // Agile/delivery roles — match both canonical title and common practitioner synonyms
+  // so a Scrum Master search doesn't block Agile Coach profiles and vice versa.
+  [/\bscrum master\b|\bscrum coach\b/i,                 ["Scrum Master", "Scrum Coach"]],
+  [/\bagile coach\b|\bagile practitioner\b/i,            ["Agile Coach", "agile"]],
+  [/\bsafe practitioner\b|\bsafe agilist\b|\brelease train engineer\b|\brte\b/i, ["SAFe", "Release Train Engineer"]],
+  [/\bproduct owner\b/i,                                ["Product Owner"]],
   // Design
   [/\bfigma\b/i,                                        ["Figma"]],
   [/\bux\b|user experience/i,                           ["UX"]],
