@@ -419,7 +419,11 @@ export default function JobDetailPage({
       if (!res.ok || data.error) {
         setParseError(data.error ?? "Parsing failed");
       } else {
-        if (data.changes?.length) setParseChanges(data.changes);
+        if (data.changes?.length) {
+          setParseChanges(data.changes);
+        } else {
+          setParseChanges(["Re-analysed — requirements are the same as before"]);
+        }
         await fetchJob();
       }
     } catch {

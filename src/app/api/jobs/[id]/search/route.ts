@@ -765,10 +765,24 @@ async function runSearchBackground(args: {
 
     if (allRaw.length === 0) {
       if (sawRetryableSearchFailure) {
-        await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "rate_limited", message: "Rate-limited before any results were returned." } }).catch(() => {});
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "rate_limited",
+            message: "Rate-limited before any results were returned.",
+            evaluation: "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.",
+          },
+        }).catch(() => {});
         return;
       }
-      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "No profiles found." } }).catch(() => {});
+      await prisma.searchSession.update({
+        where: { id: sessionId },
+        data: {
+          status: "complete",
+          message: "No profiles found.",
+          evaluation: "FAIL — No candidates found. Try: set Location to 'New Zealand', click Re-analyse to refresh search terms, or broaden requirements in the JD.",
+        },
+      }).catch(() => {});
       return;
     }
 
