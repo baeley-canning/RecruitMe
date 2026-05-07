@@ -177,7 +177,7 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
   const withProfile = candidates.length;
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="px-4 py-6 sm:px-6 md:p-8 max-w-6xl mx-auto">
       {/* Header */}
       <div className="flex items-start justify-between mb-7">
         <div>

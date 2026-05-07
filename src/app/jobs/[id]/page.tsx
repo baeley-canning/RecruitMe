@@ -1092,61 +1092,35 @@ ${toHtml(job.rawJd)}
 
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="px-4 py-6 sm:px-6 md:p-8 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-start justify-between mb-7">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h1 className="text-2xl font-bold text-slate-900">{job.title}</h1>
-            <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", statusBadge(job.status))}>
-              {statusLabel(job.status)}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 text-sm text-slate-500">
-            {job.company && (
-              <span className="flex items-center gap-1">
-                <Briefcase className="w-3.5 h-3.5" />
-                {job.company}
+      <div className="mb-6">
+        {/* Title row */}
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight">{job.title}</h1>
+              <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0", statusBadge(job.status))}>
+                {statusLabel(job.status)}
               </span>
-            )}
-            {job.location && (
-              <span className="flex items-center gap-1">
-                <MapPin className="w-3.5 h-3.5" />
-                {job.location}
-              </span>
-            )}
+            </div>
+            <div className="flex items-center gap-3 text-sm text-slate-500 flex-wrap">
+              {job.company && (
+                <span className="flex items-center gap-1">
+                  <Briefcase className="w-3.5 h-3.5 flex-shrink-0" />
+                  {job.company}
+                </span>
+              )}
+              {job.location && (
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+                  {job.location}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Shortlist link — only surfaces when there's something to see */}
-          {shortlistCount > 0 && (
-            <Link
-              href={`/jobs/${id}/shortlist`}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
-            >
-              <Star className="w-3.5 h-3.5" />
-              Shortlist ({shortlistCount})
-            </Link>
-          )}
-
-          {/* Secondary candidate-add actions */}
-          <Button variant="outline" size="sm" onClick={() => openModal("bulkUpload")}>
-            <Upload className="w-3.5 h-3.5" />
-            Upload CVs
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => openModal("browseLibrary")}>
-            <Users className="w-3.5 h-3.5" />
-            From Library
-          </Button>
-
-          {/* Primary CTA */}
-          <Button onClick={() => openModal("addCandidate")}>
-            <UserPlus className="w-4 h-4" />
-            Add Candidate
-          </Button>
-
-          {/* Overflow ⋯ — low-frequency: export, close, client report */}
-          <div className="relative" ref={overflowRef}>
+          {/* Overflow ⋯ always visible, even on mobile */}
+          <div className="relative flex-shrink-0" ref={overflowRef}>
             <button
               onClick={() => setOverflowOpen((o) => !o)}
               className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
@@ -1191,6 +1165,34 @@ ${toHtml(job.rawJd)}
               </div>
             )}
           </div>
+        </div>
+
+        {/* Action buttons — wrap on mobile */}
+        <div className="flex items-center gap-2 flex-wrap mt-3">
+          {shortlistCount > 0 && (
+            <Link
+              href={`/jobs/${id}/shortlist`}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
+            >
+              <Star className="w-3.5 h-3.5" />
+              Shortlist ({shortlistCount})
+            </Link>
+          )}
+          <Button variant="outline" size="sm" onClick={() => openModal("bulkUpload")}>
+            <Upload className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Upload CVs</span>
+            <span className="sm:hidden">Upload</span>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => openModal("browseLibrary")}>
+            <Users className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">From Library</span>
+            <span className="sm:hidden">Library</span>
+          </Button>
+          <Button onClick={() => openModal("addCandidate")}>
+            <UserPlus className="w-4 h-4" />
+            <span className="hidden sm:inline">Add Candidate</span>
+            <span className="sm:hidden">Add</span>
+          </Button>
         </div>
       </div>
 
@@ -1360,33 +1362,33 @@ ${toHtml(job.rawJd)}
                   </div>
                   {editingSalary ? (
                     <>
-                      <div className="flex items-center gap-1.5">
-                        <div className="relative flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="relative w-24">
                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
                           <input
                             type="number"
-                            placeholder="Min (k)"
+                            placeholder="Min"
                             value={salaryMin}
                             onChange={(e) => setSalaryMin(e.target.value)}
-                            className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full pl-5 pr-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
                         <span className="text-slate-400 text-sm">–</span>
-                        <div className="relative flex-1">
+                        <div className="relative w-24">
                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
                           <input
                             type="number"
-                            placeholder="Max (k)"
+                            placeholder="Max"
                             value={salaryMax}
                             onChange={(e) => setSalaryMax(e.target.value)}
-                            className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full pl-5 pr-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
-                        <span className="text-slate-400 text-xs">k</span>
-                        <button onClick={handleSaveSalary} disabled={savingSalary} className="px-2 py-1 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50">
-                          {savingSalary ? "..." : "Save"}
+                        <span className="text-slate-400 text-xs">k NZD</span>
+                        <button onClick={handleSaveSalary} disabled={savingSalary} className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50">
+                          {savingSalary ? "…" : "Save"}
                         </button>
-                        <button onClick={() => { setEditingSalary(false); setSalaryError(""); }} className="text-slate-400 hover:text-slate-600">
+                        <button onClick={() => { setEditingSalary(false); setSalaryError(""); }} className="p-1.5 text-slate-400 hover:text-slate-600">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>

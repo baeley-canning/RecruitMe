@@ -50,7 +50,7 @@ export default async function JobsPage() {
   const fetchTarget = needsFetchRows.length > 0 ? needsFetchRows[0] : null;
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="px-4 py-6 sm:px-6 md:p-8 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>

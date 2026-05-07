@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, SlidersHorizontal, Github } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, SlidersHorizontal, Github, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
@@ -147,8 +147,12 @@ export function Sidebar({ jobs }: SidebarProps) {
   const router = useRouter();
   const { data: session } = useSession();
   const [showSettings, setShowSettings] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const username = session?.user?.name ?? "";
   const isOwner = (session?.user as { role?: string })?.role === "owner";
+
+  // Close mobile drawer whenever the route changes
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
 
   const handleDelete = async (e: React.MouseEvent, jobId: string) => {
     e.preventDefault();
@@ -165,56 +169,164 @@ export function Sidebar({ jobs }: SidebarProps) {
     <>
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
-      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-3 shadow-sm backdrop-blur md:hidden">
-        <Link href="/jobs" className="flex items-center gap-2 min-w-0">
+      {/* ── Mobile top bar ── */}
+      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-4 shadow-sm backdrop-blur md:hidden">
+        <Link href="/dashboard" className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
             <Users className="w-4 h-4 text-white" />
           </div>
           <div className="min-w-0">
             <div className="text-slate-900 font-semibold text-sm leading-tight">RecruitMe</div>
-            <div className="text-slate-500 text-xs leading-tight">Talent Manager</div>
+            <div className="text-slate-500 text-xs leading-tight truncate">Talent Manager</div>
           </div>
         </Link>
-        <div className="flex items-center gap-1">
-          <Link
-            href="/dashboard"
-            className={cn(
-              "p-2 rounded-lg transition-colors",
-              pathname === "/dashboard" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
-            )}
-            title="Dashboard"
-          >
-            <LayoutDashboard className="w-4 h-4" />
-          </Link>
-          <Link
-            href="/candidates"
-            className={cn(
-              "p-2 rounded-lg transition-colors",
-              pathname.startsWith("/candidates") ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
-            )}
-            title="Candidates"
-          >
-            <Library className="w-4 h-4" />
-          </Link>
-          <Link
-            href="/candidate-profiles"
-            className={cn(
-              "p-2 rounded-lg transition-colors",
-              pathname === "/candidate-profiles" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100"
-            )}
-            title="Candidate Profiles"
-          >
-            <ClipboardList className="w-4 h-4" />
-          </Link>
+        <div className="flex items-center gap-2">
           <Link
             href="/jobs/new"
-            className="p-2 rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-500"
-            title="New job"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium transition-colors hover:bg-blue-500"
           >
             <Plus className="w-4 h-4" />
+            New Job
           </Link>
+          <button
+            onClick={() => setMobileOpen(true)}
+            className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
+            aria-label="Open menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
         </div>
       </div>
+
+      {/* ── Mobile slide-out drawer ── */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 md:hidden" onClick={() => setMobileOpen(false)}>
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          {/* Drawer panel */}
+          <div
+            className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-slate-900 flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
+                  <Users className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <div className="text-white font-semibold text-sm">RecruitMe</div>
+                  <div className="text-slate-400 text-xs">Talent Manager</div>
+                </div>
+              </div>
+              <button onClick={() => setMobileOpen(false)} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Drawer nav */}
+            <nav className="px-3 py-3 border-b border-slate-800 space-y-0.5">
+              {[
+                { href: "/dashboard",          icon: LayoutDashboard, label: "Dashboard",          match: (p: string) => p === "/dashboard" },
+                { href: "/jobs/listing-builder",icon: FileText,        label: "Listing Builder",   match: (p: string) => p === "/jobs/listing-builder" },
+                { href: "/candidates",          icon: Library,         label: "Candidates Library", match: (p: string) => p.startsWith("/candidates") },
+                { href: "/candidate-profiles",  icon: ClipboardList,   label: "Candidate Profiles", match: (p: string) => p === "/candidate-profiles" },
+                { href: "/github-search",       icon: Github,          label: "GitHub Search",     match: (p: string) => p.startsWith("/github-search") },
+                { href: "/linkedin-setup",      icon: Bookmark,        label: "LinkedIn Setup",    match: (p: string) => p === "/linkedin-setup" },
+                { href: "/settings",            icon: SlidersHorizontal, label: "Scoring Settings", match: (p: string) => p === "/settings" },
+              ].map(({ href, icon: Icon, label, match }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors",
+                    match(pathname ?? "")
+                      ? "bg-slate-800 text-white"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800"
+                  )}
+                >
+                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  {label}
+                </Link>
+              ))}
+              {isOwner && (
+                <Link
+                  href="/admin"
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors",
+                    pathname === "/admin"
+                      ? "bg-slate-800 text-white"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800"
+                  )}
+                >
+                  <Shield className="w-4 h-4 flex-shrink-0" />
+                  Admin
+                </Link>
+              )}
+            </nav>
+
+            {/* Jobs list */}
+            <div className="flex-1 overflow-y-auto px-3 py-3">
+              <div className="flex items-center justify-between mb-2 px-1">
+                <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Jobs</span>
+                <Link href="/jobs/new" className="text-slate-400 hover:text-white p-0.5 rounded hover:bg-slate-800 transition-colors">
+                  <Plus className="w-4 h-4" />
+                </Link>
+              </div>
+              {jobs.length === 0 && (
+                <p className="text-xs text-slate-500 px-3 py-2">No jobs yet</p>
+              )}
+              {jobs.map((job) => {
+                const active = pathname === `/jobs/${job.id}` || pathname?.startsWith(`/jobs/${job.id}/`);
+                return (
+                  <Link
+                    key={job.id}
+                    href={`/jobs/${job.id}`}
+                    className={cn(
+                      "flex flex-col px-3 py-2.5 rounded-lg transition-colors mb-0.5",
+                      active ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                    )}
+                  >
+                    <span className="text-sm font-medium leading-snug line-clamp-1">{job.title}</span>
+                    {job.company && (
+                      <span className={cn("text-xs mt-0.5 line-clamp-1", active ? "text-blue-100" : "text-slate-500")}>
+                        {job.company}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-4 border-t border-slate-800 space-y-3">
+              <Link
+                href="/jobs/new"
+                className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                New Job
+              </Link>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0">
+                    {isOwner ? <Shield className="w-3.5 h-3.5 text-blue-400" /> : <Users className="w-3.5 h-3.5 text-slate-400" />}
+                  </div>
+                  <span className="text-sm text-slate-400 truncate">{username}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => { setMobileOpen(false); setShowSettings(true); }} className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors" title="API Keys">
+                    <Settings className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => signOut({ callbackUrl: "/login" })} className="p-2 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors" title="Sign out">
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <aside className="hidden w-64 flex-shrink-0 bg-slate-900 md:flex flex-col h-screen sticky top-0">
         {/* Logo */}

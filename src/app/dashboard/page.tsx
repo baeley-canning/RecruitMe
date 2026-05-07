@@ -55,14 +55,14 @@ export default function DashboardPage() {
   const healthy = jobs.filter((j) => !j.needsAttention);
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <div className="mb-7">
+    <div className="px-4 py-6 sm:px-6 md:p-8 max-w-6xl mx-auto">
+      <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
         <p className="text-sm text-slate-500 mt-1">What needs your attention right now.</p>
       </div>
 
       {/* Stat strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {[
           { label: "Active jobs",        value: totals.activeJobs,        icon: Briefcase,  colour: "text-blue-600 bg-blue-50" },
           { label: "Total candidates",   value: totals.totalCandidates,   icon: Users,      colour: "text-slate-600 bg-slate-100" },

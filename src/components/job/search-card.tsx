@@ -312,30 +312,30 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
           </div>
 
           <div className="space-y-3 pt-1 border-t border-slate-100">
-            <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex flex-wrap gap-x-4 gap-y-2 items-center">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-slate-500 whitespace-nowrap">Max candidates</label>
                 <select value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} disabled={searching}
-                  className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
+                  className="text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
                   {[10, 20, 30, 50, 75, 100].map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
+              {defaultSearchLocation && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 whitespace-nowrap">Location</span>
+                  <NZLocationInput
+                    value={locationOverride ?? defaultSearchLocation}
+                    onChange={(v) => setLocationOverride(v || null)}
+                    allowNationwide={false}
+                    disabled={searching}
+                    className="w-full sm:w-44"
+                  />
+                  {locationOverride?.trim() && (
+                    <button onClick={() => setLocationOverride(null)} className="text-[10px] text-slate-400 hover:text-slate-600 underline">reset</button>
+                  )}
+                </div>
+              )}
             </div>
-            {defaultSearchLocation && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-500 whitespace-nowrap">Searching in</span>
-                <NZLocationInput
-                  value={locationOverride ?? defaultSearchLocation}
-                  onChange={(v) => setLocationOverride(v || null)}
-                  allowNationwide={false}
-                  disabled={searching}
-                  className="w-48"
-                />
-                {locationOverride?.trim() && (
-                  <button onClick={() => setLocationOverride(null)} className="text-[10px] text-slate-400 hover:text-slate-600 underline">reset</button>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </CardBody>
