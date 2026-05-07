@@ -3,12 +3,15 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, jobsWhere } from "@/lib/session";
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
+  const url    = new URL(req.url);
+  const status = url.searchParams.get("status"); // optional: "active" | "closed" | "on-hold"
+
   const jobs = await prisma.job.findMany({
-    where: jobsWhere(auth),
+    where: { ...jobsWhere(auth), ...(status ? { status } : {}) },
     orderBy: { createdAt: "desc" },
     include: {
       _count: { select: { candidates: true } },

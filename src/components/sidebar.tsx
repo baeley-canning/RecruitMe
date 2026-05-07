@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, SlidersHorizontal } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, SlidersHorizontal, Github } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
@@ -279,6 +279,18 @@ export function Sidebar({ jobs }: SidebarProps) {
           >
             <ClipboardList className="w-4 h-4" />
             Candidate Profiles
+          </Link>
+          <Link
+            href="/github-search"
+            className={cn(
+              "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
+              pathname?.startsWith("/github-search")
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            )}
+          >
+            <Github className="w-4 h-4" />
+            GitHub Search
           </Link>
           <Link
             href="/linkedin-setup"

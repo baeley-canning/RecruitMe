@@ -164,7 +164,7 @@ describe("org isolation — job access", () => {
     // DB returns both orgs' jobs; the route must filter to org-b only.
     dbMocks.prisma.job.findMany.mockResolvedValue([JOB_A]);
 
-    const res = await getJobs();
+    const res = await getJobs(new Request("http://localhost/api/jobs"));
     await res.json();
 
     // The route filters by orgId in the Prisma where clause.
