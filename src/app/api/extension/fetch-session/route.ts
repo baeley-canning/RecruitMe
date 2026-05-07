@@ -13,6 +13,7 @@ import {
   type ExtensionCaptureSession,
 } from "@/lib/linkedin-capture";
 import { verifyAnyAuth, requireJobAccess, verifyExtensionAuth } from "@/lib/session";
+import { isScraperConfigured, scrapeViaServiceAsync } from "@/lib/server-scraper";
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
@@ -64,6 +65,29 @@ export async function POST(req: Request) {
   };
 
   await addSessionToQueue(session);
+
+  // If the server-side scraper is configured, fire it immediately so the
+  // recruiter doesn't need the browser extension at all. The scraper works
+  // async (~5–9 min with human-paced delays) and posts back to
+  // /api/extension/fetch-session/complete when done — the existing polling
+  // UI picks it up without any changes.
+  if (isScraperConfigured()) {
+    const callbackUrl = process.env.NEXTAUTH_URL ?? process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : "http://localhost:3000";
+
+    void scrapeViaServiceAsync({
+      linkedinUrl: session.linkedinUrl,
+      sessionId:   session.sessionId,
+      callbackUrl,
+    }).catch((err) => {
+      console.error("[fetch-session] scraper fire-and-forget failed:", err.message);
+      // Non-fatal — extension can still capture manually if scraper is down
+    });
+
+    // Advance message so the UI shows scraper is working, not waiting for extension
+    session.message = "Server scraper queued — captures automatically in ~5–8 minutes";
+  }
 
   return NextResponse.json(session, { headers: EXTENSION_CORS });
 }

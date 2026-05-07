@@ -29,6 +29,30 @@ export function isScraperConfigured(): boolean {
   return Boolean(getScraperUrl() && getScraperApiKey());
 }
 
+/** Fire-and-forget async scrape. Returns immediately; result posted back via FetchSession callback. */
+export async function scrapeViaServiceAsync(opts: {
+  linkedinUrl: string;
+  sessionId: string;
+  callbackUrl: string;
+}): Promise<void> {
+  const base = getScraperUrl();
+  if (!base) throw new Error("SCRAPER_URL is not configured");
+  const apiKey = getScraperApiKey();
+  if (!apiKey) throw new Error("SCRAPER_API_KEY is not configured");
+
+  const res = await fetch(`${base.replace(/\/$/, "")}/scrape-async`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Scraper-Api-Key": apiKey },
+    body: JSON.stringify({ ...opts }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error ?? `Scraper returned HTTP ${res.status}`);
+  }
+}
+
 export async function scrapeViaService(linkedinUrl: string): Promise<ScraperResult> {
   const base = getScraperUrl();
   if (!base) throw new Error("SCRAPER_URL is not configured");
