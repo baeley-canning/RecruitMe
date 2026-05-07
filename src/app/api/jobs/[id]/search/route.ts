@@ -969,7 +969,7 @@ async function runSearchBackground(args: {
               });
             }
           } catch (err) {
-            console.error(`[search] score failed for candidate ${r.linkedinUrl ?? "unknown"}:`, err);
+            reportError(err, { route: "search:score", jobId, orgId, candidateUrl: r.linkedinUrl ?? "unknown" });
             const fallback = buildProvisionalSearchScore(
               r,
               parsedRole,
@@ -989,20 +989,19 @@ async function runSearchBackground(args: {
 
       console.log(`[search] batch done — running total scored=${scored}, saved=${saved.length}`);
 
+      // ── Import-decision gate ─────────────────────────────────────────────
+      // Three filters applied in order; any failure increments skippedScore
+      // and skips to the next item. Keeping them together here makes the
+      // rejection logic easy to audit in one place.
+      const specialistRole = extractDistinctiveRequirementTerms(parsedRole).length > 0;
       for (const item of results) {
         if (saved.length >= maxResults) break;
         const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
-        // Hard location cutoff: drop candidates we KNOW are out-of-area.
-        // Two cases:
-        //   1. Location is set and scores ≤ 20 — clearly overseas or wrong region.
-        //   2. Location is MISSING on a non-remote role — provisional score is 25
-        //      (skeptical, not neutral). Snippet candidates with no location info
-        //      for an on-site Wellington/Auckland role almost always turn out to be
-        //      international profiles surfaced by broad SerpAPI queries.
-        //      They can still be added manually but shouldn't bulk-import.
-        //      Pool entries (isFromPool) are exempt because they have a stored
-        //      location on their full profile row.
+        // Gate 1 — location. Drop candidates clearly out-of-area:
+        //   • Known overseas location (score ≤ 20)
+        //   • No location on a non-remote on-site role (score ≤ 25, skeptical)
+        //     Pool entries are exempt — their stored profile carries a real location.
         if (!job.isRemote && locationFitScore !== null && (
           (candidateLocation  && locationFitScore <= 20) ||
           (!candidateLocation && !isFromPool && locationFitScore <= 25)
@@ -1011,17 +1010,11 @@ async function runSearchBackground(args: {
           continue;
         }
 
-        // Specialist searches should not import low-probability broad matches.
-        // The threshold is data-quality aware: full-profile scores below 45 are
-        // a real "no" (Claude has all the info), but snippet-tier provisional
-        // scores are pessimistic by design and the same candidate often jumps
-        // 20–30 pts on full fetch. Dropping snippets at <45 introduced a "first
-        // fetched wins" bias — the recruiter would only see candidates whose
-        // snippets happened to be rich enough. We use 30 for snippet-tier
-        // (matches the provisional 30% floor) so borderline candidates are
-        // imported and re-evaluated when their profile is captured.
+        // Gate 2 — score threshold for specialist roles.
+        //   Full-profile: 45 (Claude has all the info; low score is a real "no")
+        //   Snippet:      30 (provisional scores are conservative; same as floor)
         const scoreCutoff = hasFullProfile ? SCORE_CUTOFF_FULL_PROFILE : SCORE_CUTOFF_SNIPPET;
-        if (extractDistinctiveRequirementTerms(parsedRole).length > 0 && matchScore !== null && matchScore < scoreCutoff) {
+        if (specialistRole && matchScore !== null && matchScore < scoreCutoff) {
           skippedScore++;
           continue;
         }
