@@ -100,6 +100,7 @@ interface Candidate {
   profileText: string | null;
   profileCapturedAt?: string | null;
   matchScore: number | null;
+  provisionalScore?: number | null;
   profileTextHash: string | null;
   matchReason: string | null;
   fetchPriorityScore?: number | null;
@@ -1158,6 +1159,21 @@ export const CandidateCard = memo(function CandidateCard({
               {!hasFetchedProfile && candidate.matchScore != null && (
                 <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">
                   Provisional
+                </span>
+              )}
+              {/* Score delta: shown after full-profile scoring when the provisional snapshot exists */}
+              {hasFetchedProfile && candidate.provisionalScore != null && candidate.matchScore != null &&
+               Math.abs(candidate.matchScore - candidate.provisionalScore) >= 8 && (
+                <span
+                  title={`Provisional score was ${candidate.provisionalScore}% at import`}
+                  className={cn(
+                    "text-[9px] font-semibold px-1 py-0.5 rounded border",
+                    candidate.matchScore > candidate.provisionalScore
+                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                      : "text-rose-700 bg-rose-50 border-rose-200"
+                  )}
+                >
+                  {candidate.matchScore > candidate.provisionalScore ? "▲" : "▼"} was {candidate.provisionalScore}%
                 </span>
               )}
               <div className="flex items-center gap-2">

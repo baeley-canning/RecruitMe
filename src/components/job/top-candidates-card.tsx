@@ -1,6 +1,6 @@
 "use client";
 
-import { Star, ChevronRight } from "lucide-react";
+import { Star, ChevronRight, TrendingDown } from "lucide-react";
 import { cn, statusBadge, statusLabel } from "@/lib/utils";
 import { ScoreBadge } from "@/components/score-badge";
 
@@ -23,9 +23,14 @@ interface TopCandidatesCardProps {
 const TERMINAL = new Set(["shortlisted", "contacted", "interviewing", "offer_sent", "hired", "declined", "rejected"]);
 
 export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandidatesCardProps) {
-  // Only show scored, unfinalised candidates — sorted by score desc.
-  const top = candidates
-    .filter((c) => c.matchScore !== null && c.matchScore >= 40 && !TERMINAL.has(c.status))
+  const scoredCount = candidates.filter((c) => c.matchScore !== null).length;
+  // Thin market: fewer than 6 scored candidates — relax threshold to 30 so the
+  // card still surfaces the best available rather than showing nothing.
+  const thinMarket = scoredCount > 0 && scoredCount < 6;
+  const threshold = thinMarket ? 30 : 40;
+
+  const eligible = candidates.filter((c) => c.matchScore !== null && c.matchScore >= threshold && !TERMINAL.has(c.status));
+  const top = eligible
     .sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0))
     .slice(0, 3);
 
@@ -36,6 +41,12 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
       <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-100">
         <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
         <p className="text-sm font-semibold text-slate-800">Top matches — ready to shortlist</p>
+        {thinMarket && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded ml-1">
+            <TrendingDown className="w-2.5 h-2.5" />
+            Thin market
+          </span>
+        )}
         <span className="ml-auto text-[11px] text-slate-400">{top.length} candidate{top.length !== 1 ? "s" : ""}</span>
       </div>
 
@@ -79,9 +90,9 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
         ))}
       </div>
 
-      {candidates.filter(c => c.matchScore !== null && c.matchScore >= 40 && !TERMINAL.has(c.status)).length > 3 && (
+      {eligible.length > 3 && (
         <div className="px-4 py-2 text-[11px] text-slate-400 border-t border-amber-100">
-          +{candidates.filter(c => c.matchScore !== null && c.matchScore >= 40 && !TERMINAL.has(c.status)).length - 3} more candidates scoring 40%+
+          +{eligible.length - 3} more candidates scoring {threshold}%+
         </div>
       )}
     </div>

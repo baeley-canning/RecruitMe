@@ -431,6 +431,31 @@ export function buildScoreBreakdown(params: {
     }
   }
 
+  // Build augmented missing_evidence:
+  // 1. Auto-add clearance/citizenship note when a 1.5× clearance must-have is unresolved.
+  // 2. Flag soft-skill-heavy JDs where the 36% must-have weight is being diluted by
+  //    unmeasurable requirements — scoring is directional only in that case.
+  const effectiveMissingEvidence = [...params.missing_evidence];
+
+  const CLEARANCE_RE = /security clearance|secret vetting|confidential vetting|nz citizen|nz resident|work rights|right to work/i;
+  const hasUnresolvedClearance = params.must_have_coverage.some(
+    (c) => CLEARANCE_RE.test(c.requirement) &&
+           getMustHaveImportance(c.requirement) >= 1.5 &&
+           (c.status === "missing" || c.status === "unknown")
+  );
+  if (hasUnresolvedClearance && !effectiveMissingEvidence.some((e) => /clearance|citizenship|work rights/i.test(e))) {
+    effectiveMissingEvidence.push("NZ citizenship and clearance history are not visible on LinkedIn — require direct confirmation from the candidate");
+  }
+
+  if (params.must_have_coverage.length >= 3) {
+    const softSkillCount = params.must_have_coverage.filter(
+      (c) => getMustHaveImportance(c.requirement) < 0.8
+    ).length;
+    if (softSkillCount / params.must_have_coverage.length >= 0.5) {
+      effectiveMissingEvidence.push("Most must-have requirements are soft skills that cannot be reliably assessed from a LinkedIn profile — treat this score as directional");
+    }
+  }
+
   return {
     version:                 2,
     overall,
@@ -442,7 +467,7 @@ export function buildScoreBreakdown(params: {
     nice_to_have_pct:        niceToHavePct,
     reasons_for:             params.reasons_for.slice(0, 4),
     reasons_against:         effectiveReasonsAgainst.slice(0, 4),
-    missing_evidence:        params.missing_evidence.slice(0, 4),
+    missing_evidence:        effectiveMissingEvidence.slice(0, 4),
     confidence,
     data_quality:            dataQuality,
     recruiter_summary:       params.recruiter_summary,

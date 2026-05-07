@@ -79,8 +79,9 @@ model Candidate {
   jobAdderUrl  String?  // JobAdder candidate profile URL — set manually until API integration
   profileText     String?  // Raw pasted/captured profile text
   profileTextHash String?  // Written after every score; cleared when profile is updated. Used by the UI stale indicator — if matchScore is set but this is null, the profile was refreshed since last score.
-  matchScore       Int?
-  matchReason      String?  // AI JSON: { summary, strengths, gaps }
+  matchScore          Int?
+  provisionalScore    Int?     // matchScore at snippet-import time; never overwritten — used to compute score delta after full-profile scoring
+  matchReason         String?  // AI JSON: { summary, strengths, gaps }
   fetchPriorityScore  Int?
   fetchPriorityReason String?  // JSON: why this search hit is/isn't worth fetching before full scoring
   acceptanceScore  Int?
