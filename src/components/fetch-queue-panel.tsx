@@ -41,8 +41,9 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss }: FetchQu
   useEffect(() => {
     fetch("/api/scraper/status")
       .then((r) => r.json())
-      .then((d: { ok?: boolean }) => setScraperOk(d.ok ?? false))
-      .catch(() => setScraperOk(false));
+      // ok=true → green (not shown), ok=false → red banner, ok=null → unknown/timeout (silent)
+      .then((d: { ok?: boolean | null }) => setScraperOk(d.ok === false ? false : null))
+      .catch(() => setScraperOk(null)); // network error → silent, scraper likely fine
   }, []);
 
   const entries = Object.entries(statuses);
