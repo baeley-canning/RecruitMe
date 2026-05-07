@@ -384,18 +384,53 @@ function isSessionLocked(sessionId) {
   return true;
 }
 
+// Persist active captures to chrome.storage.session so the lock survives
+// service worker restarts within the same browser session. When the SW is
+// killed mid-capture the in-memory activeAutoCaptures Map is wiped, but the
+// storage entry lives on — ensurePendingSessionTabs can check it before
+// deciding to re-fire the alarm for a session that's still in-flight.
+async function persistActiveCaptureStart(sessionId) {
+  try {
+    const stored = await chrome.storage.session.get({ activeCaptureIds: [] });
+    const ids = new Set(stored.activeCaptureIds);
+    ids.add(sessionId);
+    await chrome.storage.session.set({ activeCaptureIds: [...ids] });
+  } catch { /* non-fatal */ }
+}
+async function persistActiveCaptureEnd(sessionId) {
+  try {
+    const stored = await chrome.storage.session.get({ activeCaptureIds: [] });
+    const ids = new Set(stored.activeCaptureIds);
+    ids.delete(sessionId);
+    await chrome.storage.session.set({ activeCaptureIds: [...ids] });
+  } catch { /* non-fatal */ }
+}
+async function isCapturePersisted(sessionId) {
+  try {
+    const stored = await chrome.storage.session.get({ activeCaptureIds: [] });
+    return stored.activeCaptureIds.includes(sessionId);
+  } catch { return false; }
+}
+
 async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
   if (isSessionLocked(pending.sessionId)) return;
+  // Also check the persisted set — covers SW-restart scenario where
+  // activeAutoCaptures was wiped but the capture is still running.
+  if (await isCapturePersisted(pending.sessionId)) return;
+
   activeAutoCaptures.set(pending.sessionId, Date.now());
+  await persistActiveCaptureStart(pending.sessionId);
 
   try {
     await prepareTabForCapture(tabId, pending.linkedinUrl);
     await sleep(1400);
+    let captureStarted = false;
     try {
       const response = await initiateCapture(tabId, pending, preferredBase);
       if (response?.status !== "started" && response?.status !== "in-progress") {
         throw new Error("LinkedIn capture did not start");
       }
+      captureStarted = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/Receiving end does not exist|Could not establish connection/i.test(message)) {
@@ -406,14 +441,30 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
         if (response?.status !== "started" && response?.status !== "in-progress") {
           throw new Error("LinkedIn capture did not start after reload");
         }
+        captureStarted = true;
       } else {
         throw error;
       }
     }
+
+    // Advance the session to "processing" on the server as soon as content.js
+    // confirms it has started. This prevents the alarm loop from treating the
+    // session as still-pending and re-firing a duplicate capture while the first
+    // one is running (the alarm fires every 30s; captures can take 30-60s).
+    if (captureStarted) {
+      requestRecruitMe(
+        "/api/extension/fetch-session",
+        { method: "PATCH", body: JSON.stringify({ sessionId: pending.sessionId, status: "processing" }) },
+        preferredBase,
+        { rememberFailure: false }
+      ).catch(() => {}); // fire-and-forget; failure is non-fatal
+    }
+
     // Lock stays held until capture-complete / capture-error message clears it,
     // or until SESSION_LOCK_MAX_AGE_MS elapses (whichever comes first).
   } catch (error) {
     activeAutoCaptures.delete(pending.sessionId);
+    await persistActiveCaptureEnd(pending.sessionId);
     await markPendingCaptureError(pending, error, preferredBase);
   }
 }
@@ -525,7 +576,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "capture-complete") {
     console.log("[RecruitMe] capture-complete", { sessionId: message.sessionId, candidateName: message.candidateName });
-    if (message.sessionId) activeAutoCaptures.delete(message.sessionId);
+    if (message.sessionId) {
+      activeAutoCaptures.delete(message.sessionId);
+      void persistActiveCaptureEnd(message.sessionId);
+    }
     const tabId = sender.tab?.id;
     if (tabId && autoOpenedTabs.has(tabId)) {
       autoOpenedTabs.delete(tabId);
@@ -539,7 +593,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "capture-error") {
     console.log("[RecruitMe] capture-error", { sessionId: message.sessionId, error: message.error });
-    if (message.sessionId) activeAutoCaptures.delete(message.sessionId);
+    if (message.sessionId) {
+      activeAutoCaptures.delete(message.sessionId);
+      void persistActiveCaptureEnd(message.sessionId);
+    }
     const tabId = sender.tab?.id;
     if (tabId && autoOpenedTabs.has(tabId)) {
       autoOpenedTabs.delete(tabId);
@@ -568,7 +625,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           serverBase || "",
           { rememberFailure: false }
         );
-        if (sessionId) activeAutoCaptures.delete(sessionId);
+        if (sessionId) { activeAutoCaptures.delete(sessionId); void persistActiveCaptureEnd(sessionId); }
         if (tabId && autoOpenedTabs.has(tabId)) {
           autoOpenedTabs.delete(tabId);
           chrome.tabs.remove(tabId).catch(() => {});
@@ -580,7 +637,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // POST failed — report error to server and set badge
         const errMsg = (error instanceof Error ? error.message : String(error)).slice(0, 500);
         console.warn("[RecruitMe] submit-capture-result failed:", errMsg);
-        if (sessionId) activeAutoCaptures.delete(sessionId);
+        if (sessionId) { activeAutoCaptures.delete(sessionId); void persistActiveCaptureEnd(sessionId); }
         if (tabId && autoOpenedTabs.has(tabId)) {
           autoOpenedTabs.delete(tabId);
           chrome.tabs.remove(tabId).catch(() => {});
@@ -603,7 +660,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void (async () => {
       const { sessionId, error: errMsg, serverBase } = message;
       const tabId = sender.tab?.id;
-      if (sessionId) activeAutoCaptures.delete(sessionId);
+      if (sessionId) { activeAutoCaptures.delete(sessionId); void persistActiveCaptureEnd(sessionId); }
       if (tabId && autoOpenedTabs.has(tabId)) {
         autoOpenedTabs.delete(tabId);
         chrome.tabs.remove(tabId).catch(() => {});

@@ -9,6 +9,7 @@ import {
   getSessionQueue,
   normaliseLinkedInUrl,
   removeSessionFromQueue,
+  updateSessionInQueue,
   type ExtensionCaptureSession,
 } from "@/lib/linkedin-capture";
 import { verifyAnyAuth, requireJobAccess, verifyExtensionAuth } from "@/lib/session";
@@ -115,6 +116,40 @@ export async function GET(req: Request) {
     (s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId)
   );
   return NextResponse.json(visible.length > 0 ? visible : null, { headers: EXTENSION_CORS });
+}
+
+// Called by the extension as soon as content.js confirms the capture has
+// started. Advancing to "processing" immediately means the alarm-loop's
+// getPendingSessions() (which only returns "pending") won't retry mid-capture,
+// even if the service worker is killed and restarts while capture is running.
+export async function PATCH(req: Request) {
+  const auth = await verifyExtensionAuth(req);
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: extensionCorsHeaders(req) });
+
+  const body = await req.json().catch(() => null) as { sessionId?: string; status?: string } | null;
+  const { sessionId, status } = body ?? {};
+
+  if (!sessionId || status !== "processing") {
+    return NextResponse.json({ error: "sessionId and status:processing required" }, { status: 400, headers: extensionCorsHeaders(req) });
+  }
+
+  const session = await findSessionInQueue((s) => s.sessionId === sessionId);
+  if (!session) return NextResponse.json({ ok: false }, { headers: extensionCorsHeaders(req) });
+
+  // Org-scope: only the user/org that created the session can advance it.
+  const sameUser = !session.userId || session.userId === auth.userId;
+  const sameOrg  = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
+  if (!auth.isOwner && !sameUser && !sameOrg) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
+  }
+
+  // Only advance from pending → processing; never go backwards.
+  if (session.status !== "pending") {
+    return NextResponse.json({ ok: true, skipped: true }, { headers: extensionCorsHeaders(req) });
+  }
+
+  await updateSessionInQueue({ sessionId, status: "processing", message: "Extension is capturing the profile" });
+  return NextResponse.json({ ok: true }, { headers: extensionCorsHeaders(req) });
 }
 
 export async function DELETE(req: Request) {
