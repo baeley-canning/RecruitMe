@@ -6,6 +6,7 @@ import {
   Plus, CheckCircle2, AlertCircle, Code2, Building2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { NZLocationInput } from "@/components/ui/nz-location-input";
 import { cn } from "@/lib/utils";
 import type { GitHubUser } from "@/lib/github-search";
 import { githubUserToProfileText } from "@/lib/github-search";
@@ -140,17 +141,12 @@ export default function GitHubSearchPage() {
         <div className="flex gap-3">
           <div className="flex-1">
             <label className="block text-xs font-medium text-slate-600 mb-1.5">Location</label>
-            <div className="relative">
-              <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                placeholder="e.g. Wellington, New Zealand"
-                className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            <NZLocationInput
+              value={location}
+              onChange={setLocation}
+              placeholder="e.g. Wellington"
+              allowNationwide
+            />
           </div>
           <div className="flex items-end">
             <Button onClick={handleSearch} loading={loading} disabled={loading || !location.trim()} size="lg">

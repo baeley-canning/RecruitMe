@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Loader2, Key, AlertCircle, CheckCircle2, MapPin, ExternalLink } from "lucide-react";
+import { Search, Loader2, Key, AlertCircle, CheckCircle2, ExternalLink } from "lucide-react";
+import { NZLocationInput } from "@/components/ui/nz-location-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -35,7 +36,6 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   }>>([]);
   const [maxResults, setMaxResults] = useState(20);
   const [locationOverride, setLocationOverride] = useState<string | null>(null);
-  const [editingLocation, setEditingLocation] = useState(false);
 
   const searchResultDisplay = searchResult ? getSearchResultDisplay(searchResult) : null;
   const defaultSearchLocation =
@@ -322,27 +322,17 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
               </div>
             </div>
             {defaultSearchLocation && (
-              <div className="flex items-center gap-1.5">
-                <MapPin className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                <span className="text-xs text-slate-500">Searching in</span>
-                {editingLocation ? (
-                  <>
-                    <input autoFocus type="text" value={locationOverride ?? defaultSearchLocation}
-                      onChange={(e) => setLocationOverride(e.target.value)}
-                      onBlur={() => setEditingLocation(false)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingLocation(false); }}
-                      className="text-xs border border-blue-300 rounded px-1.5 py-0.5 text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 w-36"
-                    />
-                    <span className="text-[10px] text-slate-400">enter to confirm</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="font-medium text-slate-700 text-xs">{activeSearchLocation}</span>
-                    <button onClick={() => setEditingLocation(true)} className="text-[10px] text-blue-400 hover:text-blue-600 underline">change</button>
-                    {locationOverride?.trim() && (
-                      <button onClick={() => setLocationOverride(null)} className="text-[10px] text-slate-400 hover:text-slate-600 underline">reset</button>
-                    )}
-                  </>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-500 whitespace-nowrap">Searching in</span>
+                <NZLocationInput
+                  value={locationOverride ?? defaultSearchLocation}
+                  onChange={(v) => setLocationOverride(v || null)}
+                  allowNationwide={false}
+                  disabled={searching}
+                  className="w-48"
+                />
+                {locationOverride?.trim() && (
+                  <button onClick={() => setLocationOverride(null)} className="text-[10px] text-slate-400 hover:text-slate-600 underline">reset</button>
                 )}
               </div>
             )}

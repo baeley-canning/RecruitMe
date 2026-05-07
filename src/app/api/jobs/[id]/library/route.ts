@@ -136,26 +136,25 @@ export async function POST(
 
   let added = 0;
   const failed: string[] = [];
+  const unscoredIds: string[] = []; // imported but scoring failed after retry
 
   for (const source of sourceCandidates) {
     if (!source.profileText) continue;
-    try {
-      const rawBreakdown = await scoreCandidateStructured(
-        source.profileText,
-        parsedRole,
-        salary,
-        weights,
-        auth.orgId,
-      );
-      const breakdown = applyLocationFitOverride(
-        rawBreakdown,
-        source.location,
-        parsedRole.location,
-        parsedRole.location_rules,
-        job.isRemote,
-        weights,
-      );
 
+    // Try scoring twice — transient API failures (timeouts, 503s) are common
+    // and a single retry catches most of them without significant latency.
+    let breakdown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const raw = await scoreCandidateStructured(source.profileText, parsedRole, salary, weights, auth.orgId);
+        breakdown = applyLocationFitOverride(raw, source.location, parsedRole.location, parsedRole.location_rules, job.isRemote, weights);
+        break;
+      } catch {
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+
+    try {
       await prisma.candidate.upsert({
         where: { jobId_linkedinUrl: { jobId: id, linkedinUrl: source.linkedinUrl ?? `library:${source.id}` } },
         create: {
@@ -169,24 +168,28 @@ export async function POST(
           source: "talent_pool",
           status: "new",
           profileCapturedAt: source.profileCapturedAt,
-          ...deriveUpdateData(breakdown),
-          profileTextHash: buildScoreCacheKey({
-            profileText: source.profileText,
-            parsedRole,
-            salary,
-            jobLocation: job.location,
-            isRemote: job.isRemote,
-          }),
+          // If scoring succeeded, spread score data + hash; otherwise import
+          // without a score so the candidate is visible and can be re-scored.
+          ...(breakdown ? deriveUpdateData(breakdown) : {}),
+          ...(breakdown ? {
+            profileTextHash: buildScoreCacheKey({ profileText: source.profileText, parsedRole, salary, jobLocation: job.location, isRemote: job.isRemote }),
+          } : {}),
         },
         update: {
-          ...deriveUpdateData(breakdown),
+          ...(breakdown ? deriveUpdateData(breakdown) : {}),
         },
       });
       added++;
+      if (!breakdown) unscoredIds.push(source.id);
     } catch {
       failed.push(source.id);
     }
   }
 
-  return NextResponse.json({ added, failed });
+  return NextResponse.json({
+    added,
+    failed,
+    // Let the UI warn the recruiter when candidates imported without scores.
+    unscoredIds: unscoredIds.length > 0 ? unscoredIds : undefined,
+  });
 }

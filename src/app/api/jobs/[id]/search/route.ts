@@ -445,8 +445,10 @@ export async function POST(
   // Stamp saved-search lastRunAt at start so the UI updates immediately. The
   // result count is filled in once the background run completes.
   if (savedSearchId) {
+    // Scope by jobId AND orgId so a caller cannot accidentally (or deliberately)
+    // stamp another org's saved search even if jobId routing were misconfigured.
     await prisma.savedSearch.updateMany({
-      where: { id: savedSearchId, jobId: id },
+      where: { id: savedSearchId, jobId: id, orgId: auth.orgId },
       data: { lastRunAt: new Date() },
     }).catch(() => {});
   }
@@ -1145,7 +1147,7 @@ async function runSearchBackground(args: {
 
     if (savedSearchId) {
       await prisma.savedSearch.updateMany({
-        where: { id: savedSearchId, jobId },
+        where: { id: savedSearchId, jobId, orgId },
         data: { lastResultCount: sorted.length },
       }).catch(() => {});
     }

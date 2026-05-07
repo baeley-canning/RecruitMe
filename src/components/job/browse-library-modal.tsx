@@ -31,7 +31,7 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
-  const [progress, setProgress] = useState<{ added: number; failed: number } | null>(null);
+  const [progress, setProgress] = useState<{ added: number; failed: number; unscored?: number } | null>(null);
 
   useEffect(() => {
     fetch(`/api/jobs/${jobId}/library`)
@@ -70,12 +70,17 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ candidateIds: [...selected] }),
       });
-      const data = await res.json() as { added?: number; failed?: string[] };
+      const data = await res.json() as { added?: number; failed?: string[]; unscoredIds?: string[] };
       if (res.ok) {
-        setProgress({ added: data.added ?? 0, failed: data.failed?.length ?? 0 });
+        const unscored = data.unscoredIds?.length ?? 0;
+        setProgress({
+          added: data.added ?? 0,
+          failed: data.failed?.length ?? 0,
+          unscored,
+        });
         onComplete();
-        // Auto-close after a short success message.
-        setTimeout(onClose, 1400);
+        // Keep modal open briefly longer when there are unscored warnings.
+        setTimeout(onClose, unscored > 0 ? 3000 : 1400);
       }
     } finally {
       setAdding(false);
@@ -173,7 +178,7 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
             {selected.size} selected
             {progress && (
               <span className="ml-2 text-emerald-600 font-medium">
-                · added {progress.added}{progress.failed > 0 ? `, ${progress.failed} failed` : ""}
+                · added {progress.added}{progress.failed > 0 ? `, ${progress.failed} failed` : ""}{(progress.unscored ?? 0) > 0 ? ` · ${progress.unscored} unscored (scoring failed — re-score from job page)` : ""}
               </span>
             )}
           </p>

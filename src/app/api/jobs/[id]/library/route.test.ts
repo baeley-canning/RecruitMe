@@ -149,13 +149,15 @@ describe("library browse / add route", () => {
     expect(res.status).toBe(422);
   });
 
-  it("POST records failures from the scorer without aborting the batch", async () => {
+  it("POST still imports when scoring fails (retry both attempts), surfaces unscoredIds", async () => {
     dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
       { id: "src-good", name: "Good", linkedinUrl: "https://www.linkedin.com/in/good/", profileText: "x".repeat(2500), location: "Wellington" },
       { id: "src-bad",  name: "Bad",  linkedinUrl: "https://www.linkedin.com/in/bad/",  profileText: "x".repeat(2500), location: "Wellington" },
     ]);
     aiMocks.scoreCandidateStructured
       .mockResolvedValueOnce(makeBreakdown())
+      // Both the first attempt AND the retry fail for src-bad.
+      .mockRejectedValueOnce(new Error("AI failed"))
       .mockRejectedValueOnce(new Error("AI failed"));
     dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({ id: "new", ...create }));
 
@@ -167,7 +169,10 @@ describe("library browse / add route", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.added).toBe(1);
-    expect(body.failed).toEqual(["src-bad"]);
+    // Both candidates are added — scoring failure no longer blocks import.
+    expect(body.added).toBe(2);
+    expect(body.failed).toEqual([]);
+    // The one that couldn't be scored is flagged separately so the UI can warn.
+    expect(body.unscoredIds).toEqual(["src-bad"]);
   });
 });
