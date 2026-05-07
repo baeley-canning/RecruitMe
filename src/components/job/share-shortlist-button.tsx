@@ -101,7 +101,7 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
           {shortlistCount === 0 && (
             <div className="mb-3 flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
               <span className="mt-0.5">⚠</span>
-              <span>No candidates have been shortlisted yet. The link will show a "being evaluated" message to clients until you shortlist candidates.</span>
+              <span>No candidates have been shortlisted yet. The link will show a &ldquo;being evaluated&rdquo; message to clients until you shortlist candidates.</span>
             </div>
           )}
           <p className="text-[11px] text-slate-500 mb-3">

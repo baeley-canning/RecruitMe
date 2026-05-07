@@ -23,8 +23,6 @@ export async function checkRateLimit(
   orgId: string | null | undefined,
   type: UsageType,
 ): Promise<{ allowed: boolean; retryAfterMs?: number }> {
-  // Use a synthetic key for owner accounts so their usage is tracked separately.
-  const trackingKey = orgId ?? "__owner__";
   const ownerMultiplier = orgId ? 1 : 5;
 
   const { max, windowMs } = LIMITS[type];
