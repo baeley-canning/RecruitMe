@@ -722,6 +722,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "get-active-jobs") {
+    void requestRecruitMe("/api/extension/jobs")
+      .then(({ data }) => sendResponse({ ok: true, jobs: data || [] }))
+      .catch((error) => sendResponse({ ok: false, jobs: [], error: error.message }));
+    return true;
+  }
+
   if (message?.type === "get-session") {
     void requestRecruitMe("/api/extension/fetch-session")
       .then(({ base, data }) => sendResponse({ ok: true, session: data, serverBase: base }))

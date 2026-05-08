@@ -101,6 +101,145 @@ function isRootLinkedInProfile(url = "") {
   return /linkedin\.com\/in\/[^/?#]+\/?([?#].*)?$/i.test(url);
 }
 
+// ── SEEK Talent Search ────────────────────────────────────────────────────
+
+function isSeekProfilePage() {
+  return /nz\.employer\.seek\.com\/talentsearch\/profile\//i.test(location.href);
+}
+
+function captureSeekProfile() {
+  // Extract structured text from SEEK Talent Search profile DOM.
+  const parts = [];
+
+  // Name + title
+  const name = document.querySelector('h1')?.innerText?.trim();
+  if (name) parts.push(name);
+
+  const title = document.querySelector('[data-automation="talentProfileJobTitle"], h2')?.innerText?.trim();
+  if (title) parts.push(title);
+
+  // Location + salary
+  document.querySelectorAll('[data-automation="talentProfileLocation"], [data-automation="talentProfileSalary"]').forEach(el => {
+    const t = el.innerText?.trim();
+    if (t) parts.push(t);
+  });
+
+  // Career history — most important section
+  const careerSection = document.querySelector('[data-automation="talentProfileCareerHistory"]');
+  if (careerSection) {
+    parts.push('\nCareer History');
+    parts.push(careerSection.innerText?.trim() || '');
+  }
+
+  // Skills
+  const skillsSection = document.querySelector('[data-automation="talentProfileSkills"]');
+  if (skillsSection) {
+    parts.push('\nSkills');
+    parts.push(skillsSection.innerText?.trim() || '');
+  }
+
+  // Education
+  const eduSection = document.querySelector('[data-automation="talentProfileEducation"]');
+  if (eduSection) {
+    parts.push('\nEducation');
+    parts.push(eduSection.innerText?.trim() || '');
+  }
+
+  // Fallback: grab all visible text from the profile container
+  if (parts.length < 3) {
+    const container = document.querySelector('main, [data-automation="talentProfileContainer"], #app');
+    if (container) parts.push(container.innerText?.trim()?.slice(0, 8000) || '');
+  }
+
+  return parts.filter(Boolean).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function renderSeekOverlay() {
+  if (document.getElementById('recruitme-seek-overlay')) return;
+
+  const profileUrl = location.href.replace(/[?#].*$/, '');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'recruitme-seek-overlay';
+  overlay.style.cssText = `
+    position: fixed; bottom: 24px; right: 24px; z-index: 999999;
+    background: white; border: 1px solid #e2e8f0; border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12); padding: 14px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-width: 220px; max-width: 300px;
+  `;
+
+  overlay.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div style="width:28px;height:28px;background:#3b82f6;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="14" height="14" fill="white" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/></svg>
+      </div>
+      <span style="font-size:13px;font-weight:600;color:#1e293b">Add to RecruitMe</span>
+      <button id="recruitme-seek-close" style="margin-left:auto;background:none;border:none;cursor:pointer;color:#94a3b8;font-size:16px;line-height:1;padding:0">×</button>
+    </div>
+    <div id="recruitme-seek-jobs" style="font-size:12px;color:#64748b;margin-bottom:10px">Loading jobs…</div>
+    <div id="recruitme-seek-status" style="font-size:11px;color:#64748b;display:none;margin-top:6px"></div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  document.getElementById('recruitme-seek-close').addEventListener('click', () => overlay.remove());
+
+  // Load active jobs
+  sendToServiceWorker({ type: 'get-active-jobs' }, 5000).then(res => {
+    const jobs = res?.jobs || [];
+    const container = document.getElementById('recruitme-seek-jobs');
+    if (!container) return;
+    if (jobs.length === 0) {
+      container.textContent = 'No active jobs in RecruitMe.';
+      return;
+    }
+    container.innerHTML = jobs.slice(0, 5).map(j => `
+      <button class="recruitme-seek-add" data-job-id="${escapeHtml(j.id)}" style="
+        display:block;width:100%;text-align:left;background:#f8fafc;border:1px solid #e2e8f0;
+        border-radius:8px;padding:6px 10px;margin-bottom:4px;cursor:pointer;font-size:12px;
+        color:#1e293b;transition:background 0.1s;
+      " onmouseover="this.style.background='#eff6ff'" onmouseout="this.style.background='#f8fafc'">
+        + ${escapeHtml(j.title)}${j.company ? ` <span style="color:#94a3b8">· ${escapeHtml(j.company)}</span>` : ''}
+      </button>
+    `).join('');
+
+    container.querySelectorAll('.recruitme-seek-add').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const jobId = btn.getAttribute('data-job-id');
+        const status = document.getElementById('recruitme-seek-status');
+        container.querySelectorAll('.recruitme-seek-add').forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+        if (status) { status.style.display = 'block'; status.textContent = 'Capturing profile…'; }
+
+        const profileText = captureSeekProfile();
+        if (!profileText || profileText.length < 50) {
+          if (status) status.textContent = 'Could not extract profile text.';
+          return;
+        }
+
+        const res = await sendToServiceWorker({
+          type: 'submit-add-to-job',
+          jobId,
+          linkedinUrl: profileUrl, // SEEK URL stored as the profile identifier
+          profileText,
+          captureMeta: { source: 'seek', capturedAt: new Date().toISOString() },
+        }, 30000);
+
+        if (res?.ok) {
+          if (status) { status.style.color = '#059669'; status.textContent = '✓ Added to job'; }
+          setTimeout(() => overlay.remove(), 2000);
+        } else {
+          if (status) { status.style.color = '#dc2626'; status.textContent = res?.error || 'Failed to add.'; }
+          container.querySelectorAll('.recruitme-seek-add').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+        }
+      });
+    });
+  }).catch(() => {
+    const c = document.getElementById('recruitme-seek-jobs');
+    if (c) c.textContent = 'Could not connect to RecruitMe.';
+  });
+}
+
 function cleanText(value) {
   return value
     .replace(/\u00a0/g, " ")
@@ -1619,19 +1758,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
-notifyBackground();
-setTimeout(notifyBackground, 1500);
-setTimeout(notifyBackground, 4000);
-setInterval(() => {
-  if (!isLinkedInProfilePage()) {
-    // Clean up the match overlay when the recruiter clicks off a profile —
-    // we don't want a stale "On 2 jobs" pill hovering on the LinkedIn home.
-    removeOverlay();
-    lastMatchQueriedUrl = "";
-    return;
-  }
-  const linkedinUrl = location.href.replace(/[?#].*$/, "");
-  if (linkedinUrl !== lastObservedUrl) {
-    notifyBackground();
-  }
-}, OBSERVE_INTERVAL_MS);
+// SEEK Talent Search — show overlay immediately when on a profile page
+if (isSeekProfilePage()) {
+  setTimeout(renderSeekOverlay, 1200); // wait for page to render
+} else {
+  // LinkedIn flow
+  notifyBackground();
+  setTimeout(notifyBackground, 1500);
+  setTimeout(notifyBackground, 4000);
+  setInterval(() => {
+    if (!isLinkedInProfilePage()) {
+      removeOverlay();
+      lastMatchQueriedUrl = "";
+      return;
+    }
+    const linkedinUrl = location.href.replace(/[?#].*$/, "");
+    if (linkedinUrl !== lastObservedUrl) {
+      notifyBackground();
+    }
+  }, OBSERVE_INTERVAL_MS);
+}
