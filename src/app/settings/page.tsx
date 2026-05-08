@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getAuth } from "@/lib/session";
 import { getOrgScoringWeights, DEFAULT_SCORING_WEIGHTS } from "@/lib/scoring-config";
 import { ScoringWeightsEditor } from "@/components/scoring-weights-editor";
-import { SlidersHorizontal, ArrowLeft } from "lucide-react";
+import { SlidersHorizontal, ArrowLeft, Brain, ChevronRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +37,22 @@ export default async function SettingsPage() {
           defaultWeights={DEFAULT_SCORING_WEIGHTS}
         />
       </div>
+
+      <Link
+        href="/settings/memory"
+        className="mt-6 flex items-center justify-between gap-4 px-5 py-4 bg-white rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50/30 transition-colors group"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 bg-violet-50 rounded-lg flex items-center justify-center flex-shrink-0">
+            <Brain className="w-5 h-5 text-violet-600" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-900">Recruiter memory</p>
+            <p className="text-xs text-slate-500 mt-0.5">View and remove past score corrections influencing future scoring</p>
+          </div>
+        </div>
+        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-violet-500 flex-shrink-0" />
+      </Link>
 
       <div className="mt-6 bg-slate-50 rounded-xl border border-slate-200 p-5">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">How the score is calculated</h2>
