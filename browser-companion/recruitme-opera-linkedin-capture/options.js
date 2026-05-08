@@ -10,6 +10,63 @@ const manualOnlyToggle = document.getElementById("manualOnlyToggle");
 const manualOnlyRow    = document.getElementById("manualOnlyRow");
 const manualOnlyHint   = document.getElementById("manualOnlyHint");
 
+// Auto-capture pacing UI
+const hourlyCapInput   = document.getElementById("hourlyCap");
+const hourlyCapValue   = document.getElementById("hourlyCapValue");
+const dailyCapInput    = document.getElementById("dailyCap");
+const dailyCapValue    = document.getElementById("dailyCapValue");
+const hourlyCount      = document.getElementById("hourlyCount");
+const dailyCount       = document.getElementById("dailyCount");
+const pauseRow         = document.getElementById("pauseRow");
+const pauseReason      = document.getElementById("pauseReason");
+const pauseUntil       = document.getElementById("pauseUntil");
+const resumeBtn        = document.getElementById("resumeBtn");
+
+function formatLocalTime(epochMs) {
+  if (!epochMs) return "";
+  const d = new Date(epochMs);
+  const same = (new Date()).toDateString() === d.toDateString();
+  return same
+    ? `today at ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    : d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function refreshAutoCaptureStatus() {
+  try {
+    const r = await sendMessage({ type: "get-auto-capture-status" });
+    hourlyCapInput.value = r.hourlyCap;
+    hourlyCapValue.textContent = r.hourlyCap;
+    dailyCapInput.value = r.dailyCap;
+    dailyCapValue.textContent = r.dailyCap;
+    hourlyCount.textContent = r.hourly;
+    dailyCount.textContent = r.daily;
+
+    if (r.paused) {
+      pauseRow.style.display = "block";
+      pauseReason.textContent = r.pausedReason || "Detection signal from LinkedIn";
+      pauseUntil.textContent = formatLocalTime(r.pausedUntil);
+    } else {
+      pauseRow.style.display = "none";
+    }
+  } catch { /* not critical */ }
+}
+
+hourlyCapInput.addEventListener("input", () => { hourlyCapValue.textContent = hourlyCapInput.value; });
+dailyCapInput.addEventListener("input",  () => { dailyCapValue.textContent  = dailyCapInput.value;  });
+hourlyCapInput.addEventListener("change", async () => {
+  await sendMessage({ type: "set-auto-capture-caps", hourlyCap: Number(hourlyCapInput.value) });
+});
+dailyCapInput.addEventListener("change", async () => {
+  await sendMessage({ type: "set-auto-capture-caps", dailyCap: Number(dailyCapInput.value) });
+});
+resumeBtn.addEventListener("click", async () => {
+  resumeBtn.disabled = true;
+  try {
+    await sendMessage({ type: "resume-auto-capture" });
+    await refreshAutoCaptureStatus();
+  } finally { resumeBtn.disabled = false; }
+});
+
 function setManualOnlyUI(enabled) {
   manualOnlyToggle.checked = enabled;
   manualOnlyRow.className = "toggle-row" + (enabled ? " active" : "");
@@ -123,3 +180,5 @@ extPasswordInput.addEventListener("keydown", (e) => {
 });
 
 init();
+void refreshAutoCaptureStatus();
+setInterval(refreshAutoCaptureStatus, 15_000);

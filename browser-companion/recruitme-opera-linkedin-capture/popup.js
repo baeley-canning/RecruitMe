@@ -7,6 +7,9 @@ const pageStatus        = document.getElementById("pageStatus");
 const capturePendingButton = document.getElementById("capturePending");
 const pendingStatus     = document.getElementById("pendingStatus");
 const setupCard         = document.getElementById("setupCard");
+const autoCaptureCard   = document.getElementById("autoCaptureCard");
+const autoCaptureLine   = document.getElementById("autoCaptureLine");
+const autoCaptureCounts = document.getElementById("autoCaptureCounts");
 
 function openSettings() {
   chrome.runtime.openOptionsPage();
@@ -43,6 +46,39 @@ function sendMessage(message) {
       resolve(response);
     });
   });
+}
+
+function fmtCountdown(epochMs) {
+  const ms = epochMs - Date.now();
+  if (ms <= 0) return "now";
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  if (h > 0) return `in ${h}h ${m}m`;
+  return `in ${m}m`;
+}
+
+async function refreshAutoCaptureCard() {
+  try {
+    const r = await sendMessage({ type: "get-auto-capture-status" });
+    if (r.manualOnlyMode) {
+      autoCaptureCard.style.display = "none";
+      return;
+    }
+    autoCaptureCard.style.display = "block";
+    if (r.paused) {
+      autoCaptureLine.textContent = `Paused — resumes ${fmtCountdown(r.pausedUntil)}`;
+      autoCaptureLine.style.color = "#b45309";
+    } else if (r.hourly >= r.hourlyCap || r.daily >= r.dailyCap) {
+      autoCaptureLine.textContent = "Cap reached — waiting for the window to roll over";
+      autoCaptureLine.style.color = "#b45309";
+    } else {
+      autoCaptureLine.textContent = "Active — capturing one profile every 90–240s";
+      autoCaptureLine.style.color = "#047857";
+    }
+    autoCaptureCounts.textContent = `${r.hourly}/${r.hourlyCap} this hour · ${r.daily}/${r.dailyCap} today`;
+  } catch {
+    autoCaptureCard.style.display = "none";
+  }
 }
 
 async function refreshPendingStatus() {
@@ -140,4 +176,6 @@ capturePendingButton.addEventListener("click", async () => {
 });
 
 void init();
+void refreshAutoCaptureCard();
 setInterval(() => { void refreshPendingStatus(); }, 2000);
+setInterval(() => { void refreshAutoCaptureCard(); }, 5000);

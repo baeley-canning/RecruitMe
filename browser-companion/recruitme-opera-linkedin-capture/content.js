@@ -223,8 +223,30 @@ async function waitForMain() {
   throw new Error("LinkedIn profile content did not finish loading");
 }
 
+// Human-paced timings used by auto-capture. Manual-trigger captures keep
+// the original snappy timings — the user is watching, no need to fake idle.
+const HUMAN_TIMING = {
+  betweenClicksMs: [800, 2000],   // pause between "Show more" clicks
+  afterClickPassMs: [1500, 3500], // pause after a full pass of clicks
+};
+function rand([min, max]) { return min + Math.floor(Math.random() * (max - min)); }
+
+async function isHumanPacedMode() {
+  // Auto-capture mode means manualOnlyMode is OFF in storage.
+  return new Promise((resolve) => {
+    try {
+      chrome.storage?.local?.get?.({ manualOnlyMode: true }, (s) => {
+        resolve(s?.manualOnlyMode === false);
+      }) ?? resolve(false);
+    } catch { resolve(false); }
+  });
+}
+
 async function expandInlineSections(clicked, options = {}) {
   const { visibleOnly = false, passes = 4 } = options;
+  const human = await isHumanPacedMode();
+  const clickGap = human ? rand(HUMAN_TIMING.betweenClicksMs) : 180;
+  const passGap  = human ? rand(HUMAN_TIMING.afterClickPassMs) : 350;
 
   for (let pass = 0; pass < passes; pass += 1) {
     let clickedThisPass = 0;
@@ -240,7 +262,7 @@ async function expandInlineSections(clicked, options = {}) {
       clicked.add(key);
       control.click();
       clickedThisPass += 1;
-      await sleep(180);
+      await sleep(human ? rand(HUMAN_TIMING.betweenClicksMs) : clickGap);
 
       if (!isLinkedInProfilePage()) {
         lastObservedUrl = "";
@@ -251,34 +273,47 @@ async function expandInlineSections(clicked, options = {}) {
     }
 
     if (!clickedThisPass) break;
-    await sleep(350);
+    await sleep(human ? rand(HUMAN_TIMING.afterClickPassMs) : passGap);
   }
 
   return true;
 }
 
 async function scrollProfile(clicked) {
-  const step = Math.max(Math.floor(window.innerHeight * 0.85), 520);
+  const human = await isHumanPacedMode();
+  // Smaller step + longer pause in human mode → looks like reading.
+  const step = human
+    ? Math.max(Math.floor(window.innerHeight * 0.45), 280)
+    : Math.max(Math.floor(window.innerHeight * 0.85), 520);
   let lastHeight = document.body.scrollHeight;
   let stableBottomPasses = 0;
 
   window.scrollTo({ top: 0, behavior: "auto" });
-  await sleep(250);
+  // Initial dwell — "reading the header / about" before scrolling. This is
+  // the most important signal for LinkedIn's "viewed your profile" feature.
+  await sleep(human ? rand([6000, 14000]) : 250);
 
-  for (let pass = 0; pass < 26; pass += 1) {
+  for (let pass = 0; pass < (human ? 40 : 26); pass += 1) {
     const nextTop = Math.min(
       Math.max(0, document.body.scrollHeight - window.innerHeight),
       pass === 0 ? 0 : window.scrollY + step
     );
-    window.scrollTo({ top: nextTop, behavior: "auto" });
-    await sleep(500);
+    window.scrollTo({ top: nextTop, behavior: human ? "smooth" : "auto" });
+    await sleep(human ? rand([1200, 2800]) : 500);
 
     if (clicked) {
       const expanded = await expandInlineSections(clicked, { visibleOnly: true, passes: 1 });
       if (!expanded) return false;
     }
 
-    await sleep(320);
+    // Reading dwell on whatever just came into view.
+    await sleep(human ? rand([2000, 5000]) : 320);
+
+    // Occasional small scroll-up — humans rarely read straight to the bottom.
+    if (human && Math.random() < 0.18 && window.scrollY > 200) {
+      window.scrollTo({ top: window.scrollY - rand([120, 280]), behavior: "smooth" });
+      await sleep(rand([800, 1800]));
+    }
 
     const nextHeight = document.body.scrollHeight;
     const atBottom = window.scrollY + window.innerHeight >= nextHeight - 60;
@@ -291,8 +326,8 @@ async function scrollProfile(clicked) {
     lastHeight = nextHeight;
   }
 
-  window.scrollTo({ top: 0, behavior: "auto" });
-  await sleep(350);
+  window.scrollTo({ top: 0, behavior: human ? "smooth" : "auto" });
+  await sleep(human ? rand([1500, 3000]) : 350);
   return true;
 }
 
@@ -1156,12 +1191,17 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
       }
     }
 
+    // Human-paced auto-capture takes 2–4 minutes per profile (slow scroll +
+    // dwell + click-to-expand). Manual / non-human-paced captures are still
+    // fast. Pick the timeout based on which mode is active.
+    const human = await isHumanPacedMode();
+    const captureTimeoutMs = human ? 360_000 : 70_000;
     const capture = await Promise.race([
       captureProfile(),
       new Promise((_, reject) => {
         captureTimer = setTimeout(
           () => reject(new Error("Profile capture timed out — reload the LinkedIn tab and try again")),
-          70_000
+          captureTimeoutMs
         );
       }),
     ]);

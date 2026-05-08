@@ -7,12 +7,26 @@ const DEFAULT_SERVER_BASES = [
 ];
 
 const PENDING_CAPTURE_ALARM = "recruitme-pending-capture-check";
+const NEXT_CAPTURE_ALARM    = "recruitme-next-capture";
 const activeAutoCaptures = new Map(); // sessionId -> startedAt timestamp
 const pendingSessionEnsures = new Set();
 const autoOpenedTabs = new Set(); // Tab IDs auto-opened by the extension for background capture
 const recentAutoCaptureLookups = new Map(); // url -> timestamp; throttles checkPendingCapture calls
 const AUTO_CAPTURE_LOOKUP_COOLDOWN_MS = 12_000;
 const ERROR_BADGE_COLOR = "#b91c1c";
+
+// ─── Safe-pacing config ───────────────────────────────────────────────────
+// Auto-capture mode rate-limits itself to look like a human recruiter. These
+// constants are the defaults; the user can override caps from options.html.
+const DEFAULT_HOURLY_CAP   = 10;
+const DEFAULT_DAILY_CAP    = 30;
+// Random gap between two profile captures. Combined with each profile taking
+// 2–4 minutes of paced scroll/click, this produces a cadence of ~5–8 min/profile.
+const JITTER_MIN_MS        = 90_000;   //  90s
+const JITTER_MAX_MS        = 240_000;  // 240s
+// When LinkedIn shows a captcha / authwall / 429 we back off for 24h.
+const AUTO_PAUSE_MS        = 24 * 60 * 60 * 1000;
+const AUTO_PAUSE_PATTERNS  = /captcha|challenge|authwall|999|429|rate.?limit/i;
 
 async function setExtensionError(message) {
   const error = message || "RecruitMe extension error";
@@ -52,6 +66,95 @@ async function getStoredSettings() {
     // deliberately from the popup; one profile at a time, human-paced.
     manualOnlyMode: true,
   });
+}
+
+// ─── Cap tracking ─────────────────────────────────────────────────────────
+// Counts roll over hourly / daily based on epoch timestamps stored alongside
+// each count, so the cap is enforced even if the service worker is restarted
+// or the user reboots their machine mid-day.
+const HOUR_MS = 3_600_000;
+const DAY_MS  = 86_400_000;
+
+async function getCaps() {
+  const { hourlyCap, dailyCap } = await chrome.storage.local.get({
+    hourlyCap: DEFAULT_HOURLY_CAP,
+    dailyCap:  DEFAULT_DAILY_CAP,
+  });
+  return { hourlyCap, dailyCap };
+}
+
+async function getCaptureCounts() {
+  const stored = await chrome.storage.local.get({ captureCounts: null });
+  const c = stored.captureCounts;
+  const now = Date.now();
+  if (!c) return { hourly: 0, daily: 0, hourStart: now, dayStart: now };
+  // Roll over expired windows so callers always see a live snapshot.
+  const out = { ...c };
+  if (now - out.hourStart > HOUR_MS) { out.hourly = 0; out.hourStart = now; }
+  if (now - out.dayStart  > DAY_MS)  { out.daily  = 0; out.dayStart  = now; }
+  return out;
+}
+
+async function incrementCaptureCounts() {
+  const counts = await getCaptureCounts();
+  counts.hourly += 1;
+  counts.daily  += 1;
+  await chrome.storage.local.set({ captureCounts: counts });
+}
+
+async function isUnderCap() {
+  const counts = await getCaptureCounts();
+  const { hourlyCap, dailyCap } = await getCaps();
+  return counts.hourly < hourlyCap && counts.daily < dailyCap;
+}
+
+// ─── Auto-pause (LinkedIn detection backoff) ──────────────────────────────
+async function isAutoPaused() {
+  const { autoPausedUntil } = await chrome.storage.local.get({ autoPausedUntil: 0 });
+  return autoPausedUntil > Date.now();
+}
+
+async function pauseAutoCapture(reason = "Detection signal") {
+  await chrome.storage.local.set({
+    autoPausedUntil:  Date.now() + AUTO_PAUSE_MS,
+    autoPausedReason: String(reason).slice(0, 200),
+  });
+  await setExtensionError(`Auto-capture paused 24h: ${reason}`).catch(() => {});
+}
+
+async function resumeAutoCapture() {
+  await chrome.storage.local.remove(["autoPausedUntil", "autoPausedReason"]);
+  await clearExtensionError().catch(() => {});
+}
+
+// ─── Dedicated scraper window ─────────────────────────────────────────────
+// Auto-capture opens profiles in a separate Chrome window so they don't
+// steal focus from the user's main window. The window is reused across
+// captures within the same browser session.
+async function getOrCreateScraperWindow() {
+  const { scraperWindowId } = await chrome.storage.local.get({ scraperWindowId: 0 });
+  if (scraperWindowId) {
+    try {
+      const win = await chrome.windows.get(scraperWindowId);
+      // LinkedIn lazy-loading needs viewport > 0; minimised tabs return innerHeight=0,
+      // so un-minimise (without focusing) before we hand the window off to the capture.
+      if (win.state === "minimized") {
+        await chrome.windows.update(scraperWindowId, { state: "normal" });
+        await sleep(400);
+      }
+      return scraperWindowId;
+    } catch { /* window was closed by the user — fall through and recreate */ }
+  }
+  const win = await chrome.windows.create({
+    url: "about:blank",
+    type: "normal",
+    state: "normal",
+    focused: false,
+    width: 1280,
+    height: 900,
+  });
+  if (win?.id) await chrome.storage.local.set({ scraperWindowId: win.id });
+  return win?.id ?? null;
 }
 
 // Build a Basic Authorization header from stored credentials, or return null.
@@ -305,9 +408,14 @@ async function findLinkedInProfileTab(linkedinUrl) {
 }
 
 async function openPendingProfileTab(linkedinUrl) {
-  // active: true ensures LinkedIn renders all sections via IntersectionObserver
-  // (background tabs have innerHeight=0 so lazy sections never load → "too short")
-  const created = await chrome.tabs.create({ url: linkedinUrl, active: true });
+  // Open in a dedicated scraper window so the new tab doesn't steal focus
+  // from the user's main window. active: true is required within that
+  // window so LinkedIn's IntersectionObserver fires (innerHeight > 0);
+  // the user's main window remains the OS-focused one.
+  const windowId = await getOrCreateScraperWindow();
+  const opts = { url: linkedinUrl, active: true };
+  if (windowId) opts.windowId = windowId;
+  const created = await chrome.tabs.create(opts);
   const tabId = created?.id ?? null;
   if (tabId) autoOpenedTabs.add(tabId);
   return tabId;
@@ -375,9 +483,11 @@ async function initiateCapture(tabId, pending, preferredBase = "") {
 
 // Tracks sessions currently being captured. Key is sessionId (NOT sessionId:tabId)
 // so the same session can never trigger duplicate captures across two tabs. Value is
-// the timestamp the capture started — the lock auto-releases after 90s as a safety
-// net, in case the content script never sends capture-complete/error.
-const SESSION_LOCK_MAX_AGE_MS = 90_000;
+// the timestamp the capture started — the lock auto-releases after this many ms as
+// a safety net, in case the content script never sends capture-complete/error.
+// Human-paced auto-capture takes 2–4 min per profile, so the lock has to live
+// longer than that or it'll release mid-capture and trigger a duplicate run.
+const SESSION_LOCK_MAX_AGE_MS = 6 * 60 * 1000; // 6 min
 
 function isSessionLocked(sessionId) {
   const startedAt = activeAutoCaptures.get(sessionId);
@@ -392,7 +502,7 @@ function isSessionLocked(sessionId) {
 // Persist active captures to chrome.storage.session so the lock survives
 // service worker restarts within the same browser session. When the SW is
 // killed mid-capture the in-memory activeAutoCaptures Map is wiped, but the
-// storage entry lives on — ensurePendingSessionTabs can check it before
+// storage entry lives on — processNextCapture can check it before
 // deciding to re-fire the alarm for a session that's still in-flight.
 async function persistActiveCaptureStart(sessionId) {
   try {
@@ -496,42 +606,69 @@ async function maybeAutoCapture(tabId, linkedinUrl) {
   await capturePendingSessionInTab(tabId, pending.data, pending.base);
 }
 
-const MAX_AUTO_OPEN_TABS = 3;
+// ─── Serial, capped, jittered capture loop ────────────────────────────────
+// Replaces the previous "open up to 3 tabs every 30s" approach. We now
+// process exactly one pending session at a time, with a random 90–240s
+// gap between captures. After each capture finishes (or errors), the
+// completion handlers schedule the next NEXT_CAPTURE_ALARM.
 
-async function ensurePendingSessionTabs() {
+async function scheduleNextCapture() {
+  const delay = JITTER_MIN_MS + Math.random() * (JITTER_MAX_MS - JITTER_MIN_MS);
+  await chrome.alarms.create(NEXT_CAPTURE_ALARM, { when: Date.now() + delay });
+}
+
+async function processNextCapture() {
+  const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
+  if (manualOnlyMode) return;
+
+  if (await isAutoPaused()) {
+    console.log("[RecruitMe] auto-capture paused — skipping cycle");
+    return;
+  }
+  if (!(await isUnderCap())) {
+    console.log("[RecruitMe] hourly/daily cap reached — re-checking in 1h");
+    await chrome.alarms.create(NEXT_CAPTURE_ALARM, { when: Date.now() + HOUR_MS });
+    return;
+  }
+
+  // If there's already a capture running we don't fire another. The
+  // capture-complete handler will schedule the next one.
+  if (activeAutoCaptures.size > 0) return;
+
   const { base, sessions } = await getPendingSessions();
   if (!sessions.length) return;
 
-  let autoOpened = 0;
-  for (const session of sessions) {
-    if (pendingSessionEnsures.has(session.sessionId)) continue;
+  const session = sessions[0];
+  if (pendingSessionEnsures.has(session.sessionId)) return;
+  pendingSessionEnsures.add(session.sessionId);
 
-    pendingSessionEnsures.add(session.sessionId);
-    try {
-      const existingTab = await findLinkedInProfileTab(session.linkedinUrl);
-
-      if (existingTab?.id) {
-        if (existingTab.status === "complete") {
-          await capturePendingSessionInTab(existingTab.id, session, base);
-        }
-        continue;
+  try {
+    const existingTab = await findLinkedInProfileTab(session.linkedinUrl);
+    if (existingTab?.id) {
+      // User already has the profile open in their browsing — capture in-place.
+      if (existingTab.status === "complete") {
+        await capturePendingSessionInTab(existingTab.id, session, base);
       }
-
-      if (autoOpened >= MAX_AUTO_OPEN_TABS) continue;
-      autoOpened++;
+    } else {
+      // Open fresh in the dedicated scraper window. The tab's onUpdated
+      // listener picks it up via maybeAutoCapture once loading completes.
       await openPendingProfileTab(session.linkedinUrl);
-    } catch (error) {
-      console.warn("RecruitMe pending-session ensure failed:", error);
-    } finally {
-      pendingSessionEnsures.delete(session.sessionId);
     }
+  } catch (error) {
+    console.warn("[RecruitMe] processNextCapture failed:", error);
+  } finally {
+    pendingSessionEnsures.delete(session.sessionId);
   }
 }
 
 async function ensurePendingCaptureAlarm() {
+  // Slow heartbeat that re-checks the queue every 5 minutes. Most scheduling
+  // happens via NEXT_CAPTURE_ALARM driven by capture-complete handlers; this
+  // alarm is the safety net that picks the loop back up if the SW restarts
+  // mid-pause or the previous schedule was missed.
   const existing = await chrome.alarms.get(PENDING_CAPTURE_ALARM);
   if (existing) return;
-  await chrome.alarms.create(PENDING_CAPTURE_ALARM, { periodInMinutes: 0.5 });
+  await chrome.alarms.create(PENDING_CAPTURE_ALARM, { periodInMinutes: 5 });
 }
 
 async function getActiveLinkedInTab() {
@@ -590,6 +727,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       autoOpenedTabs.delete(tabId);
       chrome.tabs.remove(tabId).catch(() => {});
     }
+    void incrementCaptureCounts().catch(() => {});
+    void scheduleNextCapture().catch(() => {});
     void notifyCaptureDone(message.candidateName).catch(() => {});
     void clearExtensionError().catch(() => {});
     sendResponse({ ok: true });
@@ -607,7 +746,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       autoOpenedTabs.delete(tabId);
       chrome.tabs.remove(tabId).catch(() => {});
     }
-    void setExtensionError(message.error || "Capture failed").catch(() => {});
+    // If the error looks like LinkedIn's bot-detection wall, pause auto-capture
+    // for 24h. Manual captures from the popup still work.
+    if (AUTO_PAUSE_PATTERNS.test(message.error || "")) {
+      void pauseAutoCapture(message.error).catch(() => {});
+    } else {
+      void scheduleNextCapture().catch(() => {});
+      void setExtensionError(message.error || "Capture failed").catch(() => {});
+    }
     sendResponse({ ok: true });
     return false;
   }
@@ -635,6 +781,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           autoOpenedTabs.delete(tabId);
           chrome.tabs.remove(tabId).catch(() => {});
         }
+        void incrementCaptureCounts().catch(() => {});
+        void scheduleNextCapture().catch(() => {});
         void notifyCaptureDone(candidateName || "").catch(() => {});
         void clearExtensionError().catch(() => {});
         sendResponse({ ok: true });
@@ -676,7 +824,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         serverBase || "",
         { rememberFailure: false }
       ).catch(() => {});
-      await setExtensionError(errMsg || "Capture failed").catch(() => {});
+      // Detection-style errors (captcha / 999 / authwall / 429) trigger a
+      // 24h pause so we don't keep digging the hole. Other errors just feed
+      // back into the pacing loop.
+      if (AUTO_PAUSE_PATTERNS.test(errMsg || "")) {
+        await pauseAutoCapture(errMsg).catch(() => {});
+      } else {
+        await scheduleNextCapture().catch(() => {});
+        await setExtensionError(errMsg || "Capture failed").catch(() => {});
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message?.type === "get-auto-capture-status") {
+    void (async () => {
+      const counts        = await getCaptureCounts();
+      const caps          = await getCaps();
+      const paused        = await isAutoPaused();
+      const { autoPausedUntil, autoPausedReason, manualOnlyMode } = await chrome.storage.local.get({
+        autoPausedUntil: 0, autoPausedReason: "", manualOnlyMode: true,
+      });
+      sendResponse({
+        ok: true,
+        manualOnlyMode,
+        paused,
+        pausedUntil: paused ? autoPausedUntil : 0,
+        pausedReason: paused ? autoPausedReason : "",
+        hourly: counts.hourly,
+        daily: counts.daily,
+        hourlyCap: caps.hourlyCap,
+        dailyCap: caps.dailyCap,
+      });
+    })();
+    return true;
+  }
+
+  if (message?.type === "resume-auto-capture") {
+    void resumeAutoCapture()
+      .then(() => scheduleNextCapture())
+      .then(() => sendResponse({ ok: true }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message?.type === "set-auto-capture-caps") {
+    const { hourlyCap, dailyCap } = message;
+    void (async () => {
+      const updates = {};
+      if (Number.isFinite(hourlyCap)) updates.hourlyCap = Math.max(1, Math.min(50, hourlyCap));
+      if (Number.isFinite(dailyCap))  updates.dailyCap  = Math.max(1, Math.min(200, dailyCap));
+      await chrome.storage.local.set(updates);
       sendResponse({ ok: true });
     })();
     return true;
@@ -714,7 +913,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
       await chrome.storage.local.set({ serverBase, lastWorkingServerBase: base, lastError: "" });
       await ensurePendingCaptureAlarm();
-      await ensurePendingSessionTabs().catch(() => {});
+      await maybeKickAutoCapture();
       return base;
     })()
       .then((base) => sendResponse({ ok: true, serverBase: base }))
@@ -867,35 +1066,36 @@ async function checkForExtensionUpdate() {
   } catch { /* non-fatal */ }
 }
 
-// Run ensurePendingSessionTabs only when auto-capture is enabled.
-// Calling it unconditionally would trigger captures on startup even when
-// manual-only mode is on, marking sessions "processing" before the user
-// has a chance to click Capture in the popup.
-async function maybeEnsurePendingSessionTabs() {
+// Bootstrap helper: kick the loop only when auto-capture is enabled.
+// Without this guard a service-worker restart would fire a capture before
+// the recruiter had a chance to interact with the popup.
+async function maybeKickAutoCapture() {
   const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
   if (manualOnlyMode) return;
-  void ensurePendingSessionTabs().catch(() => {});
+  void processNextCapture().catch(() => {});
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensurePendingCaptureAlarm();
   void clearExtensionError().catch(() => {});
-  void maybeEnsurePendingSessionTabs();
+  void maybeKickAutoCapture();
   void checkForExtensionUpdate().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensurePendingCaptureAlarm();
-  void maybeEnsurePendingSessionTabs();
+  void maybeKickAutoCapture();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name !== PENDING_CAPTURE_ALARM) return;
-  // Skip the background tab-opening loop when manual-only mode is on.
-  chrome.storage.local.get({ manualOnlyMode: false }, ({ manualOnlyMode }) => {
-    if (manualOnlyMode) return;
-    void ensurePendingSessionTabs().catch(() => {});
-  });
+  if (alarm.name === NEXT_CAPTURE_ALARM) {
+    void processNextCapture().catch(() => {});
+    return;
+  }
+  if (alarm.name === PENDING_CAPTURE_ALARM) {
+    // Slow heartbeat — just nudges the loop awake if it stalled.
+    void maybeKickAutoCapture();
+  }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -909,4 +1109,4 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 void ensurePendingCaptureAlarm();
-void maybeEnsurePendingSessionTabs();
+void maybeKickAutoCapture();
