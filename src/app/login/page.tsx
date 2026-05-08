@@ -67,36 +67,40 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="login-username" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Username
               </label>
               <input
+                id="login-username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 autoFocus
                 placeholder="Enter your username"
+                aria-describedby={error ? "login-error" : undefined}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="login-password" className="block text-xs font-medium text-slate-400 mb-1.5">
                 Password
               </label>
               <input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
                 placeholder="Enter your password"
+                aria-describedby={error ? "login-error" : undefined}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
               />
             </div>
 
             {error && (
-              <p className="text-xs text-red-400 bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2">
+              <p id="login-error" role="alert" className="text-xs text-red-400 bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2">
                 {error}
               </p>
             )}

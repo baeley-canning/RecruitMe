@@ -88,6 +88,30 @@ function findCoverageMatch<T extends { requirement: string }>(
   return null;
 }
 
+// Hallucination guard: when Claude marks a must-have as confirmed/likely/
+// equivalent it cites "evidence". This checks that the evidence is at least
+// vaguely grounded in the profile text — at least one 6+ character word
+// from the evidence quote should appear (case-insensitive) somewhere in
+// the profile. If not, the model fabricated the claim and we downgrade to
+// "unknown" rather than displaying a false-positive on the candidate card.
+const EVIDENCE_HALLUCINATION_TOKEN_RE = /[a-z][a-z0-9]{5,}/g;
+const EVIDENCE_BENIGN_WORDS = new Set([
+  "candidate", "profile", "experience", "background", "expertise",
+  "mentioned", "appears", "evidence", "history", "previously",
+  "demonstrate", "demonstrated", "demonstrates", "demonstrating",
+  "regarding", "related", "associated", "involved", "various",
+  "current", "currently", "former", "formerly", "recent", "recently",
+  "specifically", "particularly", "primarily", "across", "through",
+]);
+
+function evidenceLooksGrounded(evidence: string, profileLower: string): boolean {
+  if (!evidence || /not mentioned/i.test(evidence)) return true; // null evidence is fine
+  const tokens = (evidence.toLowerCase().match(EVIDENCE_HALLUCINATION_TOKEN_RE) ?? [])
+    .filter((t) => !EVIDENCE_BENIGN_WORDS.has(t));
+  if (tokens.length === 0) return true; // no testable content
+  return tokens.some((t) => profileLower.includes(t));
+}
+
 // ─── AI functions ──────────────────────────────────────────────────────────────
 
 export async function predictAcceptance(
@@ -295,10 +319,26 @@ ${SCORING_EQUIVALENCY_RULES}`,
       evidence:    typeof c.evidence === "string" ? c.evidence : "Not mentioned",
     }));
 
+  // Pre-lower the profile once for the hallucination check below.
+  const profileLower = profileText.toLowerCase();
+  const POSITIVE_MH = new Set<MustHaveStatus["status"]>(["confirmed", "equivalent", "likely", "likely_historical"]);
+  const POSITIVE_NTH = new Set<NiceToHaveStatus["status"]>(["confirmed", "likely"]);
+
   const usedMustHaveIndexes = new Set<number>();
   const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
     const match = findCoverageMatch(requirement, rawMustHaveCoverage, usedMustHaveIndexes);
     if (match) {
+      // If Claude claims this is positive but the evidence string contains
+      // no token that appears anywhere in the profile, treat it as a
+      // hallucination and downgrade to "unknown" so it doesn't show as a
+      // confirmed match on the candidate card.
+      if (POSITIVE_MH.has(match.status) && !evidenceLooksGrounded(match.evidence, profileLower)) {
+        return {
+          requirement,
+          status: "unknown" as const,
+          evidence: `Model claimed positive evidence but it was not found in the profile text — review manually.`,
+        };
+      }
       return {
         requirement,
         status: match.status,
@@ -316,6 +356,13 @@ ${SCORING_EQUIVALENCY_RULES}`,
   const niceToHaveCoverage: NiceToHaveStatus[] = niceToHaves.map((requirement) => {
     const match = findCoverageMatch(requirement, rawNiceToHaveCoverage, usedNiceToHaveIndexes);
     if (match) {
+      if (POSITIVE_NTH.has(match.status) && !evidenceLooksGrounded(match.evidence, profileLower)) {
+        return {
+          requirement,
+          status: "absent" as const,
+          evidence: `Model claimed evidence but it was not found in the profile text.`,
+        };
+      }
       return {
         requirement,
         status: match.status,

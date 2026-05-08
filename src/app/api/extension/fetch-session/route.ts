@@ -105,9 +105,12 @@ export async function GET(req: Request) {
     }
 
     // When completed, embed the updated candidate so the web UI can update
-    // without an extra round-trip. saveCapturedProfileToCandidate runs before
-    // the session is marked "completed", so the candidate is already up to date.
-    if (session.status === "completed") {
+    // without an extra round-trip. Only include the candidate when the caller
+    // is authenticated AND passed the org check above — without auth, the
+    // sessionId alone is treated as a polling capability for status only,
+    // never a route to the full PII (profileText, notes, salary, etc).
+    // The web UI handles the no-candidate case by re-fetching the job.
+    if (session.status === "completed" && auth) {
       const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
       return NextResponse.json({ ...session, candidate }, { headers: EXTENSION_CORS });
     }

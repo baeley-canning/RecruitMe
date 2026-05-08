@@ -282,13 +282,15 @@ export async function extractCandidateInfo(
     return { name: "", headline: "", location: "" };
   }
   try {
+    // Cap output at 300 tokens — three short strings, never need more. Without
+    // a cap a misbehaving model can return runaway output and inflate cost.
     const text = await chat(`Extract the candidate's name, job title/headline, and location from this LinkedIn profile text. Return actual values found in the text only.
 
 Profile text:
 ${profileText.slice(0, 2500)}
 
 Return ONLY valid JSON:
-{"name":"Sarah Johnson","headline":"Senior Recruiter at Acme Corp","location":"Auckland, New Zealand"}`, 0);
+{"name":"Sarah Johnson","headline":"Senior Recruiter at Acme Corp","location":"Auckland, New Zealand"}`, 0, 300);
 
     const parsed = parseJson<{ name?: string; headline?: string; location?: string }>(text);
     return {

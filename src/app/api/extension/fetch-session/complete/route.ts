@@ -86,7 +86,13 @@ export async function POST(req: Request) {
     message: "Profile received - scoring with AI",
   });
 
-  void processCaptureCompletion({ sessionId, session, linkedinUrl, profileText, captureMeta });
+  // Background processing — the response is sent before scoring finishes.
+  // The internal try/catch in processCaptureCompletion already updates the
+  // session row on failure, but we also log here so an unhandled rejection
+  // (e.g. DB pool exhaustion) doesn't disappear into the void.
+  processCaptureCompletion({ sessionId, session, linkedinUrl, profileText, captureMeta }).catch((err) => {
+    console.error("[fetch-session/complete] background processing failed:", err);
+  });
 
   return NextResponse.json(
     {

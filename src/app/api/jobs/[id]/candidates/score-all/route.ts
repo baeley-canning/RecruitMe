@@ -38,8 +38,17 @@ export async function POST(
 
   await prisma.job.update({ where: { id }, data: { lastScoredAt: new Date() } });
 
+  // Select only the fields we need for scoring. Without this we fetch every
+  // candidate's profileText (50KB+), scoreBreakdown (~5KB), matchReason etc —
+  // turning a 500-candidate score-all into a 25MB+ memory hit even before
+  // any scoring fires.
   const candidates = await prisma.candidate.findMany({
     where: { jobId: id, profileText: { not: null } },
+    select: {
+      id: true,
+      profileText: true,
+      location: true,
+    },
   });
 
   if (candidates.length === 0) {

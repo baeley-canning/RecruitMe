@@ -148,6 +148,12 @@ model FetchSession {
   @@unique([candidateId])
   @@index([jobId])
   @@index([status])
+  // The recovery-on-mount query in jobs/[id]/page.tsx filters by
+  // (jobId, status in [pending, processing]). Without this composite the
+  // status filter forces a full scan of all sessions for the job.
+  @@index([jobId, status])
+  // Per-org "what's pending across all my jobs?" queries used by the popup.
+  @@index([orgId, status])
 }
 
 // Reusable named scoring-weight presets per org. A preset is a snapshot of
@@ -245,6 +251,8 @@ model SearchSession {
   updatedAt          DateTime @updatedAt
 
   @@index([jobId])
+  // Search-funnel and history queries filter by (jobId, status in [running, complete]).
+  @@index([jobId, status])
 }
 
 model JobParseHistory {

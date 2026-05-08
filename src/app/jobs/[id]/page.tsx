@@ -529,6 +529,10 @@ export default function JobDetailPage({
   };
 
   const pollCandidateFetch = async (candidateId: string) => {
+    // Skip when the tab is hidden — saves API quota and Railway compute when
+    // the recruiter has stepped away. The poll resumes naturally when the
+    // tab is foregrounded again.
+    if (typeof document !== "undefined" && document.hidden) return;
     const entry = activeFetchesRef.current.get(candidateId);
     if (!entry || entry.done) return;
     const now = Date.now();
@@ -719,9 +723,11 @@ export default function JobDetailPage({
           consecutiveNetworkErrors: 0,
         };
         activeFetchesRef.current.set(candidateId, entry);
+        // 2500ms balances UI responsiveness against API hammering. With the
+        // tab-hidden gate inside pollCandidateFetch, idle tabs cost nothing.
         entry.pollInterval = setInterval(() => {
           void pollCandidateFetchRef.current(candidateId);
-        }, 1000);
+        }, 2500);
       } catch {
         setFetchStatuses((prev) => ({
           ...prev,
@@ -1081,6 +1087,23 @@ ${toHtml(job.rawJd)}
         return bComplete - aComplete;
       });
   }, [filter, jobCandidates, normalizedSearchQuery]);
+
+  // Prune selectedIds when candidates leave the filtered view (filter change,
+  // search filter, candidate removed). Otherwise bulk-delete or bulk-move
+  // would silently target candidates the recruiter can't see.
+  useEffect(() => {
+    const visibleIds = new Set(filteredCandidates.map((c) => c.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visibleIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredCandidates]);
+
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: jobCandidates.length };
     for (const candidate of jobCandidates) {

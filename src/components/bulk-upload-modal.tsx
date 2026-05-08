@@ -93,7 +93,11 @@ export function BulkUploadModal({ jobId, onClose, onComplete }: BulkUploadModalP
               Drop PDF, DOCX, or TXT files — each CV becomes a candidate and is auto-scored
             </p>
           </div>
-          <button onClick={() => { if (!processing) onClose(); }} className="text-slate-400 hover:text-slate-700">
+          <button
+            onClick={() => { if (!processing) onClose(); }}
+            className="text-slate-400 hover:text-slate-700 p-1.5 -m-1.5"
+            aria-label="Close upload modal"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -151,8 +155,11 @@ export function BulkUploadModal({ jobId, onClose, onComplete }: BulkUploadModalP
                   )}
                   {entry.status === "error" && <span className="text-[11px] text-red-500">Failed</span>}
                   {!processing && entry.status === "queued" && (
-                    <button onClick={() => setFiles((p) => p.filter((e) => e.id !== entry.id))}
-                      className="text-slate-400 hover:text-red-500 ml-1">
+                    <button
+                      onClick={() => setFiles((p) => p.filter((e) => e.id !== entry.id))}
+                      className="text-slate-400 hover:text-red-500 ml-1 p-2 -m-2"
+                      aria-label={`Remove ${entry.file.name} from upload queue`}
+                    >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   )}
