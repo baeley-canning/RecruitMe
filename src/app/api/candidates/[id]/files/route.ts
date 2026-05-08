@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
-import { scoreCandidateStructured, predictAcceptance, cleanCvText } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance, cleanCvText, extractCandidateInfo } from "@/lib/ai";
+import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
-import { getOrgScoringWeights } from "@/lib/scoring-config";
+import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -31,6 +32,7 @@ async function requireAccess(candidateId: string, auth: NonNullable<Awaited<Retu
           salaryMax: true,
           isRemote: true,
           location: true,
+          scoringWeights: true,
         },
       },
     },
@@ -156,20 +158,48 @@ export async function POST(
         }
       }
 
-      // Fix 2: Merge CV with an existing LinkedIn capture rather than discarding one.
-      // LinkedIn provides current-role context and headline signal; a CV provides
-      // detailed technical bullets and the full skills list. Together they score better.
+      // Always merge CV with existing text when both have meaningful content.
+      // LinkedIn gives current-role context + headline signal; CV gives the full
+      // detailed bullet history. Together they score better than either alone,
+      // and a CV-only swap would lose LinkedIn's current-employer signal.
       const existingText = candidate.profileText?.trim() ?? "";
       const hasLinkedInCapture = Boolean(candidate.profileCapturedAt) || candidate.source === "extension";
 
       let text: string;
-      if (hasLinkedInCapture && existingText.length >= 500) {
-        // Merge: LinkedIn text first (current role context), CV appended for detail
+      if (hasLinkedInCapture && existingText.length >= 200) {
+        text = `${existingText}\n\n--- CV ---\n\n${cvText}`.slice(0, 50000);
+      } else if (existingText && cvText && existingText !== cvText) {
         text = `${existingText}\n\n--- CV ---\n\n${cvText}`.slice(0, 50000);
       } else {
-        // No meaningful LinkedIn capture — use whichever source is richer
-        text = cvText.length > existingText.length + 500 ? cvText : existingText || cvText;
+        text = (cvText || existingText).slice(0, 50000);
       }
+
+      // Field-level enrichment: pull name / headline / location out of the CV
+      // and use them to fill any blanks on the candidate record. Existing
+      // non-empty values are NEVER overwritten — LinkedIn-provided fields take
+      // priority over CV-extracted ones, since they're usually more current.
+      let extractedName = candidate.name;
+      let extractedHeadline = candidate.headline;
+      let extractedLocation = candidate.location;
+      const directExtract = extractIdentityFromLinkedInProfileText(text);
+      if (!extractedName     && directExtract.name)     extractedName = directExtract.name;
+      if (!extractedHeadline && directExtract.headline) extractedHeadline = directExtract.headline;
+      if (!extractedLocation && directExtract.location) extractedLocation = directExtract.location;
+      try {
+        const aiExtract = await extractCandidateInfo(text);
+        if (!extractedName && aiExtract.name && aiExtract.name !== "Unknown" && aiExtract.name.length > 2) {
+          extractedName = aiExtract.name;
+        }
+        if (!extractedHeadline && aiExtract.headline && aiExtract.headline.length > 2) {
+          extractedHeadline = aiExtract.headline;
+        }
+        if (!extractedLocation && aiExtract.location && aiExtract.location.length > 2) {
+          extractedLocation = aiExtract.location;
+        }
+      } catch {
+        // AI extraction is best-effort — direct regex extraction still ran.
+      }
+
       const updates: Record<string, unknown> = {
         profileText: text,
         profileTextHash: null,
@@ -180,6 +210,10 @@ export async function POST(
         acceptanceReason: null,
         profileCapturedAt: new Date(),
         source: candidate.source === "manual" ? "manual" : candidate.source,
+        // Only assign when the field was empty before — never clobber existing data.
+        ...(candidate.name     !== extractedName     ? { name:     extractedName     } : {}),
+        ...(candidate.headline !== extractedHeadline ? { headline: extractedHeadline } : {}),
+        ...(candidate.location !== extractedLocation ? { location: extractedLocation } : {}),
       };
 
       const parsedRole = safeParseJson<ParsedRole | null>(candidate.job?.parsedRole ?? null, null);
@@ -189,7 +223,10 @@ export async function POST(
           const salary = (candidate.job.salaryMin || candidate.job.salaryMax)
             ? { min: candidate.job.salaryMin ?? 0, max: candidate.job.salaryMax ?? 0 }
             : null;
-          const weights = await getOrgScoringWeights(auth.orgId);
+          // Use job-specific weights so a recruiter who tuned a particular role
+          // (e.g. higher must-have weight for security clearance) sees the CV
+          // re-scored with that role's tuning, not a generic org default.
+          const weights = await getJobScoringWeights(candidate.job.scoringWeights, auth.orgId);
           const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
             scoreCandidateStructured(text, parsedRole, salary, weights),
             predictAcceptance(text, parsedRole, salary),
@@ -210,6 +247,7 @@ export async function POST(
               salary,
               jobLocation: candidate.job.location,
               isRemote: candidate.job.isRemote,
+              weights,
             });
             if (acceptanceResult.status === "fulfilled") {
               updates.acceptanceScore = acceptanceResult.value.score;

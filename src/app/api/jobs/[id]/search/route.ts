@@ -1086,6 +1086,7 @@ async function runSearchBackground(args: {
                 salary,
                 jobLocation: job.location,
                 isRemote: job.isRemote,
+                weights,
               });
             }
           } catch (err) {

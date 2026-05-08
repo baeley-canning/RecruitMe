@@ -172,7 +172,7 @@ export async function POST(
           // without a score so the candidate is visible and can be re-scored.
           ...(breakdown ? deriveUpdateData(breakdown) : {}),
           ...(breakdown ? {
-            profileTextHash: buildScoreCacheKey({ profileText: source.profileText, parsedRole, salary, jobLocation: job.location, isRemote: job.isRemote }),
+            profileTextHash: buildScoreCacheKey({ profileText: source.profileText, parsedRole, salary, jobLocation: job.location, isRemote: job.isRemote, weights }),
           } : {}),
         },
         update: {

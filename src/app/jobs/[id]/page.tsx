@@ -1019,6 +1019,9 @@ ${toHtml(job.rawJd)}
     : (parsedRole?.skills_preferred ?? []);
   const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
   const filteredCandidates = useMemo(() => {
+    // Terminal statuses go to the bottom of the list — recruiter doesn't want
+    // hired / rejected mixed in with the active pipeline they're still working.
+    const TERMINAL_STATUSES = new Set(["hired", "declined", "rejected"]);
     return [...jobCandidates]
       .filter((candidate) => (filter === "all" ? true : candidate.status === filter))
       .filter((candidate) => {
@@ -1031,15 +1034,34 @@ ${toHtml(job.rawJd)}
         );
       })
       .sort((a, b) => {
+        // 1. Active before terminal — moves hired/rejected to the bottom of the
+        //    "all" view rather than mixing them with new/shortlisted candidates.
+        const aTerminal = TERMINAL_STATUSES.has(a.status) ? 1 : 0;
+        const bTerminal = TERMINAL_STATUSES.has(b.status) ? 1 : 0;
+        if (aTerminal !== bTerminal) return aTerminal - bTerminal;
+
+        // 2. Within active: candidates that haven't been fetched yet but have a
+        //    high search-priority score surface first, so the recruiter knows
+        //    "fetch these next, they look promising".
         const aInitialLead = !a.profileCapturedAt && a.fetchPriorityScore != null;
         const bInitialLead = !b.profileCapturedAt && b.fetchPriorityScore != null;
         if (aInitialLead && bInitialLead) {
           const priorityDiff = (b.fetchPriorityScore ?? -1) - (a.fetchPriorityScore ?? -1);
           if (priorityDiff !== 0) return priorityDiff;
         }
+        // 3. Match score desc — primary signal.
         const scoreDiff = (b.matchScore ?? -1) - (a.matchScore ?? -1);
         if (scoreDiff !== 0) return scoreDiff;
-        return (b.acceptanceScore ?? -1) - (a.acceptanceScore ?? -1);
+
+        // 4. Acceptance score desc — when match scores tie, surface the more
+        //    likely-to-accept candidate first.
+        const acceptDiff = (b.acceptanceScore ?? -1) - (a.acceptanceScore ?? -1);
+        if (acceptDiff !== 0) return acceptDiff;
+
+        // 5. Profile completeness — full profile beats placeholder.
+        const aComplete = (a.profileText ? 1 : 0) + (a.headline ? 1 : 0) + (a.location ? 1 : 0);
+        const bComplete = (b.profileText ? 1 : 0) + (b.headline ? 1 : 0) + (b.location ? 1 : 0);
+        return bComplete - aComplete;
       });
   }, [filter, jobCandidates, normalizedSearchQuery]);
   const statusCounts = useMemo(() => {

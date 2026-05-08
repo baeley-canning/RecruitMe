@@ -43,14 +43,14 @@ const scoringConfigMocks = vi.hoisted(() => ({
     domain_fit: 0.1,
     nice_to_have_fit: 0.05,
   },
-  getOrgScoringWeights: vi.fn(),
+  getJobScoringWeights: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/scoring-config", () => ({
-  getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+  getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
 
 import { POST } from "./route";
@@ -116,7 +116,7 @@ describe("candidate file CV upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
-    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.candidate.findUnique.mockResolvedValue(makeCandidate());
     dbMocks.prisma.candidateFile.create.mockResolvedValue({
       id: "file-1",
@@ -178,6 +178,7 @@ describe("candidate file CV upload", () => {
           salary: { min: 90000, max: 120000 },
           jobLocation: "Wellington",
           isRemote: false,
+          weights: scoringConfigMocks.customWeights,
         }),
         scoreBreakdown: expect.stringContaining("\"version\":2"),
       }),

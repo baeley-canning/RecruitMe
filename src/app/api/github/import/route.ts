@@ -73,7 +73,7 @@ export async function POST(req: Request) {
       );
       scoreData = {
         ...deriveUpdateData(breakdown),
-        profileTextHash: buildScoreCacheKey({ profileText, parsedRole, salary, jobLocation: job.location, isRemote: job.isRemote }),
+        profileTextHash: buildScoreCacheKey({ profileText, parsedRole, salary, jobLocation: job.location, isRemote: job.isRemote, weights }),
       };
     } catch {
       // Scoring failed — import without a score, recruiter can re-score manually

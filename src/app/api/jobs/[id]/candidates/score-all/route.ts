@@ -84,6 +84,7 @@ export async function POST(
               salary,
               jobLocation: job.location,
               isRemote: job.isRemote,
+              weights,
             });
 
             try {

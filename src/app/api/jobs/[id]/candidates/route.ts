@@ -106,6 +106,7 @@ export async function POST(
           salary,
           jobLocation: job.location,
           isRemote: job.isRemote,
+          weights,
         }),
       };
       if (body.profileText.length >= 250) {

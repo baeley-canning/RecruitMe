@@ -386,6 +386,7 @@ async function buildCapturedCandidateData(args: {
         salary,
         jobLocation: job.location,
         isRemote: job.isRemote,
+        weights,
       });
     } else {
       scoreData.profileTextHash = null;

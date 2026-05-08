@@ -61,6 +61,7 @@ export async function POST(
           salary,
           jobLocation: job.location,
           isRemote: job.isRemote,
+          weights,
         }),
         ...(acceptanceData && {
           acceptanceScore: acceptanceData.score,

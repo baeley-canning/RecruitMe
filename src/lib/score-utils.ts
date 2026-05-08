@@ -36,13 +36,18 @@ export function deriveUpdateData(breakdown: ScoreBreakdown): Record<string, unkn
   };
 }
 
+// Default location_fit weight from scoring-config. Used to scale the
+// out-of-area penalty so a recruiter who explicitly de-prioritises location
+// doesn't get score-blasted by a hardcoded penalty that ignores their tuning.
+const DEFAULT_LOCATION_FIT_WEIGHT = 0.08;
+
 export function applyLocationFitOverride(
   breakdown: ScoreBreakdown,
   candidateLocation: string | null | undefined,
   targetLocation: string | null | undefined,
   locationRules?: string | null,
   isRemote?: boolean,
-  weights?: ScoringWeights, // eslint-disable-line @typescript-eslint/no-unused-vars
+  weights?: ScoringWeights,
 ): ScoreBreakdown {
   const assessment = assessLocationFit(candidateLocation, targetLocation, locationRules);
   if (!assessment) return breakdown;
@@ -64,22 +69,29 @@ export function applyLocationFitOverride(
     ? `${assessment.evidence} ${breakdown.recruiter_summary}`.trim()
     : breakdown.recruiter_summary;
 
-  // Start from the existing breakdown.overall — this preserves Claude's direct score
-  // when one was provided. Previously this recomputed from the formula using
-  // computeOverallScore(), which completely discarded Claude's holistic assessment.
-  // Now we apply location-specific adjustments as deltas on top of whatever score
-  // was already established (Claude's or formula-derived).
+  // Start from the existing breakdown.overall — preserves Claude's holistic score.
   let overall = breakdown.overall;
 
-  // Apply an out-of-area penalty when the job is not remote and location fit is poor.
-  // Scales from ×0.6 (completely out of area) to ×1.0 (at the 50-point threshold).
+  // Scale the penalty severity by how much weight the recruiter put on location.
+  // Default weight (0.08) → full penalty as before. Lower weight → milder; higher
+  // weight → harsher. weightRatio is clamped [0.2, 2.0] so an extreme tuning
+  // (location_fit=0.02 ×0.25 of default) still penalises a tiny bit, and an
+  // explicit boost (0.16, 2× default) doesn't go infinite.
+  const locationWeight = weights?.location_fit ?? DEFAULT_LOCATION_FIT_WEIGHT;
+  const weightRatio = Math.max(0.2, Math.min(2.0, locationWeight / DEFAULT_LOCATION_FIT_WEIGHT));
+
+  // Apply an out-of-area multiplicative penalty when the job is not remote and
+  // location fit is poor. Base multiplier 0.6→1.0; weightRatio scales how much
+  // of the 1−base penalty actually applies.
   if (!isRemote && assessment.score < 50) {
-    const multiplier = 0.6 + (assessment.score / 50) * 0.4;
-    overall = Math.max(0, Math.round(overall * multiplier));
+    const baseMultiplier = 0.6 + (assessment.score / 50) * 0.4; // 0.6..1.0
+    const adjustedMultiplier = 1 - (1 - baseMultiplier) * weightRatio;
+    overall = Math.max(0, Math.round(overall * adjustedMultiplier));
   }
 
-  // Hard-cap at 50 only for candidates who are genuinely out-of-area.
-  if (!isRemote && assessment.score < 50 && overall > 50) {
+  // Hard-cap at 50 only when location matters at default-or-higher weight.
+  // Recruiters who explicitly de-prioritise location skip this cap.
+  if (!isRemote && assessment.score < 50 && overall > 50 && weightRatio >= 1.0) {
     overall = 50;
   }
 

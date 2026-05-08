@@ -7,7 +7,8 @@ export function hashProfileText(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
-const SCORE_CACHE_VERSION = "score-context-v4";
+// Bumped when the cache key shape changes so old keys don't match.
+const SCORE_CACHE_VERSION = "score-context-v5-weights";
 
 type ScoreCacheKeyInput = {
   profileText: string;
@@ -15,6 +16,10 @@ type ScoreCacheKeyInput = {
   salary: { min: number; max: number } | null;
   jobLocation?: string | null;
   isRemote?: boolean | null;
+  // Scoring weights — when the recruiter / job overrides org defaults the
+  // resulting score changes, so the key has to include them or stale cached
+  // scores will keep showing through after a weights edit.
+  weights?: unknown;
 };
 
 function stableStringify(value: unknown): string {
@@ -38,6 +43,7 @@ export function buildScoreCacheKey(input: ScoreCacheKeyInput): string {
     salary: input.salary,
     jobLocation: input.jobLocation ?? null,
     isRemote: input.isRemote ?? false,
+    weights: input.weights ?? null,
   });
 
   return createHash("sha256").update(payload).digest("hex").slice(0, 24);

@@ -26,7 +26,11 @@ const JITTER_MIN_MS        = 90_000;   //  90s
 const JITTER_MAX_MS        = 240_000;  // 240s
 // When LinkedIn shows a captcha / authwall / 429 we back off for 24h.
 const AUTO_PAUSE_MS        = 24 * 60 * 60 * 1000;
-const AUTO_PAUSE_PATTERNS  = /captcha|challenge|authwall|999|429|rate.?limit/i;
+// LinkedIn's account-restriction signals come in many flavours — captcha,
+// authwall, "we noticed unusual activity", "please verify your identity",
+// "your account has been restricted", and the not-logged-in redirect.
+// Catching any of these triggers a 24h pause so we don't keep digging.
+const AUTO_PAUSE_PATTERNS  = /captcha|challenge|authwall|999|429|rate.?limit|unusual.?activity|verify.?(identity|account)|account.?(restricted|restriction)|action.?required|sign[- ]?in|not.?logged.?in/i;
 
 async function setExtensionError(message) {
   const error = message || "RecruitMe extension error";
@@ -485,9 +489,10 @@ async function initiateCapture(tabId, pending, preferredBase = "") {
 // so the same session can never trigger duplicate captures across two tabs. Value is
 // the timestamp the capture started — the lock auto-releases after this many ms as
 // a safety net, in case the content script never sends capture-complete/error.
-// Human-paced auto-capture takes 2–4 min per profile, so the lock has to live
-// longer than that or it'll release mid-capture and trigger a duplicate run.
-const SESSION_LOCK_MAX_AGE_MS = 6 * 60 * 1000; // 6 min
+// Human-paced auto-capture takes 2–4 min/profile + enrich phase, so the lock has
+// to comfortably exceed that or it'll release mid-capture and trigger a duplicate
+// run that could double-spike the rate to LinkedIn.
+const SESSION_LOCK_MAX_AGE_MS = 10 * 60 * 1000; // 10 min
 
 function isSessionLocked(sessionId) {
   const startedAt = activeAutoCaptures.get(sessionId);
@@ -617,47 +622,79 @@ async function scheduleNextCapture() {
   await chrome.alarms.create(NEXT_CAPTURE_ALARM, { when: Date.now() + delay });
 }
 
+// Module-level mutex so two concurrent alarm firings can't both pass the
+// cap+pause checks and double-dispatch. The whole processNextCapture body
+// runs under this gate.
+let processNextCaptureInFlight = false;
+
+// Pre-flight reservation: bump counts before dispatch, roll back on failure.
+// Without this, two alarms could both observe currentHourly=9, isUnderCap()
+// would return true for both, and we'd silently fire two captures in the
+// same hour-cap window — exactly the spike pattern LinkedIn flags.
+async function decrementCaptureCounts() {
+  const counts = await getCaptureCounts();
+  counts.hourly = Math.max(0, counts.hourly - 1);
+  counts.daily  = Math.max(0, counts.daily  - 1);
+  await chrome.storage.local.set({ captureCounts: counts });
+}
+
 async function processNextCapture() {
-  const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
-  if (manualOnlyMode) return;
-
-  if (await isAutoPaused()) {
-    console.log("[RecruitMe] auto-capture paused — skipping cycle");
-    return;
-  }
-  if (!(await isUnderCap())) {
-    console.log("[RecruitMe] hourly/daily cap reached — re-checking in 1h");
-    await chrome.alarms.create(NEXT_CAPTURE_ALARM, { when: Date.now() + HOUR_MS });
-    return;
-  }
-
-  // If there's already a capture running we don't fire another. The
-  // capture-complete handler will schedule the next one.
-  if (activeAutoCaptures.size > 0) return;
-
-  const { base, sessions } = await getPendingSessions();
-  if (!sessions.length) return;
-
-  const session = sessions[0];
-  if (pendingSessionEnsures.has(session.sessionId)) return;
-  pendingSessionEnsures.add(session.sessionId);
-
+  if (processNextCaptureInFlight) return;
+  processNextCaptureInFlight = true;
+  let reservedQuota = false;
   try {
-    const existingTab = await findLinkedInProfileTab(session.linkedinUrl);
-    if (existingTab?.id) {
-      // User already has the profile open in their browsing — capture in-place.
-      if (existingTab.status === "complete") {
-        await capturePendingSessionInTab(existingTab.id, session, base);
-      }
-    } else {
-      // Open fresh in the dedicated scraper window. The tab's onUpdated
-      // listener picks it up via maybeAutoCapture once loading completes.
-      await openPendingProfileTab(session.linkedinUrl);
+    const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
+    if (manualOnlyMode) return;
+
+    if (await isAutoPaused()) {
+      console.log("[RecruitMe] auto-capture paused — skipping cycle");
+      return;
     }
-  } catch (error) {
-    console.warn("[RecruitMe] processNextCapture failed:", error);
+    if (!(await isUnderCap())) {
+      console.log("[RecruitMe] hourly/daily cap reached — re-checking in 1h");
+      await chrome.alarms.create(NEXT_CAPTURE_ALARM, { when: Date.now() + HOUR_MS });
+      return;
+    }
+
+    // If there's already a capture running we don't fire another. The
+    // capture-complete handler will schedule the next one.
+    if (activeAutoCaptures.size > 0) return;
+
+    const { base, sessions } = await getPendingSessions();
+    if (!sessions.length) return;
+
+    const session = sessions[0];
+    if (pendingSessionEnsures.has(session.sessionId)) return;
+    pendingSessionEnsures.add(session.sessionId);
+
+    // Reserve quota BEFORE dispatch so a concurrent processNextCapture
+    // can't read the same pre-increment counts and double-fire. The
+    // submit-capture-result/error handlers no longer re-increment.
+    await incrementCaptureCounts();
+    reservedQuota = true;
+
+    try {
+      const existingTab = await findLinkedInProfileTab(session.linkedinUrl);
+      if (existingTab?.id) {
+        if (existingTab.status === "complete") {
+          await capturePendingSessionInTab(existingTab.id, session, base);
+        }
+      } else {
+        await openPendingProfileTab(session.linkedinUrl);
+      }
+      // Quota stays reserved — the capture is now owned by the content
+      // script + completion handlers. Even if it errors out, the reservation
+      // is intentional (we still hit LinkedIn).
+      reservedQuota = false;
+    } catch (error) {
+      console.warn("[RecruitMe] processNextCapture failed:", error);
+      // Dispatch itself blew up before we ever pinged LinkedIn — refund.
+    } finally {
+      pendingSessionEnsures.delete(session.sessionId);
+    }
   } finally {
-    pendingSessionEnsures.delete(session.sessionId);
+    if (reservedQuota) await decrementCaptureCounts().catch(() => {});
+    processNextCaptureInFlight = false;
   }
 }
 
@@ -727,9 +764,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       autoOpenedTabs.delete(tabId);
       chrome.tabs.remove(tabId).catch(() => {});
     }
-    void incrementCaptureCounts().catch(() => {});
+    // Quota was already reserved at dispatch time; just schedule next.
     void scheduleNextCapture().catch(() => {});
-    void notifyCaptureDone(message.candidateName).catch(() => {});
     void clearExtensionError().catch(() => {});
     sendResponse({ ok: true });
     return false;
@@ -781,9 +817,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           autoOpenedTabs.delete(tabId);
           chrome.tabs.remove(tabId).catch(() => {});
         }
-        void incrementCaptureCounts().catch(() => {});
+        // Quota was already reserved at dispatch time; just schedule next.
         void scheduleNextCapture().catch(() => {});
-        void notifyCaptureDone(candidateName || "").catch(() => {});
         void clearExtensionError().catch(() => {});
         sendResponse({ ok: true });
       } catch (error) {

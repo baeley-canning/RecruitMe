@@ -205,6 +205,7 @@ export async function POST(
         salary,
         jobLocation: job.location,
         isRemote: job.isRemote,
+        weights,
       });
     } catch (err) {
       console.error(`[talent-pool] score failed for candidate ${row.id}:`, err);
