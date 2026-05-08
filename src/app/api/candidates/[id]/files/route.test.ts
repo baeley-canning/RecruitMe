@@ -31,6 +31,12 @@ const aiMocks = vi.hoisted(() => ({
     signals: [],
     summary: "Could be open to a relevant role.",
   }),
+  cleanCvText: vi.fn().mockImplementation((s: string) => Promise.resolve(s)),
+  extractCandidateInfo: vi.fn().mockResolvedValue({ name: "", headline: "", location: "" }),
+}));
+
+const linkedinCaptureMocks = vi.hoisted(() => ({
+  extractIdentityFromLinkedInProfileText: vi.fn(() => ({ name: null, headline: null, location: null })),
 }));
 
 const scoringConfigMocks = vi.hoisted(() => ({
@@ -51,6 +57,10 @@ vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
+}));
+vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
+vi.mock("@/lib/pdf", () => ({
+  extractTextFromPdf: vi.fn().mockResolvedValue(""),
 }));
 
 import { POST } from "./route";
@@ -118,6 +128,10 @@ describe("candidate file CV upload", () => {
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
     scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.candidate.findUnique.mockResolvedValue(makeCandidate());
+    // Default: no prior files exist on the candidate, so the dup-detection
+    // check in route.ts (added to prevent silent CV reuploads from clobbering
+    // extracted fields) finds nothing and lets the upload proceed.
+    dbMocks.prisma.candidateFile.findMany.mockResolvedValue([]);
     dbMocks.prisma.candidateFile.create.mockResolvedValue({
       id: "file-1",
       type: "cv",

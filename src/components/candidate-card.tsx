@@ -1158,21 +1158,25 @@ export const CandidateCard = memo(function CandidateCard({
             </div>
 
             <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-              {candidate.matchScore != null && breakdown?.data_quality === "minimal" && (
-                <span title="Very little profile data — score is speculative until the full profile is fetched" className="text-[9px] font-semibold uppercase tracking-wide text-red-500 bg-red-50 border border-red-200 rounded px-1 py-0.5">
-                  Minimal data
-                </span>
-              )}
-              {candidate.matchScore != null && breakdown?.data_quality === "snippet" && (
-                <span title="Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" className="text-[9px] font-semibold uppercase tracking-wide text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">
-                  Snippet score
-                </span>
-              )}
-              {!hasFetchedProfile && candidate.matchScore != null && !breakdown?.data_quality && (
-                <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-500 bg-orange-50 border border-orange-200 rounded px-1 py-0.5">
-                  Provisional
-                </span>
-              )}
+              {/* Single data-quality badge replaces the previous trio (Minimal /
+                  Snippet / Provisional) — shows the worst-case warning for this
+                  candidate so the recruiter sees one clear signal, not clutter. */}
+              {candidate.matchScore != null && (() => {
+                const tag =
+                  breakdown?.data_quality === "minimal" ? { label: "Thin profile", tone: "red", title: "Very little profile data — score is speculative until the full profile is fetched" } :
+                  breakdown?.data_quality === "snippet" ? { label: "Snippet only", tone: "orange", title: "Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" } :
+                  (!hasFetchedProfile && !breakdown?.data_quality) ? { label: "Provisional", tone: "orange", title: "Score is provisional until the full LinkedIn profile is fetched" } :
+                  null;
+                if (!tag) return null;
+                const colour = tag.tone === "red"
+                  ? "text-red-600 bg-red-50 border-red-200"
+                  : "text-orange-600 bg-orange-50 border-orange-200";
+                return (
+                  <span title={tag.title} className={cn("text-[9px] font-semibold uppercase tracking-wide rounded px-1 py-0.5 border hidden sm:inline-block", colour)}>
+                    {tag.label}
+                  </span>
+                );
+              })()}
               <div className="flex items-center gap-2">
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}

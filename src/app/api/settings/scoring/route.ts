@@ -29,6 +29,15 @@ export async function GET() {
 export async function PUT(req: Request) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  // Org-wide scoring weights affect every user in the org. Restrict editing
+  // to owners so a single recruiter can't accidentally retune everyone's
+  // scoring while experimenting.
+  if (!auth.isOwner) {
+    return NextResponse.json(
+      { error: "Only the org owner can change org-wide scoring weights. Use per-job overrides on the job page instead." },
+      { status: 403 }
+    );
+  }
 
   const body = WeightsSchema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) {
@@ -43,6 +52,12 @@ export async function PUT(req: Request) {
 export async function DELETE() {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  if (!auth.isOwner) {
+    return NextResponse.json(
+      { error: "Only the org owner can reset org-wide scoring weights." },
+      { status: 403 }
+    );
+  }
   await saveOrgScoringWeights(auth.orgId, DEFAULT_SCORING_WEIGHTS);
   return NextResponse.json({ weights: DEFAULT_SCORING_WEIGHTS });
 }

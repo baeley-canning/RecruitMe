@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
@@ -126,6 +127,34 @@ export async function POST(
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const base64 = buffer.toString("base64");
+  const fileHash = createHash("sha256").update(buffer).digest("hex").slice(0, 32);
+
+  // Detect duplicate uploads — same byte-for-byte content already on this
+  // candidate. Without this guard the recruiter could re-upload the same CV
+  // and silently clobber any field-level extraction the previous upload made.
+  // Honoured via ?force=1 in case the recruiter actually wants to re-trigger
+  // scoring on the same file (rare).
+  const url = new URL(req.url);
+  const force = url.searchParams.get("force") === "1";
+  if (!force) {
+    const existingFiles = await prisma.candidateFile.findMany({
+      where: { candidateId: id },
+      select: { id: true, filename: true, data: true, createdAt: true },
+    });
+    const duplicate = existingFiles.find((f) =>
+      createHash("sha256").update(Buffer.from(f.data, "base64")).digest("hex").slice(0, 32) === fileHash
+    );
+    if (duplicate) {
+      return NextResponse.json(
+        {
+          error: "duplicate",
+          message: `This file is identical to an existing upload (${duplicate.filename}, ${new Date(duplicate.createdAt).toLocaleDateString()}). Re-upload with ?force=1 to override.`,
+          duplicateOf: { id: duplicate.id, filename: duplicate.filename, createdAt: duplicate.createdAt },
+        },
+        { status: 409 }
+      );
+    }
+  }
 
   const created = await prisma.candidateFile.create({
     data: {

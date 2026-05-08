@@ -74,6 +74,24 @@ export async function POST(
     const existing = safeParseJson<ParsedRole | null>(job.parsedRole, null);
     const parsedRole = await parseJobDescription(job.rawJd);
 
+    // Hard-fail when the parse produced no requirements at all — neither
+    // must_haves nor the legacy skills_required. Saving an empty role would
+    // poison downstream scoring (every candidate scores ~50% from empty
+    // coverage). Tell the recruiter explicitly so they expand the JD.
+    const mustHaveCount = (parsedRole.must_haves ?? []).length;
+    const skillsRequiredCount = (parsedRole.skills_required ?? []).length;
+    if (mustHaveCount === 0 && skillsRequiredCount === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "We couldn't pull any specific requirements out of this job description. " +
+            "Add a few lines about the must-have skills, seniority, and tools, then re-analyse.",
+          empty_role: true,
+        },
+        { status: 422 }
+      );
+    }
+
     // Preserve recruiter overrides that represent deliberate decisions.
     // dismissed_skill_notes is intentionally NOT preserved — tips are
     // informational and should reappear after a fresh re-analyse.

@@ -1258,6 +1258,12 @@ function notifyBackground() {
   if (linkedinUrl === lastObservedUrl) return;
   lastObservedUrl = linkedinUrl;
 
+  // Wipe the stale overlay before fetching match data for the new profile —
+  // otherwise the "On 2 jobs" pill from the previous candidate remains
+  // visible until the new fetch resolves, which is confusing.
+  removeOverlay();
+  lastMatchQueriedUrl = "";
+
   chrome.runtime.sendMessage(
     {
       type: "linkedin-page-observed",
@@ -1299,8 +1305,12 @@ function escapeHtml(s) {
 }
 
 function removeOverlay() {
-  const existing = document.getElementById(OVERLAY_ID);
-  if (existing) existing.remove();
+  // Defensive: in test contexts the document mock may not implement
+  // getElementById, and we don't want a missing-method to abort notifyBackground.
+  try {
+    const existing = document.getElementById?.(OVERLAY_ID);
+    if (existing && typeof existing.remove === "function") existing.remove();
+  } catch { /* DOM not fully available; nothing to remove */ }
 }
 
 // ── Draggable bubble shell ─────────────────────────────────────────────────

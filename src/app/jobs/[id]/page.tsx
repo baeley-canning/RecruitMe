@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
+import { showToast } from "@/components/ui/toast";
 import { CandidateCard } from "@/components/candidate-card";
 import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
@@ -202,7 +203,8 @@ export default function JobDetailPage({
   // item whenever a fetch slot becomes free.
   const fetchQueueRef = useRef<string[]>([]);
   const MAX_CONCURRENT_FETCHES = 1;
-  const [filter, setFilter] = useState<string>("all");
+  // Empty array = no filter (show all). Multiple entries = OR-filter across statuses.
+  const [filter, setFilter] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
   const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number; failedIds?: string[]; partial?: boolean } | null>(null);
@@ -733,41 +735,56 @@ export default function JobDetailPage({
   }, [id, job]);
   handleFetchProfileImplRef.current = handleFetchProfileImpl;
 
-  const handleStatusChange = useCallback(async (candidateId: string, status: string) => {
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    await fetchJob();
-  }, [fetchJob, id]);
+  // Wrap a candidate PATCH with consistent error handling + success toast.
+  // Recruiter does these every minute; silent failures here are how lost
+  // work happens. Toast surfaces both happy-path confirmation and failures.
+  const patchCandidate = useCallback(
+    async (candidateId: string, body: Record<string, unknown>, successMessage: string) => {
+      try {
+        const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({})) as { error?: string };
+          showToast(data.error || `Save failed (${res.status}) — try again`, "error");
+          return false;
+        }
+        showToast(successMessage);
+        await fetchJob();
+        return true;
+      } catch {
+        showToast("Network error — change not saved. Check your connection and try again.", "error");
+        return false;
+      }
+    },
+    [fetchJob, id]
+  );
 
-  const handleNotesChange = useCallback(async (candidateId: string, notes: string) => {
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes }),
-    });
-    await fetchJob();
-  }, [fetchJob, id]);
+  const handleStatusChange = useCallback(
+    (candidateId: string, status: string) =>
+      patchCandidate(candidateId, { status }, `Moved to ${statusLabel(status)}`).then(() => undefined),
+    [patchCandidate]
+  );
 
-  const handleLinkedInChange = useCallback(async (candidateId: string, linkedinUrl: string) => {
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ linkedinUrl: linkedinUrl || null }),
-    });
-    await fetchJob();
-  }, [fetchJob, id]);
+  const handleNotesChange = useCallback(
+    (candidateId: string, notes: string) =>
+      patchCandidate(candidateId, { notes }, "Notes saved").then(() => undefined),
+    [patchCandidate]
+  );
 
-  const handleJobAdderChange = useCallback(async (candidateId: string, jobAdderUrl: string) => {
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobAdderUrl: jobAdderUrl || null }),
-    });
-    await fetchJob();
-  }, [fetchJob, id]);
+  const handleLinkedInChange = useCallback(
+    (candidateId: string, linkedinUrl: string) =>
+      patchCandidate(candidateId, { linkedinUrl: linkedinUrl || null }, "LinkedIn URL saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleJobAdderChange = useCallback(
+    (candidateId: string, jobAdderUrl: string) =>
+      patchCandidate(candidateId, { jobAdderUrl: jobAdderUrl || null }, "JobAdder URL saved").then(() => undefined),
+    [patchCandidate]
+  );
 
   const handleScreeningDataChange = useCallback((_candidateId: string, data: string) => {
     setJob((prev) => {
@@ -1023,7 +1040,7 @@ ${toHtml(job.rawJd)}
     // hired / rejected mixed in with the active pipeline they're still working.
     const TERMINAL_STATUSES = new Set(["hired", "declined", "rejected"]);
     return [...jobCandidates]
-      .filter((candidate) => (filter === "all" ? true : candidate.status === filter))
+      .filter((candidate) => (filter.length === 0 ? true : filter.includes(candidate.status)))
       .filter((candidate) => {
         if (!normalizedSearchQuery) return true;
         return (
@@ -1630,7 +1647,7 @@ ${toHtml(job.rawJd)}
       {parsedRole && <ParseHistoryCard jobId={id} />}
 
       {/* Top matches card — surfaces best unreviewed candidates so recruiter doesn't have to scroll */}
-      {filter === "all" && (
+      {filter.length === 0 && (
         <TopCandidatesCard
           candidates={jobCandidates}
           onShortlist={(cid) => handleStatusChange(cid, "shortlisted")}
@@ -1705,9 +1722,9 @@ ${toHtml(job.rawJd)}
               </>
             ) : (
               <>
-                {filter !== "all" && (
+                {filter.length > 0 && (
                   <button
-                    onClick={() => setFilter("all")}
+                    onClick={() => setFilter([])}
                     className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
                   >
                     <X className="w-3 h-3" />
@@ -1847,21 +1864,40 @@ ${toHtml(job.rawJd)}
         )}
 
         {filteredCandidates.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-xl border border-slate-200 border-dashed">
+          <div className="text-center py-12 px-6 bg-white rounded-xl border border-slate-200 border-dashed">
             <Users className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-            <p className="text-slate-500 text-sm font-medium">
-              {filter === "all" ? "No candidates yet" : `No ${statusLabel(filter).toLowerCase()} candidates`}
+            <p className="text-slate-700 text-sm font-semibold mb-1">
+              {filter.length === 0
+                ? (jobCandidates.length === 0 ? "No candidates yet" : "No candidates match your filter")
+                : (filter.length === 1
+                    ? `No ${statusLabel(filter[0]).toLowerCase()} candidates`
+                    : `No candidates in the ${filter.length} selected statuses`)}
             </p>
-            {filter === "all" && parsedRole && (
-              <p className="text-slate-400 text-xs mt-1">
+            {filter.length === 0 && jobCandidates.length === 0 && parsedRole && (
+              <>
+                <p className="text-slate-500 text-xs mt-1 mb-4">
+                  Find candidates from the role brief, or add them manually below.
+                </p>
                 <button
                   onClick={() => document.getElementById("job-search-card")?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                  className="text-blue-600 hover:text-blue-700 underline underline-offset-2"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
                 >
-                  Find Candidates
+                  Find candidates
                 </button>
-                {" "}or add them manually below.
+              </>
+            )}
+            {filter.length === 0 && jobCandidates.length === 0 && !parsedRole && (
+              <p className="text-slate-500 text-xs mt-1">
+                Paste a job description above and click <strong>Analyse</strong> to start.
               </p>
+            )}
+            {filter.length > 0 && (
+              <button
+                onClick={() => setFilter([])}
+                className="text-blue-600 hover:text-blue-700 text-xs underline underline-offset-2 mt-2"
+              >
+                Clear filter
+              </button>
             )}
           </div>
         ) : (

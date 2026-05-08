@@ -28,7 +28,9 @@ import { GET, PUT } from "./route";
 describe("scoring settings route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+    // Tests run as the org owner so the PUT/DELETE endpoints are allowed —
+    // org-level weight edits require isOwner=true.
+    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: true });
     scoringConfigMocks.getOrgScoringWeights.mockResolvedValue({
       must_have: 0.5,
       skill_fit: 0.2,

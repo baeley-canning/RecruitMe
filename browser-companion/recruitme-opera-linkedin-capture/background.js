@@ -147,7 +147,11 @@ async function getOrCreateScraperWindow() {
         await sleep(400);
       }
       return scraperWindowId;
-    } catch { /* window was closed by the user — fall through and recreate */ }
+    } catch {
+      // Window was closed by the user — clear the stale ID before recreating
+      // so a subsequent failure doesn't keep hitting the same dead handle.
+      await chrome.storage.local.set({ scraperWindowId: 0 });
+    }
   }
   const win = await chrome.windows.create({
     url: "about:blank",
