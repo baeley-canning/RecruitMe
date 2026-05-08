@@ -21,32 +21,13 @@ import {
   Gauge,
 } from "lucide-react";
 
-function LinkedInIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-    </svg>
-  );
-}
-
-// JobAdder "JA" badge — shows when a candidate is linked in JobAdder
-function JobAdderBadge({ url, className }: { url: string | null; className?: string }) {
-  const base = cn(
-    "inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold leading-none border transition-colors",
-    url
-      ? "bg-orange-500 text-white border-orange-600"
-      : "bg-slate-100 text-slate-400 border-slate-200 hover:border-orange-300 hover:text-orange-500",
-    className
-  );
-  if (url) {
-    return (
-      <a href={url} target="_blank" rel="noopener noreferrer" className={base} title="Open in JobAdder">
-        JA
-      </a>
-    );
-  }
-  return <span className={base}>JA</span>;
-}
+import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
+import {
+  candidateSourceLabel,
+  profileSourceSummary,
+  getRadarDimensions,
+  locationFitBadge,
+} from "./candidate/helpers";
 import { ScoreBadge } from "./score-badge";
 import { ScoreRadar } from "./score-radar";
 import type { RadarDimensions } from "./score-radar";
@@ -155,102 +136,6 @@ interface CandidateCardProps {
   fetchQueueState?: string;
   fetchQueuePosition?: number;
   contactCount?: number;
-}
-
-type LegacyRadarDimensions = Partial<RadarDimensions>;
-
-function candidateSourceLabel(candidate: Candidate) {
-  const profileChars = candidate.profileText?.trim().length ?? 0;
-  if (candidate.source === "extension") {
-    if (profileChars > 0 && profileChars < 500) return "LinkedIn partial capture";
-    if (profileChars >= 500 && profileChars < 2000) return "LinkedIn partial profile";
-    return "LinkedIn extension";
-  }
-  if (candidate.source === "talent_pool") return "Talent pool";
-  if (candidate.source === "bookmarklet") return "LinkedIn capture";
-  if (candidate.source === "pdl") return "People Data Labs";
-  if (candidate.source === "serpapi") return "SerpAPI snippet";
-  return candidate.source ? candidate.source.replace(/_/g, " ") : "Manual";
-}
-
-function profileSourceSummary(candidate: Candidate) {
-  const profileChars = candidate.profileText?.trim().length ?? 0;
-  if (candidate.source === "extension") {
-    if (profileChars > 0 && profileChars < 500) {
-      return "The extension captured only a short partial profile. Fetch again before trusting the score.";
-    }
-    if (profileChars >= 500 && profileChars < 2000) {
-      return "The extension captured a partial profile. Treat the score as provisional.";
-    }
-    return "Captured from the RecruitMe LinkedIn extension.";
-  }
-  if (candidate.source === "pdl") {
-    return "Imported from People Data Labs and stored as structured profile text.";
-  }
-  if (!candidate.profileText) {
-    return "No LinkedIn profile text has been stored yet.";
-  }
-  if (candidate.source === "serpapi" && candidate.profileText.length < 500) {
-    return "This is still only the search snippet, not the full LinkedIn capture.";
-  }
-  return `Stored from ${candidateSourceLabel(candidate).toLowerCase()}.`;
-}
-
-function getRadarDimensions(
-  breakdown: ScoreBreakdown | null,
-  legacyDimensions: LegacyRadarDimensions | undefined
-): RadarDimensions | null {
-  if (breakdown) {
-    return {
-      skills: breakdown.categories.skill_fit.score,
-      title: breakdown.categories.title_fit.score,
-      industry: breakdown.categories.domain_fit?.score ?? breakdown.categories.industry_fit?.score ?? 50,
-      location: breakdown.categories.location_fit.score,
-      seniority: breakdown.categories.seniority_fit.score,
-    };
-  }
-
-  if (!legacyDimensions) return null;
-
-  return {
-    skills: legacyDimensions.skills ?? 0,
-    title: legacyDimensions.title ?? 0,
-    industry: legacyDimensions.industry ?? 0,
-    location: legacyDimensions.location ?? 0,
-    seniority: legacyDimensions.seniority ?? 0,
-  };
-}
-
-function locationFitBadge(score: number | null | undefined) {
-  if (score == null) {
-    return {
-      pill: "bg-slate-100 text-slate-500 border-slate-200",
-      icon: "text-slate-400",
-      label: "Location unknown",
-    };
-  }
-
-  if (score >= 75) {
-    return {
-      pill: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      icon: "text-emerald-600",
-      label: "Location fit",
-    };
-  }
-
-  if (score >= 45) {
-    return {
-      pill: "bg-blue-50 text-blue-700 border-blue-200",
-      icon: "text-blue-600",
-      label: "Location maybe",
-    };
-  }
-
-  return {
-    pill: "bg-red-50 text-red-700 border-red-200",
-    icon: "text-red-600",
-    label: "Location mismatch",
-  };
 }
 
 function LocationFitPill({
@@ -1035,7 +920,7 @@ export const CandidateCard = memo(function CandidateCard({
       safeParseJson<{
         summary?: string;
         reasoning?: string;
-        dimensions?: LegacyRadarDimensions;
+        dimensions?: Partial<RadarDimensions>;
         strengths?: string[];
         gaps?: string[];
       } | null>(candidate.matchReason, null),
