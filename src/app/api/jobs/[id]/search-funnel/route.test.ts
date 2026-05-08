@@ -11,6 +11,17 @@ const sessionMocks = vi.hoisted(() => ({
   getAuth: vi.fn(),
   requireJobAccess: vi.fn(),
   unauthorized: vi.fn(() => new Response(null, { status: 401 })),
+  // The route is now wrapped with withJobAuth — reproduce that behaviour
+  // here so we can still test the inner handler in isolation.
+  withJobAuth: <R>(handler: (args: { auth: { userId: string; orgId: string | null; isOwner: boolean }; req: Request; params: { id: string }; job: unknown }) => Promise<R>) =>
+    async (req: Request, ctx: { params: Promise<{ id: string }> }) => {
+      const auth = await sessionMocks.getAuth();
+      if (!auth) return sessionMocks.unauthorized();
+      const params = await ctx.params;
+      const { job, error } = await sessionMocks.requireJobAccess(params.id, auth);
+      if (error) return error;
+      return handler({ auth, req, params, job });
+    },
 }));
 
 vi.mock("@/lib/db", () => dbMocks);

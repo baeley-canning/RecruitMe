@@ -9,6 +9,19 @@ export type ChatProvider = "claude" | "openai" | "ollama";
 export interface ChatOptions {
   provider?: ChatProvider;
   model?: string;
+  /**
+   * Static system instructions that apply to every call of this prompt shape.
+   * Anthropic prompt caching keys on the system message; passing the same
+   * system text across many calls turns subsequent calls into ~0.1× input
+   * cost on the cached portion. Use for scoring rubrics, parsing rules,
+   * and other long, stable instruction blocks.
+   */
+  system?: string;
+  /**
+   * When true, mark the system block as ephemeral-cacheable so Anthropic's
+   * prompt cache can de-duplicate it across calls. Only relevant for Claude.
+   */
+  cacheSystem?: boolean;
 }
 
 export function resolveChatProvider(override?: ChatProvider): ChatProvider {
@@ -49,10 +62,19 @@ export async function chat(
     const client = new Anthropic({ apiKey, timeout: 90_000 });
     const model  = options?.model ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
+    // Build the system block. When caching is requested we wrap the text in
+    // an array with cache_control so Anthropic stores the key.
+    const systemBlock = options?.system
+      ? (options.cacheSystem
+          ? [{ type: "text" as const, text: options.system, cache_control: { type: "ephemeral" as const } }]
+          : options.system)
+      : undefined;
+
     const response = await client.messages.create({
       model,
       max_tokens: maxTokens,
       temperature,
+      ...(systemBlock !== undefined ? { system: systemBlock } : {}),
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -74,9 +96,12 @@ export async function chat(
     const client = new OpenAI({ apiKey });
     const model  = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
+    const messages = options?.system
+      ? [{ role: "system" as const, content: options.system }, { role: "user" as const, content: prompt }]
+      : [{ role: "user" as const, content: prompt }];
     const response = await client.chat.completions.create({
       model,
-      messages: [{ role: "user", content: prompt }],
+      messages,
       temperature,
       max_tokens: maxTokens,
     });
