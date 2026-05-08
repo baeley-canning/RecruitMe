@@ -205,6 +205,13 @@ export default function JobDetailPage({
   const MAX_CONCURRENT_FETCHES = 1;
   // Empty array = no filter (show all). Multiple entries = OR-filter across statuses.
   const [filter, setFilter] = useState<string[]>([]);
+  // Progressive rendering — render the first N candidates initially, expand on
+  // recruiter request. Each CandidateCard is heavy (1600+ line component);
+  // rendering 500 of them on a job page creates a noticeable initial-paint
+  // delay. Capping the first batch keeps the page snappy at any scale; the
+  // "Show all" button reveals the rest when needed.
+  const RENDER_BATCH_SIZE = 50;
+  const [renderCap, setRenderCap] = useState<number>(RENDER_BATCH_SIZE);
   const [searchQuery, setSearchQuery] = useState("");
   const [rescoringAll, setRescoringAll] = useState(false);
   const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number; failedIds?: string[]; partial?: boolean } | null>(null);
@@ -1925,13 +1932,14 @@ ${toHtml(job.rawJd)}
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredCandidates.map((candidate) => (
+            {filteredCandidates.slice(0, renderCap).map((candidate) => (
               <div key={candidate.id} id={`candidate-${candidate.id}`} className="flex items-start gap-3">
                 <input
                   type="checkbox"
                   className="mt-4 w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer flex-shrink-0"
                   checked={selectedIds.has(candidate.id)}
                   onChange={() => toggleSelect(candidate.id)}
+                  aria-label={`Select ${candidate.name}`}
                 />
                 <div className="flex-1 min-w-0">
                   <CandidateCard
@@ -1959,6 +1967,22 @@ ${toHtml(job.rawJd)}
                 </div>
               </div>
             ))}
+            {renderCap < filteredCandidates.length && (
+              <div className="flex items-center justify-center gap-3 py-4">
+                <button
+                  onClick={() => setRenderCap((n) => n + RENDER_BATCH_SIZE)}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors"
+                >
+                  Show {Math.min(RENDER_BATCH_SIZE, filteredCandidates.length - renderCap)} more
+                </button>
+                <button
+                  onClick={() => setRenderCap(filteredCandidates.length)}
+                  className="text-xs text-slate-500 hover:text-slate-700 underline underline-offset-2"
+                >
+                  Show all {filteredCandidates.length}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

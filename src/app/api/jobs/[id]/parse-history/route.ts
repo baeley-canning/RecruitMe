@@ -1,19 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { withJobAuth } from "@/lib/session";
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const auth = await getAuth();
-  if (!auth) return unauthorized();
-  const { id } = await params;
-  const { error } = await requireJobAccess(id, auth);
-  if (error) return error;
-
+export const GET = withJobAuth(async ({ params }) => {
   const history = await prisma.jobParseHistory.findMany({
-    where: { jobId: id },
+    where: { jobId: params.id },
     orderBy: { parsedAt: "desc" },
     take: 10,
     select: {
@@ -25,6 +16,5 @@ export async function GET(
       evaluation: true,
     },
   });
-
   return NextResponse.json(history);
-}
+});

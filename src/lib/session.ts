@@ -47,6 +47,43 @@ export async function requireJobAccess(jobId: string, auth: AuthResult) {
   return { job, error: null };
 }
 
+// ─── Route handler wrappers ────────────────────────────────────────────────
+// These reduce ~6 lines of auth boilerplate per route to a single composition.
+// Use sparingly — they're for the common case where a route just needs auth +
+// optional job/candidate access. Routes with bespoke flows (the search-async
+// dispatcher, the public shortlist endpoint) should keep their explicit guards.
+
+type RouteHandler<P, R> = (args: { auth: AuthResult; req: Request; params: P }) => Promise<R>;
+
+/** Wrap a handler to require an authenticated session. */
+export function withAuth<P, R>(handler: RouteHandler<P, R>) {
+  return async (req: Request, ctx: { params: Promise<P> }) => {
+    const auth = await getAuth();
+    if (!auth) return unauthorized();
+    const params = await ctx.params;
+    return handler({ auth, req, params });
+  };
+}
+
+/** Wrap a handler to require auth + ownership of {id} (a Job ID). */
+export function withJobAuth<R>(
+  handler: (args: {
+    auth: AuthResult;
+    req: Request;
+    params: { id: string };
+    job: NonNullable<Awaited<ReturnType<typeof requireJobAccess>>["job"]>;
+  }) => Promise<R>,
+) {
+  return async (req: Request, ctx: { params: Promise<{ id: string }> }) => {
+    const auth = await getAuth();
+    if (!auth) return unauthorized();
+    const params = await ctx.params;
+    const { job, error } = await requireJobAccess(params.id, auth);
+    if (error || !job) return error;
+    return handler({ auth, req, params, job });
+  };
+}
+
 /** Load a candidate for a specific job and verify the caller can access both. */
 export async function requireCandidateAccess(
   jobId: string,

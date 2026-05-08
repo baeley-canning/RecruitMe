@@ -1,21 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { withJobAuth } from "@/lib/session";
 
 // Aggregates the discovery → shortlist funnel for a single job.
 // Surfaced/imported/rejected come from SearchSession (per-run telemetry).
 // Fetched/scored/shortlisted/declined come from the live Candidate table.
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const auth = await getAuth();
-  if (!auth) return unauthorized();
-  const { id } = await params;
-
-  const { error } = await requireJobAccess(id, auth);
-  if (error) return error;
-
+export const GET = withJobAuth(async ({ params }) => {
+  const id = params.id;
   const [sessionAgg, candidateBuckets] = await Promise.all([
     prisma.searchSession.aggregate({
       where: { jobId: id, status: { not: "running" } },
@@ -64,4 +55,4 @@ export async function GET(
     rejectedByRecruiter,
     avgScore,
   });
-}
+});
