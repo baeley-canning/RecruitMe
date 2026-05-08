@@ -836,7 +836,8 @@ function ProfileDrawer({
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-700 transition-colors"
+              className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 -m-1.5"
+              aria-label="Close candidate detail"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1228,7 +1229,11 @@ export const CandidateCard = memo(function CandidateCard({
                   const latest = candidate.contactEvents?.[0];
                   const tooltipParts: string[] = [];
                   if (latest) {
-                    const typeLabel = latest.type === "call" ? "Called" : latest.type === "email" ? "Emailed" : "Messaged";
+                    const typeLabel =
+                      latest.type === "call"  ? "Called" :
+                      latest.type === "email" ? "Emailed" :
+                      latest.type === "ai_outreach_generated" ? "AI outreach drafted" :
+                      "Messaged";
                     const date = new Date(latest.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
                     tooltipParts.push(`${typeLabel} by ${latest.userName} · ${date}`);
                   }
@@ -1548,11 +1553,11 @@ export const CandidateCard = memo(function CandidateCard({
                 <span className="sm:hidden">…</span>
               </Button>
             ) : hasFetchedProfile ? (
-              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} className="text-slate-400 hover:text-slate-600 hover:bg-slate-100" title="Re-fetch LinkedIn profile">
+              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} className="text-slate-400 hover:text-slate-600 hover:bg-slate-100" title="Re-fetch LinkedIn profile" aria-label="Re-fetch LinkedIn profile">
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
             ) : (
-              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 font-medium" title="Fetch full LinkedIn profile">
+              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 font-medium" title="Fetch full LinkedIn profile" aria-label="Fetch full LinkedIn profile">
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline ml-1">Fetch</span>
               </Button>
@@ -1561,7 +1566,7 @@ export const CandidateCard = memo(function CandidateCard({
 
           {/* Score */}
           {candidate.profileText && (
-            <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-blue-600 hover:bg-blue-50" disabled={scoring}>
+            <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-blue-600 hover:bg-blue-50" disabled={scoring} aria-label={candidate.matchScore != null ? "Re-score this candidate" : "Score this candidate"}>
               {!scoring && <Loader2 className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline ml-1">{candidate.matchScore != null ? "Re-score" : "Score"}</span>
             </Button>
@@ -1575,17 +1580,17 @@ export const CandidateCard = memo(function CandidateCard({
           )}
 
           {/* Notes — icon only */}
-          <Button size="sm" variant="ghost" onClick={() => setEditingNotes(true)} className="text-slate-500" title="Edit notes">
+          <Button size="sm" variant="ghost" onClick={() => setEditingNotes(true)} className="text-slate-500" title="Edit notes" aria-label="Edit notes">
             <MessageSquare className="w-3.5 h-3.5" />
           </Button>
 
           {/* Expand/collapse */}
-          <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)} className="text-slate-500" title={expanded ? "Collapse" : "Expand"}>
+          <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)} className="text-slate-500" title={expanded ? "Collapse" : "Expand"} aria-label={expanded ? "Collapse candidate details" : "Expand candidate details"} aria-expanded={expanded}>
             {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </Button>
 
           {/* Delete */}
-          <Button size="sm" variant="ghost" onClick={() => onDelete(candidate.id)} className="text-slate-400 hover:text-red-600 hover:bg-red-50" title="Delete candidate">
+          <Button size="sm" variant="ghost" onClick={() => onDelete(candidate.id)} className="text-slate-400 hover:text-red-600 hover:bg-red-50" title="Delete candidate" aria-label="Delete candidate">
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>

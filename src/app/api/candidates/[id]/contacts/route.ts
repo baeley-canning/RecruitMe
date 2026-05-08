@@ -29,7 +29,9 @@ export async function GET(
 }
 
 const PostSchema = z.object({
-  type: z.enum(["message", "call", "email", "other"]),
+  // ai_outreach_generated is logged by the AI outreach route so the UI can
+  // show "outreach drafted N days ago" and warn before re-generating.
+  type: z.enum(["message", "call", "email", "other", "ai_outreach_generated"]),
   note: z.string().max(500).optional(),
 });
 
