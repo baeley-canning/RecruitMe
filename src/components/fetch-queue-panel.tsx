@@ -41,19 +41,7 @@ function useElapsed(startedAt?: number) {
 
 export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel }: FetchQueuePanelProps) {
   const [expanded, setExpanded] = useState(true);
-  const [scraperOk, setScraperOk] = useState<boolean | null>(null);
-  const [captureMode, setCaptureMode] = useState<"scraper" | "extension" | null>(null);
   const [now, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    fetch("/api/scraper/status")
-      .then((r) => r.json())
-      .then((d: { ok?: boolean | null; mode?: "scraper" | "extension" }) => {
-        setScraperOk(d.ok === false ? false : null);
-        setCaptureMode(d.mode ?? "scraper");
-      })
-      .catch(() => setScraperOk(null));
-  }, []);
 
   // Tick once a second so the "stalled session" check below stays live.
   useEffect(() => {
@@ -74,14 +62,13 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
   const pct    = total > 0 ? Math.round((counts.done / total) * 100) : 0;
   const allDone = counts.active === 0 && counts.queued === 0;
 
-  // Show the extension-install hint when we're in extension mode AND something
-  // has been stuck waiting for the extension for more than EXTENSION_HINT_MS.
-  const hasStalledSession = entries.some(([, s]) =>
+  // Show the extension-install hint when something has been stuck waiting
+  // for more than EXTENSION_HINT_MS — the extension probably isn't running.
+  const showExtensionHint = entries.some(([, s]) =>
     (s.state === "waiting" || s.state === "queued") &&
     s.startedAt !== undefined &&
     now - s.startedAt > EXTENSION_HINT_MS
   );
-  const showExtensionHint = captureMode === "extension" && hasStalledSession;
 
   // Sort: active first, then queued by position, then errors, then done
   const sorted = [...entries].sort(([, a], [, b]) => {
@@ -96,13 +83,6 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
 
   return (
     <div className="fixed bottom-6 right-6 z-[1100] w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
-      {/* Scraper health — only shown if a scraper is configured AND it's down */}
-      {scraperOk === false && captureMode === "scraper" && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-100">
-          <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
-          <p className="text-[11px] text-red-600">Scraper service unreachable — check Railway logs</p>
-        </div>
-      )}
       {/* Extension install hint — shown when sessions stall waiting for the extension */}
       {showExtensionHint && (
         <div className="flex items-start gap-2 px-4 py-2.5 bg-amber-50 border-b border-amber-100">

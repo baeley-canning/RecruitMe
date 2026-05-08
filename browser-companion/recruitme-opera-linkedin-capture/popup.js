@@ -57,24 +57,14 @@ async function refreshPendingStatus() {
     }
 
     const name = session.candidateName || session.linkedinUrl || "candidate";
-    const isScraperSession = (session.message || "").toLowerCase().includes("scraper");
 
     if (session.status === "pending") {
-      // Scraper owns this — don't offer manual capture
-      if (isScraperSession) {
-        setStatus(pendingStatus, `Server scraper queued for ${name} — no action needed.`, "ok");
-        capturePendingButton.disabled = true;
-      } else {
-        setStatus(pendingStatus, `Ready to capture ${name}.`, "ok");
-        capturePendingButton.disabled = false;
-      }
+      setStatus(pendingStatus, `Ready to capture ${name}.`, "ok");
+      capturePendingButton.disabled = false;
       return;
     }
     if (session.status === "processing") {
-      setStatus(pendingStatus, isScraperSession
-        ? `Scraper capturing ${name} (~5–8 min)…`
-        : `Scoring ${name}…`
-      );
+      setStatus(pendingStatus, `Scoring ${name}…`);
       capturePendingButton.disabled = true;
       return;
     }

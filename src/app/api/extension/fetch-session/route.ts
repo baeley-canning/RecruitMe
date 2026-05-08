@@ -13,7 +13,6 @@ import {
   type ExtensionCaptureSession,
 } from "@/lib/linkedin-capture";
 import { verifyAnyAuth, requireJobAccess, verifyExtensionAuth } from "@/lib/session";
-import { isScraperConfigured, scrapeViaServiceAsync } from "@/lib/server-scraper";
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
@@ -66,38 +65,6 @@ export async function POST(req: Request) {
 
   await addSessionToQueue(session);
 
-  // If the server-side scraper is configured, fire it immediately so the
-  // recruiter doesn't need the browser extension at all. The scraper works
-  // async (~5–9 min with human-paced delays) and posts back to
-  // /api/extension/fetch-session/complete when done — the existing polling
-  // UI picks it up without any changes.
-  if (isScraperConfigured()) {
-    const rawCallback = process.env.NEXTAUTH_URL
-      ?? (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "http://localhost:3000");
-    // Ensure protocol is present — NEXTAUTH_URL is sometimes set without https://
-    const callbackUrl = rawCallback.startsWith("http") ? rawCallback : `https://${rawCallback}`;
-
-    // Mark processing IMMEDIATELY so the extension alarm's getPendingSessions()
-    // (which filters to status="pending") never sees this session and won't
-    // try to open a LinkedIn tab. The scraper owns this session from here.
-    await updateSessionInQueue({
-      sessionId: session.sessionId,
-      status:    "processing",
-      message:   "Server scraper queued — captures automatically in ~60–90 seconds",
-    });
-
-    void scrapeViaServiceAsync({
-      linkedinUrl: session.linkedinUrl,
-      sessionId:   session.sessionId,
-      callbackUrl,
-    }).catch((err) => {
-      console.error("[fetch-session] scraper call failed — check SCRAPER_URL and SCRAPER_API_KEY in Railway Variables:", err.message);
-    });
-
-    session.status  = "processing";
-    session.message = "Server scraper queued — captures automatically in ~5–8 minutes";
-  }
-
   return NextResponse.json(session, { headers: EXTENSION_CORS });
 }
 
@@ -106,7 +73,7 @@ export async function GET(req: Request) {
   const sessionId = url.searchParams.get("sessionId");
   const jobId = url.searchParams.get("jobId");
 
-  // ?jobId= — web UI on page load, recover in-progress scraper sessions
+  // ?jobId= — web UI on page load, recover any in-progress capture sessions
   if (jobId && !sessionId) {
     const auth = await verifyAnyAuth(req);
     if (!auth) return NextResponse.json({ sessions: [] }, { status: 401, headers: EXTENSION_CORS });

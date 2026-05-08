@@ -233,7 +233,6 @@ export default function JobDetailPage({
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
     consecutiveNetworkErrors: number;
-    scraperActive: boolean;
   }
   const jobRef = useRef<Job | null>(null);
   const activeFetchesRef = useRef<Map<string, FetchEntry>>(new Map());
@@ -264,9 +263,9 @@ export default function JobDetailPage({
     fetchJob();
   }, [fetchJob]);
 
-  // On mount: resume polling for any candidates whose scraper sessions are still
-  // in-progress. This recovers tracking state after the user closes/refreshes the tab —
-  // the scraper keeps running server-side but the client-side activeFetchesRef was cleared.
+  // On mount: resume polling for any captures still in-progress. Recovers
+  // tracking state after the user refreshed the tab while the extension was
+  // partway through a profile.
   useEffect(() => {
     void (async () => {
       const res = await fetch(`/api/extension/fetch-session?jobId=${encodeURIComponent(id)}`, { credentials: "include" }).catch(() => null);
@@ -276,11 +275,9 @@ export default function JobDetailPage({
       for (const s of data.sessions) {
         if (!s.candidateId || activeFetchesRef.current.has(s.candidateId)) continue;
         if (s.status !== "pending" && s.status !== "processing") continue;
-        // Resume polling for this in-progress session
-        // Use a processing start time well in the past so the 11-min timeout
-        // fires quickly if the session is already stale. Resumed sessions that
-        // are genuinely new will pass the timeout check fine.
-        const resumedAt = Date.now() - 60_000; // treat as 1 min old when resumed
+        // Treat resumed sessions as ~1 min old so the timeout fires quickly
+        // if the capture is already stale.
+        const resumedAt = Date.now() - 60_000;
         const entry = {
           sessionId: s.sessionId,
           candidateId: s.candidateId,
@@ -290,12 +287,11 @@ export default function JobDetailPage({
           done: false,
           pollInterval: null as ReturnType<typeof setInterval> | null,
           consecutiveNetworkErrors: 0,
-          scraperActive: true,
         };
         activeFetchesRef.current.set(s.candidateId, entry);
         setFetchStatuses((prev) => ({
           ...prev,
-          [s.candidateId]: { state: "waiting", message: s.message ?? "Scraper still running — resumed tracking", startedAt: resumedAt },
+          [s.candidateId]: { state: "waiting", message: s.message ?? "Capture still running — resumed tracking", startedAt: resumedAt },
         }));
         entry.pollInterval = setInterval(() => {
           void pollCandidateFetchRef.current(s.candidateId);
@@ -534,29 +530,26 @@ export default function JobDetailPage({
     const entry = activeFetchesRef.current.get(candidateId);
     if (!entry || entry.done) return;
     const now = Date.now();
-    // Scraper jobs take 5–9 minutes; use extended timeouts so they don't
-    // false-alarm. Regular extension captures keep the original tight window.
-    const processingLimit = entry.scraperActive ? 660_000 : 300_000;  // 11 min vs 5 min
-    const pendingLimit    = entry.scraperActive ? 600_000 : 120_000;  // 10 min vs 2 min
+    // Pending = waiting for the extension to claim the session. If nothing
+    // happens for 2 minutes the extension probably isn't running.
+    // Processing = extension is capturing + AI scoring. Allow 5 minutes.
+    const PENDING_LIMIT    = 120_000;  // 2 min
+    const PROCESSING_LIMIT = 300_000;  // 5 min
     if (entry.lastKnownStatus === "processing") {
       const processingStartedAt = entry.processingStartedAt ?? now;
-      if (now - processingStartedAt > processingLimit) {
+      if (now - processingStartedAt > PROCESSING_LIMIT) {
         finishFetchRef.current(
           candidateId,
           "error",
-          entry.scraperActive
-            ? "Scraper is taking longer than expected — it may still be running. Refresh the job in a few minutes."
-            : "Profile reached RecruitMe but AI scoring took too long - refresh the job and re-score if needed."
+          "Profile reached RecruitMe but AI scoring took too long — refresh the job and re-score if needed."
         );
         return;
       }
-    } else if (now - entry.startedAt > pendingLimit) {
+    } else if (now - entry.startedAt > PENDING_LIMIT) {
       finishFetchRef.current(
         candidateId,
         "error",
-        entry.scraperActive
-          ? "Scraper did not respond in time — check the scraper service logs."
-          : "Capture timed out - try again. If it keeps failing, reload the extension and check the extension popup for the real error."
+        "Capture timed out — make sure the RecruitMe LinkedIn extension is installed and try again."
       );
       return;
     }
@@ -590,8 +583,6 @@ export default function JobDetailPage({
         error?: string;
       };
       entry.consecutiveNetworkErrors = 0; // reset on any successful response
-      // Detect scraper session from message so we apply the right timeout.
-      if (data.message?.toLowerCase().includes("scraper")) entry.scraperActive = true;
       if (data.status === "processing") {
         entry.lastKnownStatus = "processing";
         entry.processingStartedAt ??= Date.now();
@@ -682,10 +673,6 @@ export default function JobDetailPage({
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
 
-    // Capture is handled by the browser extension by default. If the legacy
-    // server scraper is configured (SCRAPER_URL set), the session-create
-    // endpoint dispatches it transparently; the polling logic below detects
-    // either path from the session's status message.
     setFetchStatuses((prev) => ({
       ...prev,
       [candidateId]: { state: "waiting", message: "Starting capture...", startedAt: Date.now() },
@@ -710,8 +697,6 @@ export default function JobDetailPage({
           return;
         }
 
-        // Use whatever message the server sent — it knows whether the scraper
-        // grabbed the session or whether we're waiting for the extension.
         setFetchStatuses((prev) => ({
           ...prev,
           [candidateId]: {
@@ -730,9 +715,6 @@ export default function JobDetailPage({
           done: false,
           pollInterval: null,
           consecutiveNetworkErrors: 0,
-          // Detect scraper from the initial message; pollCandidateFetch will also
-          // upgrade this if a later status message mentions "scraper".
-          scraperActive: Boolean(session.message?.toLowerCase().includes("scraper")),
         };
         activeFetchesRef.current.set(candidateId, entry);
         entry.pollInterval = setInterval(() => {

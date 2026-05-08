@@ -14,7 +14,7 @@ function setManualOnlyUI(enabled) {
   manualOnlyToggle.checked = enabled;
   manualOnlyRow.className = "toggle-row" + (enabled ? " active" : "");
   manualOnlyHint.innerHTML = enabled
-    ? "<strong>Manual-only is ON (recommended).</strong> The extension won't open tabs automatically. If a server scraper is configured, fetches happen via that — nothing to do. Without a scraper, navigate to the profile yourself and click the extension icon."
+    ? "<strong>Manual-only is ON (recommended).</strong> The extension won't open tabs automatically. When you have a pending capture, navigate to the candidate's LinkedIn profile and click the extension icon."
     : "<strong>Auto-capture is ON.</strong> Extension opens LinkedIn tabs and captures automatically. LinkedIn detects this pattern — only enable if you know what you're doing.";
 }
 
