@@ -1,0 +1,5 @@
+flask>=3.0,<4.0
+linkedin-scraper>=2.11.0,<3.0
+selenium>=4.20,<5.0
+requests>=2.31,<3.0
+python-dotenv>=1.0,<2.0
