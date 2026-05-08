@@ -682,11 +682,13 @@ export default function JobDetailPage({
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
 
-    // The scraper service (Railway) handles profile capture server-side —
-    // no browser tab needs to open. We just create a fetch session and poll.
+    // Capture is handled by the browser extension by default. If the legacy
+    // server scraper is configured (SCRAPER_URL set), the session-create
+    // endpoint dispatches it transparently; the polling logic below detects
+    // either path from the session's status message.
     setFetchStatuses((prev) => ({
       ...prev,
-      [candidateId]: { state: "waiting", message: "Queuing for scraper..." },
+      [candidateId]: { state: "waiting", message: "Starting capture...", startedAt: Date.now() },
     }));
 
     void (async () => {
@@ -708,11 +710,13 @@ export default function JobDetailPage({
           return;
         }
 
+        // Use whatever message the server sent — it knows whether the scraper
+        // grabbed the session or whether we're waiting for the extension.
         setFetchStatuses((prev) => ({
           ...prev,
           [candidateId]: {
             state: "waiting",
-            message: "Scraper is fetching the profile...",
+            message: session.message ?? "Waiting for browser extension to capture",
             startedAt: Date.now(),
           },
         }));
@@ -726,7 +730,9 @@ export default function JobDetailPage({
           done: false,
           pollInterval: null,
           consecutiveNetworkErrors: 0,
-          scraperActive: true, // scraper service always handles captures now
+          // Detect scraper from the initial message; pollCandidateFetch will also
+          // upgrade this if a later status message mentions "scraper".
+          scraperActive: Boolean(session.message?.toLowerCase().includes("scraper")),
         };
         activeFetchesRef.current.set(candidateId, entry);
         entry.pollInterval = setInterval(() => {

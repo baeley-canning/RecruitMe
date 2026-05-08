@@ -6,8 +6,16 @@ export async function GET() {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
+  // Server scraper is the legacy automated path. When unset, capture flows
+  // through the browser extension instead. Return ok:null (not false) so the
+  // UI doesn't alarm — the extension-install hint surfaces from elsewhere.
   if (!isScraperConfigured()) {
-    return NextResponse.json({ configured: false, ok: false, message: "SCRAPER_URL or SCRAPER_API_KEY not set" });
+    return NextResponse.json({
+      configured: false,
+      ok: null,
+      mode: "extension",
+      message: "Capture is via browser extension",
+    });
   }
 
   const base = process.env.SCRAPER_URL!.replace(/\/$/, "");

@@ -1,14 +1,16 @@
 /**
- * Client for the separate RecruitMe scraper service.
+ * LEGACY: client for the separate RecruitMe scraper service.
  *
- * When SCRAPER_URL is set, profile fetches go to the Playwright-based scraper
- * instead of the basic public-HTML fallback. The scraper service authenticates
- * via a shared secret (SCRAPER_API_KEY) and runs on a dedicated Railway
- * service so the scraping load is isolated from the main app.
+ * The supported capture path is now the browser extension
+ * (recruitme-opera-linkedin-capture). The server-side scraper kept losing
+ * to LinkedIn's bot detection (HTTP 999) even with proxy rotation, so it is
+ * disabled by default. Leave SCRAPER_URL unset and the extension flow
+ * handles everything via /api/extension/fetch-session/complete.
  *
- * Configure in Railway / .env:
- *   SCRAPER_URL=https://recruitme-scraper.up.railway.app
- *   SCRAPER_API_KEY=<random-secret — must match the scraper service>
+ * This file is kept as inert fallback in case someone wants to experiment
+ * with a paid LinkedIn API later — wire that up to /scrape-async via this
+ * client and the rest of the pipeline (session lifecycle, polling, scoring)
+ * works unchanged.
  */
 
 export interface ScraperResult {

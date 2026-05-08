@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Loader2, CheckCircle2, AlertCircle, Clock, ChevronDown, ChevronUp } from "lucide-react";
+import { X, Loader2, CheckCircle2, AlertCircle, Clock, ChevronDown, ChevronUp, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type FetchState = "queued" | "waiting" | "fetching" | "done" | "error";
@@ -22,6 +22,10 @@ interface FetchQueuePanelProps {
 
 const STATE_ORDER: FetchState[] = ["fetching", "waiting", "queued", "error", "done"];
 
+// If a session has been waiting/queued this long without advancing, the
+// extension is almost certainly not running. Show the install hint.
+const EXTENSION_HINT_MS = 15_000;
+
 function useElapsed(startedAt?: number) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -38,13 +42,23 @@ function useElapsed(startedAt?: number) {
 export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel }: FetchQueuePanelProps) {
   const [expanded, setExpanded] = useState(true);
   const [scraperOk, setScraperOk] = useState<boolean | null>(null);
+  const [captureMode, setCaptureMode] = useState<"scraper" | "extension" | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     fetch("/api/scraper/status")
       .then((r) => r.json())
-      // ok=true → green (not shown), ok=false → red banner, ok=null → unknown/timeout (silent)
-      .then((d: { ok?: boolean | null }) => setScraperOk(d.ok === false ? false : null))
-      .catch(() => setScraperOk(null)); // network error → silent, scraper likely fine
+      .then((d: { ok?: boolean | null; mode?: "scraper" | "extension" }) => {
+        setScraperOk(d.ok === false ? false : null);
+        setCaptureMode(d.mode ?? "scraper");
+      })
+      .catch(() => setScraperOk(null));
+  }, []);
+
+  // Tick once a second so the "stalled session" check below stays live.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
   }, []);
 
   const entries = Object.entries(statuses);
@@ -60,6 +74,15 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
   const pct    = total > 0 ? Math.round((counts.done / total) * 100) : 0;
   const allDone = counts.active === 0 && counts.queued === 0;
 
+  // Show the extension-install hint when we're in extension mode AND something
+  // has been stuck waiting for the extension for more than EXTENSION_HINT_MS.
+  const hasStalledSession = entries.some(([, s]) =>
+    (s.state === "waiting" || s.state === "queued") &&
+    s.startedAt !== undefined &&
+    now - s.startedAt > EXTENSION_HINT_MS
+  );
+  const showExtensionHint = captureMode === "extension" && hasStalledSession;
+
   // Sort: active first, then queued by position, then errors, then done
   const sorted = [...entries].sort(([, a], [, b]) => {
     const ai = STATE_ORDER.indexOf(a.state);
@@ -73,11 +96,26 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
 
   return (
     <div className="fixed bottom-6 right-6 z-[1100] w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
-      {/* Scraper health — shows if something is wrong */}
-      {scraperOk === false && (
+      {/* Scraper health — only shown if a scraper is configured AND it's down */}
+      {scraperOk === false && captureMode === "scraper" && (
         <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-100">
           <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
           <p className="text-[11px] text-red-600">Scraper service unreachable — check Railway logs</p>
+        </div>
+      )}
+      {/* Extension install hint — shown when sessions stall waiting for the extension */}
+      {showExtensionHint && (
+        <div className="flex items-start gap-2 px-4 py-2.5 bg-amber-50 border-b border-amber-100">
+          <Puzzle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] text-amber-800 font-medium">Browser extension required</p>
+            <p className="text-[11px] text-amber-700 mt-0.5">
+              Install the RecruitMe LinkedIn Capture extension to fetch profiles.{" "}
+              <a href="/linkedin-setup" className="underline font-medium hover:text-amber-900">
+                Install instructions
+              </a>
+            </p>
+          </div>
         </div>
       )}
       {/* Header */}
