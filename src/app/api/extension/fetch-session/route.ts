@@ -72,8 +72,10 @@ export async function POST(req: Request) {
   // /api/extension/fetch-session/complete when done — the existing polling
   // UI picks it up without any changes.
   if (isScraperConfigured()) {
-    const callbackUrl = process.env.NEXTAUTH_URL
+    const rawCallback = process.env.NEXTAUTH_URL
       ?? (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "http://localhost:3000");
+    // Ensure protocol is present — NEXTAUTH_URL is sometimes set without https://
+    const callbackUrl = rawCallback.startsWith("http") ? rawCallback : `https://${rawCallback}`;
 
     // Mark processing IMMEDIATELY so the extension alarm's getPendingSessions()
     // (which filters to status="pending") never sees this session and won't
