@@ -1,12 +1,11 @@
 {
   "manifest_version": 3,
   "name": "RecruitMe LinkedIn Capture",
-  "description": "Capture full LinkedIn and SEEK profiles into RecruitMe. Works in Chrome, Opera, Edge, and Firefox.",
-  "version": "1.4.5",
+  "description": "Capture full LinkedIn profiles into RecruitMe. Works in Chrome, Opera, Edge, and Firefox.",
+  "version": "1.4.4",
   "permissions": ["storage", "tabs", "activeTab", "alarms", "notifications"],
   "host_permissions": [
     "https://www.linkedin.com/*",
-    "https://nz.employer.seek.com/*",
     "https://*.up.railway.app/*",
     "https://recruitme.railway.app/*",
     "http://localhost/*",
@@ -27,11 +26,6 @@
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/in/*"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://nz.employer.seek.com/talentsearch/profile/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
