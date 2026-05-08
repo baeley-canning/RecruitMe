@@ -8,6 +8,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Pick up chromedriver/ngrok from ~/bin (where we install them when there's
+# no Homebrew). Harmless when they're already on PATH from /opt/homebrew.
+export PATH="$HOME/bin:$PATH"
+
 if [[ ! -d .venv ]]; then
   echo "✗ no .venv — run: python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
   exit 1

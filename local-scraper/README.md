@@ -46,15 +46,47 @@ needed on that hop.
    ```
 
 2. **Install Chrome + chromedriver**
+
+   If you have Homebrew:
    ```bash
    brew install --cask google-chrome    # if not installed
    brew install chromedriver
    xattr -d com.apple.quarantine "$(which chromedriver)"   # macOS Gatekeeper
    ```
 
+   No Homebrew (manual download):
+   ```bash
+   # Find your Chrome version
+   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version
+
+   # Download matching chromedriver to ~/bin (mac arm64 example)
+   mkdir -p ~/bin
+   VER=147.0.7727.139      # ← replace with your Chrome version
+   curl -L "https://storage.googleapis.com/chrome-for-testing-public/$VER/mac-arm64/chromedriver-mac-arm64.zip" -o /tmp/cd.zip
+   unzip -o /tmp/cd.zip -d /tmp
+   mv /tmp/chromedriver-mac-arm64/chromedriver ~/bin/chromedriver
+   chmod +x ~/bin/chromedriver
+   xattr -d com.apple.quarantine ~/bin/chromedriver   # macOS Gatekeeper
+   ```
+
+   `start.sh` adds `~/bin` to PATH automatically, so no shell config needed.
+
 3. **Install ngrok**
+
+   Homebrew:
    ```bash
    brew install ngrok
+   ```
+
+   Manual (mac arm64):
+   ```bash
+   curl -L https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-darwin-arm64.zip -o /tmp/ngrok.zip
+   unzip -o /tmp/ngrok.zip -d ~/bin
+   chmod +x ~/bin/ngrok
+   ```
+
+   Either way, authenticate once:
+   ```bash
    ngrok config add-authtoken <your-token-from-dashboard.ngrok.com>
    ```
 
