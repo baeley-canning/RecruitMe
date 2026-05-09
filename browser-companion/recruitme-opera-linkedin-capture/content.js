@@ -141,6 +141,26 @@ function isNearViewport(element) {
   return rect.bottom >= -140 && rect.top <= window.innerHeight + 140;
 }
 
+// Lines like {"data":{"$type":"...","trackingId":"..."} or
+// urn:li:fsd_profile:ACoAAB... — LinkedIn's hydration/tracking payloads.
+// They sneak in when textContent is read on detached documents or when a
+// future LinkedIn layout starts rendering <code>/<pre> blocks visibly.
+function looksLikeJsonOrTrackingNoise(line) {
+  if (!line) return false;
+  if (line.length < 12) return false;
+  if (/^[{[]/.test(line)) return true;
+  if (/"\$type"|"trackingId"|"urn:li:|urn:li:fsd_|"include":|"\*elements":/i.test(line)) return true;
+  // High-density punctuation gate — only fires on lines that ALSO contain a
+  // JSON-structural char ("/{/}/[/]). Skill CSVs like "AWS, GCP, Azure, K8s,
+  // DDD, TDD" can hit ~18% comma/colon density but contain no JSON tokens, so
+  // requiring quotes-or-braces saves them from a false positive.
+  if (line.length > 80 && /["{}[\]]/.test(line)) {
+    const punct = (line.match(/["{}[\]:,]/g) || []).length;
+    if (punct / line.length > 0.18) return true;
+  }
+  return false;
+}
+
 function filterProfileLines(lines) {
   const filtered = [];
   const seen = new Set();
@@ -149,6 +169,7 @@ function filterProfileLines(lines) {
     const line = lines[i];
     if (STOP_LINE_PATTERNS.some((pattern) => pattern.test(line))) break;
     if (NOISE_LINE_PATTERNS.some((pattern) => pattern.test(line))) continue;
+    if (looksLikeJsonOrTrackingNoise(line)) continue;
     if (/^\d+$/.test(line) && /^(connections?|followers)$/i.test(lines[i + 1] || "")) {
       i += 1;
       continue;
@@ -344,7 +365,10 @@ function firstNonEmptyText(root, selectors) {
     const element = root.querySelector(selector);
     if (!(element instanceof HTMLElement)) continue;
     const value = cleanText(element.innerText || element.textContent || "");
-    if (value) return value;
+    // Skip JSON/hydration noise — name/headline selectors should never return
+    // a hydration blob, but if LinkedIn ships a layout where they do, fall
+    // through to the next selector instead of dumping JSON into the intro.
+    if (value && !looksLikeJsonOrTrackingNoise(value)) return value;
   }
   return "";
 }
@@ -528,7 +552,14 @@ function collectProfileText(startUrl, options = {}) {
   const { parts: sections, sectionKeys } = extractStructuredSections(main);
   const structuredText = cleanText([intro, ...sections].filter(Boolean).join("\n\n"));
   const fallbackText = extractVisibleMainProfileText(main);
-  const profileText = mergeCaptureText(structuredText, fallbackText).slice(0, 100000);
+  const merged = mergeCaptureText(structuredText, fallbackText);
+  // Last-line defence: re-run the noise filter over the FULLY MERGED text.
+  // This catches cases where structured/fallback extraction already passed
+  // their per-line filters but a layout change exposed hydration JSON via a
+  // path we didn't anticipate. Without this, a single bad capture can save
+  // ~100k of "trackingId/$type/urn:li:" garbage, poisoning the AI scorer.
+  const cleaned = filterProfileLines(splitIntoLines(merged)).join("\n");
+  const profileText = cleaned.slice(0, 100000);
 
   if (!allowShort && profileText.length < 200) {
     throw new Error("Captured profile text was too short");
@@ -713,10 +744,12 @@ function extractLinesFromDetachedDocument(doc) {
     if (value) raw.push(value);
   }
 
-  if (raw.length === 0) {
-    raw.push(cleanText(root.textContent || ""));
-  }
-
+  // Intentionally NO root.textContent fallback. Detached documents have no
+  // layout, so textContent on <main> includes content inside <script>/<code>
+  // hydration blocks — LinkedIn embeds tens of KB of Ember prerender JSON
+  // there. When LinkedIn changes the deep-page layout and our scoped
+  // selectors miss, returning empty is correct; merging JSON garbage into
+  // the profile poisons the AI score (observed at 99,989 chars / 12% match).
   return filterProfileLines(raw.flatMap(splitIntoLines));
 }
 

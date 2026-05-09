@@ -248,6 +248,65 @@ describe("RecruitMe content script", () => {
     expect(capped.endsWith("\n") || /line-\d+ contents go here$/.test(capped)).toBe(true);
   });
 
+  it("filterProfileLines drops embedded LinkedIn hydration JSON and tracking noise", () => {
+    const { context } = loadContentScriptContext();
+    const lines = [
+      "Senior Software Engineer at Arlo",
+      "Wellington, New Zealand",
+      `{"data":{"$type":"com.linkedin.voyager.dash.identity.profile.Profile","trackingId":"abc123==","entityUrn":"urn:li:fsd_profile:ACoAAAAAAAA"}}`,
+      "About",
+      "Full-stack engineer with 8 years building Rails and React apps.",
+      `{"include":[{"$type":"com.linkedin.voyager.dash.deco.identity.profile.WebProfile","*elements":["urn:li:fsd_profile:..."]}]}`,
+      "Experience",
+      "Software Engineer at Arlo · 2021 – Present",
+    ];
+    const out = context.filterProfileLines(lines);
+    expect(out).toEqual([
+      "Senior Software Engineer at Arlo",
+      "Wellington, New Zealand",
+      "About",
+      "Full-stack engineer with 8 years building Rails and React apps.",
+      "Experience",
+      "Software Engineer at Arlo · 2021 – Present",
+    ]);
+  });
+
+  it("filterProfileLines keeps long human prose with normal punctuation", () => {
+    const { context } = loadContentScriptContext();
+    const lines = [
+      "Built and shipped a real-time analytics platform handling 50k events per second, using Kafka, ClickHouse, and a custom Go ingestion service. Cut p99 latency from 800ms to 120ms by introducing batched writes and tuning JVM heap for the consumers.",
+      "Mentored 3 juniors through their first production deployment; one is now leading their own team.",
+    ];
+    const out = context.filterProfileLines(lines);
+    expect(out).toEqual(lines);
+  });
+
+  it("filterProfileLines keeps a comma-heavy skills CSV (false-positive guard)", () => {
+    const { context } = loadContentScriptContext();
+    const lines = [
+      "Skills: C#, .NET, ASP.NET MVC, Web API, Razor, JavaScript, TypeScript, React, AWS, Docker, Octopus Deploy, Git, PowerShell",
+      "Tech stack — Node.js, Postgres, Redis, Kafka, Elasticsearch, Kubernetes, Terraform, GitHub Actions",
+      // Short-acronym CSVs hit a punctuation density that would otherwise
+      // trip the JSON heuristic; the JSON-structural-char guard saves them.
+      "AWS, GCP, Azure, K8s, DDD, TDD, BDD, CRM, ERP, CMS, ETL, EDI, AML, KYC, B2B, B2C, SaaS, IaaS",
+    ];
+    const out = context.filterProfileLines(lines);
+    expect(out).toEqual(lines);
+  });
+
+  it("looksLikeJsonOrTrackingNoise flags hydration blobs but not real headlines", () => {
+    const { context } = loadContentScriptContext();
+    // Hydration / tracking — must be flagged.
+    expect(context.looksLikeJsonOrTrackingNoise(`{"$type":"com.linkedin.voyager.dash.identity.profile.Profile","trackingId":"abc=="}`)).toBe(true);
+    expect(context.looksLikeJsonOrTrackingNoise(`urn:li:fsd_profile:ACoAAAAAAAA-some-blob-here`)).toBe(true);
+    expect(context.looksLikeJsonOrTrackingNoise(`[{"id":"x","entityUrn":"urn:li:foo"},{"id":"y"}]`)).toBe(true);
+    // Real headlines / locations / skills — must NOT be flagged.
+    expect(context.looksLikeJsonOrTrackingNoise(`Philip Chan`)).toBe(false);
+    expect(context.looksLikeJsonOrTrackingNoise(`Senior Software Engineer at Arlo Training Management Software`)).toBe(false);
+    expect(context.looksLikeJsonOrTrackingNoise(`Wellington, Wellington, New Zealand`)).toBe(false);
+    expect(context.looksLikeJsonOrTrackingNoise(`Skills: C#, .NET, ASP.NET MVC, Web API, Razor, JavaScript, TypeScript, React, AWS, Docker`)).toBe(false);
+  });
+
   it("rejects a second capture session while the tab is already capturing", () => {
     const { listeners } = loadContentScriptContext({
       location: { href: "https://www.linkedin.com/in/jane-candidate/" },
