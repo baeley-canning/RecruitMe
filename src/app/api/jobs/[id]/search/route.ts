@@ -18,7 +18,7 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { buildTargetLocationLabel, extractKnownLocationTargets, isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
+import { buildTargetLocationLabel, extractKnownLocationTargets, inferCandidateLocation, isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
@@ -944,8 +944,17 @@ async function runSearchBackground(args: {
         const r = workItem.result;
         const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
         const poolEntry = poolMap.get(normUrl);
-        const candidateLocation = poolEntry?.location ?? r.location ?? null;
         const profileText = poolEntry?.profileText ?? r.fullText ?? null;
+        // When the structured location field is empty but the snippet/full
+        // profile clearly mentions an NZ city (e.g. an Auckland-based
+        // candidate whose LinkedIn metadata didn't populate `location`),
+        // attribute the city from the text. Prevents Wellington searches
+        // from leaking obviously-Auckland candidates through the gate.
+        const candidateLocation = inferCandidateLocation(
+          poolEntry?.location ?? r.location ?? null,
+          profileText,
+          r.snippet,
+        );
         const priority = computeFetchPriority({
           result: r,
           parsedRole,
@@ -1003,7 +1012,11 @@ async function runSearchBackground(args: {
           const fetchPriorityReason = workItem.fetchPriorityReason;
           const normUrl     = normaliseLinkedInUrl(r.linkedinUrl);
           const poolEntry   = poolMap.get(normUrl);
-          const candidateLocation = poolEntry?.location ?? r.location ?? null;
+          const candidateLocation = inferCandidateLocation(
+            poolEntry?.location ?? r.location ?? null,
+            poolEntry?.profileText ?? r.fullText ?? null,
+            r.snippet,
+          );
           const searchProfileText = [r.name, r.headline, candidateLocation, r.snippet].filter(Boolean).join("\n");
           const profileText = poolEntry?.profileText ?? r.fullText ?? searchProfileText;
           const textToScore = profileText ?? `${r.name}. ${r.headline}`.trim();

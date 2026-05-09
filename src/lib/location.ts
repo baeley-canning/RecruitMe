@@ -290,6 +290,37 @@ export function extractKnownLocationTargets(...values: Array<string | null | und
   return targets;
 }
 
+/**
+ * Pick the best candidate-location guess by combining:
+ *   1. Explicit location field (LinkedIn metadata, talent-pool entry).
+ *   2. Snippet/profile-text scan for NZ city mentions (e.g. "Auckland-based"
+ *      somewhere in the body even if the structured location field is empty).
+ *
+ * Used by the search route so candidates whose snippet plainly mentions
+ * Auckland don't slip through when the recruiter's searching Wellington
+ * and the structured location field is null.
+ */
+export function inferCandidateLocation(
+  explicitLocation: string | null | undefined,
+  ...textSources: Array<string | null | undefined>
+): string | null {
+  // Trust the explicit location if it's plausible.
+  const trimmed = explicitLocation?.trim() ?? "";
+  if (trimmed && isPlausibleLocation(trimmed)) return trimmed;
+
+  // Otherwise scan supplied text fragments for an NZ city mention.
+  for (const source of textSources) {
+    if (!source) continue;
+    const cities = extractKnownLocationTargets(source);
+    if (cities.length > 0) return cities[0];
+  }
+
+  // Fall back to the explicit value even if implausible (better than null
+  // for downstream "unknown" handling — assessLocationFit will give it a
+  // soft 45 score).
+  return trimmed || null;
+}
+
 export function buildTargetLocationLabel(...values: Array<string | null | undefined>): string {
   const targets = extractKnownLocationTargets(...values);
   if (targets.length > 0) return targets.join(" OR ");

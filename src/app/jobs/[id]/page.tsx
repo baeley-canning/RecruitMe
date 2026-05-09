@@ -319,6 +319,23 @@ export default function JobDetailPage({
   // Keep jobRef in sync so poll callbacks can read the latest job without stale closures.
   useEffect(() => { jobRef.current = job; }, [job]);
 
+  // Fire an immediate catchup poll on every active fetch when the tab becomes
+  // visible again. The polling interval skips while document.hidden is true
+  // (saves API quota), so without this the recruiter waits up to 2.5s after
+  // returning to the tab before the "fetching..." panel updates to "done".
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) return;
+      for (const [candidateId, entry] of activeFetchesRef.current) {
+        if (!entry.done) {
+          void pollCandidateFetchRef.current(candidateId);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
   // Warn before browser-level navigation (refresh/close tab) when JD has unsaved edits.
   useEffect(() => {
     if (!editingJd) return;

@@ -4,10 +4,38 @@ import {
   buildTargetLocationLabel,
   expandLocationKeywords,
   extractKnownLocationTargets,
+  inferCandidateLocation,
   isPlausibleLocation,
   isRemoteFriendlyLocationRule,
   locationMatches,
 } from "../location";
+
+describe("inferCandidateLocation — search-snippet city detection", () => {
+  it("trusts an explicit, plausible location field", () => {
+    expect(inferCandidateLocation("Wellington, New Zealand", "any text"))
+      .toBe("Wellington, New Zealand");
+  });
+
+  it("scans profileText for an NZ city when the location field is empty", () => {
+    const snippet = "Senior Software Engineer based in Auckland, building Kotlin services.";
+    expect(inferCandidateLocation(null, snippet)).toBe("Auckland");
+  });
+
+  it("scans multiple text sources in order until a city is found", () => {
+    expect(inferCandidateLocation(null, null, "headline only", "snippet says Christchurch"))
+      .toBe("Christchurch");
+  });
+
+  it("returns null when no plausible location and no city in any text", () => {
+    expect(inferCandidateLocation(null, "Senior Engineer", "Five years experience"))
+      .toBeNull();
+  });
+
+  it("uses the first-mentioned NZ city when several appear", () => {
+    const text = "Worked in Auckland for 5 years before moving back to Christchurch";
+    expect(inferCandidateLocation(null, text)).toBe("Auckland");
+  });
+});
 
 describe("locationMatches", () => {
   it("rejects explicit overseas lookalikes even when the city name overlaps", () => {
