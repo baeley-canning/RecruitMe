@@ -6,7 +6,7 @@ const linkedinCaptureMocks = vi.hoisted(() => ({
 }));
 const sessionMocks = vi.hoisted(() => ({
   verifyExtensionAuth: vi.fn(
-    async (_req: Request): Promise<{ userId: string; orgId: string | null; isOwner: boolean } | null> => ({
+    async (): Promise<{ userId: string; orgId: string | null; isOwner: boolean } | null> => ({
       userId: "u-1", orgId: "org-1", isOwner: false,
     })
   ),

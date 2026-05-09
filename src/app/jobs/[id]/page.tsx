@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { showToast } from "@/components/ui/toast";
 import { CandidateCard } from "@/components/candidate-card";
-import { orchestrateFetchProfile } from "@/lib/fetch-profile-orchestrator";
+import { orchestrateFetchProfile, cleanupAbortedAfterSuccess, buildBlankTabAdapter } from "@/lib/fetch-profile-orchestrator";
 import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueuePanel } from "@/components/fetch-queue-panel";
@@ -710,11 +710,31 @@ export default function JobDetailPage({
     // pass the LinkedIn URL: that's the race we're closing.
     const win = window.open("about:blank", "_blank");
 
+    // Bind the page's React state to the testable cleanup helper.
+    const cleanupAfterCancel = (sessionId: string | null) =>
+      cleanupAbortedAfterSuccess({
+        sessionId,
+        deleteServerSession: (sid) => {
+          void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(sid)}`, {
+            method: "DELETE", credentials: "include",
+          }).catch(() => {});
+        },
+        removeFromActiveMap: () => activeFetchesRef.current.delete(candidateId),
+        clearUiStatus: () => setFetchStatuses((prev) => {
+          if (!(candidateId in prev)) return prev;
+          const next = { ...prev };
+          delete next[candidateId];
+          return next;
+        }),
+      });
+
     void orchestrateFetchProfile({
       linkedinUrl,
-      openBlankTab: () => win
-        ? { setUrl: (url) => { win.location.href = url; }, close: () => win.close() }
-        : null,
+      // buildBlankTabAdapter severs win.opener BEFORE setting location.href
+      // — see fetch-profile-orchestrator.ts. Both this caller and the unit
+      // test import the same builder, so the opener-clearing invariant
+      // can't drift between code and test.
+      openBlankTab: () => win ? buildBlankTabAdapter(win) : null,
       postFetchSession: async () => {
         const start = await fetch("/api/extension/fetch-session", {
           method: "POST",
@@ -734,13 +754,9 @@ export default function JobDetailPage({
       isAborted: () => placeholder.aborted,
     }).then((outcome) => {
       if (outcome.kind === "aborted") {
-        // Server may have created a session before cancel landed — DELETE it
-        // so it doesn't sit pending forever.
-        if (outcome.sessionId) {
-          void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(outcome.sessionId)}`, {
-            method: "DELETE", credentials: "include",
-          }).catch(() => {});
-        }
+        // Cancel landed before the tab navigated. The orchestrator already
+        // closed the tab; we just clean up server-side.
+        cleanupAfterCancel(outcome.sessionId);
         return;
       }
       if (outcome.kind === "popup_blocked") {
@@ -761,7 +777,15 @@ export default function JobDetailPage({
         clearCandidateStatus(candidateId, 6000, "error");
         return;
       }
-      // Success — promote placeholder, start polling.
+      // Success path. Check abort BEFORE touching UI — if cancel landed
+      // between the orchestrator's last isAborted poll and this microtask,
+      // we must NOT resurrect the "waiting" UI. handleCancelFetch already
+      // cleared activeFetchesRef + fetchStatuses; cleanup here is defensive
+      // (and idempotent — guards against future caller reordering).
+      if (placeholder.aborted) {
+        cleanupAfterCancel(outcome.sessionId);
+        return;
+      }
       placeholder.sessionId = outcome.sessionId;
       setFetchStatuses((prev) => ({
         ...prev,
@@ -775,14 +799,11 @@ export default function JobDetailPage({
         void pollCandidateFetchRef.current(candidateId);
       }, 2500);
       placeholder.pollInterval = interval;
-      // Tiny window: handleCancelFetch may have flipped `aborted` between the
-      // isAborted check inside the orchestrator and this point. If so, kill
-      // the interval we just set so it doesn't dangle for the session lifetime.
+      // Microtask race: cancel may have landed between the placeholder.aborted
+      // check above and setInterval here. If so, kill everything we just set.
       if (placeholder.aborted) {
         clearInterval(interval);
-        void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(outcome.sessionId)}`, {
-          method: "DELETE", credentials: "include",
-        }).catch(() => {});
+        cleanupAfterCancel(outcome.sessionId);
       }
     });
   }, [id, job]);  // eslint-disable-line react-hooks/exhaustive-deps

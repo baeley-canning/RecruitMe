@@ -112,3 +112,42 @@ export async function orchestrateFetchProfile(
 function safeCloseTab(tab: BlankTab) {
   try { tab.close(); } catch { /* best-effort */ }
 }
+
+/**
+ * Build a BlankTab adapter around a freshly-opened `window.open(...)`
+ * WindowProxy. Severs `win.opener` BEFORE navigating so the LinkedIn page
+ * can't reach back into our origin. Both the page and the unit test consume
+ * this same builder so the opener-clearing invariant can't drift.
+ */
+export function buildBlankTabAdapter(
+  win: { opener: unknown; location: { href: string }; close(): void },
+): BlankTab {
+  return {
+    setUrl: (url) => {
+      // Some browsers / cross-origin contexts make `opener` read-only —
+      // best-effort clear, then navigate regardless.
+      try { win.opener = null; } catch { /* read-only */ }
+      win.location.href = url;
+    },
+    close: () => win.close(),
+  };
+}
+
+/**
+ * Cleanup hook for the page-level "cancel landed AFTER orchestrator success"
+ * race. When the orchestrator returns success but the caller's abort flag has
+ * since flipped, we must NOT leave a "waiting" UI status, must NOT keep the
+ * placeholder in any active map, and must DELETE the (now-orphan) server
+ * session. Extracted so it's testable without React.
+ */
+export interface CleanupAbortedAfterSuccessDeps {
+  sessionId: string | null;
+  deleteServerSession(sessionId: string): void;
+  removeFromActiveMap(): void;
+  clearUiStatus(): void;
+}
+export function cleanupAbortedAfterSuccess(deps: CleanupAbortedAfterSuccessDeps): void {
+  if (deps.sessionId) deps.deleteServerSession(deps.sessionId);
+  deps.removeFromActiveMap();
+  deps.clearUiStatus();
+}

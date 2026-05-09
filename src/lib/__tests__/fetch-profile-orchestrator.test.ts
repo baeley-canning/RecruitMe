@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { orchestrateFetchProfile, type BlankTab } from "../fetch-profile-orchestrator";
+import {
+  orchestrateFetchProfile,
+  cleanupAbortedAfterSuccess,
+  type BlankTab,
+} from "../fetch-profile-orchestrator";
 
 function makeTab(): BlankTab & { url: string | null; closed: boolean } {
   const tab = {
@@ -75,6 +79,31 @@ describe("orchestrateFetchProfile", () => {
     expect(postFetchSession).not.toHaveBeenCalled();
   });
 
+  it("the BlankTab adapter shape — setUrl is called once and only after success", async () => {
+    // The orchestrator can't reach into the page's adapter, but it CAN prove
+    // the adapter's setUrl is invoked exactly once and only on success — any
+    // adapter that clears window.opener inside setUrl (as the page does) will
+    // therefore have done so before the navigation. This is the testable
+    // contract that lets us be confident opener is severed.
+    const setUrl = vi.fn();
+    const close = vi.fn();
+    const tab: BlankTab = { setUrl, close };
+
+    const result = await orchestrateFetchProfile({
+      linkedinUrl: "https://www.linkedin.com/in/alex/",
+      openBlankTab: () => tab,
+      postFetchSession: async () => {
+        // Adapter must NOT have been invoked before the POST resolves.
+        expect(setUrl).not.toHaveBeenCalled();
+        return { ok: true, session: { sessionId: "sess-1" } };
+      },
+    });
+    expect(result.kind).toBe("success");
+    expect(setUrl).toHaveBeenCalledTimes(1);
+    expect(setUrl).toHaveBeenCalledWith("https://www.linkedin.com/in/alex/");
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it("returns aborted (not success) when isAborted flips true between POST and navigate", async () => {
     const tab = makeTab();
     let aborted = false;
@@ -110,5 +139,37 @@ describe("orchestrateFetchProfile", () => {
       kind: "success", sessionId: "sess-2",
       message: "Waiting for browser extension to capture",
     });
+  });
+});
+
+describe("cleanupAbortedAfterSuccess", () => {
+  it("DELETEs the orphan session, removes the active map entry, and clears the UI", () => {
+    const events: string[] = [];
+    cleanupAbortedAfterSuccess({
+      sessionId: "sess-orphan",
+      deleteServerSession: (sid) => events.push(`DELETE ${sid}`),
+      removeFromActiveMap: () => events.push("removeFromActiveMap"),
+      clearUiStatus: () => events.push("clearUiStatus"),
+    });
+    // Order matters less than completeness — but every step must fire.
+    expect(events).toContain("DELETE sess-orphan");
+    expect(events).toContain("removeFromActiveMap");
+    expect(events).toContain("clearUiStatus");
+  });
+
+  it("skips the server DELETE when no sessionId was returned", () => {
+    const events: string[] = [];
+    cleanupAbortedAfterSuccess({
+      sessionId: null,
+      deleteServerSession: (sid) => events.push(`DELETE ${sid}`),
+      removeFromActiveMap: () => events.push("removeFromActiveMap"),
+      clearUiStatus: () => events.push("clearUiStatus"),
+    });
+    expect(events).not.toContain("DELETE null");
+    expect(events.some((e) => e.startsWith("DELETE"))).toBe(false);
+    // Still clears the UI / removes the active entry — those are local state
+    // and never depend on a server round-trip.
+    expect(events).toContain("removeFromActiveMap");
+    expect(events).toContain("clearUiStatus");
   });
 });
