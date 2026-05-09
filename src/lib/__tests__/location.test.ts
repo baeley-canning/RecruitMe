@@ -326,3 +326,53 @@ describe("shouldRejectAsOverseas — combined gate", () => {
     expect(result.reject).toBe(false);
   });
 });
+
+describe("inferCandidateCountry — false-positive guards (round 2)", () => {
+  it("'Wellington Smith' name with explicit Sydney location is rejected, NOT vetoed by name", () => {
+    // The bug the agents found: NZ veto used to fire on "wellington" appearing
+    // anywhere in the text — including the candidate's surname. Two
+    // corroborating overseas signals must override body NZ mentions.
+    const result = inferCandidateCountry({
+      explicitLocation: "Sydney, Australia",
+      headline: "CEO",
+      profileText: "Wellington Smith — CEO at Foo Corp · Present · Sydney, Australia",
+    });
+    expect(result.country).toBe("OVERSEAS");
+    expect(result.confidence).toBe("high");
+  });
+
+  it("returnee Kiwi WITHOUT explicit NZ location: NZ via soft veto", () => {
+    // The agents flagged this as the test we never had — every previous
+    // returnee test had explicit "Wellington, NZ" which short-circuited
+    // before reaching the inference. This one has profile text only.
+    const result = inferCandidateCountry({
+      profileText: [
+        "Lead Engineer at Xero · Jan 2023 - Present · Wellington",
+        "Senior Engineer at Atlassian · Mar 2018 - Dec 2021 · Sydney, Australia",
+      ].join("\n"),
+    });
+    expect(result.country).toBe("NZ");
+  });
+
+  it("does not flag profiles using common English words 'reading', 'oxford', 'cambridge'", () => {
+    // The agents flagged that bare "reading" / "oxford" / "cambridge" in
+    // OVERSEAS_CITIES was over-aggressive — they appear in normal English.
+    // Cambridge in particular collides with a NZ town. These are now removed.
+    expect(isExplicitlyOverseasLocation("My reading list includes books on architecture")).toBe(false);
+    expect(isExplicitlyOverseasLocation("Use the Oxford comma")).toBe(false);
+    expect(isExplicitlyOverseasLocation("Cambridge University Press")).toBe(false);
+    expect(isExplicitlyOverseasLocation("Cambridge, Waikato, New Zealand")).toBe(false); // NZ town
+  });
+
+  it("escapes regex metacharacters in DEFINITELY_OVERSEAS_COMPANIES company names", () => {
+    // Confidence test — "Kelly+Partners" has a `+` regex meta. The escape
+    // function must turn that into `\+` not `\\+` (which would have been the
+    // case with the broken character class). If escaping is wrong, the
+    // pattern construction throws or fails to match.
+    const result = inferCandidateCountry({
+      explicitLocation: "Sydney, Australia",
+      profileText: "Web Developer at Kelly+Partners Group Holdings Limited · Present · Sydney",
+    });
+    expect(result.country).toBe("OVERSEAS");
+  });
+});

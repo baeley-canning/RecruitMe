@@ -176,11 +176,16 @@ const OVERSEAS_CITIES = [
   "sydney", "melbourne", "brisbane", "perth", "adelaide", "canberra", "hobart",
   "darwin", "gold coast", "wollongong", "newcastle", "geelong", "townsville",
   "cairns", "ballarat", "bendigo", "launceston", "mackay", "rockhampton",
-  // United Kingdom + Ireland
+  // United Kingdom + Ireland. NOTE: dropped "reading" / "oxford" / "cambridge"
+  // / "cork" — they're common English words that false-positive in normal
+  // profile text ("reading list", "Oxford comma", "Cambridge University
+  // Press"). Cambridge also collides with a NZ town. UK candidates from
+  // those cities will still be caught by other signals (UK country marker,
+  // explicit UK location, etc.) when they actually live there.
   "london", "manchester", "birmingham", "leeds", "glasgow", "edinburgh",
   "liverpool", "bristol", "cardiff", "belfast", "sheffield", "newcastle upon tyne",
-  "nottingham", "leicester", "coventry", "southampton", "reading", "oxford",
-  "cambridge", "dublin", "cork", "galway", "limerick",
+  "nottingham", "leicester", "coventry", "southampton",
+  "dublin", "galway", "limerick",
   // India
   "mumbai", "delhi", "new delhi", "bangalore", "bengaluru", "hyderabad", "chennai",
   "kolkata", "pune", "ahmedabad", "jaipur", "lucknow", "kanpur", "nagpur", "indore",
@@ -265,12 +270,23 @@ export function isOverseasForNzRole(
 // every overseas signal. Better to occasionally let an overseas candidate
 // through than to ban a returnee.
 
+// Tokens that, when found in a candidate's profile, are treated as evidence
+// they're in NZ. Used as a tie-breaker — see inferCandidateCountry.
+//
+// CAREFUL: substring-matched against the full text. "wellington" alone matches
+// the candidate's surname "Wellington Smith". To prevent that, the veto is
+// only applied when overseas signals are weak (< 2). When overseas signals
+// corroborate (e.g. explicit Sydney + Present-Sydney), the body name match
+// can no longer override.
 const NZ_VETO_TOKENS = [
   "new zealand", "aotearoa", "auckland", "wellington", "christchurch",
   "hamilton, waikato", "tauranga", "dunedin", "palmerston north", "rotorua",
   "napier", "nelson", "queenstown", "invercargill", "whangarei", "porirua",
   "lower hutt", "upper hutt", "petone", "remote, nz", "remote from nz",
   "remote (nz)", "based in nz", "nz based",
+  // Te reo place names — caught the agent review for missing them.
+  "te whanganui-a-tara", "te whanganui a tara", "poneke",
+  "tamaki makaurau", "otautahi", "kirikiriroa", "otepoti",
 ];
 
 // Companies that virtually never employ NZ-based staff. A candidate whose
@@ -299,9 +315,12 @@ const BASED_IN_RE =
   /\b(?:based|located|live|living|reside|residing|currently)\s+in\s+([A-Z][\w' -]{2,40})\b/gi;
 const X_BASED_RE = /\b([A-Z][\w' -]{2,40})-based\b/g;
 
-// "previously based in X" / "moved from X" / "originally from X" — DON'T count
+// "previously based in X" / "moved from X" / "originally from X" — DON'T count.
+// Note: "moved to X" is a CURRENT-residence signal (the candidate is now in X),
+// so it must NOT be in this list — including "to" inverted the semantics and
+// suppressed the destination as an overseas signal. Same for "relocated to".
 const NEGATIVE_PREFIX_RE =
-  /\b(?:previously|formerly|originally|ex-|moved\s+(?:from|to)|relocated\s+from|left\s+|grew\s+up\s+in)\s+(?:[\w\s]{0,30}?)$/i;
+  /\b(?:previously|formerly|originally|ex-|moved\s+from|relocated\s+from|left\s+|grew\s+up\s+in)\s+(?:[\w\s]{0,30}?)$/i;
 
 export interface CandidateCountryInference {
   country: "NZ" | "OVERSEAS" | "UNKNOWN";
@@ -330,33 +349,29 @@ export function inferCandidateCountry(args: {
 
   const lc = text.toLowerCase();
 
-  // NZ veto first — any explicit NZ token short-circuits to NZ.
-  for (const token of NZ_VETO_TOKENS) {
-    if (lc.includes(token)) {
-      return {
-        country: "NZ",
-        confidence: token.length > 6 ? "high" : "medium",
-        evidence: `NZ veto token: "${token}"`,
-      };
-    }
+  // ── Hard NZ signals — these are unambiguous and short-circuit ────────
+  if (args.explicitLocation && isNzLocation(args.explicitLocation)) {
+    return {
+      country: "NZ", confidence: "high",
+      evidence: `explicit NZ location: "${args.explicitLocation}"`,
+    };
+  }
+  if (/\+64\b/.test(text)) {
+    return { country: "NZ", confidence: "high", evidence: "phone +64 in profile" };
   }
 
-  // Explicit overseas in the structured location field is one strong signal.
+  // ── Collect overseas signals ─────────────────────────────────────────
   const overseasSignals: string[] = [];
   if (args.explicitLocation && isExplicitlyOverseasLocation(args.explicitLocation)) {
     overseasSignals.push(`explicit location is overseas: "${args.explicitLocation}"`);
   }
 
-  // Phone country codes — +64 NZ, +61 AU, +44 UK, +91 IN, +1 US/CA.
-  if (/\+64\b/.test(text)) {
-    return { country: "NZ", confidence: "high", evidence: "phone +64 in profile" };
-  }
-  const phoneOverseas = text.match(/\+(61|44|91|1)\b/);
+  const phoneOverseas = text.match(/\+(61|44|91)\b/);
   if (phoneOverseas) {
     overseasSignals.push(`phone country code +${phoneOverseas[1]}`);
   }
 
-  // Present-block location: scan only the current role's location string.
+  // Present-block location — only the current role's location string.
   PRESENT_LOCATION_RE.lastIndex = 0;
   let presentMatch: RegExpExecArray | null;
   while ((presentMatch = PRESENT_LOCATION_RE.exec(text)) !== null) {
@@ -364,11 +379,11 @@ export function inferCandidateCountry(args: {
     if (raw.length > 80) continue;
     if (isExplicitlyOverseasLocation(raw)) {
       overseasSignals.push(`Present-role location: "${raw}"`);
-      break; // first Present block is the strongest signal
+      break;
     }
   }
 
-  // "based in X" / "X-based" — but reject if preceded by negative qualifier.
+  // "based in X" / "X-based" — reject if preceded by negative qualifier.
   for (const re of [BASED_IN_RE, X_BASED_RE]) {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -384,17 +399,26 @@ export function inferCandidateCountry(args: {
   }
 
   // Definitely-overseas company in CURRENT role context only.
-  // Look for "[Company] · Present" or "[Company] · ... · Present" (any order).
   for (const company of DEFINITELY_OVERSEAS_COMPANIES) {
-    const re = new RegExp(`\\b${company.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b[^\\n]{0,200}\\bPresent\\b`, "i");
+    const escaped = company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`\\b${escaped}\\b[^\\n]{0,200}\\bPresent\\b`, "i");
     if (re.test(text)) {
       overseasSignals.push(`current role at overseas-only company: "${company}"`);
       break;
     }
   }
 
-  // Two-signal requirement for hard OVERSEAS verdict. Single signal → UNKNOWN
-  // so the candidate is reviewable rather than auto-rejected.
+  // ── Soft NZ veto ─────────────────────────────────────────────────────
+  // Body-text mentions of NZ tokens (e.g. profile body says "Wellington",
+  // or candidate's surname is "Wellington") are NOT enough on their own
+  // to override corroborated overseas signals. They DO override single-
+  // signal overseas, since a single signal is too weak to auto-reject.
+  const nzMentions = NZ_VETO_TOKENS.filter((t) => lc.includes(t));
+
+  // Two corroborating overseas signals — hard reject regardless of body
+  // NZ mentions. This catches "Wellington Smith" with explicit Sydney +
+  // Present-Sydney: name happens to contain "wellington" but the two
+  // unambiguous Sydney signals win.
   if (overseasSignals.length >= 2) {
     return {
       country: "OVERSEAS",
@@ -402,6 +426,19 @@ export function inferCandidateCountry(args: {
       evidence: overseasSignals.join("; "),
     };
   }
+
+  // Single overseas signal + NZ mentions in body → NZ wins (returnee Kiwi,
+  // mentions Sydney once, has NZ city in summary). Reviewable medium
+  // confidence — recruiter still gets the candidate.
+  if (overseasSignals.length === 1 && nzMentions.length > 0) {
+    return {
+      country: "NZ", confidence: "medium",
+      evidence: `single overseas signal (${overseasSignals[0]}) overridden by NZ mentions: ${nzMentions.join(", ")}`,
+    };
+  }
+
+  // Single overseas signal, no NZ mention → UNKNOWN (reviewable, not
+  // auto-rejected).
   if (overseasSignals.length === 1) {
     return {
       country: "UNKNOWN",
@@ -409,6 +446,15 @@ export function inferCandidateCountry(args: {
       evidence: `weak overseas signal (${overseasSignals[0]}) — reviewable`,
     };
   }
+
+  // No overseas signals. NZ tokens in body → soft NZ verdict.
+  if (nzMentions.length > 0) {
+    return {
+      country: "NZ", confidence: "medium",
+      evidence: `NZ mentions in profile: ${nzMentions.join(", ")}`,
+    };
+  }
+
   return { country: "UNKNOWN", confidence: "low", evidence: "no strong country signal" };
 }
 
