@@ -94,7 +94,7 @@ export async function POST(
 
   if (body.autoScore !== false && body.profileText && job.parsedRole) {
     const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
-    if (!parsedRole) return NextResponse.json(candidate, { status: 201 });
+    if (!parsedRole) return NextResponse.json({ ...candidate, rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined }, { status: 201 });
     const salary = (job.salaryMin || job.salaryMax)
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
@@ -135,11 +135,17 @@ export async function POST(
         where: { id: candidate.id },
         data: updateData,
       });
-      return NextResponse.json(updated, { status: 201 });
+      return NextResponse.json({
+        ...updated,
+        rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined,
+      }, { status: 201 });
     } catch (err) {
       console.error("Auto-score failed:", err);
     }
   }
 
-  return NextResponse.json(candidate, { status: 201 });
+  return NextResponse.json({
+    ...candidate,
+    rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined,
+  }, { status: 201 });
 }

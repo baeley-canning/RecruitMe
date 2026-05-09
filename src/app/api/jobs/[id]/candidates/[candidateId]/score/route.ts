@@ -6,6 +6,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { shouldRejectAsOverseas } from "@/lib/location";
 
 export async function POST(
   _req: Request,
@@ -51,6 +52,28 @@ export async function POST(
 
     const acceptanceData = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
 
+    // Country gate runs on every re-score. Two cases:
+    // (a) Re-score reveals an overseas signal that wasn't visible before
+    //     (profile updated, recruiter pasted new text) — auto-reject.
+    // (b) Re-score on a candidate that was previously auto-rejected as
+    //     overseas now passes the gate (e.g. recruiter corrected the
+    //     location field) — un-reject by setting status back to "new".
+    // We never overwrite manual progress (shortlisted / contacted / hired
+    // / declined) — those are recruiter intent and stay put.
+    const overseas = shouldRejectAsOverseas({
+      explicitLocation: candidate.location,
+      headline: candidate.headline,
+      profileText: candidate.profileText,
+      isRemote: job.isRemote,
+    });
+    let nextStatus: string | undefined;
+    if (overseas.reject && ["new", "reviewing"].includes(candidate.status)) {
+      nextStatus = "rejected";
+    } else if (!overseas.reject && candidate.status === "rejected") {
+      // Recovery path: previously auto-rejected, now passes gate.
+      nextStatus = "new";
+    }
+
     const updated = await prisma.candidate.update({
       where: { id: candidateId },
       data: {
@@ -67,6 +90,7 @@ export async function POST(
           acceptanceScore: acceptanceData.score,
           acceptanceReason: JSON.stringify(acceptanceData),
         }),
+        ...(nextStatus ? { status: nextStatus } : {}),
       },
     });
 

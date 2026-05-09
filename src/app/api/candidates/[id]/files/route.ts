@@ -8,6 +8,7 @@ import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
 
@@ -288,6 +289,24 @@ export async function POST(
           }
         } catch (err) {
           reportError(err, { route: "cv-upload:score", candidateId: id, orgId: auth.orgId });
+        }
+      }
+
+      // Country gate: a CV that reveals the candidate is overseas should
+      // mark the row rejected if they're still in pre-decision status.
+      // Recovery path: a CV that reveals them as NZ-based when they were
+      // previously auto-rejected un-rejects them.
+      if (candidate.job) {
+        const overseas = shouldRejectAsOverseas({
+          explicitLocation: extractedLocation || candidate.location,
+          headline: extractedHeadline || candidate.headline,
+          profileText: text,
+          isRemote: candidate.job.isRemote,
+        });
+        if (overseas.reject && ["new", "reviewing"].includes(candidate.status)) {
+          updates.status = "rejected";
+        } else if (!overseas.reject && candidate.status === "rejected") {
+          updates.status = "new";
         }
       }
 

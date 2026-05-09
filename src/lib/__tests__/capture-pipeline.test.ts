@@ -241,13 +241,19 @@ describe("applyAiEnrichmentInBackground (stage 2 — concurrency gate)", () => {
     });
 
     expect(result.applied).toBe(true);
-    const update = dbMocks.prisma.candidate.updateMany.mock.calls[0][0].data;
-    expect(update).toMatchObject({
-      location: "Auckland, New Zealand",
-      status: "rejected",
-    });
-    expect(update.matchScore).toBeLessThan(78);
-    expect(JSON.parse(update.scoreBreakdown).categories.location_fit.score).toBe(20);
+    // applyAiEnrichment now splits the write: non-status fields use the
+    // profileTextHash gate; status="rejected" is applied in a SECOND call
+    // with a stricter where clause so manual recruiter status moves don't
+    // get clobbered. Verify both calls landed.
+    const calls = dbMocks.prisma.candidate.updateMany.mock.calls;
+    const dataCall = calls[0][0].data;
+    expect(dataCall).toMatchObject({ location: "Auckland, New Zealand" });
+    expect(dataCall.matchScore).toBeLessThan(78);
+    expect(JSON.parse(dataCall.scoreBreakdown).categories.location_fit.score).toBe(20);
+    // Second call sets the rejection.
+    const statusCall = calls[1][0];
+    expect(statusCall.data).toEqual({ status: "rejected" });
+    expect(statusCall.where.status).toEqual({ in: ["new", "reviewing"] });
   });
 
   it("does not auto-reject candidates already moved beyond initial review", async () => {

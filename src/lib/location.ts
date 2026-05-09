@@ -306,21 +306,31 @@ const DEFINITELY_OVERSEAS_COMPANIES = [
   "sap se", "siemens", "ericsson", "spotify",
 ];
 
-// "Present · Sydney, Australia" / "Present — Melbourne, VIC" / "Present | London"
+// Match the candidate's CURRENT-role location. Two real LinkedIn formats:
+//   1. Inline:   "Present · Sydney, Australia"
+//   2. Next-line: "Mar 2023 - Present · 1 yr 9 mos\nSydney, NSW, Australia · Hybrid"
+// In format 2 the location sits on the next line — what follows "Present" is
+// duration text, not the city. The regex captures EITHER an inline location
+// OR (when the inline match fails) the first capitalised line within ~200
+// chars of the "Present" anchor. Tab is part of the separator class because
+// some clipboard pastes use \t.
 const PRESENT_LOCATION_RE =
-  /\b(?:Present|Now|Current)\b\s*[·•\-–—|,]\s*([A-Z][\w' .,-]{2,80}?)(?:\n|$|\s{2,})/g;
+  /\b(?:Present|Now|Current)\b[\s\S]{0,200}?(?:\n|[·•\-–—|,\t]\s*)([A-Z][\w' .,-]{2,80}?)(?=\s*(?:\n|$|[·•\-–—|]|\s{2,}))/g;
 
 // "based in Sydney" / "Sydney-based" / "located in Melbourne" / "live in London"
 const BASED_IN_RE =
   /\b(?:based|located|live|living|reside|residing|currently)\s+in\s+([A-Z][\w' -]{2,40})\b/gi;
-const X_BASED_RE = /\b([A-Z][\w' -]{2,40})-based\b/g;
+// X-based: "Sydney-based" / "Auckland-based". Case-insensitive so lowercase
+// "sydney-based" also fires (LinkedIn captures sometimes lower-case the
+// hyphenated form). [A-Z] still works because /i matches both cases.
+const X_BASED_RE = /\b([A-Z][\w' -]{2,40})-based\b/gi;
 
 // "previously based in X" / "moved from X" / "originally from X" — DON'T count.
-// Note: "moved to X" is a CURRENT-residence signal (the candidate is now in X),
-// so it must NOT be in this list — including "to" inverted the semantics and
-// suppressed the destination as an overseas signal. Same for "relocated to".
+// "moved to X" is a CURRENT-residence signal so it's NOT in this list.
+// Intermediate class allows commas / periods / hyphens because real prose
+// like "Previously, in early 2020, was based in London" needs them spanned.
 const NEGATIVE_PREFIX_RE =
-  /\b(?:previously|formerly|originally|ex-|moved\s+from|relocated\s+from|left\s+|grew\s+up\s+in)\s+(?:[\w\s]{0,30}?)$/i;
+  /\b(?:previously|formerly|originally|ex-|moved\s+from|relocated\s+from|left\s+|grew\s+up\s+in)[\w\s,.\-]{0,40}?$/i;
 
 export interface CandidateCountryInference {
   country: "NZ" | "OVERSEAS" | "UNKNOWN";

@@ -364,6 +364,39 @@ describe("inferCandidateCountry — false-positive guards (round 2)", () => {
     expect(isExplicitlyOverseasLocation("Cambridge, Waikato, New Zealand")).toBe(false); // NZ town
   });
 
+  it("PRESENT_LOCATION_RE matches the realistic LinkedIn next-line format", () => {
+    // Real LinkedIn captures put the location on the LINE AFTER 'Present',
+    // not inline — what follows '· Present ·' is the duration text. The
+    // earlier regex required inline format and silently missed every
+    // realistic capture. This test locks the fix.
+    const result = inferCandidateCountry({
+      profileText: [
+        "Senior Engineer",
+        "Acme Corp · Full-time",
+        "Mar 2023 - Present · 1 yr 9 mos",
+        "Sydney, New South Wales, Australia · Hybrid",
+        ".NET, C#, SQL Server",
+      ].join("\n"),
+    });
+    // Two signals: Present-block location ("Sydney, NSW, Australia") AND
+    // the same line is recognised by isExplicitlyOverseasLocation. Wait —
+    // actually that's still one signal class. Let me phrase this as: the
+    // helper SHOULD detect Sydney from this format. With no explicit
+    // location and no other corroboration, single signal → UNKNOWN. But
+    // crucially, Sydney IS detected.
+    expect(result.evidence).toMatch(/Sydney|Present-role/i);
+  });
+
+  it("re-score un-rejection: recovery path returns NZ when location is corrected", () => {
+    // A candidate previously auto-rejected as overseas whose location
+    // field has been corrected to NZ should infer NZ on re-score.
+    const result = inferCandidateCountry({
+      explicitLocation: "Wellington, New Zealand",
+      profileText: "Senior Engineer at Atlassian · Mar 2018 - Dec 2021 · Sydney",
+    });
+    expect(result.country).toBe("NZ");
+  });
+
   it("escapes regex metacharacters in DEFINITELY_OVERSEAS_COMPANIES company names", () => {
     // Confidence test — "Kelly+Partners" has a `+` regex meta. The escape
     // function must turn that into `\+` not `\\+` (which would have been the

@@ -157,6 +157,7 @@ export async function POST(
   const saved: SavedCandidate[] = [];
   let scored = 0;
   let skippedScore = 0;
+  let skippedOverseas = 0;
 
   // For specialist roles (SAFe Scrum Master, C++/Sybase developer, etc.) the pool
   // should only import candidates who have at least one distinctive term in their
@@ -182,7 +183,7 @@ export async function POST(
       isRemote: job.isRemote,
     });
     if (overseasCheck.reject) {
-      skippedScore++;
+      skippedOverseas++;
       continue;
     }
 
@@ -279,7 +280,7 @@ export async function POST(
     }
   }
 
-  console.log(`[talent-pool] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore}`);
+  console.log(`[talent-pool] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore}, overseas ${skippedOverseas}`);
   void recordUsage(auth.orgId, auth.userId, "score_all", { jobId, scored: saved.length, source: "talent_pool" });
 
   const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
@@ -287,9 +288,11 @@ export async function POST(
   if (sorted.length === 0) {
     const reason = skippedScore > 0
       ? `Scored ${scored} pool candidates but none cleared ${minScore}% — try lowering the minimum score.`
-      : "No pool candidates matched this role's location or requirements.";
-    return NextResponse.json({ count: 0, candidates: [], message: reason });
+      : skippedOverseas > 0
+        ? `Skipped ${skippedOverseas} overseas candidate${skippedOverseas !== 1 ? "s" : ""}; no NZ-based pool candidates matched.`
+        : "No pool candidates matched this role's location or requirements.";
+    return NextResponse.json({ count: 0, candidates: [], message: reason, skippedOverseas });
   }
 
-  return NextResponse.json({ count: sorted.length, candidates: sorted });
+  return NextResponse.json({ count: sorted.length, candidates: sorted, skippedOverseas });
 }

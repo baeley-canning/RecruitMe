@@ -8,6 +8,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { shouldRejectAsOverseas } from "@/lib/location";
 
 const BodySchema = z.object({
   jobId:       z.string().min(1),
@@ -87,6 +88,17 @@ export async function POST(req: Request) {
     ? `Score is ${finalScore}% — this candidate may not match the role. Check the hiring brief.`
     : null;
 
+  // Country gate: GitHub bios sometimes have a clear location ("Sydney,
+  // Australia"). If the gate fires, mark the candidate rejected on creation
+  // — same pattern as the manual-paste route. Recruiter can recover via the
+  // pipeline if the gate misfires.
+  const overseas = shouldRejectAsOverseas({
+    explicitLocation: location ?? null,
+    headline:         headline  ?? null,
+    profileText,
+    isRemote:         job.isRemote,
+  });
+
   const candidate = await prisma.candidate.create({
     data: {
       jobId,
@@ -98,12 +110,16 @@ export async function POST(req: Request) {
       profileText,
       profileCapturedAt: new Date(),
       source:     "manual",
-      status:     "new",
+      status:     overseas.reject ? "rejected" : "new",
       // Store GitHub URL in notes so we can identify the source
       notes: `GitHub: ${githubUrl}\nLogin: ${login}`,
       ...scoreData,
     },
   });
 
-  return NextResponse.json({ ...candidate, lowScoreWarning }, { status: 201 });
+  return NextResponse.json({
+    ...candidate,
+    lowScoreWarning,
+    rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined,
+  }, { status: 201 });
 }

@@ -535,15 +535,48 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
 // Apply stage 2 results to the candidate row, gated on profileTextHash so a
 // concurrent edit doesn't get clobbered. Returns true if the write applied,
 // false if the hash mismatched (a fresher edit landed first).
+//
+// Status-rejected (set by the country gate) applies in a SEPARATE write with
+// a stricter where clause: only when the row is still in pre-decision status
+// ("new" or "reviewing"). Without this, a recruiter who manually moved the
+// candidate to "shortlisted" while stage 2 was in flight would have their
+// choice silently clobbered by the overseas auto-reject.
 async function applyAiEnrichment(
   candidateId: string,
   expectedHash: string | null,
   update: Record<string, unknown>,
 ): Promise<boolean> {
-  const result = await prisma.candidate.updateMany({
-    where: { id: candidateId, profileTextHash: expectedHash },
-    data: update,
-  });
+  const { status, ...updateWithoutStatus } = update;
+
+  // Score / acceptance / location etc. — applied with the standard
+  // profileTextHash gate.
+  const result = Object.keys(updateWithoutStatus).length > 0
+    ? await prisma.candidate.updateMany({
+        where: { id: candidateId, profileTextHash: expectedHash },
+        data: updateWithoutStatus,
+      })
+    : { count: 0 };
+
+  // Auto-reject status — only applies if the row is still in pre-decision
+  // status. If the recruiter has progressed it to shortlisted / contacted /
+  // hired / declined, we leave their decision alone.
+  if (status === "rejected") {
+    await prisma.candidate.updateMany({
+      where: {
+        id: candidateId,
+        profileTextHash: expectedHash,
+        status: { in: ["new", "reviewing"] },
+      },
+      data: { status: "rejected" },
+    });
+  } else if (typeof status === "string") {
+    // Other status writes (rare from this path) use the standard gate.
+    await prisma.candidate.updateMany({
+      where: { id: candidateId, profileTextHash: expectedHash },
+      data: { status },
+    });
+  }
+
   return result.count > 0;
 }
 
