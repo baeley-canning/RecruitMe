@@ -1887,7 +1887,11 @@ function renderOnActiveJobs(container, data, serverBase) {
 
 function renderSuggestedJobs(container, data, linkedinUrl, serverBase) {
   const suggested = (data.suggestedJobs || []).slice(0, 3);
-  if (suggested.length === 0) { removeOverlay(); return; }
+  // Library candidates with no active job match still get the bubble — the
+  // recruiter wants to be able to log "messaged" / "called" against them too.
+  // They just won't see the jobId-tagged "re: Role" — events are untagged.
+  const libCandidateId = data.libraryCandidateId || "";
+  if (suggested.length === 0 && !data.inLibrary) { removeOverlay(); return; }
 
   const accent = data.inLibrary ? "#3b82f6" : "#8b5cf6";
   const label  = data.inLibrary ? "In your library" : "Not yet tracked";
@@ -1910,17 +1914,84 @@ function renderSuggestedJobs(container, data, linkedinUrl, serverBase) {
     </button>`
   ).join("");
 
+  // Contact history for this library candidate so colleagues see what you've
+  // already done. Same shape as the on-active-jobs view.
+  const base = getOverlayServerBase(serverBase);
+  const contacts = (data.recentContacts || []).slice(0, 2);
+  const roleSuffix = (c) => {
+    if (!c.jobId || !c.jobTitle) return "";
+    const url = `${base}/jobs/${encodeURIComponent(c.jobId)}`;
+    return ` · re: <a href="${url}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">${escapeHtml(c.jobTitle)}</a>`;
+  };
+  const contactRows = contacts.map((c) =>
+    `<div style="display:flex;align-items:flex-start;gap:6px;font-size:11px;color:#64748b;padding:3px 0">
+      <span style="font-size:13px;line-height:1.4">${c.type === "call" ? "📞" : c.type === "email" ? "✉️" : "💬"}</span>
+      <span style="flex:1;min-width:0">
+        <strong style="color:#475569">${escapeHtml(c.userName)}</strong> ${escapeHtml(c.type)}d <span style="color:#94a3b8">· ${escapeHtml(c.relativeDate)}</span>${roleSuffix(c)}${c.note ? `<br><span style="color:#94a3b8">${escapeHtml(c.note)}</span>` : ""}
+      </span>
+    </div>`
+  ).join("");
+
+  // Messaged/Called buttons — only when we have a candidate ID to attach the
+  // event to (i.e. they're already in the library). For genuinely unknown
+  // people, the recruiter has to add-to-job first to create the candidate.
+  // No job picker here because by definition this candidate isn't on any
+  // active job; events log with jobId=null and display untagged.
+  const logButtons = libCandidateId ? `
+    <div style="display:flex;gap:6px;margin-top:10px;border-top:1px solid #f1f5f9;padding-top:10px">
+      <button class="recruitme-log-contact" data-type="message" data-candidate-id="${escapeHtml(libCandidateId)}" data-default-job-id="" style="
+        flex:1;display:flex;align-items:center;justify-content:center;gap:4px;
+        background:#f0fdf4;border:1px solid #86efac;color:#15803d;
+        border-radius:8px;padding:5px 8px;font-size:11px;font-weight:500;cursor:pointer;
+      ">💬 Messaged</button>
+      <button class="recruitme-log-contact" data-type="call" data-candidate-id="${escapeHtml(libCandidateId)}" data-default-job-id="" style="
+        flex:1;display:flex;align-items:center;justify-content:center;gap:4px;
+        background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;
+        border-radius:8px;padding:5px 8px;font-size:11px;font-weight:500;cursor:pointer;
+      ">📞 Called</button>
+    </div>
+    <div id="recruitme-contact-status" style="font-size:11px;color:#64748b;text-align:center;display:none;padding-top:4px"></div>
+  ` : "";
+
   container.innerHTML = `
     ${buildHeader(label, accent)}
     <div style="padding:10px 14px 12px">
-      <div style="font-size:11px;color:#64748b;margin-bottom:2px">Add to one of your active jobs:</div>
-      ${jobButtons}
+      ${suggested.length > 0 ? `
+        <div style="font-size:11px;color:#64748b;margin-bottom:2px">Add to one of your active jobs:</div>
+        ${jobButtons}
+      ` : ""}
+      ${contactRows ? `
+        <div style="${suggested.length > 0 ? "border-top:1px solid #f1f5f9;padding-top:8px;margin-top:10px" : ""}">
+          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8;margin-bottom:4px">Contact history</div>
+          ${contactRows}
+        </div>` : ""}
+      ${logButtons}
       <div id="recruitme-overlay-status" style="margin-top:8px;font-size:11px;color:#64748b;display:none"></div>
     </div>
   `;
   container.querySelectorAll(".recruitme-add-to-job").forEach((btn) =>
     btn.addEventListener("click", (e) => handleAddToJobClick(e.currentTarget, linkedinUrl, serverBase))
   );
+  // Same contact-log handler as renderOnActiveJobs — sends jobId when set.
+  container.querySelectorAll(".recruitme-log-contact").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const candidateId = btn.getAttribute("data-candidate-id");
+      const contactType = btn.getAttribute("data-type");
+      const jobId = btn.getAttribute("data-default-job-id") || "";
+      const statusEl = container.querySelector("#recruitme-contact-status");
+      container.querySelectorAll(".recruitme-log-contact").forEach((b) => { b.disabled = true; b.style.opacity = "0.6"; });
+      if (statusEl) { statusEl.style.display = "block"; statusEl.textContent = "Logging…"; }
+      try {
+        const res = await sendToServiceWorker({ type: "log-contact", candidateId, contactType, jobId }, 8000);
+        if (!res?.ok) throw new Error(res?.error || "Failed");
+        if (statusEl) { statusEl.style.color = "#059669"; statusEl.textContent = `✓ ${contactType === "call" ? "Call" : "Message"} logged`; }
+        setTimeout(() => { removeOverlay(); lastMatchQueriedUrl = ""; renderProfileMatchOverlay(location.href.replace(/[?#].*$/, "")); }, 1500);
+      } catch (e) {
+        if (statusEl) { statusEl.style.color = "#dc2626"; statusEl.textContent = e.message || "Error logging contact"; }
+        container.querySelectorAll(".recruitme-log-contact").forEach((b) => { b.disabled = false; b.style.opacity = "1"; });
+      }
+    });
+  });
   container.querySelector("#recruitme-overlay-close")?.addEventListener("click", removeOverlay);
   wireMinimizeButton(container);
   makeDraggable(container, container.querySelector("#recruitme-drag-handle"));

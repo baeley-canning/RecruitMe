@@ -56,6 +56,7 @@ export async function GET(req: Request) {
       status: true,
       jobId: true,
       profileText: true,
+      createdAt: true,
       job: { select: { id: true, title: true, company: true, status: true } },
     },
   });
@@ -79,6 +80,15 @@ export async function GET(req: Request) {
     }));
 
   const inLibrary = matches.some((m) => Boolean(m.profileText));
+  // Pick a representative candidate ID for library-only logging — used by the
+  // bubble when the candidate is in the library but not on any active job, so
+  // the recruiter can still log "messaged" / "called" against that record.
+  // Prefer one that has profileText (more useful) and the most recent.
+  const libraryCandidateId = matches
+    .filter((m) => Boolean(m.profileText))
+    .sort((a, b) => (b.createdAt?.getTime?.() ?? 0) - (a.createdAt?.getTime?.() ?? 0))[0]?.id
+    ?? matches[0]?.id
+    ?? null;
 
   // For "add to job" suggestions: any active job the candidate is NOT yet on.
   const jobIdsWithCandidate = new Set(onActiveJobs.map((m) => m.jobId).filter(Boolean) as string[]);
@@ -122,6 +132,7 @@ export async function GET(req: Request) {
     normalisedUrl: normUrl,
     onActiveJobs,
     inLibrary,
+    libraryCandidateId,
     suggestedJobs: suggestedJobs.slice(0, 5),
     recentContacts,
   }, { headers: extensionCorsHeaders(req) });
