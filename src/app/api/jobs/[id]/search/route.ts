@@ -29,7 +29,12 @@ import {
 } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
-import { buildTalentPoolMap, type TalentPoolEntry } from "@/lib/talent-pool";
+import {
+  buildTalentPoolMap,
+  searchTalentPoolForRole,
+  type TalentPoolEntry,
+  type TalentPoolSearchResult,
+} from "@/lib/talent-pool";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
@@ -536,6 +541,76 @@ export async function GET(
   });
 }
 
+// ── Pool-first save helper ────────────────────────────────────────────────
+// Persists pool-first criteria-search results as Candidate rows on the
+// current job. Pool candidates are pre-scored (Claude full-profile via
+// searchTalentPoolForRole) so they bypass the score+save loop.
+//
+// Returns the upserted Candidate rows so the caller can merge them into
+// the final `saved` list / importedIds / session message.
+async function persistPoolSearchResults(args: {
+  jobId: string;
+  orgId: string | null;
+  results: TalentPoolSearchResult[];
+}): Promise<Array<{ id: string; linkedinUrl: string | null; matchScore: number | null }>> {
+  const { jobId, orgId, results } = args;
+  const saved: Array<{ id: string; linkedinUrl: string | null; matchScore: number | null }> = [];
+  for (const result of results) {
+    const { hit, scoreBreakdown, candidateLocation } = result;
+    const normUrl = hit.linkedinUrl;
+    const scoreData = deriveUpdateData(scoreBreakdown);
+    try {
+      const where = normUrl
+        ? { jobId_linkedinUrl: { jobId, linkedinUrl: normUrl } }
+        : null;
+      // Manual rows (no URL) get a fresh row per job — there's no
+      // (jobId, linkedinUrl) unique key to upsert against.
+      const candidate = where
+        ? await prisma.candidate.upsert({
+            where,
+            create: {
+              jobId,
+              orgId: orgId ?? null,
+              name: hit.name,
+              headline: hit.headline,
+              location: candidateLocation,
+              linkedinUrl: normUrl,
+              profileText: hit.profileText,
+              source: "talent_pool",
+              status: "new",
+              ...(hit.profileCapturedAt ? { profileCapturedAt: hit.profileCapturedAt } : {}),
+              ...scoreData,
+            },
+            update: {
+              ...scoreData,
+            },
+          })
+        : await prisma.candidate.create({
+            data: {
+              jobId,
+              orgId: orgId ?? null,
+              name: hit.name,
+              headline: hit.headline,
+              location: candidateLocation,
+              profileText: hit.profileText,
+              source: "talent_pool",
+              status: "new",
+              ...(hit.profileCapturedAt ? { profileCapturedAt: hit.profileCapturedAt } : {}),
+              ...scoreData,
+            },
+          });
+      saved.push({
+        id: candidate.id,
+        linkedinUrl: candidate.linkedinUrl,
+        matchScore: candidate.matchScore,
+      });
+    } catch (err) {
+      console.error("[search] pool-first candidate save failed:", err);
+    }
+  }
+  return saved;
+}
+
 // ── Background search processor ───────────────────────────────────────────────
 
 async function runSearchBackground(args: {
@@ -582,6 +657,110 @@ async function runSearchBackground(args: {
   const anchorTermsForFallback = extractAnchorRequirementTerms(parsedRole);
 
   try {
+    // ── Phase 0: Pool-first criteria search ────────────────────────────────
+    // Search the existing candidate pool BY JD CRITERIA before spending any
+    // LinkedIn credits. Pool candidates are scored against the CURRENT role
+    // (not their stale matchScore) and saved with source="talent_pool".
+    //
+    // - If pool fills maxResults → skip Phase 1a/1b entirely.
+    // - Otherwise → reduce the LinkedIn fetch budget by `poolSaved`.
+    // - On error → log + continue with full LinkedIn fallback.
+    const poolScopeForCriteriaSearch: string | string[] | null = isOwner
+      ? null
+      : (await getAccessibleOrgIds({ userId: "", orgId, isOwner: false })) ?? [];
+
+    // Find URLs already attached to this job so the pool-first pass doesn't
+    // re-import them. We do a small targeted query first; the broader
+    // `existingCandidates` lookup happens after LinkedIn fetch (line ~887).
+    const existingForJob = await prisma.candidate.findMany({
+      where: { jobId, linkedinUrl: { not: null } },
+      select: { linkedinUrl: true },
+    });
+    const existingJobUrls = new Set<string>();
+    for (const c of existingForJob) {
+      if (c.linkedinUrl) existingJobUrls.add(normaliseLinkedInUrl(c.linkedinUrl));
+    }
+
+    let poolSaved: Array<{ id: string; linkedinUrl: string | null; matchScore: number | null }> = [];
+    let poolExamined = 0;
+
+    try {
+      const poolSummary = await searchTalentPoolForRole({
+        parsedRole: parsedRoleForScoring,
+        job: { isRemote: job.isRemote },
+        orgScope: poolScopeForCriteriaSearch,
+        excludeLinkedInUrls: existingJobUrls,
+        maxResults,
+        weights,
+        targetLocation,
+        scoringOrgId: orgId,
+        salary,
+      });
+      poolExamined = poolSummary.examined;
+      console.log(
+        `[search] pool-first: examined ${poolSummary.examined}, pre-rank pool ${poolSummary.preRankPool}, shortlisted ${poolSummary.shortlisted}, scored ${poolSummary.scored}, returning ${poolSummary.returned}`,
+      );
+
+      poolSaved = await persistPoolSearchResults({
+        jobId,
+        orgId: job.orgId,
+        results: poolSummary.results,
+      });
+    } catch (err) {
+      console.warn("[search] pool-first criteria search failed — continuing to LinkedIn fallback", err);
+      reportError(err instanceof Error ? err : new Error(String(err)), {
+        scope: "search.poolFirstSearch",
+        jobId,
+      });
+    }
+
+    // Re-key existingJobUrls so subsequent LinkedIn passes don't double-import
+    // candidates we just brought in from the pool.
+    for (const saved of poolSaved) {
+      if (saved.linkedinUrl) existingJobUrls.add(normaliseLinkedInUrl(saved.linkedinUrl));
+    }
+
+    // Compute the remaining slot budget for LinkedIn. If the pool filled
+    // the request, we skip LinkedIn entirely AND short-circuit out of
+    // runSearchBackground after writing a session message.
+    const remainingSlots = Math.max(0, maxResults - poolSaved.length);
+    const linkedinSkipped = remainingSlots === 0;
+
+    if (linkedinSkipped) {
+      console.log(`[search] pool-first filled maxResults (${poolSaved.length}/${maxResults}) — skipping LinkedIn`);
+      const importedIds = poolSaved.map((c) => c.id);
+      const avgScore = poolSaved.length > 0
+        ? Math.round(poolSaved.reduce((s, c) => s + (c.matchScore ?? 0), 0) / poolSaved.length)
+        : null;
+      await prisma.searchSession.update({
+        where: { id: sessionId },
+        data: {
+          status: "complete",
+          collected: poolSaved.length,
+          importedIds: JSON.stringify(importedIds),
+          avgScore,
+          candidatesRejected: 0,
+          totalExamined: poolExamined,
+          evaluation: `OK — filled from talent pool (${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""}); LinkedIn search skipped to save credits.`,
+          message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn search skipped — saved external credits.`,
+        },
+      }).catch(() => {});
+      if (savedSearchId) {
+        await prisma.savedSearch.updateMany({
+          where: { id: savedSearchId, jobId, orgId },
+          data: { lastResultCount: poolSaved.length },
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // Recompute fetch budget against remaining slots so LinkedIn doesn't
+    // pull more profiles than we now need. Mirrors the formula in POST().
+    const remainingTargetRaw = Math.min(
+      Math.max(remainingSlots * 3, remainingSlots + 15),
+      120,
+    );
+
     const seenUrls = new Set<string>();
     const allRaw: SearchResult[] = [];
     // URLs found via the scarce-skill adjacent-skill fallback (e.g. SQL Server DBA
@@ -591,9 +770,11 @@ async function runSearchBackground(args: {
     const scarceSkillFallbackUrls = new Set<string>();
 
     // ── Phase 1a: PDL bulk fetch (not paginated — returns full profiles) ──────
+    // Reduced by remainingSlots so we don't fetch profiles past the slots
+    // pool-first already filled.
     if (hasPDL) {
       try {
-        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(maxResults, 50), pdlKey);
+        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(remainingSlots, 50), pdlKey);
         for (const r of pdl) {
           if (!seenUrls.has(r.linkedinUrl)) { seenUrls.add(r.linkedinUrl); allRaw.push(r); }
         }
@@ -607,7 +788,7 @@ async function runSearchBackground(args: {
     // the same page instead of ending the search early.
     const { items: collectedRaw, sawRetryableFailure: sawRetryableSearchFailure } =
       await collectPagedSearchResults<SearchResult>({
-        targetCount: targetRaw,
+        targetCount: remainingTargetRaw,
         maxPages: MAX_PAGES,
         maxPageRetries: MAX_PAGE_RETRIES,
         emptyRoundsBeforeStop: EMPTY_ROUNDS_BEFORE_STOP,
@@ -844,6 +1025,32 @@ async function runSearchBackground(args: {
       }
 
       if (allRaw.length === 0) {
+        // LinkedIn / PDL turned up nothing — but pool-first may have already
+        // saved candidates. Report those rather than overwriting the message.
+        if (poolSaved.length > 0) {
+          const importedIds = poolSaved.map((c) => c.id);
+          const avgScore = Math.round(
+            poolSaved.reduce((s, c) => s + (c.matchScore ?? 0), 0) / poolSaved.length,
+          );
+          await prisma.searchSession.update({
+            where: { id: sessionId },
+            data: {
+              status: "complete",
+              collected: poolSaved.length,
+              importedIds: JSON.stringify(importedIds),
+              avgScore,
+              message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn returned no new profiles.`,
+              evaluation: `OK — ${poolSaved.length} pool candidate${poolSaved.length !== 1 ? "s" : ""}; LinkedIn produced no additional results.`,
+            },
+          }).catch(() => {});
+          if (savedSearchId) {
+            await prisma.savedSearch.updateMany({
+              where: { id: savedSearchId, jobId, orgId },
+              data: { lastResultCount: poolSaved.length },
+            }).catch(() => {});
+          }
+          return;
+        }
         await prisma.searchSession.update({
           where: { id: sessionId },
           data: {
@@ -953,6 +1160,32 @@ async function runSearchBackground(args: {
     console.log(`[search] talent pool: ${poolMap.size} of ${allNormed.length} found URLs have existing full profiles`);
 
     if (workItems.length === 0) {
+      // LinkedIn/PDL returned only profiles we already had on this job. If
+      // pool-first added new candidates, surface those — otherwise this is
+      // genuinely a "nothing new" run.
+      if (poolSaved.length > 0) {
+        const importedIds = poolSaved.map((c) => c.id);
+        const avgScore = Math.round(
+          poolSaved.reduce((s, c) => s + (c.matchScore ?? 0), 0) / poolSaved.length,
+        );
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "complete",
+            collected: poolSaved.length,
+            importedIds: JSON.stringify(importedIds),
+            avgScore,
+            message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn results were already imported.`,
+          },
+        }).catch(() => {});
+        if (savedSearchId) {
+          await prisma.savedSearch.updateMany({
+            where: { id: savedSearchId, jobId, orgId },
+            data: { lastResultCount: poolSaved.length },
+          }).catch(() => {});
+        }
+        return;
+      }
       await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
       return;
     }
@@ -1031,15 +1264,16 @@ async function runSearchBackground(args: {
         return true;
       })
       .sort((a, b) => b.fetchPriorityScore - a.fetchPriorityScore)
-      .slice(0, Math.min(Math.max(maxResults * 3, maxResults + 15), 100));
+      .slice(0, Math.min(Math.max(remainingSlots * 3, remainingSlots + 15), 100));
 
-    console.log(`[search] ${toScore.length} candidates to score`);
+    console.log(`[search] ${toScore.length} candidates to score (LinkedIn slots remaining: ${remainingSlots})`);
 
     // Full profiles get Claude scoring; snippets get fast provisional scoring.
     // Batch size 3 to avoid concurrent Claude bursts when talent-pool/PDL full
     // profiles are in the result set (matches score-all concurrency).
+    // Cap at remainingSlots so pool-first saves count toward the maxResults budget.
     const BATCH = 3;
-    for (let i = 0; i < toScore.length && saved.length < maxResults; i += BATCH) {
+    for (let i = 0; i < toScore.length && saved.length < remainingSlots; i += BATCH) {
       const batch = toScore.slice(i, i + BATCH);
 
       const results = await Promise.all(
@@ -1121,7 +1355,7 @@ async function runSearchBackground(args: {
       // rejection logic easy to audit in one place.
       const specialistRole = extractDistinctiveRequirementTerms(parsedRole).length > 0;
       for (const item of results) {
-        if (saved.length >= maxResults) break;
+        if (saved.length >= remainingSlots) break;
         const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
         // Gate 1 — country. The pre-score filter already drops candidates
@@ -1215,12 +1449,27 @@ async function runSearchBackground(args: {
       }
     }
 
-    console.log(`[search] done — scored ${scored}, saved ${saved.length} (${fromPool} from pool), skipped ${skippedScore} below score/location threshold, ${skippedSourceGate} source-gated, ${skippedSeniorityGate} seniority-gated`);
+    // Merge pool-first criteria saves into the final result list. They were
+    // upserted before the LinkedIn pass and pre-scored by Claude, so they
+    // sit alongside the LinkedIn imports and order by matchScore.
+    const linkedinSaved = saved.length;
+    const linkedinFromPool = fromPool;             // URL-reuse pool count
+    const poolFirstSaved = poolSaved.length;       // criteria-search pool count
+    const fromPoolTotal = poolFirstSaved + linkedinFromPool;
+    const fromLinkedinTotal = linkedinSaved - linkedinFromPool;
+
+    // Hydrate poolSaved into SavedCandidate-typed rows so they merge with `saved`.
+    const poolSavedFull = poolFirstSaved > 0
+      ? await prisma.candidate.findMany({ where: { id: { in: poolSaved.map((c) => c.id) } } })
+      : [];
+    for (const c of poolSavedFull) saved.push(c as SavedCandidate);
+
+    console.log(`[search] done — scored ${scored}, saved ${saved.length} (pool-first ${poolFirstSaved}, linkedin ${linkedinSaved}, of which url-reuse ${linkedinFromPool}), skipped ${skippedScore} below score/location threshold, ${skippedSourceGate} source-gated, ${skippedSeniorityGate} seniority-gated`);
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
     // Compute self-evaluation before writing the final session row.
-    const totalExamined  = allNormed.length;
+    const totalExamined  = allNormed.length + poolExamined;
     const totalFiltered  = skippedNameCheck + skippedOverseas + skippedSeniorityGate + skippedSourceGate;
     const avgScore = sorted.length > 0
       ? Math.round(sorted.reduce((s, c) => s + (c.matchScore ?? 0), 0) / sorted.length)
@@ -1268,7 +1517,9 @@ async function runSearchBackground(args: {
       return;
     }
 
-    const poolNote = fromPool > 0 ? ` (${fromPool} from talent pool, ${saved.length - fromPool} from LinkedIn)` : "";
+    const poolNote = fromPoolTotal > 0
+      ? ` (${fromPoolTotal} from talent pool${linkedinSkipped ? ", LinkedIn skipped" : `, ${fromLinkedinTotal} from LinkedIn`})`
+      : "";
     const limitNote = sawRetryableSearchFailure
       ? " Partially rate-limited — run again to find more."
       : "";

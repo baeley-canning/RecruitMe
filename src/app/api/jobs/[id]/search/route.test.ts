@@ -34,6 +34,8 @@ const searchCollectionMocks = vi.hoisted(() => ({
 
 const talentPoolMocks = vi.hoisted(() => ({
   buildTalentPoolMap: vi.fn(),
+  searchTalentPoolForRole: vi.fn(),
+  POOL_SEARCH_DEFAULT_SHORTLIST: 30,
 }));
 
 const sessionMocks = vi.hoisted(() => ({
@@ -104,6 +106,15 @@ describe("search import route", () => {
     // tests — clearAllMocks only clears call history, so a `mockResolvedValue`
     // set by one test would otherwise leak into the next.
     talentPoolMocks.buildTalentPoolMap.mockReset();
+    talentPoolMocks.searchTalentPoolForRole.mockReset();
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: [],
+      examined: 0,
+      preRankPool: 0,
+      shortlisted: 0,
+      scored: 0,
+      returned: 0,
+    });
     dbMocks.prisma.candidate.findMany.mockReset();
     process.env.SERPAPI_API_KEY = "test";
     delete process.env.BING_API_KEY;
@@ -132,9 +143,14 @@ describe("search import route", () => {
     scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
+    // findMany call sequence after pool-first wiring:
+    //   1. Phase 0: existingForJob (URLs already on this job, for pool-first exclusion)
+    //   2. Post-LinkedIn: existingCandidates (full row, used for url-reuse upgrade path)
+    //   3. Final merge: pool candidates by id (only fires if poolFirstSaved > 0)
     dbMocks.prisma.candidate.findMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([]) // existingForJob
+      .mockResolvedValueOnce([]) // existingCandidates
+      .mockResolvedValueOnce([]); // poolSavedFull
     dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
       id: "cand-1",
       createdAt: new Date(),
@@ -193,6 +209,11 @@ describe("search import route", () => {
 
   it("upgrades an existing snippet candidate when a full talent-pool profile exists", async () => {
     dbMocks.prisma.candidate.findMany.mockReset();
+    // existingForJob (Phase 0) — return the existing snippet so it's excluded from pool-first
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
+      { linkedinUrl: "https://www.linkedin.com/in/taylor-morgan/" },
+    ]);
+    // existingCandidates (post-LinkedIn) — the same candidate row in full
     dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
       {
         id: "cand-existing",
@@ -204,6 +225,8 @@ describe("search import route", () => {
         profileCapturedAt: null,
       },
     ]);
+    // poolSavedFull — empty (pool-first didn't import)
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([]);
     const fullProfile = "Taylor Morgan\nFull-stack Engineer\nWellington, New Zealand\nAbout\nExperienced React and Ruby on Rails engineer. ".repeat(30);
     const poolEntry = {
         candidateId: "pool-1",
@@ -339,6 +362,479 @@ describe("search import route", () => {
     const importedNames = dbMocks.prisma.candidate.upsert.mock.calls.map((call) => call[0].create.name);
     expect(importedNames).toEqual(["Relevant Developer"]);
     expect(dbMocks.prisma.searchSession.create.mock.calls[0][0].data.queries).toContain("Sybase dba");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+//  Pool-first search — 9 required scenarios
+// ───────────────────────────────────────────────────────────────────────────
+describe("search route — pool-first integration scenarios", () => {
+  function makePoolResult(overrides: {
+    candidateId: string;
+    name?: string;
+    headline?: string;
+    location?: string;
+    linkedinUrl: string;
+    overall?: number;
+  }) {
+    return {
+      hit: {
+        candidateId: overrides.candidateId,
+        name: overrides.name ?? "Pool Candidate",
+        headline: overrides.headline ?? "Senior SCADA Engineer",
+        location: overrides.location ?? "Wellington, New Zealand",
+        linkedinUrl: overrides.linkedinUrl,
+        profileText: "SCADA RTU substation profile. ".repeat(50),
+        profileCapturedAt: new Date(),
+        isFresh: true,
+        matchedAnchors: ["scada", "rtu"],
+        signalDensity: 2,
+      },
+      scoreBreakdown: makeBreakdown(),
+      candidateLocation: overrides.location ?? "Wellington, New Zealand",
+    };
+  }
+
+  function setupBaselineMocks() {
+    process.env.SERPAPI_API_KEY = "test";
+    delete process.env.BING_API_KEY;
+    delete process.env.PDL_API_KEY;
+    const job = {
+      id: "job-power",
+      orgId: "org-1",
+      isRemote: false,
+      location: "Wellington",
+      parsedRole: JSON.stringify({
+        title: "Senior SCADA Engineer",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        search_queries: ["scada engineer wellington"],
+        google_queries: [],
+        synonym_titles: [],
+        seniority_band: "senior",
+        must_haves: ["SCADA systems", "RTU configuration", "Smart metering"],
+        nice_to_haves: [],
+        knockout_criteria: [],
+        skills_required: ["SCADA", "RTU", "metering"],
+        skills_preferred: [],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+    };
+    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    dbMocks.prisma.job.findUnique.mockResolvedValue(job);
+    aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
+    talentPoolMocks.buildTalentPoolMap.mockResolvedValue(new Map());
+    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create, where }) => ({
+      id: `cand-${(where as { jobId_linkedinUrl: { linkedinUrl: string } }).jobId_linkedinUrl.linkedinUrl.split("/").pop() || "x"}`,
+      createdAt: new Date(),
+      ...create,
+    }));
+    return job;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    talentPoolMocks.buildTalentPoolMap.mockReset();
+    talentPoolMocks.searchTalentPoolForRole.mockReset();
+    dbMocks.prisma.candidate.findMany.mockReset();
+  });
+
+  it("Scenario 1 — pool fills maxResults: LinkedIn search NOT called, source=talent_pool, session says skipped", async () => {
+    setupBaselineMocks();
+    const poolResults = [
+      makePoolResult({ candidateId: "p-1", linkedinUrl: "https://www.linkedin.com/in/p1" }),
+      makePoolResult({ candidateId: "p-2", linkedinUrl: "https://www.linkedin.com/in/p2" }),
+      makePoolResult({ candidateId: "p-3", linkedinUrl: "https://www.linkedin.com/in/p3" }),
+    ];
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([]); // existingForJob
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: poolResults,
+      examined: 3,
+      preRankPool: 3,
+      shortlisted: 3,
+      scored: 3,
+      returned: 3,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(res.status).toBe(200);
+    expect(searchCollectionMocks.collectPagedSearchResults).not.toHaveBeenCalled();
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(3);
+    for (const call of dbMocks.prisma.candidate.upsert.mock.calls) {
+      expect((call[0] as { create: { source: string } }).create.source).toBe("talent_pool");
+    }
+    const sessionUpdates = dbMocks.prisma.searchSession.update.mock.calls;
+    const finalUpdate = sessionUpdates[sessionUpdates.length - 1][0] as { data: { message: string; evaluation?: string } };
+    expect(finalUpdate.data.message).toMatch(/talent pool/i);
+    expect(finalUpdate.data.message).toMatch(/LinkedIn (search )?skipped/i);
+  });
+
+  it("Scenario 2 — pool partially fills: LinkedIn called with reduced budget; both counts in message", async () => {
+    setupBaselineMocks();
+    const poolResults = [
+      makePoolResult({ candidateId: "p-1", linkedinUrl: "https://www.linkedin.com/in/p1" }),
+      makePoolResult({ candidateId: "p-2", linkedinUrl: "https://www.linkedin.com/in/p2" }),
+    ];
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])  // existingForJob
+      .mockResolvedValueOnce([])  // existingCandidates (post-LinkedIn)
+      .mockResolvedValueOnce(poolResults.map((r) => ({  // poolSavedFull
+        id: `cand-${r.hit.linkedinUrl.split("/").pop()}`,
+        matchScore: r.scoreBreakdown.overall,
+        linkedinUrl: r.hit.linkedinUrl,
+        name: r.hit.name,
+        headline: r.hit.headline,
+        location: r.hit.location,
+      })));
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: poolResults,
+      examined: 2,
+      preRankPool: 2,
+      shortlisted: 2,
+      scored: 2,
+      returned: 2,
+    });
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [
+        {
+          name: "LinkedIn Cand",
+          headline: "Senior SCADA Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/linkedin-cand/",
+          snippet: "Strong SCADA RTU metering experience.",
+          fullText: "Senior SCADA Engineer with extensive RTU and substation experience. ".repeat(40),
+          source: "serpapi",
+        },
+      ],
+      sawRetryableFailure: false,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // LinkedIn DID run, but with reduced target (remainingSlots = 1).
+    expect(searchCollectionMocks.collectPagedSearchResults).toHaveBeenCalledTimes(1);
+    const call = searchCollectionMocks.collectPagedSearchResults.mock.calls[0][0] as { targetCount: number };
+    // remainingSlots=1 → targetRaw = min(max(1*3, 1+15), 120) = 16, NOT the original 60.
+    expect(call.targetCount).toBeLessThanOrEqual(16);
+
+    const finalMessage = (dbMocks.prisma.searchSession.update.mock.calls.at(-1)?.[0] as { data: { message: string } }).data.message;
+    expect(finalMessage).toMatch(/2 from talent pool/);
+    expect(finalMessage).toMatch(/from LinkedIn/);
+  });
+
+  it("Scenario 3 — pool empty: LinkedIn search behaves as before", async () => {
+    setupBaselineMocks();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])  // existingForJob
+      .mockResolvedValueOnce([])  // existingCandidates
+      .mockResolvedValueOnce([]); // poolSavedFull
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: [],
+      examined: 0,
+      preRankPool: 0,
+      shortlisted: 0,
+      scored: 0,
+      returned: 0,
+    });
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [
+        {
+          name: "LinkedIn Only",
+          headline: "Senior SCADA Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/linkedin-only/",
+          snippet: "SCADA RTU experience.",
+          fullText: "SCADA Engineer profile with extensive RTU and substation experience. ".repeat(40),
+          source: "serpapi",
+        },
+      ],
+      sawRetryableFailure: false,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(searchCollectionMocks.collectPagedSearchResults).toHaveBeenCalledTimes(1);
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalled();
+  });
+
+  it("Scenario 4 — pool error: LinkedIn fallback runs, search does not fail", async () => {
+    setupBaselineMocks();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    talentPoolMocks.searchTalentPoolForRole.mockRejectedValue(new Error("DB timeout"));
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [
+        {
+          name: "LinkedIn Cand",
+          headline: "Senior SCADA Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/linkedin-cand/",
+          fullText: "SCADA profile. ".repeat(150),
+          source: "serpapi",
+        },
+      ],
+      sawRetryableFailure: false,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Search did NOT fail — POST returns 200 and LinkedIn fallback runs.
+    expect(res.status).toBe(200);
+    expect(searchCollectionMocks.collectPagedSearchResults).toHaveBeenCalledTimes(1);
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalled();
+  });
+
+  it("Scenario 5 — pool candidate must be re-scored: saved matchScore comes from the FRESH ScoreBreakdown, not any stored field", async () => {
+    setupBaselineMocks();
+    // The pool function (mocked) returns a freshly-computed ScoreBreakdown
+    // from the CURRENT JD. The route persists it via deriveUpdateData. We
+    // prove the route is reading from THAT breakdown (not from any stale
+    // candidate row) by passing a known overall and asserting it round-trips.
+    const fresh = makeBreakdown();
+    const expectedOverall = fresh.overall;
+    const poolResult = {
+      hit: {
+        candidateId: "p-stale",
+        name: "Stale Pat",
+        headline: "Senior SCADA Engineer",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/stale",
+        profileText: "SCADA RTU substation profile. ".repeat(50),
+        profileCapturedAt: new Date(),
+        isFresh: true,
+        matchedAnchors: ["scada", "rtu"],
+        signalDensity: 2,
+      },
+      scoreBreakdown: fresh,
+      candidateLocation: "Wellington, New Zealand",
+    };
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([]);
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: [poolResult],
+      examined: 1, preRankPool: 1, shortlisted: 1, scored: 1, returned: 1,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 1 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
+    const upsertCall = dbMocks.prisma.candidate.upsert.mock.calls[0][0] as { create: { matchScore: number; source: string; scoreBreakdown?: string } };
+    expect(upsertCall.create.matchScore).toBe(expectedOverall);
+    expect(upsertCall.create.source).toBe("talent_pool");
+    // The persisted scoreBreakdown JSON must serialise the fresh breakdown
+    // (proving deriveUpdateData ran on the new score, not a stored value).
+    expect(upsertCall.create.scoreBreakdown).toContain('"version":2');
+  });
+
+  it("Scenario 6 — existing attached candidate is excluded from pool-first import", async () => {
+    setupBaselineMocks();
+    // Phase 0 returns the URL as already attached → pool-first must skip it.
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
+      { linkedinUrl: "https://www.linkedin.com/in/already-here/" },
+    ]);
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: [], examined: 0, preRankPool: 0, shortlisted: 0, scored: 0, returned: 0,
+    });
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [],
+      sawRetryableFailure: false,
+    });
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([]) // existingCandidates
+      .mockResolvedValueOnce([]); // poolSavedFull
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Pool function was called WITH the already-attached URL in the
+    // exclude set. (We mocked the function so the impl test is the
+    // unit-test layer; here we verify the route passes the right input.)
+    const poolCall = talentPoolMocks.searchTalentPoolForRole.mock.calls[0][0] as { excludeLinkedInUrls: Set<string> };
+    // The route normalises URLs before adding to the exclude set — accept
+    // either form here (with/without trailing slash) since both should
+    // collide on the same canonical key.
+    const urls = [...poolCall.excludeLinkedInUrls];
+    expect(urls.some((u) => u.includes("already-here"))).toBe(true);
+  });
+
+  it("Scenario 7 — location: Auckland pool candidate excluded from Wellington-onsite role", async () => {
+    setupBaselineMocks();
+    // Verifies the route passes job.isRemote=false to the pool function.
+    // The pool function (unit-tested separately) drops overseas candidates
+    // and applies location-fit override; the route's responsibility is
+    // simply to forward job.isRemote correctly.
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([]);
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: [], examined: 0, preRankPool: 0, shortlisted: 0, scored: 0, returned: 0,
+    });
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [],
+      sawRetryableFailure: false,
+    });
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const poolCall = talentPoolMocks.searchTalentPoolForRole.mock.calls[0][0] as {
+      job: { isRemote: boolean };
+      targetLocation: string;
+      parsedRole: { location_rules: string };
+    };
+    expect(poolCall.job.isRemote).toBe(false);
+    expect(poolCall.targetLocation).toContain("Wellington");
+    expect(poolCall.parsedRole.location_rules).toContain("Wellington");
+  });
+
+  it("Scenario 8 — specialist role: pool result with rich SCADA profile passes via Claude full-profile path", async () => {
+    setupBaselineMocks();
+    // The pool function (unit-tested separately) only returns candidates
+    // it pre-ranked + Claude-scored. Here we verify the ROUTE saves them
+    // with full Claude scoring intact (source=talent_pool, matchScore from
+    // breakdown, scoreBreakdown JSON persisted).
+    const poolResult = {
+      hit: {
+        candidateId: "scada-1",
+        name: "SCADA Sam",
+        headline: "Senior SCADA Engineer at Transpower",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/scada-sam",
+        profileText: "Senior SCADA engineer. Strong RTU and substation experience. ".repeat(40),
+        profileCapturedAt: new Date(),
+        isFresh: true,
+        matchedAnchors: ["scada", "rtu"],
+        signalDensity: 2,
+      },
+      scoreBreakdown: makeBreakdown(),
+      candidateLocation: "Wellington, New Zealand",
+    };
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([]);
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: [poolResult],
+      examined: 1, preRankPool: 1, shortlisted: 1, scored: 1, returned: 1,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 1 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
+    const upsert = dbMocks.prisma.candidate.upsert.mock.calls[0][0] as {
+      create: { source: string; matchScore: number; scoreBreakdown?: string; profileText?: string };
+    };
+    expect(upsert.create.source).toBe("talent_pool");
+    expect(upsert.create.matchScore).toBeGreaterThan(0);
+    expect(upsert.create.scoreBreakdown).toContain('"version":2');
+    expect(upsert.create.profileText).toContain("Senior SCADA engineer");
+    // LinkedIn was NOT called because pool filled maxResults.
+    expect(searchCollectionMocks.collectPagedSearchResults).not.toHaveBeenCalled();
+  });
+
+  it("Scenario 9 — URL enrichment still works: LinkedIn URL with pool match uses stored full text", async () => {
+    setupBaselineMocks();
+    // Pool profile MUST contain the role's distinctive anchors (SCADA / RTU
+    // / metering) — otherwise the source-gate filter rejects the candidate
+    // before the score loop and Claude is never called.
+    const fullProfile = "Senior SCADA engineer with strong RTU and smart metering experience across substation rollout. ".repeat(40);
+    const poolEntry = {
+      candidateId: "pool-1",
+      name: "Reuse Sam",
+      headline: "Senior SCADA Engineer",
+      location: "Wellington, New Zealand",
+      profileText: fullProfile,
+      profileCapturedAt: new Date(),
+      isFresh: true,
+    };
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])  // existingForJob
+      .mockResolvedValueOnce([])  // existingCandidates
+      .mockResolvedValueOnce([]); // poolSavedFull
+    talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
+      results: [], examined: 0, preRankPool: 0, shortlisted: 0, scored: 0, returned: 0,
+    });
+    talentPoolMocks.buildTalentPoolMap.mockResolvedValue(new Map([
+      ["https://www.linkedin.com/in/reuse-sam", poolEntry],
+      ["https://www.linkedin.com/in/reuse-sam/", poolEntry],
+    ]));
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [
+        {
+          name: "Reuse Sam",
+          headline: "Senior SCADA Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/reuse-sam/",
+          snippet: "SCADA RTU metering experience",
+          source: "serpapi",
+        },
+      ],
+      sawRetryableFailure: false,
+    });
+
+    const req = new Request("http://localhost/api/jobs/job-power/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 3 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Claude was called with the FULL pool profile text — proving URL
+    // enrichment from the existing buildTalentPoolMap path still operates.
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalled();
+    const profileTextArg = aiMocks.scoreCandidateStructured.mock.calls[0][0] as string;
+    expect(profileTextArg).toContain("Senior SCADA engineer with strong RTU");
   });
 });
 
