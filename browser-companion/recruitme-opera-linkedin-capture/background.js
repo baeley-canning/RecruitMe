@@ -117,13 +117,17 @@ async function isUnderCap() {
 // captured: Jane Smith 2 min ago" without re-fetching from the server.
 const MAX_RECENT_CAPTURES = 8;
 
-async function recordRecentCapture(candidateName, sessionId) {
+async function recordRecentCapture(candidateName, sessionId, linkedinUrl) {
   if (!candidateName) return;
   try {
     const { recentCaptures } = await chrome.storage.local.get({ recentCaptures: [] });
+    // De-dupe by both sessionId and url so a re-capture of the same profile
+    // updates instead of stacking. Storing the URL lets the on-page bubble
+    // detect "this is the profile I just captured" and show a banner.
+    const url = (linkedinUrl || "").replace(/[?#].*$/, "");
     const next = [
-      { name: candidateName, sessionId: sessionId || "", at: Date.now() },
-      ...recentCaptures.filter((r) => r?.sessionId !== sessionId),
+      { name: candidateName, sessionId: sessionId || "", linkedinUrl: url, at: Date.now() },
+      ...recentCaptures.filter((r) => r?.sessionId !== sessionId && r?.linkedinUrl !== url),
     ].slice(0, MAX_RECENT_CAPTURES);
     await chrome.storage.local.set({ recentCaptures: next });
   } catch { /* non-fatal */ }
@@ -790,7 +794,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     // Quota was already reserved at dispatch time; just schedule next.
     void scheduleNextCapture().catch(() => {});
-    void recordRecentCapture(message.candidateName, message.sessionId).catch(() => {});
+    void recordRecentCapture(message.candidateName, message.sessionId, sender.tab?.url || "").catch(() => {});
+    // Tell the content script to show the "captured ✓" banner in the
+    // overlay bubble. The content script is on the same tab as the
+    // capture so this is a direct messaging hop.
+    if (tabId) {
+      chrome.tabs.sendMessage(tabId, {
+        type: "capture-complete-banner",
+        candidateName: message.candidateName || "Profile",
+      }).catch(() => { /* tab may have closed already */ });
+    }
     void clearExtensionError().catch(() => {});
     sendResponse({ ok: true });
     return false;
@@ -844,7 +857,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         // Quota was already reserved at dispatch time; just schedule next.
         void scheduleNextCapture().catch(() => {});
-        void recordRecentCapture(candidateName, sessionId).catch(() => {});
+        void recordRecentCapture(candidateName, sessionId, linkedinUrl).catch(() => {});
+        // If the tab that owned the capture is still open, tell the content
+        // script to show the "captured ✓" banner inside the overlay bubble.
+        if (tabId) {
+          chrome.tabs.sendMessage(tabId, {
+            type: "capture-complete-banner",
+            candidateName: candidateName || "Profile",
+          }).catch(() => { /* tab may have closed already */ });
+        }
         void clearExtensionError().catch(() => {});
         sendResponse({ ok: true });
       } catch (error) {

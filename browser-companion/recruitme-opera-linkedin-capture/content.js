@@ -1328,6 +1328,14 @@ const MIN_BALL_ID = "recruitme-min-ball";
 // when the user clicks the minimised ball without re-fetching from the server.
 let lastOverlayBuilder = null;
 
+// Sticky "✓ Captured" state for the current profile — the recruiter sees
+// this both immediately after a capture finishes (via the capture-complete
+// message from the SW) and when revisiting a recently-captured profile
+// (read from chrome.storage.local on overlay render).
+let capturedBannerForUrl = "";  // url where the banner is currently active
+let capturedBannerName = "";    // candidate name to display
+let capturedBannerAt = 0;       // epoch ms when capture finished
+
 function makeDraggable(container, handle) {
   let dragging = false, startX, startY, startLeft, startTop;
   handle.style.cursor = "grab";
@@ -1454,9 +1462,114 @@ function wireMinimizeButton(container) {
   });
 }
 
+// Tell the recruiter their profile was received by the app — paints a green
+// "✓ Captured" banner at the top of the overlay bubble for ~10 minutes.
+// Idempotent: re-paints whether the bubble was open, minimised, or absent.
+function showCapturedBanner(candidateName) {
+  capturedBannerForUrl = location.href.replace(/[?#].*$/, "");
+  capturedBannerName = candidateName || "Profile";
+  capturedBannerAt = Date.now();
+  // Re-render whichever state is currently active so the banner shows.
+  if (overlayMinimized) {
+    showMinimizedBall();
+  } else if (typeof lastOverlayBuilder === "function") {
+    lastOverlayBuilder();
+  } else {
+    // No overlay rendered yet on this page — paint a standalone banner.
+    paintStandaloneCapturedBanner(candidateName);
+  }
+}
+
+function paintStandaloneCapturedBanner(candidateName) {
+  removeOverlay();
+  const container = buildOverlayShell();
+  container.innerHTML = `
+    <div style="padding:16px;text-align:center;">
+      <div style="
+        display:inline-flex;align-items:center;justify-content:center;
+        width:36px;height:36px;border-radius:50%;
+        background:#10b981;color:#fff;
+        font-size:18px;font-weight:700;
+        box-shadow:0 4px 10px rgba(16,185,129,0.30);
+        margin-bottom:8px;
+      ">✓</div>
+      <p style="margin:0;font-weight:600;color:#065f46;font-size:13px;">
+        Captured ${escapeHtml(candidateName || "profile")}
+      </p>
+      <p style="margin:4px 0 0;font-size:11px;color:#475569;">
+        Sent to RecruitMe — scoring now.
+      </p>
+    </div>
+  `;
+  document.body.appendChild(container);
+  // Auto-dismiss after 8s — recruiter has seen it, don't pollute the page.
+  setTimeout(() => {
+    if (capturedBannerForUrl === location.href.replace(/[?#].*$/, "")) {
+      removeOverlay();
+    }
+  }, 8000);
+}
+
+// Returns { name, at, fresh } if the current profile URL was captured
+// recently, otherwise null. Read from chrome.storage.local so the state
+// survives popup-close, SW restart, page navigations.
+async function getCapturedStateForCurrentProfile() {
+  // First check the in-memory banner that was just set by capture-complete.
+  const url = location.href.replace(/[?#].*$/, "");
+  if (capturedBannerForUrl === url && Date.now() - capturedBannerAt < 30 * 60_000) {
+    return { name: capturedBannerName, at: capturedBannerAt };
+  }
+  // Then check the persistent recentCaptures list.
+  return new Promise((resolve) => {
+    try {
+      chrome.storage?.local?.get?.({ recentCaptures: [] }, (s) => {
+        const match = (s?.recentCaptures || []).find((r) => r?.linkedinUrl === url);
+        if (match && Date.now() - match.at < 30 * 60_000) {
+          resolve({ name: match.name, at: match.at });
+        } else {
+          resolve(null);
+        }
+      }) ?? resolve(null);
+    } catch { resolve(null); }
+  });
+}
+
+function capturedBannerHTML(name, at) {
+  const ms = Date.now() - at;
+  const mins = Math.floor(ms / 60_000);
+  const ago = mins < 1 ? "just now" : `${mins}m ago`;
+  return `
+    <div style="
+      display:flex;align-items:center;gap:10px;
+      padding:10px 14px;
+      background:linear-gradient(135deg,#ecfdf5 0%,#d1fae5 100%);
+      border-bottom:1px solid #a7f3d0;
+      color:#065f46;
+    ">
+      <span style="
+        display:inline-flex;align-items:center;justify-content:center;
+        width:22px;height:22px;border-radius:50%;
+        background:#10b981;color:#fff;
+        font-size:12px;font-weight:700;flex-shrink:0;
+        box-shadow:0 2px 6px rgba(16,185,129,0.30);
+      ">✓</span>
+      <div style="flex:1;min-width:0;">
+        <p style="margin:0;font-weight:600;font-size:12px;color:#065f46;">
+          Sent to RecruitMe
+        </p>
+        <p style="margin:1px 0 0;font-size:11px;color:#047857;">
+          ${escapeHtml(name)} · ${ago}
+        </p>
+      </div>
+    </div>
+  `;
+}
+
 // Render the small floating ball that shows when the overlay is minimised.
 // Click anywhere on the ball (or the + icon) to expand back to the full bubble.
-function showMinimizedBall() {
+// When `capturedState` is provided, the ball is green with a ✓ to signal
+// "sent to RecruitMe" without the recruiter needing to expand it.
+function showMinimizedBall(capturedState) {
   removeOverlay();
   // Also remove any previous ball so we don't stack two.
   document.getElementById(MIN_BALL_ID)?.remove();
@@ -1465,38 +1578,50 @@ function showMinimizedBall() {
     ? `left:${overlayPos.left}px;top:${overlayPos.top}px`
     : `right:${overlayPos.right}px;bottom:${overlayPos.bottom}px`;
 
+  const captured = !!capturedState;
+  const grad = captured
+    ? "linear-gradient(135deg,#10b981 0%,#059669 100%)"
+    : "linear-gradient(135deg,#3b82f6 0%,#2563eb 100%)";
+  const shadow = captured
+    ? "0 4px 10px rgba(16,185,129,0.30), 0 8px 24px rgba(15,23,42,0.18)"
+    : "0 4px 10px rgba(37,99,235,0.30), 0 8px 24px rgba(15,23,42,0.18)";
+
   const ball = document.createElement("button");
   ball.id = MIN_BALL_ID;
   ball.type = "button";
-  ball.setAttribute("aria-label", "Expand RecruitMe overlay");
-  ball.title = "Expand RecruitMe (click +)";
+  ball.setAttribute(
+    "aria-label",
+    captured ? `Captured ${capturedState.name} — click to expand` : "Expand RecruitMe overlay",
+  );
+  ball.title = captured
+    ? `Sent to RecruitMe: ${capturedState.name}`
+    : "Expand RecruitMe (click +)";
   ball.style.cssText = `
     position:fixed;${posStyle};
     z-index:2147483647;
     width:44px;height:44px;
     border:none;border-radius:50%;cursor:pointer;
-    background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);
+    background:${grad};
     color:#fff;font-weight:700;font-size:13px;
     display:flex;align-items:center;justify-content:center;
-    box-shadow:
-      0 0 0 1px rgba(255,255,255,0.3) inset,
-      0 4px 10px rgba(37,99,235,0.30),
-      0 8px 24px rgba(15,23,42,0.18);
+    box-shadow:0 0 0 1px rgba(255,255,255,0.3) inset, ${shadow};
     transition:transform 0.15s, box-shadow 0.15s;
     animation:recruitme-pop 0.18s cubic-bezier(0.34,1.56,0.64,1) both;
   `;
-  ball.innerHTML = `
-    <span style="font-size:14px;line-height:1;">R</span>
-    <span style="
-      position:absolute;bottom:-2px;right:-2px;
-      width:18px;height:18px;border-radius:50%;
-      background:#fff;color:#2563eb;
-      display:flex;align-items:center;justify-content:center;
-      font-size:14px;font-weight:700;line-height:1;
-      box-shadow:0 2px 6px rgba(15,23,42,0.20);
-      border:1px solid #dbeafe;
-    " aria-hidden="true">+</span>
-  `;
+  ball.innerHTML = captured
+    ? `<span style="font-size:18px;line-height:1;">✓</span>`
+    : `
+      <span style="font-size:14px;line-height:1;">R</span>
+      <span style="
+        position:absolute;bottom:-2px;right:-2px;
+        width:18px;height:18px;border-radius:50%;
+        background:#fff;color:#2563eb;
+        display:flex;align-items:center;justify-content:center;
+        font-size:14px;font-weight:700;line-height:1;
+        box-shadow:0 2px 6px rgba(15,23,42,0.20);
+        border:1px solid #dbeafe;
+      " aria-hidden="true">+</span>
+    `;
   ball.onmouseover = () => { ball.style.transform = "scale(1.08)"; };
   ball.onmouseout  = () => { ball.style.transform = "scale(1)";    };
 
@@ -1737,16 +1862,24 @@ async function renderProfileMatchOverlay(linkedinUrl) {
   if (!linkedinUrl) return;
   if (lastMatchQueriedUrl === linkedinUrl) return;
   lastMatchQueriedUrl = linkedinUrl;
+
+  // Fetch capture status alongside match data so the bubble can show
+  // "Sent to RecruitMe" if this profile was captured recently.
+  const capturedPromise = getCapturedStateForCurrentProfile().catch(() => null);
+
   try {
     const res = await sendToServiceWorker({ type: "query-profile-match", linkedinUrl }, 8000);
+    const captured = await capturedPromise;
     if (!res?.ok || !res.data) {
-      // Silent failure — the overlay is opportunistic, not load-bearing
+      // No match data, but if we have a captured banner state, paint it standalone.
+      if (captured) paintStandaloneCapturedBanner(captured.name);
       return;
     }
     const data = res.data;
     const onActive = (data.onActiveJobs || []).length > 0;
-    if (!onActive && !data.inLibrary && (data.suggestedJobs || []).length === 0) {
-      // Genuinely unknown candidate — nothing actionable to show
+    const hasMatchContent = onActive || data.inLibrary || (data.suggestedJobs || []).length > 0;
+    if (!hasMatchContent && !captured) {
+      // Genuinely unknown candidate AND no recent capture — nothing to show.
       return;
     }
 
@@ -1755,10 +1888,18 @@ async function renderProfileMatchOverlay(linkedinUrl) {
     // re-querying the service worker.
     const builder = () => {
       const container = buildOverlayShell();
-      if (onActive) {
-        renderOnActiveJobs(container, data, res.serverBase);
-      } else {
-        renderSuggestedJobs(container, data, linkedinUrl, res.serverBase);
+      if (hasMatchContent) {
+        if (onActive) {
+          renderOnActiveJobs(container, data, res.serverBase);
+        } else {
+          renderSuggestedJobs(container, data, linkedinUrl, res.serverBase);
+        }
+      }
+      // Prepend the "Sent to RecruitMe" banner above whatever match content
+      // rendered, or use it as the sole content for a captured-but-unmatched
+      // profile. The recruiter immediately sees their action was received.
+      if (captured) {
+        container.insertAdjacentHTML("afterbegin", capturedBannerHTML(captured.name, captured.at));
       }
       document.body.appendChild(container);
     };
@@ -1767,12 +1908,15 @@ async function renderProfileMatchOverlay(linkedinUrl) {
     if (overlayMinimized) {
       // Recruiter previously minimised on another profile — keep the ball
       // visible rather than popping the full bubble back open.
-      showMinimizedBall();
+      showMinimizedBall(captured);
     } else {
       builder();
     }
   } catch {
-    // Silent — recruiter sees no overlay rather than an error toast
+    // Silent — recruiter sees no overlay rather than an error toast.
+    // Still paint the captured banner if we have one.
+    const captured = await capturedPromise;
+    if (captured) paintStandaloneCapturedBanner(captured.name);
   }
 }
 
@@ -1792,6 +1936,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     captureInProgressSessionId = message.sessionId || "";
     sendResponse({ ok: true, status: "started" });
     void runCaptureAndPost(message.sessionId, message.serverBase, message.linkedinUrl);
+    return false;
+  }
+
+  // Background fired this when a capture for THIS tab finished — show a
+  // green banner inside the on-page bubble so the recruiter knows the
+  // profile was received by the app.
+  if (message?.type === "capture-complete-banner") {
+    showCapturedBanner(message.candidateName);
+    sendResponse({ ok: true });
     return false;
   }
 
