@@ -12,6 +12,7 @@ import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import {
   isConfirmedOutOfAreaForLocalRole,
+  isOverseasForNzRole,
   isExplicitlyOverseasLocation,
   isNzLocation,
   isPlausibleLocation,
@@ -504,7 +505,11 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
 
     if (
       ["new", "reviewing"].includes(currentStatus) &&
-      isConfirmedOutOfAreaForLocalRole(location, parsedRole.location || job.location, parsedRole.location_rules, job.isRemote)
+      // Country-level hard reject — a confirmed-overseas candidate should
+      // never sit in the active list for a NZ-only role. City-distance
+      // (Auckland-vs-Wellington) is now scored not rejected.
+      (isOverseasForNzRole(location, job.isRemote) ||
+        isConfirmedOutOfAreaForLocalRole(location, parsedRole.location || job.location, parsedRole.location_rules, job.isRemote))
     ) {
       update.status = "rejected";
     }

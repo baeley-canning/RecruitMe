@@ -8,6 +8,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { isOverseasForNzRole } from "@/lib/location";
 
 export async function GET(
   _req: Request,
@@ -66,6 +67,11 @@ export async function POST(
     }
   }
 
+  // If the manually-added candidate is clearly overseas for a non-remote NZ
+  // role, mark them rejected on creation. The row is preserved (recruiter
+  // can recover via the pipeline), but they don't pollute the active list.
+  // Same pattern as the post-fetch enrichment path.
+  const overseas = isOverseasForNzRole(location, job.isRemote);
   const candidate = await prisma.candidate.create({
     data: {
       jobId: id,
@@ -76,7 +82,7 @@ export async function POST(
       linkedinUrl,
       profileText: body.profileText?.trim() || null,
       source: "manual",
-      status: "new",
+      status: overseas ? "rejected" : "new",
     },
   });
 

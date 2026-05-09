@@ -6,6 +6,8 @@ import {
   extractKnownLocationTargets,
   inferCandidateLocation,
   isConfirmedOutOfAreaForLocalRole,
+  isExplicitlyOverseasLocation,
+  isOverseasForNzRole,
   isPlausibleLocation,
   isRemoteFriendlyLocationRule,
   locationMatches,
@@ -144,5 +146,66 @@ describe("isPlausibleLocation", () => {
     expect(isPlausibleLocation("Porirua, Wellington, New Zealand")).toBe(true);
     expect(isPlausibleLocation("Wellington & Wairarapa, New Zealand")).toBe(true);
     expect(isPlausibleLocation("Shanghai, China")).toBe(true);
+  });
+});
+
+describe("isExplicitlyOverseasLocation — bare-city detection", () => {
+  it("catches bare Australian city names without state or country", () => {
+    // Bin Xiao class of leak: snippet-only location field, no AU/NSW marker.
+    expect(isExplicitlyOverseasLocation("Sydney")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Melbourne")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Brisbane")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Perth")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Adelaide")).toBe(true);
+  });
+
+  it("catches bare UK / Ireland / India / Asia city names", () => {
+    expect(isExplicitlyOverseasLocation("London")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Manchester")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Dublin")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Mumbai")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Bangalore")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Singapore")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Tokyo")).toBe(true);
+  });
+
+  it("still catches the explicit forms that already worked", () => {
+    expect(isExplicitlyOverseasLocation("Sydney, New South Wales, Australia")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Sydney, NSW")).toBe(true);
+    expect(isExplicitlyOverseasLocation("Pittsburgh, PA")).toBe(true);
+  });
+
+  it("does not flag NZ locations", () => {
+    expect(isExplicitlyOverseasLocation("Wellington, New Zealand")).toBe(false);
+    expect(isExplicitlyOverseasLocation("Auckland")).toBe(false);
+    expect(isExplicitlyOverseasLocation("Christchurch, Canterbury, NZ")).toBe(false);
+    expect(isExplicitlyOverseasLocation("")).toBe(false);
+  });
+});
+
+describe("isOverseasForNzRole — country gate at save sites", () => {
+  it("blocks bare-city Australian candidates on a non-remote NZ role", () => {
+    expect(isOverseasForNzRole("Sydney", false)).toBe(true);
+    expect(isOverseasForNzRole("Sydney, NSW, Australia", false)).toBe(true);
+  });
+
+  it("does not block NZ-wide candidates (loose intra-NZ — city-distance handles ranking)", () => {
+    // Auckland for a Wellington role: still in NZ, NOT a country-level reject.
+    // City-distance affects scoring, not the import gate.
+    expect(isOverseasForNzRole("Auckland, New Zealand", false)).toBe(false);
+    expect(isOverseasForNzRole("Christchurch", false)).toBe(false);
+  });
+
+  it("does not block when the role is remote", () => {
+    expect(isOverseasForNzRole("Sydney, Australia", true)).toBe(false);
+    expect(isOverseasForNzRole("London", true)).toBe(false);
+  });
+
+  it("does not block when the location is unknown", () => {
+    // Unknown stays reviewable — fetch will reveal more later, and the
+    // post-fetch enrichment path applies the gate retroactively.
+    expect(isOverseasForNzRole(null, false)).toBe(false);
+    expect(isOverseasForNzRole("", false)).toBe(false);
+    expect(isOverseasForNzRole(undefined, false)).toBe(false);
   });
 });

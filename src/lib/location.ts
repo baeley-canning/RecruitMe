@@ -164,6 +164,48 @@ export function isNzLocation(location: string): boolean {
 // Australia OR Washington); we only fire when preceded by a comma, space, or start of string.
 const US_STATE_RE = /\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WV|WI|WY|DC)\b/;
 const AU_STATE_RE = /\b(NSW|VIC|QLD|TAS|ACT|NT)\b/; // WA omitted — clashes with Washington
+
+// Cities that, when they appear in a location string with no NZ marker, almost
+// always indicate the candidate is overseas. Major centres only — adding a small
+// town can produce false positives if a NZ candidate worked there years ago and
+// the city name leaked into their location field. The list is substring-matched
+// against the normalised location, so "Sydney, NSW, Australia" and bare "Sydney"
+// both fire. Conservative on regional cities — when in doubt, leave them out.
+const OVERSEAS_CITIES = [
+  // Australia
+  "sydney", "melbourne", "brisbane", "perth", "adelaide", "canberra", "hobart",
+  "darwin", "gold coast", "wollongong", "newcastle", "geelong", "townsville",
+  "cairns", "ballarat", "bendigo", "launceston", "mackay", "rockhampton",
+  // United Kingdom + Ireland
+  "london", "manchester", "birmingham", "leeds", "glasgow", "edinburgh",
+  "liverpool", "bristol", "cardiff", "belfast", "sheffield", "newcastle upon tyne",
+  "nottingham", "leicester", "coventry", "southampton", "reading", "oxford",
+  "cambridge", "dublin", "cork", "galway", "limerick",
+  // India
+  "mumbai", "delhi", "new delhi", "bangalore", "bengaluru", "hyderabad", "chennai",
+  "kolkata", "pune", "ahmedabad", "jaipur", "lucknow", "kanpur", "nagpur", "indore",
+  "noida", "gurgaon", "gurugram", "thane",
+  // East / SE Asia (singapore + hong kong already in country markers)
+  "tokyo", "osaka", "kyoto", "yokohama", "seoul", "busan", "incheon", "beijing",
+  "shanghai", "shenzhen", "guangzhou", "chengdu", "hangzhou", "kuala lumpur",
+  "jakarta", "manila", "bangkok", "ho chi minh city", "hanoi", "taipei",
+  // Middle East
+  "dubai", "abu dhabi", "doha", "riyadh", "jeddah", "muscat", "manama",
+  "kuwait city", "tel aviv", "jerusalem",
+  // North America (also covered by US_STATE_RE / US_CITIES_RE for explicit forms,
+  // but bare city names still need entries here)
+  "toronto", "vancouver", "montreal", "calgary", "ottawa", "edmonton", "winnipeg",
+  // Europe
+  "berlin", "munich", "frankfurt", "hamburg", "paris", "lyon", "marseille",
+  "madrid", "barcelona", "valencia", "rome", "milan", "naples", "turin",
+  "amsterdam", "rotterdam", "the hague", "brussels", "antwerp", "lisbon", "porto",
+  "athens", "thessaloniki", "warsaw", "krakow", "prague", "budapest", "bucharest",
+  // South America
+  "sao paulo", "rio de janeiro", "buenos aires", "santiago", "bogota", "lima",
+  // Africa
+  "johannesburg", "cape town", "durban", "pretoria", "lagos", "abuja", "nairobi",
+  "cairo", "casablanca",
+];
 // Common US cities not covered by OVERSEAS_MARKERS
 const US_CITIES_RE = /\b(pittsburgh|philadelphia|chicago|houston|atlanta|dallas|boston|denver|seattle|miami|charlotte|raleigh|phoenix|minneapolis|portland|detroit|sacramento|austin|nashville|baltimore|st louis|new orleans|tampa|las vegas|cincinnati|cleveland|kansas city|columbus|indianapolis|louisville|memphis|san francisco|san diego|san jose|los angeles|new york|washington dc)\b/i;
 
@@ -178,9 +220,34 @@ export function isExplicitlyOverseasLocation(location: string): boolean {
     }
     return normalized.includes(normalizedMarker);
   })) return true;
+  // Bare overseas city names (e.g. "Sydney" without "Australia") — these were
+  // the silent leak path: SerpAPI/Bing snippets often only carry the city.
+  if (OVERSEAS_CITIES.some((city) => normalized.includes(city))) return true;
   // US/AU state abbreviations and known US city names in the location string
   if (US_STATE_RE.test(location) || AU_STATE_RE.test(location) || US_CITIES_RE.test(normalized)) return true;
   return false;
+}
+
+/**
+ * Hard country gate: would importing this candidate place a clearly-overseas
+ * person on a NZ-only role? Use this at every Candidate save site so an
+ * Australian / UK / Indian / etc. candidate cannot land on a Wellington (or
+ * any NZ) role unless the role is explicitly remote.
+ *
+ * Semantics:
+ *   - Remote roles → never block (anywhere is fine).
+ *   - Primary location is explicitly overseas → block.
+ *   - Otherwise → don't block. Unknown / NZ-but-distant locations are
+ *     LOOSE-passed; city-distance scoring handles ranking, not import.
+ */
+export function isOverseasForNzRole(
+  candidateLocation: string | null | undefined,
+  isRemote?: boolean,
+): boolean {
+  if (isRemote) return false;
+  const raw = candidateLocation?.trim() ?? "";
+  if (!raw) return false; // unknown — let it through, fetch will reveal more
+  return isExplicitlyOverseasLocation(raw);
 }
 
 export function isPlausibleLocation(value: string | null | undefined): boolean {

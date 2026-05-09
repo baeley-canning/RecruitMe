@@ -22,8 +22,8 @@ import {
   buildTargetLocationLabel,
   extractKnownLocationTargets,
   inferCandidateLocation,
-  isConfirmedOutOfAreaForLocalRole,
   isExplicitlyOverseasLocation,
+  isOverseasForNzRole,
   isNzLocation,
   normalizeLocationText,
 } from "@/lib/location";
@@ -996,6 +996,12 @@ async function runSearchBackground(args: {
         const poolEntry = poolMap.get(normUrl);
         const poolLoc = poolMap.get(normUrl)?.location ?? "";
         const loc = poolLoc || poolEntry?.location || r.location || "";
+        // Country gate: bare-city snippets ("Sydney" with no state/country)
+        // used to slip through because OVERSEAS_MARKERS only listed
+        // countries — OVERSEAS_CITIES (in lib/location.ts) now closes that
+        // hole. NOT scanning headline because headlines often mention past
+        // employer cities ("worked with London teams" → false positive).
+        // Post-fetch, structured location takes over via stage-2 enrichment.
         if (loc && isExplicitlyOverseasLocation(loc)) { skippedOverseas++; return false; }
         if (looksUnderqualifiedForRole(r, parsedRole)) {
           skippedSeniorityGate++;
@@ -1107,21 +1113,14 @@ async function runSearchBackground(args: {
         if (saved.length >= maxResults) break;
         const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
-        // Gate 1 — location. Drop candidates with a confirmed overseas location.
-        // We do NOT drop null-location candidates here: LinkedIn NZ search returns
-        // predominantly NZ profiles even without location metadata. If they're
-        // genuinely overseas, scoring will reflect that via location_fit = 0.
-        // Explicitly overseas locations (confirmed by isExplicitlyOverseasLocation
-        // above) are already rejected before this point.
-        if (
-          candidateLocation &&
-          isConfirmedOutOfAreaForLocalRole(
-            candidateLocation,
-            targetLocation,
-            parsedRoleForScoring.location_rules,
-            job.isRemote,
-          )
-        ) {
+        // Gate 1 — country. The pre-score filter already drops candidates
+        // whose primary location string is explicitly overseas. After
+        // scoring, `candidateLocation` may have been refined by inference
+        // (e.g. profile text revealed "Sydney") — so we re-check at the
+        // country level here. We deliberately DON'T re-apply the city-
+        // distance reject (Auckland-vs-Wellington); city distance affects
+        // ranking via location_fit, but NZ-wide candidates are kept.
+        if (candidateLocation && isOverseasForNzRole(candidateLocation, job.isRemote)) {
           skippedScore++;
           continue;
         }

@@ -19,6 +19,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getAccessibleOrgIds, candidateOrgFilter } from "@/lib/org-access";
+import { isOverseasForNzRole } from "@/lib/location";
 
 export async function GET(
   req: Request,
@@ -131,9 +132,18 @@ export async function POST(
   let added = 0;
   const failed: string[] = [];
   const unscoredIds: string[] = []; // imported but scoring failed after retry
+  const skippedOverseas: string[] = [];
 
   for (const source of sourceCandidates) {
     if (!source.profileText) continue;
+    // Country gate: never import a confirmed-overseas candidate onto a
+    // non-remote NZ role from the library picker. The previous code had
+    // location only as a scoring input here, so a Sydney candidate could be
+    // manually picked from the library and silently land on a Wellington job.
+    if (isOverseasForNzRole(source.location, job.isRemote)) {
+      skippedOverseas.push(source.id);
+      continue;
+    }
 
     // Try scoring twice — transient API failures (timeouts, 503s) are common
     // and a single retry catches most of them without significant latency.
@@ -191,5 +201,6 @@ export async function POST(
     failed,
     // Let the UI warn the recruiter when candidates imported without scores.
     unscoredIds: unscoredIds.length > 0 ? unscoredIds : undefined,
+    skippedOverseas: skippedOverseas.length > 0 ? skippedOverseas : undefined,
   });
 }

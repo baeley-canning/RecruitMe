@@ -17,8 +17,8 @@ import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { locationMatches, expandLocationKeywords, isConfirmedOutOfAreaForLocalRole } from "@/lib/location";
-import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
+import { isOverseasForNzRole } from "@/lib/location";
+import { getCityCoords, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
@@ -55,7 +55,9 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { minScore, maxResults, radiusKm, centerLat, centerLng } = parsed.data;
+  // radiusKm is accepted for back-compat with older clients but ignored —
+  // the country gate replaces the city-radius filter.
+  const { minScore, maxResults, centerLat, centerLng } = parsed.data;
 
   const { job, error } = await requireJobAccess(jobId, auth);
   if (error || !job) return error;
@@ -81,16 +83,12 @@ export async function POST(
     : null;
   const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
+  // targetLocation feeds into score-time location_fit ranking. The hard
+  // import gate is now country-only (NZ-wide), so we no longer need the
+  // pre-loop city/keyword/radius expansion that used to filter the pool.
   const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
   const targetLocation = customCenterCity?.name ?? (location || canonicalJobCity || locationSource);
-  const baseKeywords   = customCenterCity?.keywords ?? expandLocationKeywords(targetLocation);
-  const jobCoords      = getCityCoords(locationSource);
-  const searchCenter   = centerLat != null && centerLng != null
-    ? { lat: centerLat, lng: centerLng }
-    : (jobCoords ? { lat: jobCoords.lat, lng: jobCoords.lng } : null);
-  const radiusKeywords = searchCenter ? getCityKeywordsWithinRadius(searchCenter.lat, searchCenter.lng, radiusKm) : [];
-  const locationKeywords = [...new Set([...baseKeywords, ...radiusKeywords])];
 
   // 1. Collect the LinkedIn URLs already in this job so we skip duplicates.
   const existingUrls = new Set(
@@ -172,8 +170,11 @@ export async function POST(
     const row = candidates[i];
     const loc = row.location ?? "";
 
-    // Location filter (non-fatal if location unknown)
-    if (loc && locationKeywords.length > 0 && !locationMatches(loc, locationKeywords)) {
+    // Country gate: hard reject anyone clearly overseas. NZ-wide is fine —
+    // a Christchurch candidate on a Wellington role is no longer dropped at
+    // import; city-distance just affects the location_fit score for ranking.
+    if (isOverseasForNzRole(loc, job.isRemote)) {
+      skippedScore++;
       continue;
     }
 
@@ -219,12 +220,9 @@ export async function POST(
       if (minScore > 0) { skippedScore++; continue; }
     }
 
-    // Hard location cutoff: don't import talent-pool candidates who are clearly
-    // out of area for non-remote local roles.
-    if (isConfirmedOutOfAreaForLocalRole(row.location, targetLocation, parsedRole.location_rules, job.isRemote)) {
-      skippedScore++;
-      continue;
-    }
+    // City-distance reject removed (moved to a soft score only). The country
+    // gate at the top of the loop already handles overseas; an Auckland
+    // candidate on a Wellington role is now ranked low rather than dropped.
 
     // Score floor for specialist roles — same threshold as the search route uses
     // for full profiles. Pool candidates have full text so the score is reliable;
