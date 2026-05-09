@@ -9,6 +9,7 @@ import {
   X,
   Loader2,
   MessageSquare,
+  MessageCircle,
   TrendingUp,
   Minus,
   TrendingDown,
@@ -917,6 +918,27 @@ export const CandidateCard = memo(function CandidateCard({
   const [outreachOpen, setOutreachOpen] = useState(false);
   const [rejectionOpen, setRejectionOpen] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
+  const [messageState, setMessageState] = useState<"idle" | "saving" | "logged" | "error">("idle");
+  // Once-per-load: stays "logged" until the page re-fetches the candidate.
+  // Avoids accidental duplicate ContactEvents from a second click — the
+  // server doesn't de-dup, so a second click really would create a 2nd row.
+
+  const handleQuickMessage = useCallback(async () => {
+    if (messageState === "saving" || messageState === "logged") return;
+    setMessageState("saving");
+    try {
+      const res = await fetch(`/api/candidates/${candidate.id}/contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "message", jobId }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      setMessageState("logged");
+    } catch {
+      setMessageState("error");
+      setTimeout(() => setMessageState("idle"), 3000);
+    }
+  }, [candidate.id, jobId, messageState]);
 
   const matchReason = useMemo(
     () =>
@@ -1410,6 +1432,30 @@ export const CandidateCard = memo(function CandidateCard({
             <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Hired?`)) onStatusChange(candidate.id, "hired"); }} className="text-green-700 hover:bg-green-50">Hired</Button>
             <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "declined")} className="text-orange-600 hover:bg-orange-50">Declined</Button>
           </>)}
+          {/* Quick "Messaged" — logs a contact event tagged to THIS job without
+              expanding the card or advancing the pipeline. Useful when a
+              candidate scored low but actually fits. Only shown in early funnel
+              stages where messaging is the natural next action; gated on
+              linkedinUrl since "messaged about this role" presumes a channel. */}
+          {["new", "reviewing", "shortlisted", "contacted"].includes(candidate.status) && candidate.linkedinUrl && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleQuickMessage}
+              disabled={messageState === "saving" || messageState === "logged"}
+              className={
+                messageState === "logged" ? "text-emerald-600 hover:bg-emerald-50"
+                : messageState === "error" ? "text-red-600 hover:bg-red-50"
+                : "text-blue-600 hover:bg-blue-50"
+              }
+              title="Log that you messaged this candidate about this role"
+            >
+              {messageState === "saving"
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <MessageCircle className="w-3.5 h-3.5" />}
+              {messageState === "logged" ? "Logged" : messageState === "error" ? "Failed" : "Messaged"}
+            </Button>
+          )}
           {/* Back step */}
           {PIPELINE_BACK[candidate.status] && (() => {
             const a = PIPELINE_BACK[candidate.status];
