@@ -686,7 +686,11 @@ export default function JobDetailPage({
     if (fetchQueueRef.current.includes(candidateId)) return;
     setFetchPanelDismissed(false); // show panel when a new fetch starts
 
-    // If at capacity, add to queue
+    // If at capacity, queue without opening a tab. With MAX_CONCURRENT_FETCHES=1
+    // and the rate-pacing in the extension, opening a tab per click would dump
+    // a stack of LinkedIn tabs at the user — the same fingerprint the jitter
+    // logic exists to avoid. Queued items won't get a tab until the user re-
+    // triggers them (clicks Fetch again after the first one completes).
     if (activeFetchesRef.current.size >= MAX_CONCURRENT_FETCHES) {
       const pos = fetchQueueRef.current.length + 1;
       fetchQueueRef.current.push(candidateId);
@@ -696,7 +700,11 @@ export default function JobDetailPage({
       }));
       return;
     }
-    // Slot free — start immediately
+
+    // Slot free — open the LinkedIn profile synchronously, inside the user
+    // gesture, so Chrome opens a tab in the current window (not a popup or
+    // separate window). Any await before this call would forfeit the gesture.
+    window.open(candidate.linkedinUrl, "_blank", "noopener,noreferrer");
     startFetchRef.current(candidateId);
   }, [job]);  // eslint-disable-line react-hooks/exhaustive-deps
 

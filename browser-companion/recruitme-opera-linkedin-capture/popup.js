@@ -123,7 +123,27 @@ async function refreshAutoCaptureCard() {
 async function refreshPendingStatus() {
   try {
     const response = await sendMessage({ type: "get-session" });
-    const session  = response.session;
+    // The server returns an array of visible sessions (one per active fetch).
+    // Pick the one whose linkedinUrl matches the current LinkedIn tab — that's
+    // the one the manual-capture button will actually act on.
+    const data = response.session;
+    const sessions = Array.isArray(data) ? data : data ? [data] : [];
+
+    let session = null;
+    if (sessions.length > 0) {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabUrl = tab?.url || "";
+        if (tabUrl.includes("linkedin.com/in/")) {
+          // Strip query/hash for comparison; the server records the canonical url.
+          const norm = (u) => (u || "").split("?")[0].split("#")[0].replace(/\/+$/, "");
+          const normTab = norm(tabUrl);
+          session = sessions.find((s) => norm(s.linkedinUrl) === normTab) || null;
+        }
+      } catch { /* fall back to first */ }
+      // Prefer a pending session if no tab match — that's what's actionable.
+      if (!session) session = sessions.find((s) => s.status === "pending") || sessions[0];
+    }
 
     if (!session) {
       setStatus(pendingStatus, "No pending RecruitMe fetch.");

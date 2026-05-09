@@ -152,40 +152,6 @@ async function resumeAutoCapture() {
   await clearExtensionError().catch(() => {});
 }
 
-// ─── Dedicated scraper window ─────────────────────────────────────────────
-// Auto-capture opens profiles in a separate Chrome window so they don't
-// steal focus from the user's main window. The window is reused across
-// captures within the same browser session.
-async function getOrCreateScraperWindow() {
-  const { scraperWindowId } = await chrome.storage.local.get({ scraperWindowId: 0 });
-  if (scraperWindowId) {
-    try {
-      const win = await chrome.windows.get(scraperWindowId);
-      // LinkedIn lazy-loading needs viewport > 0; minimised tabs return innerHeight=0,
-      // so un-minimise (without focusing) before we hand the window off to the capture.
-      if (win.state === "minimized") {
-        await chrome.windows.update(scraperWindowId, { state: "normal" });
-        await sleep(400);
-      }
-      return scraperWindowId;
-    } catch {
-      // Window was closed by the user — clear the stale ID before recreating
-      // so a subsequent failure doesn't keep hitting the same dead handle.
-      await chrome.storage.local.set({ scraperWindowId: 0 });
-    }
-  }
-  const win = await chrome.windows.create({
-    url: "about:blank",
-    type: "normal",
-    state: "normal",
-    focused: false,
-    width: 1280,
-    height: 900,
-  });
-  if (win?.id) await chrome.storage.local.set({ scraperWindowId: win.id });
-  return win?.id ?? null;
-}
-
 // Build a Basic Authorization header from stored credentials, or return null.
 async function getBasicAuthHeader() {
   const { extUsername, extPassword } = await getStoredSettings();
@@ -431,19 +397,47 @@ async function findLinkedInProfileTab(linkedinUrl) {
   const targetUrl = normaliseLinkedInUrl(linkedinUrl);
   if (!targetUrl) return null;
 
-  const tabs = await chrome.tabs.query({ url: ["https://www.linkedin.com/in/*"] });
-  const matchingTabs = tabs.filter((tab) => linkedInProfileMatches(tab.url || "", targetUrl));
-  return matchingTabs.find((tab) => isRootLinkedInProfile(tab.url || "")) || matchingTabs[0] || null;
+  // Query LinkedIn tabs by URL, plus any tabs currently loading (status filter
+  // is widely supported; about:blank as a tabs.query URL pattern is not). For
+  // the loading set we match pendingUrl, restricted to tabs whose own url is
+  // still empty/about:blank so we don't grab a tab the user has navigated
+  // away from but whose pendingUrl is briefly stale.
+  const [linkedinTabs, loadingTabs] = await Promise.all([
+    chrome.tabs.query({ url: ["https://www.linkedin.com/in/*"] }),
+    chrome.tabs.query({ status: "loading" }),
+  ]);
+  const candidates = [
+    ...linkedinTabs.filter((tab) => linkedInProfileMatches(tab.url || "", targetUrl)),
+    ...loadingTabs.filter((tab) => {
+      const url = tab.url || "";
+      const isFresh = !url || url === "about:blank";
+      return isFresh && linkedInProfileMatches(tab.pendingUrl || "", targetUrl);
+    }),
+  ];
+  return (
+    candidates.find((tab) => isRootLinkedInProfile(tab.url || tab.pendingUrl || "")) ||
+    candidates[0] ||
+    null
+  );
 }
 
 async function openPendingProfileTab(linkedinUrl) {
-  // Open in a dedicated scraper window so the new tab doesn't steal focus
-  // from the user's main window. active: true is required within that
-  // window so LinkedIn's IntersectionObserver fires (innerHeight > 0);
-  // the user's main window remains the OS-focused one.
-  const windowId = await getOrCreateScraperWindow();
+  // Race guard: the app's window.open propagation to the tabs API can lag
+  // 100–300ms. If the alarm fires in that gap we'd open a duplicate. Sleep
+  // briefly and re-check before creating; if the user's tab has appeared,
+  // adopt it instead of creating a second one.
+  await sleep(400);
+  const existing = await findLinkedInProfileTab(linkedinUrl);
+  if (existing?.id) return existing.id;
+
+  // Open as a regular new tab in the user's last-focused normal window
+  // (not a separate Chrome window). active: true is required so LinkedIn's
+  // IntersectionObserver fires (innerHeight > 0).
   const opts = { url: linkedinUrl, active: true };
-  if (windowId) opts.windowId = windowId;
+  try {
+    const lastFocused = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    if (lastFocused?.id) opts.windowId = lastFocused.id;
+  } catch { /* fall through to default window */ }
   const created = await chrome.tabs.create(opts);
   const tabId = created?.id ?? null;
   if (tabId) autoOpenedTabs.add(tabId);
@@ -1186,6 +1180,9 @@ chrome.runtime.onInstalled.addListener(() => {
   void clearExtensionError().catch(() => {});
   void maybeKickAutoCapture();
   void checkForExtensionUpdate().catch(() => {});
+  // Drop stale scraperWindowId from <=1.4.15 installs that used a dedicated
+  // capture window. The key is no longer read; clearing it is just hygiene.
+  void chrome.storage.local.remove(["scraperWindowId"]).catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
