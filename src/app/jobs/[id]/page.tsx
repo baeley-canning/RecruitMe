@@ -279,19 +279,25 @@ export default function JobDetailPage({
     void (async () => {
       const res = await fetch(`/api/extension/fetch-session?jobId=${encodeURIComponent(id)}`, { credentials: "include" }).catch(() => null);
       if (!res?.ok) return;
-      const data = await res.json().catch(() => null) as { sessions?: Array<{ sessionId: string; candidateId: string; status: string; message?: string }> } | null;
+      const data = await res.json().catch(() => null) as {
+        sessions?: Array<{ sessionId: string; candidateId: string; status: string; message?: string; updatedAt?: string; createdAt?: string }>;
+      } | null;
       if (!data?.sessions) return;
       for (const s of data.sessions) {
         if (!s.candidateId || activeFetchesRef.current.has(s.candidateId)) continue;
         if (s.status !== "pending" && s.status !== "processing") continue;
-        // Treat resumed sessions as ~1 min old so the timeout fires quickly
-        // if the capture is already stale.
-        const resumedAt = Date.now() - 60_000;
+        // Use the SESSION's actual createdAt / updatedAt so the timeout is
+        // anchored to when the server transitioned states, not when the
+        // recruiter's tab happens to mount. Otherwise a session that's been
+        // in "processing" for 4 min server-side gets a fresh 5-min timeout
+        // every time the page reloads.
+        const serverCreatedAt = s.createdAt ? new Date(s.createdAt).getTime() : Date.now() - 60_000;
+        const serverUpdatedAt = s.updatedAt ? new Date(s.updatedAt).getTime() : serverCreatedAt;
         const entry = {
           sessionId: s.sessionId,
           candidateId: s.candidateId,
-          startedAt: resumedAt,
-          processingStartedAt: s.status === "processing" ? resumedAt : null,
+          startedAt: serverCreatedAt,
+          processingStartedAt: s.status === "processing" ? serverUpdatedAt : null,
           lastKnownStatus: s.status as "pending" | "processing",
           done: false,
           pollInterval: null as ReturnType<typeof setInterval> | null,
@@ -300,7 +306,7 @@ export default function JobDetailPage({
         activeFetchesRef.current.set(s.candidateId, entry);
         setFetchStatuses((prev) => ({
           ...prev,
-          [s.candidateId]: { state: "waiting", message: s.message ?? "Capture still running — resumed tracking", startedAt: resumedAt },
+          [s.candidateId]: { state: "waiting", message: s.message ?? "Capture still running — resumed tracking", startedAt: serverCreatedAt },
         }));
         entry.pollInterval = setInterval(() => {
           void pollCandidateFetchRef.current(s.candidateId);

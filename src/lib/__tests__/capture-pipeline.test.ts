@@ -1,0 +1,264 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mocks for the two-stage capture pipeline. Stage 1 must never call AI;
+// stage 2 must respect the profileTextHash concurrency gate.
+
+const dbMocks = vi.hoisted(() => ({
+  prisma: {
+    job: { findUnique: vi.fn() },
+    candidate: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findMany: vi.fn(),
+      create: vi.fn(),
+    },
+  },
+  Prisma: {
+    PrismaClientKnownRequestError: class extends Error {
+      code = "";
+      constructor(msg: string, code: string) { super(msg); this.code = code; }
+    },
+  },
+}));
+
+const aiMocks = vi.hoisted(() => ({
+  scoreCandidateStructured: vi.fn(),
+  predictAcceptance: vi.fn(),
+  extractCandidateInfo: vi.fn(),
+}));
+
+const scoringConfigMocks = vi.hoisted(() => ({
+  getJobScoringWeights: vi.fn().mockResolvedValue({
+    must_have: 0.36, skill_fit: 0.22, location_fit: 0.08, seniority_fit: 0.10,
+    title_fit: 0.08, domain_fit: 0.10, nice_to_have_fit: 0.06,
+  }),
+}));
+
+vi.mock("@/lib/db", () => dbMocks);
+vi.mock("@prisma/client", () => ({ Prisma: dbMocks.Prisma }));
+vi.mock("@/lib/ai", async (importActual) => {
+  const actual = await importActual() as object;
+  return { ...actual, ...aiMocks };
+});
+vi.mock("@/lib/scoring-config", async (importActual) => {
+  const actual = await importActual() as object;
+  return { ...actual, ...scoringConfigMocks };
+});
+
+import {
+  saveCapturedProfileFast,
+  applyAiEnrichmentInBackground,
+} from "../linkedin-capture";
+
+const PROFILE_TEXT = "Pat Lee\nSenior Software Engineer at Acme Corp\nAbout\nTen years of full-stack development. Strong distributed systems background. Wellington, New Zealand. Built and shipped a microservice platform handling 50k tps with React, TypeScript, Postgres.";
+
+const baseJob = {
+  id: "job-1",
+  orgId: "org-1",
+  parsedRole: JSON.stringify({
+    title: "Senior Engineer",
+    location: "Wellington",
+    must_haves: ["distributed systems"],
+    nice_to_haves: [],
+    skills_required: [],
+    skills_preferred: [],
+  }),
+  scoringWeights: null,
+  salaryMin: null,
+  salaryMax: null,
+  isRemote: false,
+  location: "Wellington",
+};
+
+describe("saveCapturedProfileFast (stage 1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.prisma.job.findUnique.mockResolvedValue(baseJob);
+    dbMocks.prisma.candidate.findUnique.mockResolvedValue({
+      id: "cand-1",
+      jobId: "job-1",
+      name: "Unknown",
+      headline: null,
+      location: null,
+      profileText: null,
+    });
+    dbMocks.prisma.candidate.update.mockImplementation(({ data }) =>
+      Promise.resolve({ id: "cand-1", ...data }),
+    );
+  });
+
+  afterEach(() => {
+    // Stage 1 must NEVER call any AI function — that's the whole point
+    // of the split. If any of these were called, the test fails.
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+    expect(aiMocks.predictAcceptance).not.toHaveBeenCalled();
+    expect(aiMocks.extractCandidateInfo).not.toHaveBeenCalled();
+  });
+
+  it("persists profileText synchronously without invoking AI", async () => {
+    const { candidate, identity } = await saveCapturedProfileFast({
+      jobId: "job-1",
+      candidateId: "cand-1",
+      profileText: PROFILE_TEXT,
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+    });
+
+    expect(candidate.id).toBe("cand-1");
+    expect(identity.profileTextHash).toBeTruthy();   // computed eagerly
+    expect(identity.profileUnchanged).toBe(false);
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-1" },
+        data: expect.objectContaining({
+          profileText: expect.stringContaining("Pat Lee"),
+          source: "extension",
+          // Stage 1 should clear stale score fields when the profile changed.
+          matchScore: null,
+          scoreBreakdown: null,
+          // profileTextHash is set in stage 1 (concurrency token for stage 2).
+          profileTextHash: expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("rejects profile text under the minimum length", async () => {
+    await expect(
+      saveCapturedProfileFast({
+        jobId: "job-1",
+        candidateId: "cand-1",
+        profileText: "too short",
+        linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      }),
+    ).rejects.toThrow(/enough usable profile text/);
+  });
+
+  it("returns candidate even when the linkedinUrl collides with another candidate (P2002)", async () => {
+    const collision = new dbMocks.Prisma.PrismaClientKnownRequestError("dup url", "P2002");
+    dbMocks.prisma.candidate.update
+      .mockRejectedValueOnce(collision)
+      .mockImplementationOnce(({ data }) =>
+        Promise.resolve({ id: "cand-1", ...data }),
+      );
+
+    const { candidate } = await saveCapturedProfileFast({
+      jobId: "job-1",
+      candidateId: "cand-1",
+      profileText: PROFILE_TEXT,
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+    });
+
+    expect(candidate.id).toBe("cand-1");
+    // Second call should NOT include linkedinUrl.
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(2);
+    const [, secondCall] = dbMocks.prisma.candidate.update.mock.calls;
+    expect((secondCall[0] as { data: Record<string, unknown> }).data.linkedinUrl).toBeUndefined();
+  });
+});
+
+describe("applyAiEnrichmentInBackground (stage 2 — concurrency gate)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    aiMocks.scoreCandidateStructured.mockResolvedValue({
+      overall: 78,
+      categories: {
+        skill_fit:        { score: 80, weight: 0.22, evidence: "Distributed systems experience confirmed" },
+        location_fit:     { score: 95, weight: 0.08, evidence: "Wellington" },
+        seniority_fit:    { score: 75, weight: 0.10, evidence: "Senior" },
+        title_fit:        { score: 85, weight: 0.08, evidence: "Senior engineer match" },
+        domain_fit:       { score: 70, weight: 0.10, evidence: "Strong" },
+        nice_to_have_fit: { score: 60, weight: 0.06, evidence: "" },
+      },
+      must_have_coverage: [{ requirement: "distributed systems", status: "confirmed", evidence: "Built microservice platform handling 50k tps" }],
+      nice_to_have_coverage: [],
+      reasons_for: ["distributed systems"],
+      reasons_against: [],
+      recruiter_summary: "Strong fit",
+      confidence: { level: "high", score: 80, reasons: [] },
+      confidence_label: "high",
+      data_quality: "full_profile",
+      must_have_pct: 100,
+    });
+    aiMocks.predictAcceptance.mockResolvedValue({
+      score: 70, likelihood: "medium", headline: "May consider", signals: [], summary: "Open",
+    });
+    aiMocks.extractCandidateInfo.mockResolvedValue({ name: "Pat Lee", headline: "Senior Software Engineer", location: "Wellington" });
+  });
+
+  it("applies the score update when profileTextHash matches (no race)", async () => {
+    dbMocks.prisma.candidate.updateMany.mockResolvedValue({ count: 1 });
+    const result = await applyAiEnrichmentInBackground("cand-1", {
+      cleanedProfileText: PROFILE_TEXT,
+      name: "Pat Lee", headline: null, location: null,
+      hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
+      orgId: "org-1",
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      profileCapturedAt: new Date(),
+      profileTextHash: "hash-1",
+      profileUnchanged: false,
+      job: baseJob as unknown as Awaited<ReturnType<typeof dbMocks.prisma.job.findUnique>>,
+      parsedRole: JSON.parse(baseJob.parsedRole),
+      salary: null,
+      weights: { must_have: 0.36, skill_fit: 0.22, location_fit: 0.08, seniority_fit: 0.10, title_fit: 0.08, domain_fit: 0.10, nice_to_have_fit: 0.06 },
+    });
+
+    expect(result.applied).toBe(true);
+    expect(dbMocks.prisma.candidate.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-1", profileTextHash: "hash-1" },
+        data: expect.objectContaining({
+          matchScore: expect.any(Number),
+        }),
+      }),
+    );
+  });
+
+  it("skips silently when profileTextHash has changed (race lost — recruiter re-scored manually)", async () => {
+    // Simulates: between stage 1 and stage 2, recruiter manually re-scored
+    // the candidate, which bumped profileTextHash to a different value.
+    dbMocks.prisma.candidate.updateMany.mockResolvedValue({ count: 0 });
+    const result = await applyAiEnrichmentInBackground("cand-1", {
+      cleanedProfileText: PROFILE_TEXT,
+      name: "Pat Lee", headline: null, location: null,
+      hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
+      orgId: "org-1",
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      profileCapturedAt: new Date(),
+      profileTextHash: "hash-1-stale",
+      profileUnchanged: false,
+      job: baseJob as unknown as Awaited<ReturnType<typeof dbMocks.prisma.job.findUnique>>,
+      parsedRole: JSON.parse(baseJob.parsedRole),
+      salary: null,
+      weights: { must_have: 0.36, skill_fit: 0.22, location_fit: 0.08, seniority_fit: 0.10, title_fit: 0.08, domain_fit: 0.10, nice_to_have_fit: 0.06 },
+    });
+
+    expect(result.applied).toBe(false);
+    // updateMany was called but matched 0 rows due to hash mismatch.
+    expect(dbMocks.prisma.candidate.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-op when profileUnchanged (stale-skip optimization preserved)", async () => {
+    const result = await applyAiEnrichmentInBackground("cand-1", {
+      cleanedProfileText: PROFILE_TEXT,
+      name: "Pat Lee", headline: null, location: null,
+      hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
+      orgId: "org-1",
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      profileCapturedAt: new Date(),
+      profileTextHash: "hash-1",
+      profileUnchanged: true, // ← short-circuit
+      job: baseJob as unknown as Awaited<ReturnType<typeof dbMocks.prisma.job.findUnique>>,
+      parsedRole: JSON.parse(baseJob.parsedRole),
+      salary: null,
+      weights: { must_have: 0.36, skill_fit: 0.22, location_fit: 0.08, seniority_fit: 0.10, title_fit: 0.08, domain_fit: 0.10, nice_to_have_fit: 0.06 },
+    });
+
+    expect(result.applied).toBe(false);
+    // No AI calls, no DB write.
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+    expect(aiMocks.predictAcceptance).not.toHaveBeenCalled();
+    expect(dbMocks.prisma.candidate.updateMany).not.toHaveBeenCalled();
+  });
+});

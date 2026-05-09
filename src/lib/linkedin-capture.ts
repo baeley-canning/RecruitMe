@@ -288,7 +288,43 @@ function buildAcceptanceData(acceptance: Awaited<ReturnType<typeof predictAccept
   };
 }
 
-async function buildCapturedCandidateData(args: {
+// ─── Two-stage capture pipeline ────────────────────────────────────────────
+//
+// Stage 1 (sync, no AI):   buildIdentityData → save profileText + regex-
+//                          extracted name/headline/location + computed
+//                          profileTextHash. ~50ms.
+//
+// Stage 2 (async, AI):     runAiEnrichment → run extractCandidateInfo +
+//                          scoreCandidateStructured + predictAcceptance,
+//                          patch the same row using profileTextHash as a
+//                          concurrency token. ~5–30s.
+//
+// The split exists so the candidate appears as "captured" within ~1 second of
+// the extension POSTing, instead of after AI scoring lands. If the recruiter
+// closes the page mid-capture and returns later, the candidate is already
+// shown as captured because Stage 1 persisted it before the response was sent.
+
+interface IdentityData {
+  cleanedProfileText: string;
+  name: string;
+  headline: string | null;
+  location: string | null;
+  hasDirectName: boolean;
+  hasDirectHeadline: boolean;
+  hasDirectLocation: boolean;
+  orgId: string | null;
+  linkedinUrl: string;
+  profileCapturedAt: Date;
+  profileTextHash: string | null;
+  profileUnchanged: boolean;
+  // Cached for stage 2 so it doesn't have to re-fetch.
+  job: NonNullable<Awaited<ReturnType<typeof prisma.job.findUnique>>>;
+  parsedRole: ParsedRole | null;
+  salary: { min: number; max: number } | null;
+  weights: Awaited<ReturnType<typeof getJobScoringWeights>>;
+}
+
+async function buildIdentityData(args: {
   jobId: string;
   currentName: string;
   currentHeadline: string | null;
@@ -296,7 +332,7 @@ async function buildCapturedCandidateData(args: {
   currentProfileText: string | null;
   profileText: string;
   linkedinUrl: string;
-}) {
+}): Promise<IdentityData> {
   const { jobId, currentName, currentHeadline, currentLocation, currentProfileText, profileText, linkedinUrl } = args;
   const cleanedProfileText = sanitizeCapturedLinkedInText(profileText);
   if (cleanedProfileText.length < 200) {
@@ -309,7 +345,7 @@ async function buildCapturedCandidateData(args: {
   }
 
   // If the new profile is very similar to the stored one, skip the expensive
-  // extractCandidateInfo and predictAcceptance calls (saves ~2/3 of AI spend).
+  // AI calls in stage 2 (saves ~2/3 of AI spend — the existing score is still valid).
   const profileUnchanged =
     !!currentProfileText &&
     isProfileUnchanged(sanitizeCapturedLinkedInText(currentProfileText), cleanedProfileText);
@@ -322,9 +358,6 @@ async function buildCapturedCandidateData(args: {
   if (extracted.name) name = extracted.name;
   if (extracted.headline) headline = extracted.headline;
   if (extracted.location) location = extracted.location;
-  const hasDirectName = Boolean(extracted.name);
-  const hasDirectHeadline = Boolean(extracted.headline);
-  const hasDirectLocation = Boolean(extracted.location);
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   const salary =
@@ -333,88 +366,176 @@ async function buildCapturedCandidateData(args: {
       : null;
   const weights = await getJobScoringWeights(job.scoringWeights, job.orgId);
 
-  // Run all three AI calls concurrently — they are independent of each other.
-  // When the profile is unchanged we skip scoring too (saves AI spend — the
-  // existing score was computed against the same text and remains valid).
-  const [info, rawBreakdown, acceptance] = await Promise.all([
-    !profileUnchanged
-      ? extractCandidateInfo(cleanedProfileText).catch(() => null)
-      : Promise.resolve(null),
-    !profileUnchanged && parsedRole
-      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch(() => null)
-      : Promise.resolve(null),
-    !profileUnchanged && cleanedProfileText.length >= 250 && parsedRole
-      ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch(() => null)
-      : Promise.resolve(null),
-  ]);
-
-  if (info) {
-    if (!hasDirectName && info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
-    if (!hasDirectHeadline && info.headline && info.headline.length > 2) headline = info.headline;
-    if (!hasDirectLocation && info.location && info.location.length > 2) location = info.location;
-  }
-
-  // When profileUnchanged the existing score in the DB is still valid — don't
-  // overwrite it with nulls. Only clear scores when we have new profile text
-  // but the AI scoring call hasn't run yet (e.g. no parsedRole).
-  const scoreData: Record<string, unknown> = profileUnchanged
-    ? {}
-    : {
-        profileTextHash: null,
-        matchScore: null,
-        matchReason: null,
-        scoreBreakdown: null,
-        acceptanceScore: null,
-        acceptanceReason: null,
-      };
-
-  if (parsedRole) {
-    if (rawBreakdown) {
-      // location is finalised above before applyLocationFitOverride runs.
-      const breakdown = applyLocationFitOverride(
-        rawBreakdown,
-        location,
-        parsedRole.location,
-        parsedRole.location_rules,
-        job.isRemote,
-        weights,
-      );
-      Object.assign(scoreData, deriveUpdateData(breakdown));
-      scoreData.profileTextHash = buildScoreCacheKey({
+  // Compute profileTextHash NOW (in stage 1) — it's a deterministic hash
+  // with no AI calls. Storing it eagerly means stage 2 can use it as the
+  // concurrency token for its conditional update; if a faster path lands
+  // a manual re-score in between, stage 2 detects the hash change and
+  // skips silently rather than clobbering the newer data.
+  const profileTextHash = parsedRole
+    ? buildScoreCacheKey({
         profileText: cleanedProfileText,
         parsedRole,
         salary,
         jobLocation: job.location,
         isRemote: job.isRemote,
         weights,
-      });
-    } else {
-      scoreData.profileTextHash = null;
-    }
-    if (acceptance) {
-      Object.assign(scoreData, buildAcceptanceData(acceptance));
-    }
-  }
+      })
+    : null;
 
   return {
+    cleanedProfileText,
     name,
     headline,
     location,
+    hasDirectName: Boolean(extracted.name),
+    hasDirectHeadline: Boolean(extracted.headline),
+    hasDirectLocation: Boolean(extracted.location),
     orgId: job.orgId ?? null,
     linkedinUrl: normaliseLinkedInUrl(linkedinUrl),
-    profileText: cleanedProfileText,
     profileCapturedAt: new Date(),
-    ...scoreData,
+    profileTextHash,
+    profileUnchanged,
+    job,
+    parsedRole,
+    salary,
+    weights,
   };
 }
 
-export async function saveCapturedProfileToCandidate(args: {
+// Stage 1 DB write payload — everything we know without calling Claude.
+function identityToCandidateUpdate(identity: IdentityData) {
+  // When the profile is unchanged we DON'T clear score fields — the existing
+  // score was computed against the same text and remains valid. When changed,
+  // clear stale score fields so the candidate card shows "captured but not
+  // yet scored" until stage 2 lands.
+  // Note: provisionalScore is intentionally preserved (schema-documented as
+  // "never overwritten" — it's the historical snippet-time score for delta
+  // computation). fetchPriority* fields are cleared because they were a
+  // pre-fetch ranking that no longer applies once we have a full profile.
+  const scoreClears: Record<string, unknown> = identity.profileUnchanged
+    ? {}
+    : {
+        matchScore: null,
+        matchReason: null,
+        scoreBreakdown: null,
+        acceptanceScore: null,
+        acceptanceReason: null,
+        fetchPriorityScore: null,
+        fetchPriorityReason: null,
+      };
+  return {
+    name: identity.name,
+    headline: identity.headline,
+    location: identity.location,
+    orgId: identity.orgId,
+    linkedinUrl: identity.linkedinUrl,
+    profileText: identity.cleanedProfileText,
+    profileCapturedAt: identity.profileCapturedAt,
+    profileTextHash: identity.profileTextHash,
+    ...scoreClears,
+  };
+}
+
+// Stage 2 — three Claude calls in parallel, returns the field updates.
+// Returns null if all AI calls fail (DB write becomes a no-op).
+async function runAiEnrichment(identity: IdentityData): Promise<Record<string, unknown> | null> {
+  const { cleanedProfileText, parsedRole, salary, weights, job, profileUnchanged } = identity;
+
+  if (profileUnchanged) {
+    // Existing score is still valid — nothing to do in stage 2.
+    return null;
+  }
+
+  const [info, rawBreakdown, acceptance] = await Promise.all([
+    extractCandidateInfo(cleanedProfileText).catch(() => null),
+    parsedRole
+      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch(() => null)
+      : Promise.resolve(null),
+    cleanedProfileText.length >= 250 && parsedRole
+      ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  // Refine identity ONLY where stage 1's regex extraction left a field null.
+  // If the recruiter manually edited a field between stage 1 and stage 2,
+  // we don't clobber — the conditional update below is keyed on
+  // profileTextHash, so a manual edit that changes the text invalidates this.
+  let name = identity.name;
+  let headline = identity.headline;
+  let location = identity.location;
+  if (info) {
+    if (!identity.hasDirectName && info.name && info.name !== "Unknown" && info.name.length > 2) name = info.name;
+    if (!identity.hasDirectHeadline && info.headline && info.headline.length > 2) headline = info.headline;
+    if (!identity.hasDirectLocation && info.location && info.location.length > 2) location = info.location;
+  }
+
+  const update: Record<string, unknown> = {};
+  if (name     !== identity.name)     update.name = name;
+  if (headline !== identity.headline) update.headline = headline;
+  if (location !== identity.location) update.location = location;
+
+  if (rawBreakdown && parsedRole) {
+    const breakdown = applyLocationFitOverride(
+      rawBreakdown,
+      location,
+      parsedRole.location,
+      parsedRole.location_rules,
+      job.isRemote,
+      weights,
+    );
+    Object.assign(update, deriveUpdateData(breakdown));
+  }
+  if (acceptance) {
+    Object.assign(update, buildAcceptanceData(acceptance));
+  }
+
+  return Object.keys(update).length > 0 ? update : null;
+}
+
+// Apply stage 2 results to the candidate row, gated on profileTextHash so a
+// concurrent edit doesn't get clobbered. Returns true if the write applied,
+// false if the hash mismatched (a fresher edit landed first).
+async function applyAiEnrichment(
+  candidateId: string,
+  expectedHash: string | null,
+  update: Record<string, unknown>,
+): Promise<boolean> {
+  const result = await prisma.candidate.updateMany({
+    where: { id: candidateId, profileTextHash: expectedHash },
+    data: update,
+  });
+  return result.count > 0;
+}
+
+// Backwards-compat wrapper — runs stage 1 + stage 2 sequentially and returns
+// the final candidate row. Kept for tests and any caller that expects
+// "save everything in one go". The hot path (the /complete route) calls
+// the two stages explicitly so it can return 202 between them.
+async function buildCapturedCandidateData(args: {
+  jobId: string;
+  currentName: string;
+  currentHeadline: string | null;
+  currentLocation: string | null;
+  currentProfileText: string | null;
+  profileText: string;
+  linkedinUrl: string;
+}) {
+  const identity = await buildIdentityData(args);
+  const stage1 = identityToCandidateUpdate(identity);
+  const stage2 = await runAiEnrichment(identity);
+  return { ...stage1, ...(stage2 ?? {}) };
+}
+
+// Stage 1 of saveCapturedProfileToCandidate — does the fast persist (no AI).
+// Returns the candidate row + profileTextHash so the caller can pass that to
+// applyAiEnrichmentInBackground as the concurrency token for stage 2.
+export async function saveCapturedProfileFast(args: {
   jobId: string;
   candidateId: string;
   profileText: string;
   linkedinUrl: string;
   captureMeta?: unknown;
-}) {
+}): Promise<{ candidate: NonNullable<Awaited<ReturnType<typeof prisma.candidate.findUnique>>>; identity: IdentityData; }> {
   const { jobId, candidateId, profileText, linkedinUrl, captureMeta } = args;
 
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
@@ -422,7 +543,7 @@ export async function saveCapturedProfileToCandidate(args: {
     throw new Error("Candidate not found");
   }
 
-  const data = await buildCapturedCandidateData({
+  const identity = await buildIdentityData({
     jobId,
     currentName: candidate.name,
     currentHeadline: candidate.headline,
@@ -432,52 +553,76 @@ export async function saveCapturedProfileToCandidate(args: {
     linkedinUrl,
   });
 
-  // Same shape + cap as importCapturedLinkedInProfile so both paths surface
-  // the same proof structure on the candidate row.
   const captureMetadata = captureMeta != null
     ? JSON.stringify(captureMeta).slice(0, 8000)
     : undefined;
 
+  const baseUpdate = {
+    ...identityToCandidateUpdate(identity),
+    source: "extension",
+    ...(captureMetadata !== undefined ? { captureMetadata } : {}),
+  };
+
+  let updated;
   try {
-    return await prisma.candidate.update({
-      where: { id: candidateId },
-      data: {
-        ...data,
-        source: "extension",
-        ...(captureMetadata !== undefined ? { captureMetadata } : {}),
-      },
-    });
+    updated = await prisma.candidate.update({ where: { id: candidateId }, data: baseUpdate });
   } catch (err) {
-    // Another candidate in this job already has the same LinkedIn URL.
-    // Save everything except the URL — profile text and scores are still valuable.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      const dataWithoutUrl: Record<string, unknown> = { ...data };
-      delete dataWithoutUrl.linkedinUrl;
-      return await prisma.candidate.update({
-        where: { id: candidateId },
-        data: {
-          ...dataWithoutUrl,
-          source: "extension",
-          ...(captureMetadata !== undefined ? { captureMetadata } : {}),
-        },
-      });
+      // Another candidate in this job already has the same LinkedIn URL.
+      // Save everything except the URL — profile text is still valuable.
+      const without = { ...baseUpdate } as Record<string, unknown>;
+      delete without.linkedinUrl;
+      updated = await prisma.candidate.update({ where: { id: candidateId }, data: without });
+    } else {
+      throw err;
     }
-    throw err;
   }
+  return { candidate: updated, identity };
 }
 
-export async function importCapturedLinkedInProfile(args: {
+// Stage 2 of saveCapturedProfileToCandidate — runs the AI enrichment and
+// patches the row using profileTextHash as the concurrency token. Skip
+// silently if the hash has changed in the meantime (someone re-scored or
+// re-captured between stage 1 and stage 2).
+export async function applyAiEnrichmentInBackground(
+  candidateId: string,
+  identity: IdentityData,
+): Promise<{ applied: boolean }> {
+  const update = await runAiEnrichment(identity);
+  if (!update) return { applied: false };
+  const applied = await applyAiEnrichment(candidateId, identity.profileTextHash, update);
+  return { applied };
+}
+
+// Backwards-compat wrapper for callers (e.g. tests) that want the full
+// captured-and-scored row in a single await. Equivalent to fast + background
+// run sequentially.
+export async function saveCapturedProfileToCandidate(args: {
+  jobId: string;
+  candidateId: string;
+  profileText: string;
+  linkedinUrl: string;
+  captureMeta?: unknown;
+}) {
+  const { candidate, identity } = await saveCapturedProfileFast(args);
+  await applyAiEnrichmentInBackground(args.candidateId, identity).catch(() => ({ applied: false }));
+  // Return the latest candidate state so the caller sees scores if they landed.
+  return prisma.candidate.findUnique({ where: { id: args.candidateId } }) ?? candidate;
+}
+
+// Stage 1 of importCapturedLinkedInProfile — fast persist, no AI. Returns
+// candidate + identity so the caller can fire stage 2 as a background Promise.
+export async function importCapturedLinkedInProfileFast(args: {
   jobId: string;
   linkedinUrl: string;
   profileText: string;
   source?: string;
   captureMeta?: unknown;
-}) {
+}): Promise<{ candidate: NonNullable<Awaited<ReturnType<typeof prisma.candidate.findUnique>>>; identity: IdentityData; }> {
   const { jobId, linkedinUrl, profileText, source = "extension", captureMeta } = args;
   const cleanUrl = normaliseLinkedInUrl(linkedinUrl);
 
-  // Match by normalised URL to handle variants stored by SerpAPI or manual entry
-  // (no www, trailing slash, country-code subdomains, etc.).
+  // Match by normalised URL to handle variants stored by SerpAPI or manual entry.
   const jobCandidates = await prisma.candidate.findMany({
     where: { jobId },
     select: { id: true, linkedinUrl: true },
@@ -489,7 +634,7 @@ export async function importCapturedLinkedInProfile(args: {
     ? await prisma.candidate.findUnique({ where: { id: existingRef.id } })
     : null;
 
-  const data = await buildCapturedCandidateData({
+  const identity = await buildIdentityData({
     jobId,
     currentName: existing?.name ?? "Unknown",
     currentHeadline: existing?.headline ?? null,
@@ -499,32 +644,36 @@ export async function importCapturedLinkedInProfile(args: {
     linkedinUrl: cleanUrl,
   });
 
-  // Persist the extension-emitted proof of deep-page usage as JSON. We don't
-  // validate the shape server-side — the extension is the source of truth and
-  // the schema may evolve. Capped at ~8KB to prevent a bloated payload from
-  // polluting the candidate row.
   const captureMetadata = captureMeta != null
     ? JSON.stringify(captureMeta).slice(0, 8000)
     : undefined;
 
-  if (existing) {
-    return prisma.candidate.update({
-      where: { id: existing.id },
-      data: {
-        ...data,
-        source,
-        ...(captureMetadata !== undefined ? { captureMetadata } : {}),
-      },
-    });
-  }
+  const baseUpdate = {
+    ...identityToCandidateUpdate(identity),
+    source,
+    ...(captureMetadata !== undefined ? { captureMetadata } : {}),
+  };
 
-  return prisma.candidate.create({
-    data: {
-      jobId,
-      status: "new",
-      source,
-      ...data,
-      ...(captureMetadata !== undefined ? { captureMetadata } : {}),
-    },
-  });
+  const candidate = existing
+    ? await prisma.candidate.update({ where: { id: existing.id }, data: baseUpdate })
+    : await prisma.candidate.create({
+        data: { jobId, status: "new", ...baseUpdate },
+      });
+
+  return { candidate, identity };
+}
+
+// Backwards-compat wrapper — runs fast + background sequentially. The
+// /api/extension/import route uses the explicit two-step pattern instead so
+// it can return 202-equivalent quickly.
+export async function importCapturedLinkedInProfile(args: {
+  jobId: string;
+  linkedinUrl: string;
+  profileText: string;
+  source?: string;
+  captureMeta?: unknown;
+}) {
+  const { candidate, identity } = await importCapturedLinkedInProfileFast(args);
+  await applyAiEnrichmentInBackground(candidate.id, identity).catch(() => ({ applied: false }));
+  return prisma.candidate.findUnique({ where: { id: candidate.id } }) ?? candidate;
 }

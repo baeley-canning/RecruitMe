@@ -1083,6 +1083,19 @@ export const CandidateCard = memo(function CandidateCard({
                   onMouseLeave={() => setShowRadar(false)}
                 >
                   <ScoreBadge score={candidate.matchScore} size="sm" />
+                  {/* Captured-but-not-yet-scored — Stage 1 of the capture
+                      pipeline lands profileText immediately; Stage 2 (scoring)
+                      can take 5–30s. Show a pulse so the recruiter sees "we
+                      have the profile, score is coming" instead of just an
+                      empty score badge. */}
+                  {candidate.matchScore == null && candidate.profileText && candidate.profileCapturedAt && (
+                    Date.now() - new Date(candidate.profileCapturedAt).getTime() < 5 * 60_000
+                  ) && (
+                    <span
+                      title="Profile captured — AI scoring in progress"
+                      className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border border-white animate-pulse"
+                    />
+                  )}
                   {/* Amber dot: profile updated since last score */}
                   {candidate.matchScore != null && !candidate.profileTextHash && candidate.profileText && (
                     <span

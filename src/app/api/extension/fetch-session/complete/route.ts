@@ -2,9 +2,10 @@ import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  applyAiEnrichmentInBackground,
   findSessionInQueue,
   linkedInProfileMatches,
-  saveCapturedProfileToCandidate,
+  saveCapturedProfileFast,
   updateSessionInQueue,
 } from "@/lib/linkedin-capture";
 
@@ -22,36 +23,39 @@ export async function OPTIONS(req: Request) {
   return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
 }
 
-async function processCaptureCompletion(args: {
+// Stage 2 of the capture pipeline. Runs as a fire-and-forget background
+// Promise after the response goes out — so the recruiter never has to keep
+// the page open for scoring to finish.
+async function processBackgroundScoring(args: {
   sessionId: string;
-  session: NonNullable<Awaited<ReturnType<typeof findSessionInQueue>>>;
-  linkedinUrl: string;
-  profileText: string;
-  captureMeta?: unknown;
+  candidateId: string;
+  identity: Awaited<ReturnType<typeof saveCapturedProfileFast>>["identity"];
 }) {
-  const { sessionId, session, linkedinUrl, profileText, captureMeta } = args;
-
+  const { sessionId, candidateId, identity } = args;
   try {
-    await saveCapturedProfileToCandidate({
-      jobId: session.jobId,
-      candidateId: session.candidateId,
-      linkedinUrl,
-      profileText,
-      captureMeta,
-    });
-
+    const { applied } = await applyAiEnrichmentInBackground(candidateId, identity);
+    // Stage 2 may legitimately not apply for two reasons — both end as
+    // "completed" from the recruiter's perspective:
+    //   1. profileTextHash changed (recruiter manually re-scored in between),
+    //   2. candidate row was deleted before stage 2 landed.
+    // Stage 1 already persisted profileText to whatever row existed, so the
+    // user-facing fact "profile captured" is true either way. Use a neutral
+    // message rather than claiming the score was applied when it wasn't.
     await updateSessionInQueue({
       sessionId,
       status: "completed",
-      message: "Profile captured and scored",
+      message: applied ? "Profile captured and scored" : "Profile captured",
       completedAt: new Date().toISOString(),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to save captured profile";
+    // Stage 1 already persisted profileText, so the candidate is "captured"
+    // even if scoring fails. Mark the session errored so the polling UI
+    // surfaces the failure and the recruiter can manually re-score.
+    const message = err instanceof Error ? err.message : "Scoring failed";
     await updateSessionInQueue({
       sessionId,
       status: "error",
-      message,
+      message: `Captured but scoring failed: ${message}`,
       error: message,
     });
   }
@@ -80,18 +84,40 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "LinkedIn URL mismatch" }, { status: 409, headers: extensionCorsHeaders(req) });
   }
 
+  // STAGE 1 — fast persist. Saves profileText, identity, profileTextHash
+  // synchronously before we return the 202. After this point the candidate
+  // row in the DB is "captured" and any subsequent page load shows it as
+  // such, regardless of whether the recruiter is still on the original
+  // /jobs/[id] tab. This is the fix for the "capture only saves when I
+  // return to the page" bug.
+  let identity;
+  try {
+    const fast = await saveCapturedProfileFast({
+      jobId: session.jobId,
+      candidateId: session.candidateId,
+      linkedinUrl,
+      profileText,
+      captureMeta,
+    });
+    identity = fast.identity;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save captured profile";
+    await updateSessionInQueue({ sessionId, status: "error", message, error: message });
+    return NextResponse.json({ error: message }, { status: 500, headers: extensionCorsHeaders(req) });
+  }
+
   await updateSessionInQueue({
     sessionId,
     status: "processing",
-    message: "Profile received - scoring with AI",
+    message: "Profile captured — scoring with AI",
   });
 
-  // Background processing — the response is sent before scoring finishes.
-  // The internal try/catch in processCaptureCompletion already updates the
-  // session row on failure, but we also log here so an unhandled rejection
-  // (e.g. DB pool exhaustion) doesn't disappear into the void.
-  processCaptureCompletion({ sessionId, session, linkedinUrl, profileText, captureMeta }).catch((err) => {
-    console.error("[fetch-session/complete] background processing failed:", err);
+  // STAGE 2 — fire-and-forget AI scoring. The candidate is already saved;
+  // this just patches in the score fields when Claude returns. If it fails,
+  // the candidate stays captured-but-unscored and the session is marked
+  // errored so the recruiter can re-score manually.
+  processBackgroundScoring({ sessionId, candidateId: session.candidateId, identity }).catch((err) => {
+    console.error("[fetch-session/complete] background scoring crashed:", err);
   });
 
   return NextResponse.json(
@@ -99,7 +125,7 @@ export async function POST(req: Request) {
       accepted: true,
       sessionId,
       status: "processing",
-      message: "Profile received - scoring with AI",
+      message: "Profile captured — scoring with AI",
     },
     { status: 202, headers: extensionCorsHeaders(req) }
   );

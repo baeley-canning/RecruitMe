@@ -1,7 +1,7 @@
 import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { importCapturedLinkedInProfile } from "@/lib/linkedin-capture";
+import { applyAiEnrichmentInBackground, importCapturedLinkedInProfileFast } from "@/lib/linkedin-capture";
 import { prisma } from "@/lib/db";
 import { verifyExtensionAuth } from "@/lib/session";
 
@@ -38,7 +38,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    const candidate = await importCapturedLinkedInProfile(parsed.data);
+    // Stage 1 — sync persist. The bubble's "Add to {job}" UX shows
+    // "✓ Added to {job}" the moment this returns; scoring lands later.
+    const { candidate, identity } = await importCapturedLinkedInProfileFast(parsed.data);
+    // Stage 2 — fire-and-forget AI scoring. Logged on failure but never
+    // blocks the response.
+    applyAiEnrichmentInBackground(candidate.id, identity).catch((err) => {
+      console.error("[extension/import] background scoring crashed:", err);
+    });
     return NextResponse.json(candidate, { headers: EXTENSION_CORS });
   } catch (err) {
     return NextResponse.json(
