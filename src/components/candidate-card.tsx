@@ -97,6 +97,9 @@ interface Candidate {
   source: string;
   captureMetadata?: string | null;
   contactEvents?: Array<{ type: string; userName: string; createdAt: string }>;
+  // Cross-org library access — set when the candidate's home org is
+  // different from the viewer's, so the card can show a "Shared from X" tag.
+  sharedFromOrgName?: string | null;
 }
 
 // ── Pipeline action configuration ────────────────────────────────────────────
@@ -1009,6 +1012,14 @@ export const CandidateCard = memo(function CandidateCard({
                   </a>
                 )}
                 <JobAdderBadge url={candidate.jobAdderUrl} />
+                {candidate.sharedFromOrgName && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5"
+                    title={`This candidate is in ${candidate.sharedFromOrgName}'s library — read-only via your cross-org subscription`}
+                  >
+                    Shared from {candidate.sharedFromOrgName}
+                  </span>
+                )}
               </div>
               {candidate.headline && (
                 <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">

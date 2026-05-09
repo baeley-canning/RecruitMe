@@ -6,6 +6,12 @@ const dbMocks = vi.hoisted(() => ({
       findMany: vi.fn(),
       create: vi.fn(),
     },
+    org: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    orgAccessGrant: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 

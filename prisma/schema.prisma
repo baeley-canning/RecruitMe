@@ -53,6 +53,35 @@ model Org {
   jobs      Job[]
 }
 
+// Cross-org library access grant. When org A buys a higher-tier subscription
+// to view org B's candidate library, an OrgAccessGrant is created (manually
+// by the platform owner via the admin panel). The grant is one-way: viewer
+// gains read access to provider's library; provider does NOT automatically
+// see viewer's library unless a reciprocal grant exists.
+//
+// Scope strings (extensible):
+//   library_read   — see provider's candidates in the viewer's library view
+//   library_full   — also see notes, screening, interview data (sensitive)
+//   anonymous      — see only profile text + score, no name/contact
+//
+// Manual grants only; no Stripe integration in v1. Owner pulls the trigger
+// after the org has paid (whatever channel that is) and audits via createdAt
+// + grantedByUserId.
+model OrgAccessGrant {
+  id              String   @id @default(cuid())
+  viewerOrgId     String   // who can see
+  providerOrgId   String   // whose library is shared
+  scope           String   @default("library_read")
+  grantedByUserId String   // owner userId who created the grant
+  note            String?  // free-text — sub tier name, expiry reason, etc.
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime?
+
+  @@unique([viewerOrgId, providerOrgId, scope])
+  @@index([viewerOrgId])
+  @@index([providerOrgId])
+}
+
 model User {
   id        String   @id @default(cuid())
   username  String   @unique

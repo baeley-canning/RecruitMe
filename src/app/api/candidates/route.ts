@@ -5,6 +5,7 @@ import { extractCandidateInfo } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
+import { getAccessibleOrgIds } from "@/lib/org-access";
 
 /**
  * GET /api/candidates
@@ -19,18 +20,20 @@ export async function GET() {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
+  // Cross-org library access — accessible orgs include the caller's own
+  // plus any provider orgs the caller's org has been granted access to.
+  // Owners get null which means "no filter".
+  const accessibleOrgIds = await getAccessibleOrgIds(auth);
+
   const rows = await prisma.candidate.findMany({
     where: {
       profileText: { not: null },
-      // Non-owners must belong to the same org. We use an explicit orgId filter
-      // (not OR-based) to avoid a null-orgId bypass where candidates with
-      // jobId=null AND orgId=null would match no condition and leak to all users.
-      ...(auth.isOwner ? {} : {
+      ...(accessibleOrgIds === null ? {} : {
         OR: [
-          { job: { orgId: auth.orgId } },        // candidate still linked to a job in this org
-          { jobId: null, orgId: auth.orgId },     // candidate preserved after job deletion
+          { job: { orgId: { in: accessibleOrgIds } } },     // via active jobs
+          { jobId: null, orgId: { in: accessibleOrgIds } }, // preserved after job deletion
         ],
-        NOT: { orgId: null, jobId: null },        // never return orphaned null-org candidates
+        NOT: { orgId: null, jobId: null },                  // never return orphaned null-org candidates
       }),
     },
     orderBy: { createdAt: "desc" },
@@ -48,9 +51,10 @@ export async function GET() {
       profileCapturedAt: true,
       createdAt: true,
       jobId: true,
+      orgId: true,
       archivedJobTitle: true,
       archivedJobCompany: true,
-      job: { select: { id: true, title: true, company: true } },
+      job: { select: { id: true, title: true, company: true, orgId: true } },
       files: {
         select: { id: true, type: true, filename: true, size: true, createdAt: true },
         orderBy: { createdAt: "desc" },
@@ -86,8 +90,30 @@ export async function GET() {
     (a, b) => (b.profileCapturedAt ?? b.createdAt) > (a.profileCapturedAt ?? a.createdAt) ? 1 : -1
   );
 
+  // For cross-org library access: when the candidate's effective orgId
+  // (job.orgId or row.orgId) is different from the viewer's orgId, attach
+  // sharedFromOrgName so the candidate-card can render a "Shared from X" badge.
+  const viewerOrgId = auth.orgId ?? null;
+  const externalOrgIds = new Set<string>();
+  for (const p of people) {
+    const candOrgId = p.job?.orgId ?? p.orgId ?? null;
+    if (candOrgId && viewerOrgId && candOrgId !== viewerOrgId) externalOrgIds.add(candOrgId);
+  }
+  const externalOrgs = externalOrgIds.size === 0 ? [] : await prisma.org.findMany({
+    where: { id: { in: [...externalOrgIds] } },
+    select: { id: true, name: true },
+  });
+  const orgName = new Map(externalOrgs.map((o) => [o.id, o.name]));
+
   return NextResponse.json(people.map((row) => {
-    const person: Omit<typeof row, "profileText"> & { profileText?: string | null } = { ...row };
+    const candOrgId = row.job?.orgId ?? row.orgId ?? null;
+    const sharedFromOrgName = candOrgId && viewerOrgId && candOrgId !== viewerOrgId
+      ? orgName.get(candOrgId) ?? null
+      : null;
+    const person: Omit<typeof row, "profileText"> & { profileText?: string | null; sharedFromOrgName?: string | null } = {
+      ...row,
+      sharedFromOrgName,
+    };
     delete person.profileText;
     return person;
   }));

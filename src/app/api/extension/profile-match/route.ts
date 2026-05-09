@@ -14,6 +14,7 @@ import { prisma } from "@/lib/db";
 import { verifyExtensionAuth, jobsWhere } from "@/lib/session";
 import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { getAccessibleOrgIds } from "@/lib/org-access";
 
 export async function OPTIONS(req: Request) {
   return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
@@ -38,14 +39,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Invalid LinkedIn URL" }, { status: 400, headers: extensionCorsHeaders(req) });
   }
 
-  // All matches by URL, scoped to caller's org (or all orgs if owner).
+  // All matches by URL — viewer sees their own org plus any orgs whose
+  // libraries they've been granted access to (cross-org subscription).
+  const accessibleOrgIds = await getAccessibleOrgIds(auth);
   const matches = await prisma.candidate.findMany({
     where: {
       linkedinUrl: normUrl,
-      ...(auth.isOwner ? {} : {
+      ...(accessibleOrgIds === null ? {} : {
         OR: [
-          { job: { orgId: auth.orgId } },
-          { jobId: null, orgId: auth.orgId },
+          { job: { orgId: { in: accessibleOrgIds } } },
+          { jobId: null, orgId: { in: accessibleOrgIds } },
         ],
       }),
     },

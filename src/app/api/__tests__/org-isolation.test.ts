@@ -34,6 +34,12 @@ const dbMocks = vi.hoisted(() => ({
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
+    orgAccessGrant: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    org: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -279,10 +285,12 @@ describe("org isolation — search session access", () => {
 describe("org isolation — candidates library", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it("GET /api/candidates scopes query to the caller's orgId", async () => {
+  it("GET /api/candidates scopes query to the caller's orgId (plus any cross-org grants)", async () => {
     const { GET: getCandidatesLibrary } = await import("@/app/api/candidates/route");
     sessionMocks.getAuth.mockResolvedValue(ORG_B);
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
+    // No cross-org grants for this test — accessibleOrgIds = ["org-b"] only.
+    dbMocks.prisma.orgAccessGrant.findMany.mockResolvedValue([]);
 
     await getCandidatesLibrary();
 
@@ -290,8 +298,8 @@ describe("org isolation — candidates library", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           OR: expect.arrayContaining([
-            expect.objectContaining({ job: expect.objectContaining({ orgId: "org-b" }) }),
-            expect.objectContaining({ jobId: null, orgId: "org-b" }),
+            expect.objectContaining({ job: expect.objectContaining({ orgId: { in: ["org-b"] } }) }),
+            expect.objectContaining({ jobId: null, orgId: { in: ["org-b"] } }),
           ]),
         }),
       })
