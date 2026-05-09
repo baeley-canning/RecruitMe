@@ -123,10 +123,29 @@ function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole,
 
   const text = candidateSearchText(result, profileText, candidateLocation);
   const anchorTerms = extractAnchorRequirementTerms(parsedRole);
-  if (anchorTerms.length > 0) {
-    return anchorTerms.some((term) => textHasTerm(text, term));
-  }
-  return terms.some((term) => textHasTerm(text, term));
+
+  // Re-audit found this gate was using anchorTerms EXCLUSIVELY when any were
+  // present, ignoring the distinctive set entirely. Effect: a POWER role's
+  // legacy anchors are only [SCADA, RTU] (RARE_ANCHOR_PATTERNS is narrow) so
+  // a real Mercury / Vector field-service engineer with substation +
+  // commissioning + HV + metering experience would fail the gate because
+  // none of those terms are in the legacy list. Now we UNION the two sets
+  // so any legitimate domain anchor — legacy OR distinctive — passes.
+  // Also expand each anchor through requirement-signals so candidates
+  // writing the long form ("programmable logic controller", "remote
+  // terminal unit", "information security management system") are
+  // recognised even when the short token isn't in their text.
+  const combinedAnchors = new Set<string>([...anchorTerms, ...terms]);
+  const candidateSignals = new Set(
+    extractSignalsFromRequirement(text).map((s) => s.toLowerCase()),
+  );
+  return [...combinedAnchors].some((anchor) => {
+    const lower = anchor.toLowerCase();
+    if (candidateSignals.has(lower)) return true;
+    // Fall back to the original direct-match for any anchor that isn't an
+    // alias-table entry (e.g. AI-generated anchor_terms).
+    return textHasTerm(text, anchor);
+  });
 }
 
 // Thin wrapper that binds the local signal helpers to the extracted library
@@ -174,7 +193,14 @@ function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
     extractDistinctiveSignalsFromRequirement(requirement).forEach((term) => terms.add(term));
   }
 
-  return [...terms].slice(0, 5);
+  // Previously sliced to 5. The provisional-scoring cap reads the full set,
+  // so on a role with >5 distinctive must-haves the source gate and the cap
+  // diverged: source gate gated on the first 5, cap on all of them. A
+  // candidate satisfying anchor #6 would pass the cap (no cap fires) but
+  // fail the gate (anchor #6 wasn't in the gate's slice). Removing the cap
+  // unifies behaviour. The 4-anchor display cap in buildSearchEvaluation
+  // is unaffected — that's a UX truncation in the warning string only.
+  return [...terms];
 }
 
 function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {

@@ -171,12 +171,18 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
     expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
   });
 
-  it("accepts ISMS-led snippets even when ISO 27001 is not written in the snippet", () => {
+  it("accepts ISMS-led snippets even when neither 'ISMS' nor 'ISO 27001' appear literally — long-form expansion alone is enough", () => {
+    // The previous version of this test put "ISMS Lead at Xero" in the
+    // headline, which trivially injected the literal token "isms" into the
+    // haystack and made the cap pass for the wrong reason. The real claim
+    // is: a candidate writing the LONG FORM ("information security
+    // management system") gets recognised even without the abbreviation.
+    // Headline is now neutral so only the snippet body carries the signal.
     const score = buildProvisionalSearchScore(
       {
         name: "Alex Kumar",
-        headline: "ISMS Lead at Xero",
-        snippet: "Information security management system owner. Runs governance, risk and audit readiness across SaaS platforms.",
+        headline: "Senior Security Manager at Xero",  // intentionally no ISMS/ISO27001
+        snippet: "Owns the information security management system. Drives governance, risk and audit readiness across SaaS platforms.",
       },
       complianceRole,
       "Wellington",
@@ -186,7 +192,50 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
       undefined,
       deps,
     );
-    expect(score.overall).toBeGreaterThan(SPECIALIST_SNIPPET_NO_ANCHOR_CAP);
+    // The cap matching now expands aliases via extractSignalsFromRequirement
+    // — "information security management system" produces ["isms", ...]
+    // which matches the role's distinctive anchors. Cap doesn't fire.
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
+  });
+
+  it("ditto for PLC: 'programmable logic controller' in body alone is enough — no bare 'PLC' needed", () => {
+    const plcRole = makeRole({
+      title: "Industrial Controls Engineer",
+      location: "Christchurch",
+      must_haves: ["PLC integration"],
+      skills_required: ["PLC integration", "industrial controls"],
+    });
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Sam",
+        headline: "Senior Controls Engineer at Mercury",
+        snippet: "Programmable logic controller commissioning and ladder logic for substation automation.",
+      },
+      plcRole,
+      "Christchurch", "Christchurch", "Christchurch office",
+      false, undefined, deps,
+    );
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
+  });
+
+  it("ditto for RTU: 'remote terminal unit' in body alone is enough", () => {
+    const rtuRole = makeRole({
+      title: "Substation Telemetry Engineer",
+      location: "Christchurch",
+      must_haves: ["RTU experience"],
+      skills_required: ["RTU"],
+    });
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Pat",
+        headline: "Senior Substation Engineer at Transpower",
+        snippet: "Remote terminal unit configuration and substation telemetry rollout for the upper South Island grid.",
+      },
+      rtuRole,
+      "Christchurch", "Christchurch", "Christchurch office",
+      false, undefined, deps,
+    );
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
   });
 
   it("does not let Vodafone PLC satisfy PLC requirements through a bare company suffix", () => {
@@ -213,6 +262,29 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
       deps,
     );
     expect(score.overall).toBeLessThan(SCORE_CUTOFF_SNIPPET);
+  });
+
+  it("accepts field-service / utilities engineer (Mercury / Vector style) — adjacent power-domain pool", () => {
+    // Re-audit case D: a Mercury / Vector field-service engineer with
+    // substation, commissioning, HV equipment, metering and data-logging
+    // experience must clear the cap on a SCADA-required POWER role. The
+    // earlier source-gate logic only checked legacy anchors [SCADA, RTU]
+    // and ignored the rest of the distinctive set, dropping these
+    // adjacent-pool candidates wrongly.
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Riley",
+        headline: "Field Service Engineer at Mercury NZ",
+        snippet: "Substation commissioning, HV equipment installation, smart metering and data logging across the lower North Island.",
+      },
+      powerRole,
+      "Christchurch", "Christchurch", "Christchurch office",
+      false, undefined, deps,
+    );
+    // The candidate matches multiple distinctive anchors via alias expansion
+    // (metering, power distribution via substation/HV, commissioning).
+    // Cap must NOT fire.
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
   });
 
   it("does NOT cap when at least one distinctive anchor is present (partial match)", () => {

@@ -20,7 +20,7 @@ import {
 } from "./scoring";
 import { applyLocationFitOverride } from "./score-utils";
 import { isNzLocation } from "./location";
-import { extractDistinctiveSignalsFromRequirement, signalMatchesText } from "./requirement-signals";
+import { extractDistinctiveSignalsFromRequirement, extractSignalsFromRequirement } from "./requirement-signals";
 import type { ParsedRole } from "./ai";
 import type { ScoringWeights } from "./scoring-config";
 import type { ScoreBreakdown } from "./scoring";
@@ -108,13 +108,25 @@ export function buildProvisionalSearchScore(
 
   const profileText = [result.name, result.headline, candidateLocation, result.snippet].filter(Boolean).join("\n");
   const haystack = normaliseText(profileText);
+  // Pre-compute the candidate's own signal set by running the same alias
+  // table over their haystack. This lets a candidate writing "programmable
+  // logic controller" / "remote terminal unit" / "information security
+  // management system" register the corresponding short canonical token
+  // (PLC / RTU / ISMS) — which is what the role's must_haves expand to.
+  // Without this, the literal-token check `hasSignal(haystack, "rtu")`
+  // misses every long-form candidate.
+  const candidateSignals = new Set(
+    extractSignalsFromRequirement(haystack).map((s) => s.toLowerCase()),
+  );
+  const matchesCandidate = (signal: string): boolean =>
+    candidateSignals.has(signal.toLowerCase()) || hasSignal(haystack, signal);
 
   const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
     if (WORK_RIGHTS_RE.test(requirement)) {
       return provisionalWorkRightsStatus(requirement, candidateLocation);
     }
     const signals = requirementSignals(requirement);
-    const matched = signals.filter((signal) => hasSignal(haystack, signal));
+    const matched = signals.filter(matchesCandidate);
     return {
       requirement,
       status: matched.length > 0 ? "likely" : "missing",
@@ -126,7 +138,7 @@ export function buildProvisionalSearchScore(
 
   const niceToHaveCoverage: NiceToHaveStatus[] = niceToHaves.map((requirement) => {
     const signals = requirementSignals(requirement);
-    const matched = signals.filter((signal) => hasSignal(haystack, signal));
+    const matched = signals.filter(matchesCandidate);
     return {
       requirement,
       status: matched.length > 0 ? "likely" : "absent",
@@ -178,11 +190,16 @@ export function buildProvisionalSearchScore(
   const provisionalScore = applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote, weights);
 
   // Specialist hybrid-role cap: if the role has distinctive anchors (SCADA,
-  // PLC, ISO 27001, etc.) and the candidate's snippet shows NONE of them,
-  // cap below the snippet cutoff so it gets filtered. This stops generic
-  // "Technical Support Engineer" or "IT Manager" snippets from passing for
-  // POWER / compliance-spined roles just because title/location score okay.
-  // Anchor terms come from must_haves + skills_required + knockouts.
+  // PLC, ISO 27001, etc.) and the candidate's haystack shows NONE of them,
+  // cap below the snippet cutoff so it gets filtered.
+  //
+  // Matching: we run extractSignalsFromRequirement against the candidate's
+  // haystack to expand alias forms — a candidate writing "information
+  // security management system" gets recognised as ISMS, "programmable
+  // logic controller" as PLC, "remote terminal unit" as RTU, etc. The
+  // earlier implementation matched the SHORT alias literally against the
+  // haystack and produced a false negative for every candidate who used
+  // the long form (the agents found this on a re-audit).
   const distinctiveAnchors = new Set<string>();
   for (const requirement of [
     ...(parsedRole.must_haves ?? []),
@@ -194,8 +211,9 @@ export function buildProvisionalSearchScore(
     );
   }
   if (distinctiveAnchors.size > 0) {
+    // Reuse the candidateSignals set already built for coverage matching.
     const anyAnchorPresent = [...distinctiveAnchors].some((anchor) =>
-      signalMatchesText(haystack, anchor),
+      candidateSignals.has(anchor),
     );
     if (!anyAnchorPresent && provisionalScore.overall > SPECIALIST_SNIPPET_NO_ANCHOR_CAP) {
       (provisionalScore as { overall: number }).overall = SPECIALIST_SNIPPET_NO_ANCHOR_CAP;

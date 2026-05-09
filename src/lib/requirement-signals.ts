@@ -243,7 +243,7 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   // SCADA, RTU are rare enough as bare tokens. PLC is NOT — it collides with
   // company suffix "Vodafone PLC". Anchor PLC as a phrase only.
   [/\bscada\b/i,                                    ["scada", "industrial controls", "control systems"]],
-  [/\brtu\b/i,                                      ["rtu", "remote terminal unit", "scada"]],
+  [/\brtu\b|remote\s+terminal\s+unit/i,             ["rtu", "remote terminal unit", "scada"]],
   [/programmable\s+logic\s+controller|\bplc\s+(?:programming|integration|configuration|config|ladder|hmi|scada)/i, ["plc integration", "plc configuration", "programmable logic controller", "industrial controls"]],
   // HMI: allow up to ~30 chars between HMI and a qualifier so "HMI integration
   // with SCADA" matches. Bare "HMI design" still doesn't fire — needs an
