@@ -231,6 +231,39 @@ describe("requirement signal extraction", () => {
     expect(soc2Terms).not.toEqual(expect.arrayContaining(["SOC 2"]));
   });
 
+  it("DISTINCTIVE power-distribution regex covers HV-equipment / power-systems / protection-relay candidate phrasings", () => {
+    // Re-audit fix: the DISTINCTIVE power-distribution pattern previously
+    // accepted only "power distribution" / "high voltage" (long form) /
+    // "substation". A candidate writing "HV equipment" / "Power systems
+    // engineer" / "protection relays" had ZERO distinctive overlap with a
+    // POWER role and was wrongly capped. These phrasings now anchor.
+    expect(extractDistinctiveSignalsFromRequirement(
+      "HV switchgear and power distribution field service"
+    )).toEqual(expect.arrayContaining(["power distribution"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "HV equipment commissioning and substation work"
+    )).toEqual(expect.arrayContaining(["power distribution"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Power systems engineer with grid experience"
+    )).toEqual(expect.arrayContaining(["power distribution"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Protection relay configuration and substation automation"
+    )).toEqual(expect.arrayContaining(["power distribution"]));
+
+    // False-positive guards: generic uses of "power" / "systems" must NOT
+    // distinctive-flag random roles.
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Operating systems power management for laptop firmware"
+    )).not.toEqual(expect.arrayContaining(["power distribution"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Senior systems engineer for cloud platform"
+    )).not.toEqual(expect.arrayContaining(["power distribution"]));
+  });
+
   it("PLC requirements do not create a bare PLC signal that matches company suffixes", () => {
     const signals = extractSignalsFromRequirement("PLC integration and configuration experience");
     expect(signals).toEqual(expect.arrayContaining(["plc integration", "plc configuration"]));

@@ -184,6 +184,11 @@ export function getMustHaveImportance(requirement: string): number {
   // no amount of location/domain/seniority alignment rescues the candidate.
   if (/\bc\+\+\b/i.test(r)) return 1.5;
   if (/\bsybase\b|\bcobol\b|\bmainframe\b/i.test(r)) return 1.5; // legacy/rare: absence is a blocker
+  // NZ-scarce industrial / compliance specialisms — same scarcity reasoning as
+  // legacy DBs. PLC is phrase-anchored to dodge company-suffix collision
+  // ("Vodafone PLC"). Keep aligned with NZ_SCARCE_SKILLS in requirement-signals.
+  if (/\bscada\b|\brtu\b|programmable\s+logic\s+controller|\bplc\s+(?:programming|integration|configuration|ladder|hmi|scada)/i.test(r)) return 1.5;
+  if (/\bisms\b|information\s+security\s+management\s+system|\biso\s*27001\b/i.test(r)) return 1.5;
   if (/\bangular\b|\.net|asp\.net|c#|azure|kubernetes|aks|api design|ci\/cd|pipeline/i.test(r)) return 1.3;
   if (/\bitil\b|\bitsm\b|service management|incident management|change management|problem management|requirements|process mapping|business analysis/i.test(r)) return 1.2;
   if (/concept to launch|full.{0,5}site|full.{0,5}build|full website|ownership|end.to.end/i.test(r)) return 1.2;

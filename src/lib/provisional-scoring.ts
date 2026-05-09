@@ -108,16 +108,20 @@ export function buildProvisionalSearchScore(
 
   const profileText = [result.name, result.headline, candidateLocation, result.snippet].filter(Boolean).join("\n");
   const haystack = normaliseText(profileText);
-  // Pre-compute the candidate's own signal set by running the same alias
-  // table over their haystack. This lets a candidate writing "programmable
-  // logic controller" / "remote terminal unit" / "information security
-  // management system" register the corresponding short canonical token
-  // (PLC / RTU / ISMS) — which is what the role's must_haves expand to.
-  // Without this, the literal-token check `hasSignal(haystack, "rtu")`
-  // misses every long-form candidate.
-  const candidateSignals = new Set(
-    extractSignalsFromRequirement(haystack).map((s) => s.toLowerCase()),
-  );
+  // Pre-compute the candidate's own signal set by running BOTH alias tables
+  // over their haystack:
+  //   - TECH expands "programmable logic controller" → PLC, "remote terminal
+  //     unit" → RTU, "information security management system" → ISMS, etc.
+  //   - DISTINCTIVE expands adjacent-domain phrases like "substation" →
+  //     "power distribution" so a substation/HV candidate registers the same
+  //     anchor a SCADA/HV role JD would emit.
+  // Without DISTINCTIVE expansion, a "Substation commissioning engineer at
+  // Vector" snippet has no overlap with a POWER role's anchor set even though
+  // they're plainly adjacent — they get capped at 25 and silently filtered.
+  const candidateSignals = new Set([
+    ...extractSignalsFromRequirement(haystack),
+    ...extractDistinctiveSignalsFromRequirement(haystack),
+  ].map((s) => s.toLowerCase()));
   const matchesCandidate = (signal: string): boolean =>
     candidateSignals.has(signal.toLowerCase()) || hasSignal(haystack, signal);
 

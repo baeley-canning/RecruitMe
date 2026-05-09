@@ -366,7 +366,12 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   // downstream noun would trigger specialist gating on DevOps / RPA JDs.
   [/(?:industrial|plant|manufacturing|substation)\s+process\s+(?:control|automation|instrumentation)|process\s+(?:control|instrumentation)\s+(?:engineer|system|loop|valve|equipment)|industrial\s+(?:control\s+system|automation\s+(?:system|engineer|platform))/i, ["industrial controls"]],
   [/\bmetering\b|smart\s+metering/i,                    ["metering"]],
-  [/\bpower\s+distribution\b|\bhigh[- ]voltage|\bsubstation\b/i, ["power distribution"]],
+  // Power-distribution anchor: include canonical adjacent phrasings so a
+  // substation / HV-switchgear / protection-relay candidate registers the
+  // same anchor a SCADA-and-HV role JD would emit. "power systems engineer"
+  // is anchored on the role-noun to avoid drifting into generic uses like
+  // "operating systems power management".
+  [/\bpower\s+distribution\b|\bhigh[- ]voltage|\bhv\s+(?:equipment|switchgear|substation|commissioning|cable|transmission|distribution|installation)\b|\bsubstation\b|\bpower\s+systems?\s+(?:engineer|technician|specialist)\b|\bprotection\s+relays?\b/i, ["power distribution"]],
   [/\belectrical\s+engineering\b|\bpower\s+engineering\b/i, ["electrical engineering"]],
   // Agile/delivery roles — match both canonical title and common practitioner synonyms
   // so a Scrum Master search doesn't block Agile Coach profiles and vice versa.

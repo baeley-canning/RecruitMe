@@ -228,8 +228,20 @@ describe("Golden Candidate 6: Title adjacency — must_have as likely, not confi
       ],
       reasons_against: ["Hardware interfacing absent from detailed profile — treat as missing"],
     }));
+    // Profile must actually contain the text Claude claims it confirmed —
+    // the evidence-hallucination guard downgrades 'confirmed' → 'unknown'
+    // when the cited evidence string isn't present in the profile, and with
+    // ISO 27001 now carrying 1.5× importance (NZ-scarce specialism) an
+    // unknown-on-a-detailed-profile would trigger the critical-missing cap.
+    // The test's intent is the LIKELY-not-confirmed nuance for IT
+    // infrastructure, not the cap, so make ISO 27001 evidence real.
+    const profileText =
+      "ISO 27001 Lead Implementer certification (BSI). " +
+      "Senior IT Manager, 12 years across enterprise infrastructure projects. " +
+      "Led ISMS implementation for SaaS company with 200 staff. " +
+      "A".repeat(7700);
     const result = await scoreCandidateStructured(
-      "A".repeat(8000), // full profile, long enough for 'missing' to be real
+      profileText,
       {
         ...baseParsedRole,
         title: "IT & Technical Support Manager",

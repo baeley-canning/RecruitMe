@@ -379,6 +379,64 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
     expect(withAnchor.overall).toBeGreaterThan(withoutAnchor.overall);
   });
 
+  // ── Adjacent-domain pass-through (re-audit case): each of the 5 user-listed
+  //    POWER-role candidates must clear the cap individually, even on a role
+  //    that omits "electrical engineering" from skills_required (a stricter
+  //    JD that lists only SCADA/RTU/metering/HV-substation). The test lives
+  //    here so a future tightening of the DISTINCTIVE power-distribution
+  //    regex doesn't silently re-block adjacent profiles.
+  describe("re-audit: adjacent-domain POWER candidates clear the cap on a strict JD", () => {
+    const strictPowerRole = makeRole({
+      title: "POWER Systems Engineer",
+      location: "Christchurch",
+      location_rules: "Christchurch office",
+      must_haves: [
+        "SCADA systems experience",
+        "RTU configuration",
+        "HV switchgear and substation work",
+        "Smart metering and data logging",
+      ],
+      // Intentionally NO "electrical engineering" — proves each candidate
+      // clears on the basis of substation/HV/protection-relay anchors alone.
+      skills_required: ["SCADA", "RTU", "metering"],
+      anchor_terms: [],
+    });
+
+    const adjacentCandidates: Array<{ name: string; headline: string; snippet: string }> = [
+      { name: "Cand 1", headline: "Substation commissioning engineer at Vector", snippet: "" },
+      { name: "Cand 2", headline: "HV switchgear and power distribution field service engineer", snippet: "" },
+      { name: "Cand 3", headline: "Utilities field engineer, substation automation and commissioning", snippet: "" },
+      { name: "Cand 4", headline: "Power systems engineer, HV equipment, protection relays", snippet: "" },
+      { name: "Cand 5", headline: "Electrical field service engineer, metering and data logging", snippet: "" },
+    ];
+
+    for (const c of adjacentCandidates) {
+      it(`clears the cap: "${c.headline}"`, () => {
+        const score = buildProvisionalSearchScore(
+          c,
+          strictPowerRole,
+          "Christchurch", "Christchurch", "Christchurch office",
+          false, undefined, deps,
+        );
+        expect(score.overall).toBeGreaterThanOrEqual(SCORE_CUTOFF_SNIPPET);
+      });
+    }
+
+    it("noise control: 'Technical Support Engineer at Xero' (no power evidence) is still capped", () => {
+      const score = buildProvisionalSearchScore(
+        {
+          name: "Noise",
+          headline: "Technical Support Engineer at Xero",
+          snippet: "Helping customers debug API integrations.",
+        },
+        strictPowerRole,
+        "Christchurch", "Christchurch", "Christchurch office",
+        false, undefined, deps,
+      );
+      expect(score.overall).toBeLessThan(SCORE_CUTOFF_SNIPPET);
+    });
+  });
+
   // ── Common-role regression: must NOT change behaviour for ordinary roles ──
   it("does NOT cap ordinary developer roles (no distinctive anchors)", () => {
     // Generic "Software Engineer" role without distinctive anchors must
