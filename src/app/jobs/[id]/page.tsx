@@ -47,7 +47,6 @@ import { ClientReportModal } from "@/components/job/client-report-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
 import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
-import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 
 
 interface Candidate {
@@ -1880,25 +1879,34 @@ ${toHtml(job.rawJd)}
           </div>
         )}
 
-        {/* Needs-profile notice — computed from live candidate list.
-            Excludes candidates whose fetch is already in-flight so the
-            banner clears as soon as the queue drains, not only after a
-            full page reload. */}
+        {/* Needs-profile notice. The list-view API strips profileText (it's
+            10-50KB per candidate), so hasFullCandidateProfile would read
+            undefined and flag every candidate — even ones that have already
+            been captured. Use profileCapturedAt as the in-list signal: it's
+            set the moment extension capture stage 1 succeeds, and matches
+            what candidate-card uses to show/hide the amber Fetch button. */}
         {(() => {
-          const needsFetch = job.candidates.filter(
-            (c) => c.linkedinUrl &&
-                   !hasFullCandidateProfile(c) &&
-                   fetchStatuses[c.id]?.state !== "waiting" &&
-                   fetchStatuses[c.id]?.state !== "fetching"
+          const needsFetchSet = new Set(
+            job.candidates
+              .filter(
+                (c) => c.linkedinUrl &&
+                       !c.profileCapturedAt &&
+                       fetchStatuses[c.id]?.state !== "waiting" &&
+                       fetchStatuses[c.id]?.state !== "fetching"
+              )
+              .map((c) => c.id)
           );
-          const n = needsFetch.length;
+          const n = needsFetchSet.size;
           if (n === 0) return null;
           const scrollToFirst = () => {
-            const sorted = [...needsFetch].sort((a, b) =>
-              (a.name.split(" ")[0] ?? a.name).localeCompare(b.name.split(" ")[0] ?? b.name)
-            );
-            const target = document.getElementById(`candidate-${sorted[0].id}`);
-            target?.scrollIntoView({ behavior: "smooth", block: "center" });
+            // Walk the visible list in display order so we land on the first
+            // amber Fetch button the recruiter actually sees, not the first
+            // alphabetically.
+            const target = filteredCandidates.find((c) => needsFetchSet.has(c.id))
+              ?? job.candidates.find((c) => needsFetchSet.has(c.id));
+            if (!target) return;
+            const el = document.getElementById(`candidate-${target.id}`);
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
           };
           return (
             <button
