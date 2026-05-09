@@ -72,7 +72,13 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       .catch(() => {});
   }, [jobId, searchResult]);
 
-  const runTalentPoolSearch = async ({ refreshOnlyWhenAdded }: { refreshOnlyWhenAdded: boolean }) => {
+  const runTalentPoolSearch = async ({
+    limit = maxResults,
+    refreshOnlyWhenAdded,
+  }: {
+    limit?: number;
+    refreshOnlyWhenAdded: boolean;
+  }): Promise<{ count: number; ok: boolean }> => {
     setSearchingPool(true);
     setPoolError("");
     setPoolResult(null);
@@ -80,19 +86,21 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       const res = await fetch(`/api/jobs/${jobId}/candidates/talent-pool`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxResults }),
+        body: JSON.stringify({ maxResults: limit }),
       });
       const data = await res.json() as { count?: number; error?: string; message?: string };
       if (!res.ok || data.error) {
         setPoolError(data.error ?? "Talent pool search failed");
-        return;
+        return { count: 0, ok: false };
       }
 
       const count = data.count ?? 0;
       setPoolResult({ count, message: data.message });
       if (count > 0 || !refreshOnlyWhenAdded) onComplete();
+      return { count, ok: true };
     } catch {
       setPoolError("Talent pool search failed. Check your connection.");
+      return { count: 0, ok: false };
     } finally {
       setSearchingPool(false);
     }
@@ -104,16 +112,27 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     setSearchResult(null);
     setSearchTimedOut(false);
 
-    // Run the whole-library talent-pool query in parallel with LinkedIn. The
-    // search API itself only reuses pool profiles whose URL also appears in
-    // fresh LinkedIn results; this route is the true independent library pass.
-    void runTalentPoolSearch({ refreshOnlyWhenAdded: true });
+    // Pool first: full profiles we already own should be used before spending
+    // fresh search/fetch effort. The search API only reuses pool profiles whose
+    // URL appears in new LinkedIn results; this route is the independent pass.
+    const pool = await runTalentPoolSearch({ limit: maxResults, refreshOnlyWhenAdded: true });
+    const remainingResults = Math.max(0, maxResults - pool.count);
+    if (pool.ok && remainingResults === 0) {
+      setSearchResult({
+        status: "complete",
+        count: pool.count,
+        fromPool: pool.count,
+        message: "Candidate library filled this search, so LinkedIn search was skipped.",
+      });
+      setSearching(false);
+      return;
+    }
 
     try {
       const res = await fetch(`/api/jobs/${jobId}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxResults, locationOverride: activeSearchLocation, relaxClearance }),
+        body: JSON.stringify({ maxResults: remainingResults || maxResults, locationOverride: activeSearchLocation, relaxClearance }),
       });
       const data = await res.json() as { sessionId?: string; error?: string };
       if (!res.ok || data.error) { setSearchError(data.error ?? "Search failed"); setSearching(false); return; }
@@ -231,7 +250,9 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                 </div>
                 <p className="text-xs text-slate-500">
                   {searching
-                    ? "Searching LinkedIn and your talent pool. Pool hits import instantly; LinkedIn hits scored after capture."
+                    ? searchingPool
+                      ? "Checking your candidate library first. LinkedIn search only runs for the remaining gap."
+                      : "Searching LinkedIn for remaining candidates after the library pass."
                     : "Searches configured sources, imports likely LinkedIn profiles, and uses full scoring for captured profiles."
                   }
                 </p>

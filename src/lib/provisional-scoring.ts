@@ -20,6 +20,7 @@ import {
 } from "./scoring";
 import { applyLocationFitOverride } from "./score-utils";
 import { isNzLocation } from "./location";
+import { extractDistinctiveSignalsFromRequirement, signalMatchesText } from "./requirement-signals";
 import type { ParsedRole } from "./ai";
 import type { ScoringWeights } from "./scoring-config";
 import type { ScoreBreakdown } from "./scoring";
@@ -38,6 +39,14 @@ export const SCORE_CUTOFF_SNIPPET = 30;
  *  A snippet that passed the source gate has enough signal to be worth
  *  showing — don't let missing fields collapse the score below this. */
 export const PROVISIONAL_SCORE_FLOOR = 30;
+
+/** Specialist hybrid-role snippet cap. When a role has distinctive
+ *  anchors (e.g. SCADA/PLC for a POWER engineer, ISO 27001/ISMS for a
+ *  compliance manager) and the candidate's snippet shows ZERO of them,
+ *  cap the provisional score below the snippet cutoff so the candidate
+ *  is filtered. Generic "Technical Support Engineer" snippets must not
+ *  pass for these roles just because title/location score reasonable. */
+export const SPECIALIST_SNIPPET_NO_ANCHOR_CAP = 25;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -167,6 +176,33 @@ export function buildProvisionalSearchScore(
   });
 
   const provisionalScore = applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote, weights);
+
+  // Specialist hybrid-role cap: if the role has distinctive anchors (SCADA,
+  // PLC, ISO 27001, etc.) and the candidate's snippet shows NONE of them,
+  // cap below the snippet cutoff so it gets filtered. This stops generic
+  // "Technical Support Engineer" or "IT Manager" snippets from passing for
+  // POWER / compliance-spined roles just because title/location score okay.
+  // Anchor terms come from must_haves + skills_required + knockouts.
+  const distinctiveAnchors = new Set<string>();
+  for (const requirement of [
+    ...(parsedRole.must_haves ?? []),
+    ...(parsedRole.skills_required ?? []),
+    ...(parsedRole.knockout_criteria ?? []),
+  ]) {
+    extractDistinctiveSignalsFromRequirement(requirement).forEach((t) =>
+      distinctiveAnchors.add(t.toLowerCase()),
+    );
+  }
+  if (distinctiveAnchors.size > 0) {
+    const anyAnchorPresent = [...distinctiveAnchors].some((anchor) =>
+      signalMatchesText(haystack, anchor),
+    );
+    if (!anyAnchorPresent && provisionalScore.overall > SPECIALIST_SNIPPET_NO_ANCHOR_CAP) {
+      (provisionalScore as { overall: number }).overall = SPECIALIST_SNIPPET_NO_ANCHOR_CAP;
+      // Don't apply the floor below — caller will filter via SCORE_CUTOFF_SNIPPET.
+      return provisionalScore;
+    }
+  }
 
   // Floor: a snippet that passed the source gate has enough signal to be
   // worth showing. Don't let missing fields collapse the score below the floor.

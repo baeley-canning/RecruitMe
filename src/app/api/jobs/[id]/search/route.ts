@@ -203,8 +203,9 @@ function buildSearchEvaluation(opts: {
   candidatesRejected: number;  // rejected at source gate only
   totalFiltered: number;       // all filters combined (source gate + seniority + overseas + name)
   sawRetryableSearchFailure: boolean;
+  distinctiveAnchors?: string[]; // surfaced in WARNING so recruiters know what was missing
 }): string {
-  const { collected, avgScore, totalExamined, totalFiltered, sawRetryableSearchFailure } = opts;
+  const { collected, avgScore, totalExamined, totalFiltered, sawRetryableSearchFailure, distinctiveAnchors } = opts;
   // Use total filtered for rejection rate — source gate is only one filter
   const rejectionRate = totalExamined > 0 ? totalFiltered / totalExamined : 0;
 
@@ -212,8 +213,12 @@ function buildSearchEvaluation(opts: {
     return "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.";
   if (collected === 0)
     return "FAIL — No candidates found. Try: broader location (e.g. 'New Zealand' instead of a specific city), Re-analyse to refresh search terms, or add more skills to the job description.";
-  if (rejectionRate >= 0.80 && totalExamined >= 10)
-    return `WARNING — ${Math.round(rejectionRate * 100)}% of search results filtered out before scoring. The role's required skills may be too narrow for the available pool — try Re-analyse, then Search Again`;
+  if (rejectionRate >= 0.80 && totalExamined >= 10) {
+    const anchorHint = distinctiveAnchors && distinctiveAnchors.length > 0
+      ? ` Looking for: ${distinctiveAnchors.slice(0, 4).join(", ")} — none found in most snippets.`
+      : "";
+    return `WARNING — ${Math.round(rejectionRate * 100)}% of search results filtered out before scoring.${anchorHint} The role's required skills may be too narrow for the available pool — try Re-analyse, then Search Again`;
+  }
   if (collected <= 2)
     return `WARNING — only ${collected} candidate${collected !== 1 ? "s" : ""} found. Try a broader search location or Re-analyse the JD with more context`;
   if (avgScore !== null && avgScore >= 88)
@@ -1221,6 +1226,10 @@ async function runSearchBackground(args: {
       candidatesRejected: skippedSourceGate,
       totalFiltered,
       sawRetryableSearchFailure,
+      // Pass the distinctive terms so the warning names the missing
+      // anchors — the recruiter can decide whether to relax the JD or
+      // accept the narrow pool.
+      distinctiveAnchors: extractDistinctiveRequirementTerms(parsedRole),
     });
 
     const finalStatus = sawRetryableSearchFailure ? "rate_limited" : "complete";

@@ -50,4 +50,109 @@ describe("requirement signal extraction", () => {
     expect(terms).toEqual(expect.arrayContaining(["Sybase", "SQL Server", "Oracle"]));
     expect(terms).not.toEqual(expect.arrayContaining(["enterprise", "platforms", "similar"]));
   });
+
+  it("extracts POWER role anchors (SCADA / RTU / industrial controls / metering)", () => {
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Experience with SCADA systems, RTU configuration, and metering infrastructure"
+    )).toEqual(expect.arrayContaining(["SCADA", "RTU", "metering"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Process control / industrial automation background, with electrical engineering focus"
+    )).toEqual(expect.arrayContaining(["industrial controls", "electrical engineering"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Power distribution / high-voltage substation experience"
+    )).toEqual(expect.arrayContaining(["power distribution"]));
+  });
+
+  it("PLC anchor requires phrase form — bare 'PLC' (company suffix) does NOT trigger", () => {
+    // Critical false-positive guard: "Vodafone PLC" / "Spark NZ PLC" are
+    // company suffixes and must NOT pass the source gate for SCADA roles.
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Senior engineer at Vodafone PLC working on cloud infrastructure"
+    )).not.toEqual(expect.arrayContaining(["PLC"]));
+
+    // Legitimate PLC phrase form does fire.
+    expect(extractDistinctiveSignalsFromRequirement(
+      "PLC programming experience with ladder logic and HMI integration"
+    )).toEqual(expect.arrayContaining(["PLC"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Programmable logic controller configuration and ladder logic"
+    )).toEqual(expect.arrayContaining(["PLC"]));
+  });
+
+  it("PCI anchor requires PCI-DSS phrase — bare 'PCI' (PCIe / PCI bus) does NOT trigger", () => {
+    // Embedded engineer's "PCIe driver" must not pass a PCI-DSS gate.
+    expect(extractSignalsFromRequirement(
+      "Embedded firmware engineer with PCIe driver development experience"
+    )).not.toEqual(expect.arrayContaining(["iso 27001", "security compliance"]));
+
+    expect(extractSignalsFromRequirement(
+      "PCI-DSS compliance experience for payment processing"
+    )).toEqual(expect.arrayContaining(["iso 27001", "security compliance"]));
+  });
+
+  it("compliance signals: ISMS / GRC / information security governance", () => {
+    expect(extractSignalsFromRequirement(
+      "ISMS lead experience implementing ISO 27001 controls"
+    )).toEqual(expect.arrayContaining(["isms", "iso 27001"]));
+
+    expect(extractSignalsFromRequirement(
+      "GRC framework experience and audit governance"
+    )).toEqual(expect.arrayContaining(["grc", "compliance"]));
+
+    expect(extractSignalsFromRequirement(
+      "Lead information security governance for SaaS platform"
+    )).toEqual(expect.arrayContaining(["security governance", "isms"]));
+  });
+
+  it("hybrid leadership phrases: IT operations leadership + technical support leadership", () => {
+    // Phrase requires the leadership noun/verb ("lead", "manager", "head",
+    // "leadership") as part of the phrase — bare "Lead a team of IT
+    // operations engineers" doesn't qualify because the leadership word
+    // isn't fused with the function. Anchor on the phrase form.
+    expect(extractSignalsFromRequirement(
+      "Head of IT Operations for the platform team"
+    )).toEqual(expect.arrayContaining(["it operations leadership"]));
+
+    expect(extractSignalsFromRequirement(
+      "IT Operations Manager with 5 years in enterprise"
+    )).toEqual(expect.arrayContaining(["it operations leadership"]));
+
+    expect(extractSignalsFromRequirement(
+      "Head of Technical Support, leading the customer support function"
+    )).toEqual(expect.arrayContaining(["support leadership"]));
+  });
+
+  it("technical sales / pre-sales / RFP signals — but ONLY when the phrase is present", () => {
+    expect(extractSignalsFromRequirement(
+      "Technical sales engineer covering enterprise accounts"
+    )).toEqual(expect.arrayContaining(["technical sales", "sales engineer"]));
+
+    expect(extractSignalsFromRequirement(
+      "Pre-sales engineering for SaaS platforms; RFP/RFQ response experience"
+    )).toEqual(expect.arrayContaining(["pre-sales", "rfp"]));
+
+    // Bare "sales" alone should not over-match — only with the qualifying word.
+    expect(extractSignalsFromRequirement(
+      "Sales focus with strong communication"
+    )).not.toEqual(expect.arrayContaining(["technical sales"]));
+  });
+
+  it("ISMS / SOC 2 / SCADA are NOT in DISTINCTIVE — too easily confused with adjacent ops roles", () => {
+    // Wait — SCADA IS distinctive now. ISMS / SOC 2 are NOT (per design — see
+    // requirement-signals.ts comment). This test locks the policy so a future
+    // refactor doesn't accidentally add ISMS to DISTINCTIVE and over-block.
+    const ismsTerms = extractDistinctiveSignalsFromRequirement(
+      "ISMS lead with ISO 27001 implementation"
+    );
+    expect(ismsTerms).toEqual(expect.arrayContaining(["ISO 27001"]));
+    expect(ismsTerms).not.toEqual(expect.arrayContaining(["ISMS"]));
+
+    const soc2Terms = extractDistinctiveSignalsFromRequirement(
+      "SOC 2 Type 2 audit experience"
+    );
+    expect(soc2Terms).not.toEqual(expect.arrayContaining(["SOC 2"]));
+  });
 });

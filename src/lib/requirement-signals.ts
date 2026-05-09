@@ -112,6 +112,24 @@ export const NZ_SCARCE_SKILLS: ScarceSkillEntry[] = [
     alternatives: ["C", "C++", "Rust"],
     note: "Assembly expertise is extremely rare in NZ — C or C++ engineers with low-level systems or embedded experience are the realistic adjacent pool.",
   },
+  {
+    match: /\bscada\b|\brtu\b|programmable\s+logic\s+controller/i,
+    label: "SCADA / PLC / RTU",
+    alternatives: ["industrial automation", "control systems", "process control", "instrumentation"],
+    note: "SCADA/PLC/RTU specialists are scarce in NZ — industrial-automation, process-control or control-systems engineers from utilities, manufacturing or oil-and-gas are the closest adjacent pool. Look for Transpower, Mercury, Genesis, Beca or similar.",
+  },
+  {
+    match: /\bmetering\b|\bpower\s+distribution\b|\bhigh[- ]voltage\b|\belectrical\s+engineering\b/i,
+    label: "Power / electrical engineering",
+    alternatives: ["utilities", "field service engineer", "high voltage", "substation"],
+    note: "Power-distribution and HV electrical engineers are a small pool in NZ — field-service engineers from utilities (Transpower, Vector, Powerco) or commissioning engineers are the realistic adjacent pool.",
+  },
+  {
+    match: /\bisms\b|information\s+security\s+governance|iso\s*27001/i,
+    label: "ISMS / ISO 27001 governance",
+    alternatives: ["GRC", "compliance manager", "risk management", "information security governance"],
+    note: "ISMS implementers / ISO 27001 leads are a niche in NZ — GRC, compliance-manager or information-security-governance leads with regulated-industry exposure are the realistic adjacent pool.",
+  },
 ];
 
 // Serialise the table into a compact text block for prompt injection.
@@ -212,7 +230,36 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   [/\bdevops\b/i,                                   ["devops"]],
   // ── Security ──────────────────────────────────────────────────────────────
   [/security clearance|secret vetting|confidential vetting/i, ["security clearance"]],
-  [/\biso 27001\b|\bsoc 2\b|\bpci\b/i,             ["iso 27001", "security compliance"]],
+  // Bare \bpci\b previously collided with PCI bus / PCIe driver work. Anchor
+  // on PCI-DSS so only payment-compliance roles match; SOC 2 and ISO 27001
+  // are unambiguous as bare tokens.
+  [/\biso 27001\b|\bsoc[- ]?2\b|\bpci[- ]?dss\b/i,  ["iso 27001", "security compliance"]],
+  [/\bisms\b|information\s+security\s+management\s+system/i, ["isms", "information security governance", "iso 27001"]],
+  [/\bgrc\b|governance[,\s]+risk[,\s]+compliance/i, ["grc", "compliance", "risk management"]],
+  [/information\s+security\s+governance|security\s+governance/i, ["security governance", "isms"]],
+  // ── Industrial / Power / Control systems ──────────────────────────────────
+  // SCADA, RTU are rare enough as bare tokens. PLC is NOT — it collides with
+  // company suffix "Vodafone PLC". Anchor PLC as a phrase only.
+  [/\bscada\b/i,                                    ["scada", "industrial controls", "control systems"]],
+  [/\brtu\b/i,                                      ["rtu", "remote terminal unit", "scada"]],
+  [/programmable\s+logic\s+controller|\bplc\s+(?:programming|ladder|hmi|scada|configuration)/i, ["plc", "industrial controls"]],
+  [/\bhmi\b\s+(?:scada|industrial|configuration|interface)|human\s+machine\s+interface/i, ["hmi", "scada", "industrial controls"]],
+  [/process\s+(?:control|instrumentation|automation)|industrial\s+(?:control|automation)/i, ["industrial controls", "process control"]],
+  [/\bmetering\b|smart\s+metering|electricity\s+metering/i, ["metering", "smart metering"]],
+  [/\bdata\s+acquisition\b|\bdata\s+logging\b/i,    ["data acquisition", "data logging"]],
+  [/\bpower\s+distribution\b|\belectrical\s+distribution\b/i, ["power distribution", "electrical engineering"]],
+  [/high[- ]voltage|\bhv\s+(?:electrical|power|systems?)/i, ["high voltage", "power", "electrical engineering"]],
+  [/\belectrical\s+engineering\b|\bpower\s+engineering\b/i, ["electrical engineering", "power systems"]],
+  [/\bcommissioning\b|field\s+(?:install|commission|maintenance)/i, ["commissioning", "field installation"]],
+  // ── Customer-facing technical sales ────────────────────────────────────────
+  [/\btechnical\s+sales\b|\bsales\s+engineer(?:ing)?\b/i, ["technical sales", "sales engineer"]],
+  [/\bpre[- ]sales\b|\bpresales\b/i,                ["pre-sales", "presales"]],
+  [/\brfp\b|\brfq\b|request\s+for\s+(?:proposal|quote)/i, ["rfp", "rfq", "tendering"]],
+  // ── IoT / SaaS / leadership phrases ────────────────────────────────────────
+  [/\biot\b|internet\s+of\s+things/i,               ["iot", "connected devices"]],
+  [/\bsaas\b\s+(?:platform|solution|product)|software\s+as\s+a\s+service/i, ["saas", "platform"]],
+  [/it\s+operations?\s+(?:lead|manager|head|leadership)|head\s+of\s+it\s+operations?/i, ["it operations leadership", "it operations"]],
+  [/(?:technical|customer)\s+support\s+(?:manager|lead|head|leadership)|head\s+of\s+(?:technical\s+)?support/i, ["support leadership", "technical support leadership"]],
   // ── Design ────────────────────────────────────────────────────────────────
   [/\bfigma\b/i,                                    ["figma", "design"]],
   [/\bsketch\b/i,                                   ["sketch", "design"]],
@@ -291,6 +338,19 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   // don't put clearance status in their LinkedIn profiles (it's sensitive/restricted),
   // so any role with a clearance requirement would return 0 candidates if this gated
   // the source check. Clearance is assessed during scoring, not at search import.
+  // ── Industrial / power / control systems specialists ──────────────────────
+  // SCADA, RTU are rare enough as bare tokens to anchor on. PLC and PCI-DSS
+  // require phrase forms because the bare abbreviations collide ("Vodafone PLC",
+  // "PCIe driver"). ISMS and SOC 2 are intentionally NOT in DISTINCTIVE because
+  // they appear in too many adjacent IT-ops roles and would over-block; the
+  // scoring path handles compliance-domain matching.
+  [/\bscada\b/i,                                        ["SCADA"]],
+  [/\brtu\b|remote\s+terminal\s+unit/i,                 ["RTU"]],
+  [/programmable\s+logic\s+controller|\bplc\s+(?:programming|ladder|hmi|scada|configuration)/i, ["PLC"]],
+  [/process\s+(?:control|instrumentation)|industrial\s+(?:control|automation)/i, ["industrial controls"]],
+  [/\bmetering\b|smart\s+metering/i,                    ["metering"]],
+  [/\bpower\s+distribution\b|\bhigh[- ]voltage|\bsubstation\b/i, ["power distribution"]],
+  [/\belectrical\s+engineering\b|\bpower\s+engineering\b/i, ["electrical engineering"]],
   // Agile/delivery roles — match both canonical title and common practitioner synonyms
   // so a Scrum Master search doesn't block Agile Coach profiles and vice versa.
   [/\bscrum master\b|\bscrum coach\b/i,                 ["Scrum Master", "Scrum Coach"]],
@@ -390,6 +450,11 @@ const RARE_ANCHOR_PATTERNS: Array<[RegExp, string]> = [
   [/security clearance|secret vetting|confidential vetting/i,"security clearance"],
   [/\bdb2\b/i,                                               "DB2"],
   [/\boracle forms\b|\bplsql\b|\bpl\/sql\b/i,                "PL/SQL"],
+  // Industrial / power. SCADA / RTU are bare-token-safe; PLC requires phrase
+  // form because "PLC" alone matches "Vodafone PLC" / "Spark NZ PLC".
+  [/\bscada\b/i,                                             "SCADA"],
+  [/\brtu\b/i,                                               "RTU"],
+  [/programmable\s+logic\s+controller|\bplc\s+(?:programming|ladder|hmi|scada)/i, "PLC"],
 ];
 
 /**
