@@ -1317,6 +1317,16 @@ function removeOverlay() {
 // Fluffy cloud aesthetic — soft white, generous rounding, layered shadows.
 // Draggable by the header bar; position persists within the page session.
 let overlayPos = { right: 20, bottom: 20 }; // remembered across re-renders
+// Minimize state — when true the overlay collapses to a small floating
+// ball; clicking the ball expands back to the full bubble. Persists across
+// re-renders within the page session so a recruiter who minimised on one
+// profile keeps the minimised state when navigating to the next.
+let overlayMinimized = false;
+const MIN_BALL_ID = "recruitme-min-ball";
+
+// Last-rendered overlay context — stored so we can re-build the full overlay
+// when the user clicks the minimised ball without re-fetching from the server.
+let lastOverlayBuilder = null;
 
 function makeDraggable(container, handle) {
   let dragging = false, startX, startY, startLeft, startTop;
@@ -1400,7 +1410,7 @@ function buildOverlayShell() {
   return container;
 }
 
-// Shared header bar used by all overlay states — draggable + close button.
+// Shared header bar used by all overlay states — draggable + minimize + close.
 function buildHeader(label, accent) {
   return `
     <div id="recruitme-drag-handle" style="
@@ -1417,6 +1427,13 @@ function buildHeader(label, accent) {
         box-shadow:0 2px 6px ${accent}50;
       ">R</span>
       <span style="font-weight:600;font-size:12px;color:#334155;flex:1">${label}</span>
+      <button id="recruitme-overlay-minimize" aria-label="Minimize to ball" title="Minimize" style="
+        background:none;border:none;color:#94a3b8;cursor:pointer;
+        width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+        border-radius:50%;font-size:18px;line-height:1;padding:0 0 4px;
+        transition:background 0.15s,color 0.15s;
+      " onmouseover="this.style.background='#f1f5f9';this.style.color='#475569'"
+         onmouseout="this.style.background='none';this.style.color='#94a3b8'">−</button>
       <button id="recruitme-overlay-close" aria-label="Close" style="
         background:none;border:none;color:#94a3b8;cursor:pointer;
         width:20px;height:20px;display:flex;align-items:center;justify-content:center;
@@ -1426,6 +1443,71 @@ function buildHeader(label, accent) {
          onmouseout="this.style.background='none';this.style.color='#94a3b8'">×</button>
     </div>
   `;
+}
+
+// Wire the minimize button on every overlay state. Called after the header
+// has been inserted so the button is queryable.
+function wireMinimizeButton(container) {
+  container.querySelector("#recruitme-overlay-minimize")?.addEventListener("click", () => {
+    overlayMinimized = true;
+    showMinimizedBall();
+  });
+}
+
+// Render the small floating ball that shows when the overlay is minimised.
+// Click anywhere on the ball (or the + icon) to expand back to the full bubble.
+function showMinimizedBall() {
+  removeOverlay();
+  // Also remove any previous ball so we don't stack two.
+  document.getElementById(MIN_BALL_ID)?.remove();
+
+  const posStyle = overlayPos.left !== undefined
+    ? `left:${overlayPos.left}px;top:${overlayPos.top}px`
+    : `right:${overlayPos.right}px;bottom:${overlayPos.bottom}px`;
+
+  const ball = document.createElement("button");
+  ball.id = MIN_BALL_ID;
+  ball.type = "button";
+  ball.setAttribute("aria-label", "Expand RecruitMe overlay");
+  ball.title = "Expand RecruitMe (click +)";
+  ball.style.cssText = `
+    position:fixed;${posStyle};
+    z-index:2147483647;
+    width:44px;height:44px;
+    border:none;border-radius:50%;cursor:pointer;
+    background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);
+    color:#fff;font-weight:700;font-size:13px;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.3) inset,
+      0 4px 10px rgba(37,99,235,0.30),
+      0 8px 24px rgba(15,23,42,0.18);
+    transition:transform 0.15s, box-shadow 0.15s;
+    animation:recruitme-pop 0.18s cubic-bezier(0.34,1.56,0.64,1) both;
+  `;
+  ball.innerHTML = `
+    <span style="font-size:14px;line-height:1;">R</span>
+    <span style="
+      position:absolute;bottom:-2px;right:-2px;
+      width:18px;height:18px;border-radius:50%;
+      background:#fff;color:#2563eb;
+      display:flex;align-items:center;justify-content:center;
+      font-size:14px;font-weight:700;line-height:1;
+      box-shadow:0 2px 6px rgba(15,23,42,0.20);
+      border:1px solid #dbeafe;
+    " aria-hidden="true">+</span>
+  `;
+  ball.onmouseover = () => { ball.style.transform = "scale(1.08)"; };
+  ball.onmouseout  = () => { ball.style.transform = "scale(1)";    };
+  ball.addEventListener("click", () => {
+    overlayMinimized = false;
+    document.getElementById(MIN_BALL_ID)?.remove();
+    // Re-render the last-known overlay state without re-fetching.
+    if (typeof lastOverlayBuilder === "function") {
+      lastOverlayBuilder();
+    }
+  });
+  document.body.appendChild(ball);
 }
 
 function renderOnActiveJobs(container, data, serverBase) {
@@ -1505,6 +1587,7 @@ function renderOnActiveJobs(container, data, serverBase) {
   });
 
   container.querySelector("#recruitme-overlay-close")?.addEventListener("click", removeOverlay);
+  wireMinimizeButton(container);
   makeDraggable(container, container.querySelector("#recruitme-drag-handle"));
 }
 
@@ -1545,6 +1628,7 @@ function renderSuggestedJobs(container, data, linkedinUrl, serverBase) {
     btn.addEventListener("click", (e) => handleAddToJobClick(e.currentTarget, linkedinUrl, serverBase))
   );
   container.querySelector("#recruitme-overlay-close")?.addEventListener("click", removeOverlay);
+  wireMinimizeButton(container);
   makeDraggable(container, container.querySelector("#recruitme-drag-handle"));
 }
 
@@ -1619,16 +1703,32 @@ async function renderProfileMatchOverlay(linkedinUrl) {
     }
     const data = res.data;
     const onActive = (data.onActiveJobs || []).length > 0;
-    const container = buildOverlayShell();
-    if (onActive) {
-      renderOnActiveJobs(container, data, res.serverBase);
-    } else if (data.inLibrary || (data.suggestedJobs || []).length > 0) {
-      renderSuggestedJobs(container, data, linkedinUrl, res.serverBase);
-    } else {
+    if (!onActive && !data.inLibrary && (data.suggestedJobs || []).length === 0) {
       // Genuinely unknown candidate — nothing actionable to show
       return;
     }
-    document.body.appendChild(container);
+
+    // Build closure that paints the overlay using THIS data. Stashed in a
+    // module variable so the minimised ball can call it on click without
+    // re-querying the service worker.
+    const builder = () => {
+      const container = buildOverlayShell();
+      if (onActive) {
+        renderOnActiveJobs(container, data, res.serverBase);
+      } else {
+        renderSuggestedJobs(container, data, linkedinUrl, res.serverBase);
+      }
+      document.body.appendChild(container);
+    };
+    lastOverlayBuilder = builder;
+
+    if (overlayMinimized) {
+      // Recruiter previously minimised on another profile — keep the ball
+      // visible rather than popping the full bubble back open.
+      showMinimizedBall();
+    } else {
+      builder();
+    }
   } catch {
     // Silent — recruiter sees no overlay rather than an error toast
   }
@@ -1675,8 +1775,10 @@ setTimeout(notifyBackground, 4000);
 setInterval(() => {
   if (!isLinkedInProfilePage()) {
     // Clean up the match overlay when the recruiter clicks off a profile —
-    // we don't want a stale "On 2 jobs" pill hovering on the LinkedIn home.
+    // we don't want a stale "On 2 jobs" pill (or its minimised ball)
+    // hovering on the LinkedIn home.
     removeOverlay();
+    document.getElementById(MIN_BALL_ID)?.remove();
     lastMatchQueriedUrl = "";
     return;
   }
