@@ -18,7 +18,15 @@ import {
   type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { buildTargetLocationLabel, extractKnownLocationTargets, inferCandidateLocation, isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
+import {
+  buildTargetLocationLabel,
+  extractKnownLocationTargets,
+  inferCandidateLocation,
+  isConfirmedOutOfAreaForLocalRole,
+  isExplicitlyOverseasLocation,
+  isNzLocation,
+  normalizeLocationText,
+} from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
@@ -1038,7 +1046,6 @@ async function runSearchBackground(args: {
 
           const scoreData: Record<string, unknown> = {};
           let matchScore: number | null = null;
-          let locationFitScore: number | null = null;
           const hasFullProfile = classifyDataQuality(profileText?.length ?? 0) === "full_profile";
           try {
             const breakdown = hasFullProfile
@@ -1058,9 +1065,8 @@ async function runSearchBackground(args: {
                   parsedRoleForScoring.location_rules,
                   job.isRemote,
                   weights,
-                );
+            );
             matchScore = breakdown.overall;
-            locationFitScore = breakdown.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(breakdown));
             if (hasFullProfile) {
               scoreData.profileTextHash = buildScoreCacheKey({
@@ -1084,10 +1090,9 @@ async function runSearchBackground(args: {
               weights,
             );
             matchScore = fallback.overall;
-            locationFitScore = fallback.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(fallback));
           }
-          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile };
+          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile };
         })
       );
 
@@ -1100,7 +1105,7 @@ async function runSearchBackground(args: {
       const specialistRole = extractDistinctiveRequirementTerms(parsedRole).length > 0;
       for (const item of results) {
         if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
+        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
         // Gate 1 — location. Drop candidates with a confirmed overseas location.
         // We do NOT drop null-location candidates here: LinkedIn NZ search returns
@@ -1108,7 +1113,15 @@ async function runSearchBackground(args: {
         // genuinely overseas, scoring will reflect that via location_fit = 0.
         // Explicitly overseas locations (confirmed by isExplicitlyOverseasLocation
         // above) are already rejected before this point.
-        if (!job.isRemote && candidateLocation && locationFitScore !== null && locationFitScore <= 20) {
+        if (
+          candidateLocation &&
+          isConfirmedOutOfAreaForLocalRole(
+            candidateLocation,
+            targetLocation,
+            parsedRoleForScoring.location_rules,
+            job.isRemote,
+          )
+        ) {
           skippedScore++;
           continue;
         }

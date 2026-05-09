@@ -5,6 +5,7 @@ import {
   expandLocationKeywords,
   extractKnownLocationTargets,
   inferCandidateLocation,
+  isConfirmedOutOfAreaForLocalRole,
   isPlausibleLocation,
   isRemoteFriendlyLocationRule,
   locationMatches,
@@ -100,6 +101,20 @@ describe("assessLocationFit", () => {
 
     expect(fit?.score).toBe(100);
     expect(fit?.evidence).toContain("Acceptable role locations");
+  });
+});
+
+describe("isConfirmedOutOfAreaForLocalRole", () => {
+  it("flags Auckland as out of area for a Wellington office role", () => {
+    expect(isConfirmedOutOfAreaForLocalRole("Auckland, New Zealand", "Wellington", null, false)).toBe(true);
+  });
+
+  it("does not reject unknown locations before the profile proves the mismatch", () => {
+    expect(isConfirmedOutOfAreaForLocalRole(null, "Wellington", null, false)).toBe(false);
+  });
+
+  it("does not reject distant NZ candidates for remote roles", () => {
+    expect(isConfirmedOutOfAreaForLocalRole("Auckland, New Zealand", "Wellington", null, true)).toBe(false);
   });
 });
 

@@ -10,7 +10,12 @@ import {
 import { buildScoreCacheKey, safeParseJson } from "./utils";
 import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
-import { isExplicitlyOverseasLocation, isNzLocation, isPlausibleLocation } from "./location";
+import {
+  isConfirmedOutOfAreaForLocalRole,
+  isExplicitlyOverseasLocation,
+  isNzLocation,
+  isPlausibleLocation,
+} from "./location";
 import { getJobScoringWeights } from "./scoring-config";
 
 export { linkedInProfileMatches, linkedInSlugAliasKey, normaliseLinkedInUrl } from "./linkedin";
@@ -309,6 +314,7 @@ interface IdentityData {
   name: string;
   headline: string | null;
   location: string | null;
+  currentStatus: string;
   hasDirectName: boolean;
   hasDirectHeadline: boolean;
   hasDirectLocation: boolean;
@@ -329,11 +335,21 @@ async function buildIdentityData(args: {
   currentName: string;
   currentHeadline: string | null;
   currentLocation: string | null;
+  currentStatus: string;
   currentProfileText: string | null;
   profileText: string;
   linkedinUrl: string;
 }): Promise<IdentityData> {
-  const { jobId, currentName, currentHeadline, currentLocation, currentProfileText, profileText, linkedinUrl } = args;
+  const {
+    jobId,
+    currentName,
+    currentHeadline,
+    currentLocation,
+    currentStatus,
+    currentProfileText,
+    profileText,
+    linkedinUrl,
+  } = args;
   const cleanedProfileText = sanitizeCapturedLinkedInText(profileText);
   if (cleanedProfileText.length < 200) {
     throw new Error("Captured LinkedIn profile did not contain enough usable profile text");
@@ -387,6 +403,7 @@ async function buildIdentityData(args: {
     name,
     headline,
     location,
+    currentStatus,
     hasDirectName: Boolean(extracted.name),
     hasDirectHeadline: Boolean(extracted.headline),
     hasDirectLocation: Boolean(extracted.location),
@@ -439,7 +456,7 @@ function identityToCandidateUpdate(identity: IdentityData) {
 // Stage 2 — three Claude calls in parallel, returns the field updates.
 // Returns null if all AI calls fail (DB write becomes a no-op).
 async function runAiEnrichment(identity: IdentityData): Promise<Record<string, unknown> | null> {
-  const { cleanedProfileText, parsedRole, salary, weights, job, profileUnchanged } = identity;
+  const { cleanedProfileText, currentStatus, parsedRole, salary, weights, job, profileUnchanged } = identity;
 
   if (profileUnchanged) {
     // Existing score is still valid — nothing to do in stage 2.
@@ -484,6 +501,13 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
       weights,
     );
     Object.assign(update, deriveUpdateData(breakdown));
+
+    if (
+      ["new", "reviewing"].includes(currentStatus) &&
+      isConfirmedOutOfAreaForLocalRole(location, parsedRole.location || job.location, parsedRole.location_rules, job.isRemote)
+    ) {
+      update.status = "rejected";
+    }
   }
   if (acceptance) {
     Object.assign(update, buildAcceptanceData(acceptance));
@@ -516,6 +540,7 @@ async function buildCapturedCandidateData(args: {
   currentName: string;
   currentHeadline: string | null;
   currentLocation: string | null;
+  currentStatus: string;
   currentProfileText: string | null;
   profileText: string;
   linkedinUrl: string;
@@ -548,6 +573,7 @@ export async function saveCapturedProfileFast(args: {
     currentName: candidate.name,
     currentHeadline: candidate.headline,
     currentLocation: candidate.location,
+    currentStatus: candidate.status,
     currentProfileText: candidate.profileText,
     profileText: profileText.trim(),
     linkedinUrl,
@@ -639,6 +665,7 @@ export async function importCapturedLinkedInProfileFast(args: {
     currentName: existing?.name ?? "Unknown",
     currentHeadline: existing?.headline ?? null,
     currentLocation: existing?.location ?? null,
+    currentStatus: existing?.status ?? "new",
     currentProfileText: existing?.profileText ?? null,
     profileText: profileText.trim(),
     linkedinUrl: cleanUrl,

@@ -17,7 +17,7 @@ import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { locationMatches, expandLocationKeywords } from "@/lib/location";
+import { locationMatches, expandLocationKeywords, isConfirmedOutOfAreaForLocalRole } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
@@ -193,7 +193,6 @@ export async function POST(
 
     const scoreData: Record<string, unknown> = {};
     let matchScore: number | null = null;
-    let locationFitScore: number | null = null;
 
     try {
       const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary, weights, auth.orgId);
@@ -206,7 +205,6 @@ export async function POST(
         weights,
       );
       matchScore = breakdown.overall;
-      locationFitScore = breakdown.categories.location_fit.score;
       Object.assign(scoreData, deriveUpdateData(breakdown));
       scoreData.profileTextHash = buildScoreCacheKey({
         profileText,
@@ -222,8 +220,8 @@ export async function POST(
     }
 
     // Hard location cutoff: don't import talent-pool candidates who are clearly
-    // out of area for non-remote roles (score ≤20 means >150 km away).
-    if (!job.isRemote && locationFitScore !== null && locationFitScore <= 20) {
+    // out of area for non-remote local roles.
+    if (isConfirmedOutOfAreaForLocalRole(row.location, targetLocation, parsedRole.location_rules, job.isRemote)) {
       skippedScore++;
       continue;
     }

@@ -466,3 +466,17 @@ export function assessLocationFit(
     evidence: `Location fit is unclear from the stated location: ${candidateRaw}.`,
   };
 }
+
+export function isConfirmedOutOfAreaForLocalRole(
+  candidateLocation: string | null | undefined,
+  targetLocation: string | null | undefined,
+  locationRules?: string | null,
+  isRemote?: boolean,
+): boolean {
+  if (isRemote) return false;
+  const assessment = assessLocationFit(candidateLocation, targetLocation, locationRules);
+  // Unknown/unclear locations score 45 and should stay reviewable. A score of
+  // 35 or below means we have a concrete non-local location, e.g. Auckland for
+  // a Wellington office role.
+  return Boolean(assessment && assessment.score <= 35);
+}

@@ -192,6 +192,7 @@ describe("applyAiEnrichmentInBackground (stage 2 — concurrency gate)", () => {
     const result = await applyAiEnrichmentInBackground("cand-1", {
       cleanedProfileText: PROFILE_TEXT,
       name: "Pat Lee", headline: null, location: null,
+      currentStatus: "new",
       hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
       orgId: "org-1",
       linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
@@ -215,6 +216,69 @@ describe("applyAiEnrichmentInBackground (stage 2 — concurrency gate)", () => {
     );
   });
 
+  it("auto-rejects early-stage candidates when the full fetched profile proves they are out of area", async () => {
+    dbMocks.prisma.candidate.updateMany.mockResolvedValue({ count: 1 });
+    aiMocks.extractCandidateInfo.mockResolvedValueOnce({
+      name: "Pat Lee",
+      headline: "Senior Software Engineer",
+      location: "Auckland, New Zealand",
+    });
+
+    const result = await applyAiEnrichmentInBackground("cand-1", {
+      cleanedProfileText: PROFILE_TEXT,
+      name: "Pat Lee", headline: null, location: null,
+      currentStatus: "new",
+      hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
+      orgId: "org-1",
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      profileCapturedAt: new Date(),
+      profileTextHash: "hash-1",
+      profileUnchanged: false,
+      job: baseJob as unknown as Awaited<ReturnType<typeof dbMocks.prisma.job.findUnique>>,
+      parsedRole: JSON.parse(baseJob.parsedRole),
+      salary: null,
+      weights: { must_have: 0.36, skill_fit: 0.22, location_fit: 0.08, seniority_fit: 0.10, title_fit: 0.08, domain_fit: 0.10, nice_to_have_fit: 0.06 },
+    });
+
+    expect(result.applied).toBe(true);
+    const update = dbMocks.prisma.candidate.updateMany.mock.calls[0][0].data;
+    expect(update).toMatchObject({
+      location: "Auckland, New Zealand",
+      status: "rejected",
+    });
+    expect(update.matchScore).toBeLessThan(78);
+    expect(JSON.parse(update.scoreBreakdown).categories.location_fit.score).toBe(20);
+  });
+
+  it("does not auto-reject candidates already moved beyond initial review", async () => {
+    dbMocks.prisma.candidate.updateMany.mockResolvedValue({ count: 1 });
+    aiMocks.extractCandidateInfo.mockResolvedValueOnce({
+      name: "Pat Lee",
+      headline: "Senior Software Engineer",
+      location: "Auckland, New Zealand",
+    });
+
+    await applyAiEnrichmentInBackground("cand-1", {
+      cleanedProfileText: PROFILE_TEXT,
+      name: "Pat Lee", headline: null, location: null,
+      currentStatus: "shortlisted",
+      hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
+      orgId: "org-1",
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      profileCapturedAt: new Date(),
+      profileTextHash: "hash-1",
+      profileUnchanged: false,
+      job: baseJob as unknown as Awaited<ReturnType<typeof dbMocks.prisma.job.findUnique>>,
+      parsedRole: JSON.parse(baseJob.parsedRole),
+      salary: null,
+      weights: { must_have: 0.36, skill_fit: 0.22, location_fit: 0.08, seniority_fit: 0.10, title_fit: 0.08, domain_fit: 0.10, nice_to_have_fit: 0.06 },
+    });
+
+    const update = dbMocks.prisma.candidate.updateMany.mock.calls[0][0].data;
+    expect(update.status).toBeUndefined();
+    expect(update.location).toBe("Auckland, New Zealand");
+  });
+
   it("skips silently when profileTextHash has changed (race lost — recruiter re-scored manually)", async () => {
     // Simulates: between stage 1 and stage 2, recruiter manually re-scored
     // the candidate, which bumped profileTextHash to a different value.
@@ -222,6 +286,7 @@ describe("applyAiEnrichmentInBackground (stage 2 — concurrency gate)", () => {
     const result = await applyAiEnrichmentInBackground("cand-1", {
       cleanedProfileText: PROFILE_TEXT,
       name: "Pat Lee", headline: null, location: null,
+      currentStatus: "new",
       hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
       orgId: "org-1",
       linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
@@ -243,6 +308,7 @@ describe("applyAiEnrichmentInBackground (stage 2 — concurrency gate)", () => {
     const result = await applyAiEnrichmentInBackground("cand-1", {
       cleanedProfileText: PROFILE_TEXT,
       name: "Pat Lee", headline: null, location: null,
+      currentStatus: "new",
       hasDirectName: true, hasDirectHeadline: false, hasDirectLocation: false,
       orgId: "org-1",
       linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
