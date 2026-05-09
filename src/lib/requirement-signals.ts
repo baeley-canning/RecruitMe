@@ -245,12 +245,24 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   [/\bscada\b/i,                                    ["scada", "industrial controls", "control systems"]],
   [/\brtu\b/i,                                      ["rtu", "remote terminal unit", "scada"]],
   [/programmable\s+logic\s+controller|\bplc\s+(?:programming|integration|configuration|config|ladder|hmi|scada)/i, ["plc integration", "plc configuration", "programmable logic controller", "industrial controls"]],
-  [/\bhmi\b\s+(?:scada|industrial|configuration|interface)|human\s+machine\s+interface/i, ["hmi", "scada", "industrial controls"]],
-  [/process\s+(?:control|instrumentation|automation)|industrial\s+(?:control|automation)/i, ["industrial controls", "process control"]],
+  // HMI: allow up to ~30 chars between HMI and a qualifier so "HMI integration
+  // with SCADA" matches. Bare "HMI design" still doesn't fire — needs an
+  // industrial qualifier nearby to avoid false-positives in UX/UI roles.
+  [/\bhmi\b[\w\s]{0,30}?\b(?:scada|industrial|configuration|interface|plc|control)\b|human\s+machine\s+interface/i, ["hmi", "scada", "industrial controls"]],
+  // Process control / industrial control: tightened to require an industrial
+  // qualifier OR a downstream noun ("system","loop","valve","engineer").
+  // The previous regex matched "automated CI/CD process control" in DevOps
+  // JDs and "process automation" in RPA roles, which incorrectly flagged
+  // those as specialist roles and capped all snippet candidates at 25.
+  [/(?:industrial|plant|manufacturing|substation)\s+process\s+(?:control|automation|instrumentation)|process\s+(?:control|instrumentation)\s+(?:engineer|system|loop|valve|equipment)|industrial\s+(?:control\s+system|automation\s+(?:system|engineer|platform))/i, ["industrial controls", "process control"]],
   [/\bmetering\b|smart\s+metering|electricity\s+metering/i, ["metering", "smart metering"]],
   [/\bdata\s+acquisition\b|\bdata\s+logging\b/i,    ["data acquisition", "data logging"]],
   [/\bpower\s+distribution\b|\belectrical\s+distribution\b/i, ["power distribution", "electrical engineering"]],
-  [/high[- ]voltage|\bhv\s+(?:electrical|power|systems?)/i, ["high voltage", "power", "electrical engineering"]],
+  // HV: widened to include the canonical substation-engineer phrasings the
+  // narrow original missed ("HV equipment", "HV switchgear", "HV substation",
+  // "HV commissioning", "HV cable"). Still anchored on a power-context
+  // qualifier to avoid generic "HV TV channel" false positives.
+  [/high[- ]voltage|\bhv\s+(?:electrical|power|systems?|equipment|switchgear|substation|commissioning|cable|installation|transmission|distribution)\b/i, ["high voltage", "power", "electrical engineering"]],
   [/\belectrical\s+engineering\b|\bpower\s+engineering\b/i, ["electrical engineering", "power systems"]],
   [/\bcommissioning\b|field\s+(?:install|commission|maintenance)/i, ["commissioning", "field installation"]],
   // ── Customer-facing technical sales ────────────────────────────────────────
@@ -349,7 +361,10 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   [/\bscada\b/i,                                        ["SCADA"]],
   [/\brtu\b|remote\s+terminal\s+unit/i,                 ["RTU"]],
   [/programmable\s+logic\s+controller|\bplc\s+(?:programming|integration|configuration|config|ladder|hmi|scada)/i, ["PLC integration", "PLC configuration", "PLC programming", "programmable logic controller"]],
-  [/process\s+(?:control|instrumentation)|industrial\s+(?:control|automation)/i, ["industrial controls"]],
+  // Same tightening as TECH alias — see the comment there. Bare "process
+  // control" / "industrial control" without an industrial qualifier or a
+  // downstream noun would trigger specialist gating on DevOps / RPA JDs.
+  [/(?:industrial|plant|manufacturing|substation)\s+process\s+(?:control|automation|instrumentation)|process\s+(?:control|instrumentation)\s+(?:engineer|system|loop|valve|equipment)|industrial\s+(?:control\s+system|automation\s+(?:system|engineer|platform))/i, ["industrial controls"]],
   [/\bmetering\b|smart\s+metering/i,                    ["metering"]],
   [/\bpower\s+distribution\b|\bhigh[- ]voltage|\bsubstation\b/i, ["power distribution"]],
   [/\belectrical\s+engineering\b|\bpower\s+engineering\b/i, ["electrical engineering"]],

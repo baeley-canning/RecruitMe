@@ -109,8 +109,12 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
       undefined,
       deps,
     );
-    // Strong-spine snippet must clear the cap by a wide margin.
-    expect(score.overall).toBeGreaterThan(SPECIALIST_SNIPPET_NO_ANCHOR_CAP);
+    // Strong-spine snippet must clear the SNIPPET cutoff (30) — not just the
+    // cap (25). A weak `> 25` assertion would pass on a 26-point score, which
+    // is below the import threshold. The 5-must-have role with a 5-token
+    // snippet caps the achievable provisional score around mustHaveRatio
+    // 3/5 — so we assert >cutoff (the import gate), not a hard 45 floor.
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
   });
 
   // ── Compliance role: ISO 27001 anchor ──────────────────────────────────────
@@ -160,7 +164,11 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
       undefined,
       deps,
     );
-    expect(score.overall).toBeGreaterThan(SPECIALIST_SNIPPET_NO_ANCHOR_CAP);
+    // The snippet matches the ISMS / ISO 27001 / security-governance spine
+    // but misses IT-ops-leadership and support-leadership must_haves, so
+    // overall lands moderate. What matters is it clears the import cutoff
+    // (30), proving the cap didn't fire.
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
   });
 
   it("accepts ISMS-led snippets even when ISO 27001 is not written in the snippet", () => {
@@ -205,6 +213,98 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
       deps,
     );
     expect(score.overall).toBeLessThan(SCORE_CUTOFF_SNIPPET);
+  });
+
+  it("does NOT cap when at least one distinctive anchor is present (partial match)", () => {
+    // The cap only fires when ZERO distinctive anchors match the snippet.
+    // A role with 4 anchors (SCADA / RTU / metering / electrical engineering)
+    // and a snippet that mentions only ONE of them must pass — otherwise
+    // we'd reject candidates whose primary anchor is named even when
+    // adjacent anchors aren't.
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Pat Lee",
+        headline: "Senior SCADA Engineer",
+        snippet: "SCADA configuration for upper North Island grid; ICS systems experience.",
+      },
+      powerRole,
+      "Christchurch",
+      "Christchurch",
+      "Christchurch office",
+      false,
+      undefined,
+      deps,
+    );
+    // With "scada" present in the snippet, the cap is bypassed regardless of
+    // whether RTU / metering / electrical engineering also appear.
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
+  });
+
+  it("REGRESSION: a DevOps JD that uses 'process control' / 'process automation' must NOT trigger specialist gating", () => {
+    // Critique flagged this as a real regression risk: the over-broad
+    // `process\s+(?:control|automation)` regex was matching ordinary DevOps
+    // JDs with phrases like "automated CI/CD process control for build
+    // pipeline" and dragging every snippet into specialist gating. The
+    // tightened regex requires an industrial qualifier or a downstream noun.
+    const devopsRole = makeRole({
+      title: "Senior DevOps Engineer",
+      must_haves: [
+        "Automated CI/CD process control for build pipelines",
+        "Process automation across deployment workflows",
+        "Industrial scale and reliability practices",
+        "Kubernetes",
+      ],
+      skills_required: ["Kubernetes", "Terraform", "CI/CD"],
+    });
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Sam Patel",
+        headline: "Senior DevOps Engineer at Local Co",
+        snippet: "DevOps engineer running Kubernetes and Terraform pipelines for a SaaS startup.",
+      },
+      devopsRole,
+      "Wellington",
+      "Wellington",
+      "Wellington office",
+      false,
+      undefined,
+      deps,
+    );
+    // Distinctive anchors should be ["Kubernetes"] only — not "industrial
+    // controls". With Kubernetes present in the snippet, the cap doesn't
+    // fire. (If "process control" still over-matched, ["industrial
+    // controls"] would be in distinctive anchors, the snippet wouldn't
+    // contain it, and the cap would drop the score below 30 — wrongly.)
+    expect(score.overall).toBeGreaterThan(SCORE_CUTOFF_SNIPPET);
+  });
+
+  it("the cap actually REDUCES the score (not just lands on it by construction)", () => {
+    // Two same-shape candidates on the same role: one with the anchor
+    // present, one without. Proves the cap is doing real work — not just
+    // an arithmetic identity.
+    const withAnchor = buildProvisionalSearchScore(
+      {
+        name: "Kim",
+        headline: "Senior SCADA Engineer at Vector",
+        snippet: "SCADA, RTU, metering and substation work for the Auckland grid.",
+      },
+      powerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+    );
+    const withoutAnchor = buildProvisionalSearchScore(
+      {
+        name: "Kim",
+        headline: "Senior Technical Support Engineer at Spark",
+        snippet: "Technical support for ISP customers; ITIL v4 and incident management.",
+      },
+      powerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+    );
+    // Without-anchor was capped to 25 (we know exactly because cap fires
+    // when overall would otherwise be > 25; floor doesn't apply when the
+    // cap returns early).
+    expect(withoutAnchor.overall).toBe(SPECIALIST_SNIPPET_NO_ANCHOR_CAP);
+    // With-anchor score must be strictly higher — proves the cap reduced
+    // a score that would otherwise be above 25.
+    expect(withAnchor.overall).toBeGreaterThan(withoutAnchor.overall);
   });
 
   // ── Common-role regression: must NOT change behaviour for ordinary roles ──

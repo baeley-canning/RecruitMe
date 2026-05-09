@@ -56,8 +56,10 @@ describe("requirement signal extraction", () => {
       "Experience with SCADA systems, RTU configuration, and metering infrastructure"
     )).toEqual(expect.arrayContaining(["SCADA", "RTU", "metering"]));
 
+    // Tightened regex requires an industrial qualifier or downstream noun.
+    // Using realistic substation phrasing to anchor industrial-controls.
     expect(extractDistinctiveSignalsFromRequirement(
-      "Process control / industrial automation background, with electrical engineering focus"
+      "Industrial control system background with electrical engineering focus"
     )).toEqual(expect.arrayContaining(["industrial controls", "electrical engineering"]));
 
     expect(extractDistinctiveSignalsFromRequirement(
@@ -138,6 +140,81 @@ describe("requirement signal extraction", () => {
     expect(extractSignalsFromRequirement(
       "Sales focus with strong communication"
     )).not.toEqual(expect.arrayContaining(["technical sales"]));
+  });
+
+  it("REGRESSION: 'process control' / 'process automation' must NOT distinctive-flag DevOps or RPA JDs", () => {
+    // Critique: the original regex matched "automated CI/CD process control"
+    // (DevOps) and "process automation across deployment workflows" (RPA),
+    // which incorrectly flipped specialistRole=true on those roles. Tightened
+    // regex requires an industrial qualifier OR a downstream noun.
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Automated CI/CD process control for build pipelines"
+    )).not.toEqual(expect.arrayContaining(["industrial controls"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Process automation across deployment workflows for an RPA platform"
+    )).not.toEqual(expect.arrayContaining(["industrial controls"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Lead source-control and version-control systems migration"
+    )).not.toEqual(expect.arrayContaining(["industrial controls"]));
+
+    // Legitimate industrial-context phrasings still fire.
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Industrial process control and instrumentation experience in a substation environment"
+    )).toEqual(expect.arrayContaining(["industrial controls"]));
+
+    expect(extractDistinctiveSignalsFromRequirement(
+      "Process control engineer for plant SCADA stack"
+    )).toEqual(expect.arrayContaining(["industrial controls"]));
+  });
+
+  it("HV regex covers canonical substation phrasings ('HV equipment', 'HV switchgear', 'HV substation')", () => {
+    // Narrow original regex missed common substation phrasings. Locked here.
+    expect(extractSignalsFromRequirement(
+      "HV equipment commissioning experience"
+    )).toEqual(expect.arrayContaining(["high voltage"]));
+
+    expect(extractSignalsFromRequirement(
+      "HV switchgear and substation installation"
+    )).toEqual(expect.arrayContaining(["high voltage"]));
+
+    expect(extractSignalsFromRequirement(
+      "HV cable transmission projects across the upper North Island"
+    )).toEqual(expect.arrayContaining(["high voltage"]));
+
+    // Bare "HV broadcasting" without electrical context must NOT match.
+    expect(extractSignalsFromRequirement(
+      "HV broadcasting channel format"
+    )).not.toEqual(expect.arrayContaining(["high voltage"]));
+  });
+
+  it("HMI regex matches when an industrial qualifier is a few words after HMI", () => {
+    // Original `\bhmi\b\s+(?:scada|...)` required the qualifier as the very
+    // next token; "HMI integration with SCADA" missed. Widened here.
+    expect(extractSignalsFromRequirement(
+      "HMI integration with SCADA stack"
+    )).toEqual(expect.arrayContaining(["hmi", "scada"]));
+
+    expect(extractSignalsFromRequirement(
+      "Human Machine Interface design for industrial controls"
+    )).toEqual(expect.arrayContaining(["hmi"]));
+
+    // UX/UI roles that say "HMI design" with no industrial qualifier nearby
+    // still get no industrial-controls signal.
+    expect(extractSignalsFromRequirement(
+      "HMI design for mobile checkout flow"
+    )).not.toEqual(expect.arrayContaining(["industrial controls"]));
+  });
+
+  it("realistic Transpower-style multi-clause requirement extracts the right anchors and nothing else", () => {
+    const realisticReq =
+      "Demonstrated experience with SCADA, RTU and metering platforms in a regulated NZ utility " +
+      "(Transpower, Mercury, Genesis) — exposure to IEC 61850 and substation automation preferred.";
+    const distinctive = extractDistinctiveSignalsFromRequirement(realisticReq);
+    expect(distinctive).toEqual(expect.arrayContaining(["SCADA", "RTU", "metering"]));
+    // Must NOT pollute distinctive set with company names or generic words.
+    expect(distinctive).not.toEqual(expect.arrayContaining(["Transpower", "Mercury", "Genesis", "regulated", "utility", "platforms"]));
   });
 
   it("ISMS is distinctive, while SOC 2 stays out of DISTINCTIVE", () => {
