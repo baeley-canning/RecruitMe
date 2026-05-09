@@ -17,7 +17,7 @@ import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { isOverseasForNzRole } from "@/lib/location";
+import { shouldRejectAsOverseas } from "@/lib/location";
 import { getCityCoords, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
@@ -170,10 +170,18 @@ export async function POST(
     const row = candidates[i];
     const loc = row.location ?? "";
 
-    // Country gate: hard reject anyone clearly overseas. NZ-wide is fine —
-    // a Christchurch candidate on a Wellington role is no longer dropped at
-    // import; city-distance just affects the location_fit score for ranking.
-    if (isOverseasForNzRole(loc, job.isRemote)) {
+    // Country gate: combines explicit location with profile-text inference.
+    // Two-signal rule means a returnee Kiwi whose old roles mention overseas
+    // cities won't be falsely rejected — only candidates with corroborating
+    // signals (e.g. Present-role at AU company AND Sydney location string)
+    // get a hard reject. Single signals route to UNKNOWN → reviewable.
+    const overseasCheck = shouldRejectAsOverseas({
+      explicitLocation: loc,
+      headline: row.headline,
+      profileText: row.profileText,
+      isRemote: job.isRemote,
+    });
+    if (overseasCheck.reject) {
       skippedScore++;
       continue;
     }

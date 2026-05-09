@@ -19,7 +19,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getAccessibleOrgIds, candidateOrgFilter } from "@/lib/org-access";
-import { isOverseasForNzRole } from "@/lib/location";
+import { shouldRejectAsOverseas } from "@/lib/location";
 
 export async function GET(
   req: Request,
@@ -137,10 +137,18 @@ export async function POST(
   for (const source of sourceCandidates) {
     if (!source.profileText) continue;
     // Country gate: never import a confirmed-overseas candidate onto a
-    // non-remote NZ role from the library picker. The previous code had
-    // location only as a scoring input here, so a Sydney candidate could be
-    // manually picked from the library and silently land on a Wellington job.
-    if (isOverseasForNzRole(source.location, job.isRemote)) {
+    // non-remote NZ role. shouldRejectAsOverseas combines explicit-location
+    // check with profile-text inference (Present-role location, "based in"
+    // phrases, definitely-overseas current employer, +64/+61 phone codes)
+    // and applies a two-signal requirement so returnee Kiwis whose profile
+    // mentions e.g. London past roles aren't false-positively rejected.
+    const overseas = shouldRejectAsOverseas({
+      explicitLocation: source.location,
+      headline: source.headline,
+      profileText: source.profileText,
+      isRemote: job.isRemote,
+    });
+    if (overseas.reject) {
       skippedOverseas.push(source.id);
       continue;
     }

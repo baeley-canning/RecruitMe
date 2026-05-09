@@ -250,6 +250,193 @@ export function isOverseasForNzRole(
   return isExplicitlyOverseasLocation(raw);
 }
 
+// ─── Profile-text country inference ──────────────────────────────────────
+//
+// Even when the structured `location` field is empty, a captured LinkedIn
+// profile usually carries enough signal to place the candidate. We use a
+// deliberately narrow inference — only the candidate's CURRENT role
+// (the experience block ending in "Present") and explicit "based in"
+// phrases. Past roles, education, and country-name frequency are ignored
+// because they're how returnee Kiwis (worked overseas, now home) get
+// false-positived.
+//
+// NZ veto: any unambiguous NZ token anywhere in the profile (NZ, New
+// Zealand, Aotearoa, Auckland, Wellington, Christchurch, etc.) overrides
+// every overseas signal. Better to occasionally let an overseas candidate
+// through than to ban a returnee.
+
+const NZ_VETO_TOKENS = [
+  "new zealand", "aotearoa", "auckland", "wellington", "christchurch",
+  "hamilton, waikato", "tauranga", "dunedin", "palmerston north", "rotorua",
+  "napier", "nelson", "queenstown", "invercargill", "whangarei", "porirua",
+  "lower hutt", "upper hutt", "petone", "remote, nz", "remote from nz",
+  "remote (nz)", "based in nz", "nz based",
+];
+
+// Companies that virtually never employ NZ-based staff. A candidate whose
+// CURRENT role is at one of these and whose location signal isn't NZ-positive
+// is very likely overseas. NZ-suffixed forms (e.g. Westpac NZ) are always
+// safe — they're distinct names. List drawn from agent research; conservative.
+const DEFINITELY_OVERSEAS_COMPANIES = [
+  "atlassian", "canva", "telstra", "commonwealth bank", "commbank",
+  "macquarie group", "macquarie bank", "national australia bank",
+  "qantas", "optus", "bunnings", "rea group", "carsales", "seek limited",
+  "myob", "kelly+partners", "westpac banking corporation",
+  "tata consultancy services", "infosys", "wipro", "hcl technologies",
+  "tech mahindra", "cognizant", "reliance industries",
+  "alibaba", "tencent", "huawei", "bytedance",
+  "hsbc", "barclays", "lloyds banking", "standard chartered",
+  "vodafone group",
+  "sap se", "siemens", "ericsson", "spotify",
+];
+
+// "Present · Sydney, Australia" / "Present — Melbourne, VIC" / "Present | London"
+const PRESENT_LOCATION_RE =
+  /\b(?:Present|Now|Current)\b\s*[·•\-–—|,]\s*([A-Z][\w' .,-]{2,80}?)(?:\n|$|\s{2,})/g;
+
+// "based in Sydney" / "Sydney-based" / "located in Melbourne" / "live in London"
+const BASED_IN_RE =
+  /\b(?:based|located|live|living|reside|residing|currently)\s+in\s+([A-Z][\w' -]{2,40})\b/gi;
+const X_BASED_RE = /\b([A-Z][\w' -]{2,40})-based\b/g;
+
+// "previously based in X" / "moved from X" / "originally from X" — DON'T count
+const NEGATIVE_PREFIX_RE =
+  /\b(?:previously|formerly|originally|ex-|moved\s+(?:from|to)|relocated\s+from|left\s+|grew\s+up\s+in)\s+(?:[\w\s]{0,30}?)$/i;
+
+export interface CandidateCountryInference {
+  country: "NZ" | "OVERSEAS" | "UNKNOWN";
+  confidence: "high" | "medium" | "low";
+  evidence: string;
+}
+
+/**
+ * Infer a candidate's country from their profile text + headline + explicit
+ * location, applying the false-positive guards from the design review:
+ *   - Present-block exclusivity (only current role counts).
+ *   - NZ veto (any NZ token wins).
+ *   - Two-signal requirement for OVERSEAS verdict (one signal alone returns
+ *     UNKNOWN so the candidate is reviewable, not auto-rejected).
+ */
+export function inferCandidateCountry(args: {
+  profileText?: string | null;
+  headline?: string | null;
+  explicitLocation?: string | null;
+}): CandidateCountryInference {
+  const text = [args.explicitLocation, args.headline, args.profileText]
+    .filter((v): v is string => Boolean(v))
+    .join("\n");
+
+  if (!text) return { country: "UNKNOWN", confidence: "low", evidence: "no profile text" };
+
+  const lc = text.toLowerCase();
+
+  // NZ veto first — any explicit NZ token short-circuits to NZ.
+  for (const token of NZ_VETO_TOKENS) {
+    if (lc.includes(token)) {
+      return {
+        country: "NZ",
+        confidence: token.length > 6 ? "high" : "medium",
+        evidence: `NZ veto token: "${token}"`,
+      };
+    }
+  }
+
+  // Explicit overseas in the structured location field is one strong signal.
+  const overseasSignals: string[] = [];
+  if (args.explicitLocation && isExplicitlyOverseasLocation(args.explicitLocation)) {
+    overseasSignals.push(`explicit location is overseas: "${args.explicitLocation}"`);
+  }
+
+  // Phone country codes — +64 NZ, +61 AU, +44 UK, +91 IN, +1 US/CA.
+  if (/\+64\b/.test(text)) {
+    return { country: "NZ", confidence: "high", evidence: "phone +64 in profile" };
+  }
+  const phoneOverseas = text.match(/\+(61|44|91|1)\b/);
+  if (phoneOverseas) {
+    overseasSignals.push(`phone country code +${phoneOverseas[1]}`);
+  }
+
+  // Present-block location: scan only the current role's location string.
+  PRESENT_LOCATION_RE.lastIndex = 0;
+  let presentMatch: RegExpExecArray | null;
+  while ((presentMatch = PRESENT_LOCATION_RE.exec(text)) !== null) {
+    const raw = presentMatch[1].trim().replace(/\s+/g, " ");
+    if (raw.length > 80) continue;
+    if (isExplicitlyOverseasLocation(raw)) {
+      overseasSignals.push(`Present-role location: "${raw}"`);
+      break; // first Present block is the strongest signal
+    }
+  }
+
+  // "based in X" / "X-based" — but reject if preceded by negative qualifier.
+  for (const re of [BASED_IN_RE, X_BASED_RE]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const before = text.slice(Math.max(0, m.index - 40), m.index);
+      if (NEGATIVE_PREFIX_RE.test(before)) continue;
+      const captured = m[1].trim();
+      if (isExplicitlyOverseasLocation(captured)) {
+        overseasSignals.push(`based-in: "${captured}"`);
+        break;
+      }
+    }
+  }
+
+  // Definitely-overseas company in CURRENT role context only.
+  // Look for "[Company] · Present" or "[Company] · ... · Present" (any order).
+  for (const company of DEFINITELY_OVERSEAS_COMPANIES) {
+    const re = new RegExp(`\\b${company.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\b[^\\n]{0,200}\\bPresent\\b`, "i");
+    if (re.test(text)) {
+      overseasSignals.push(`current role at overseas-only company: "${company}"`);
+      break;
+    }
+  }
+
+  // Two-signal requirement for hard OVERSEAS verdict. Single signal → UNKNOWN
+  // so the candidate is reviewable rather than auto-rejected.
+  if (overseasSignals.length >= 2) {
+    return {
+      country: "OVERSEAS",
+      confidence: "high",
+      evidence: overseasSignals.join("; "),
+    };
+  }
+  if (overseasSignals.length === 1) {
+    return {
+      country: "UNKNOWN",
+      confidence: "medium",
+      evidence: `weak overseas signal (${overseasSignals[0]}) — reviewable`,
+    };
+  }
+  return { country: "UNKNOWN", confidence: "low", evidence: "no strong country signal" };
+}
+
+/**
+ * Strict country gate that combines the explicit location check with profile-
+ * text inference. Use this at save sites that have profileText available.
+ * Hard reject only when inference is "OVERSEAS" with high confidence — the
+ * UNKNOWN bucket is intentionally permissive.
+ */
+export function shouldRejectAsOverseas(args: {
+  explicitLocation?: string | null;
+  headline?: string | null;
+  profileText?: string | null;
+  isRemote?: boolean;
+}): { reject: boolean; evidence: string } {
+  if (args.isRemote) return { reject: false, evidence: "role is remote" };
+  // Cheap path first — explicit-overseas location is a hard reject.
+  if (args.explicitLocation && isExplicitlyOverseasLocation(args.explicitLocation)) {
+    return { reject: true, evidence: `explicit location: "${args.explicitLocation}"` };
+  }
+  // Inference path — only reject on high-confidence OVERSEAS verdict.
+  const inferred = inferCandidateCountry(args);
+  if (inferred.country === "OVERSEAS" && inferred.confidence === "high") {
+    return { reject: true, evidence: inferred.evidence };
+  }
+  return { reject: false, evidence: inferred.evidence };
+}
+
 export function isPlausibleLocation(value: string | null | undefined): boolean {
   const raw = value?.trim() ?? "";
   if (!raw || raw.length > 120) return false;

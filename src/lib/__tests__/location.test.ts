@@ -4,6 +4,7 @@ import {
   buildTargetLocationLabel,
   expandLocationKeywords,
   extractKnownLocationTargets,
+  inferCandidateCountry,
   inferCandidateLocation,
   isConfirmedOutOfAreaForLocalRole,
   isExplicitlyOverseasLocation,
@@ -11,6 +12,7 @@ import {
   isPlausibleLocation,
   isRemoteFriendlyLocationRule,
   locationMatches,
+  shouldRejectAsOverseas,
 } from "../location";
 
 describe("inferCandidateLocation — search-snippet city detection", () => {
@@ -207,5 +209,120 @@ describe("isOverseasForNzRole — country gate at save sites", () => {
     expect(isOverseasForNzRole(null, false)).toBe(false);
     expect(isOverseasForNzRole("", false)).toBe(false);
     expect(isOverseasForNzRole(undefined, false)).toBe(false);
+  });
+});
+
+describe("inferCandidateCountry — Present-block, NZ veto, two-signal rule", () => {
+  it("flags overseas with HIGH confidence when current role and explicit location both signal AU", () => {
+    const result = inferCandidateCountry({
+      explicitLocation: "Sydney, NSW, Australia",
+      headline: "Senior Engineer at Atlassian",
+      profileText: "Senior Engineer at Atlassian · Mar 2023 - Present · Sydney, Australia\nC#, .NET, AWS",
+    });
+    expect(result.country).toBe("OVERSEAS");
+    expect(result.confidence).toBe("high");
+  });
+
+  it("does NOT flag overseas when explicit location is Sydney but the candidate has +64 phone", () => {
+    // Phone +64 is a hard NZ veto via the country-code path.
+    const result = inferCandidateCountry({
+      explicitLocation: "Sydney",
+      profileText: "Contact: +64 21 555 0100\nSenior Engineer at Globex · Present · Sydney",
+    });
+    expect(result.country).toBe("NZ");
+  });
+
+  it("returnee Kiwi: previously at Atlassian Sydney, now at Xero Wellington — NOT overseas", () => {
+    // The classic false-positive risk. Past role is overseas, current role is NZ.
+    // NZ veto on "Wellington" + "New Zealand" must override the Atlassian mention.
+    const result = inferCandidateCountry({
+      explicitLocation: "Wellington, New Zealand",
+      headline: "Lead Engineer at Xero",
+      profileText: [
+        "Lead Engineer at Xero · Jan 2023 - Present · Wellington, New Zealand",
+        "Senior Engineer at Atlassian · Mar 2018 - Dec 2021 · Sydney, Australia",
+      ].join("\n"),
+    });
+    expect(result.country).toBe("NZ");
+  });
+
+  it("multinational with NZ office: 'Engineer at Canva, Auckland' is NOT overseas", () => {
+    // Canva is on the definitely-overseas list, but the role's location string
+    // names Auckland — NZ veto wins.
+    const result = inferCandidateCountry({
+      explicitLocation: "Auckland, New Zealand",
+      profileText: "Engineer at Canva · Jul 2024 - Present · Auckland, New Zealand",
+    });
+    expect(result.country).toBe("NZ");
+  });
+
+  it("dual-office founder: 'Auckland & Sydney' is NOT overseas (NZ token wins)", () => {
+    const result = inferCandidateCountry({
+      explicitLocation: "Auckland & Sydney",
+      profileText: "Co-Founder at FooCorp · Jan 2022 - Present · Auckland & Sydney",
+    });
+    expect(result.country).toBe("NZ");
+  });
+
+  it("NZ contractor remote for AU client: 'Remote from NZ' wins over 'Commbank Sydney'", () => {
+    const result = inferCandidateCountry({
+      explicitLocation: "Wellington, NZ",
+      profileText: "Lead Engineer at Commbank · Present · Sydney, Australia (remote from NZ)",
+    });
+    expect(result.country).toBe("NZ");
+  });
+
+  it("single overseas signal alone returns UNKNOWN — reviewable, not auto-rejected", () => {
+    // Only ONE signal: "based in" phrase. No corroboration. Stay reviewable.
+    const result = inferCandidateCountry({
+      profileText: "Engineer based in Sydney working on cool stuff.",
+    });
+    expect(result.country).toBe("UNKNOWN");
+  });
+
+  it("Bin Xiao class: AU explicit location + AU current-role employer = HARD reject", () => {
+    const result = inferCandidateCountry({
+      explicitLocation: "Sydney, New South Wales, Australia",
+      headline: "Web Developer: React | Javascript | HTML | C# | .NET | SQL | Azure | Blazor",
+      profileText: "Web Developer at Kelly+Partners Group Holdings Limited · Present · Sydney",
+    });
+    expect(result.country).toBe("OVERSEAS");
+    expect(result.confidence).toBe("high");
+  });
+
+  it("empty/null inputs return UNKNOWN", () => {
+    expect(inferCandidateCountry({}).country).toBe("UNKNOWN");
+    expect(inferCandidateCountry({ profileText: "" }).country).toBe("UNKNOWN");
+  });
+});
+
+describe("shouldRejectAsOverseas — combined gate", () => {
+  it("rejects when explicit location is unambiguously overseas", () => {
+    const result = shouldRejectAsOverseas({ explicitLocation: "Sydney, NSW, Australia" });
+    expect(result.reject).toBe(true);
+  });
+
+  it("does not reject when remote", () => {
+    const result = shouldRejectAsOverseas({
+      explicitLocation: "Sydney, Australia",
+      isRemote: true,
+    });
+    expect(result.reject).toBe(false);
+  });
+
+  it("does not reject a returnee Kiwi based on past-role mentions alone", () => {
+    const result = shouldRejectAsOverseas({
+      explicitLocation: "Wellington, NZ",
+      profileText: "Lead at Xero · Present · Wellington\nPrev: Atlassian · 2018-2021 · Sydney",
+    });
+    expect(result.reject).toBe(false);
+  });
+
+  it("does not reject on a single weak signal", () => {
+    // "based in Sydney" alone, no corroborating signal → UNKNOWN, no reject.
+    const result = shouldRejectAsOverseas({
+      profileText: "Engineer based in Sydney working remotely.",
+    });
+    expect(result.reject).toBe(false);
   });
 });

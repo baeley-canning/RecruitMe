@@ -12,7 +12,7 @@ import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import {
   isConfirmedOutOfAreaForLocalRole,
-  isOverseasForNzRole,
+  shouldRejectAsOverseas,
   isExplicitlyOverseasLocation,
   isNzLocation,
   isPlausibleLocation,
@@ -503,15 +503,26 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
     );
     Object.assign(update, deriveUpdateData(breakdown));
 
-    if (
-      ["new", "reviewing"].includes(currentStatus) &&
-      // Country-level hard reject — a confirmed-overseas candidate should
-      // never sit in the active list for a NZ-only role. City-distance
-      // (Auckland-vs-Wellington) is now scored not rejected.
-      (isOverseasForNzRole(location, job.isRemote) ||
-        isConfirmedOutOfAreaForLocalRole(location, parsedRole.location || job.location, parsedRole.location_rules, job.isRemote))
-    ) {
-      update.status = "rejected";
+    if (["new", "reviewing"].includes(currentStatus)) {
+      // Country gate uses the full inference (Present-role location + "based
+      // in" phrases + +64/+61 phone + definitely-overseas employer in current
+      // role). Two-signal rule means returnee Kiwis aren't false-rejected
+      // just because old roles mention London/Sydney.
+      const overseas = shouldRejectAsOverseas({
+        explicitLocation: location,
+        headline,
+        profileText: cleanedProfileText,
+        isRemote: job.isRemote,
+      });
+      if (overseas.reject) {
+        update.status = "rejected";
+      } else if (
+        // Keep the city-distance reject for the very out-of-area NZ cases
+        // (e.g. Whangarei for a Wellington office role) only when explicit.
+        isConfirmedOutOfAreaForLocalRole(location, parsedRole.location || job.location, parsedRole.location_rules, job.isRemote)
+      ) {
+        update.status = "rejected";
+      }
     }
   }
   if (acceptance) {
