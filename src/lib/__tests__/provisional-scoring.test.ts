@@ -163,6 +163,50 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
     expect(score.overall).toBeGreaterThan(SPECIALIST_SNIPPET_NO_ANCHOR_CAP);
   });
 
+  it("accepts ISMS-led snippets even when ISO 27001 is not written in the snippet", () => {
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Alex Kumar",
+        headline: "ISMS Lead at Xero",
+        snippet: "Information security management system owner. Runs governance, risk and audit readiness across SaaS platforms.",
+      },
+      complianceRole,
+      "Wellington",
+      "Wellington",
+      "Wellington office",
+      false,
+      undefined,
+      deps,
+    );
+    expect(score.overall).toBeGreaterThan(SPECIALIST_SNIPPET_NO_ANCHOR_CAP);
+  });
+
+  it("does not let Vodafone PLC satisfy PLC requirements through a bare company suffix", () => {
+    const plcRole = makeRole({
+      title: "Technical Support and Sales Engineer (POWER)",
+      location: "Christchurch",
+      location_rules: "Christchurch office",
+      must_haves: ["PLC integration and configuration experience"],
+      skills_required: ["PLC integration"],
+    });
+
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Chris Taylor",
+        headline: "Senior Technical Support Engineer at Vodafone PLC",
+        snippet: "Provides enterprise customer support for network and cloud accounts.",
+      },
+      plcRole,
+      "Christchurch",
+      "Christchurch",
+      "Christchurch office",
+      false,
+      undefined,
+      deps,
+    );
+    expect(score.overall).toBeLessThan(SCORE_CUTOFF_SNIPPET);
+  });
+
   // ── Common-role regression: must NOT change behaviour for ordinary roles ──
   it("does NOT cap ordinary developer roles (no distinctive anchors)", () => {
     // Generic "Software Engineer" role without distinctive anchors must

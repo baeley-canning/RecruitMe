@@ -233,7 +233,9 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   // Bare \bpci\b previously collided with PCI bus / PCIe driver work. Anchor
   // on PCI-DSS so only payment-compliance roles match; SOC 2 and ISO 27001
   // are unambiguous as bare tokens.
-  [/\biso 27001\b|\bsoc[- ]?2\b|\bpci[- ]?dss\b/i,  ["iso 27001", "security compliance"]],
+  [/\biso 27001\b/i,                                ["iso 27001", "security compliance"]],
+  [/\bsoc[- ]?2\b/i,                                ["soc 2", "security compliance"]],
+  [/\bpci[- ]?dss\b/i,                              ["pci dss", "security compliance"]],
   [/\bisms\b|information\s+security\s+management\s+system/i, ["isms", "information security governance", "iso 27001"]],
   [/\bgrc\b|governance[,\s]+risk[,\s]+compliance/i, ["grc", "compliance", "risk management"]],
   [/information\s+security\s+governance|security\s+governance/i, ["security governance", "isms"]],
@@ -242,7 +244,7 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   // company suffix "Vodafone PLC". Anchor PLC as a phrase only.
   [/\bscada\b/i,                                    ["scada", "industrial controls", "control systems"]],
   [/\brtu\b/i,                                      ["rtu", "remote terminal unit", "scada"]],
-  [/programmable\s+logic\s+controller|\bplc\s+(?:programming|ladder|hmi|scada|configuration)/i, ["plc", "industrial controls"]],
+  [/programmable\s+logic\s+controller|\bplc\s+(?:programming|integration|configuration|config|ladder|hmi|scada)/i, ["plc integration", "plc configuration", "programmable logic controller", "industrial controls"]],
   [/\bhmi\b\s+(?:scada|industrial|configuration|interface)|human\s+machine\s+interface/i, ["hmi", "scada", "industrial controls"]],
   [/process\s+(?:control|instrumentation|automation)|industrial\s+(?:control|automation)/i, ["industrial controls", "process control"]],
   [/\bmetering\b|smart\s+metering|electricity\s+metering/i, ["metering", "smart metering"]],
@@ -332,6 +334,7 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   [/\bpenetration test|\bpen test|\bpentest|\bethical hack/i, ["penetration testing"]],
   [/\bsiem\b|\bsplunk\b|\bqradar\b/i,                   ["SIEM"]],
   [/\biso 27001\b/i,                                    ["ISO 27001"]],
+  [/\bisms\b|information\s+security\s+management\s+system/i, ["ISMS"]],
   // Compliance / methodology
   [/\bitil\b|\bitsm\b/i,                                ["ITIL"]],
   // NOTE: "security clearance" intentionally NOT in DISTINCTIVE — cleared candidates
@@ -341,12 +344,11 @@ export const DISTINCTIVE_REQUIREMENT_ALIASES: AliasEntry[] = [
   // ── Industrial / power / control systems specialists ──────────────────────
   // SCADA, RTU are rare enough as bare tokens to anchor on. PLC and PCI-DSS
   // require phrase forms because the bare abbreviations collide ("Vodafone PLC",
-  // "PCIe driver"). ISMS and SOC 2 are intentionally NOT in DISTINCTIVE because
-  // they appear in too many adjacent IT-ops roles and would over-block; the
-  // scoring path handles compliance-domain matching.
+  // "PCIe driver"). ISMS is exact enough to be useful; SOC 2 is still kept out
+  // because it is often absent from LinkedIn snippets even for adjacent GRC leads.
   [/\bscada\b/i,                                        ["SCADA"]],
   [/\brtu\b|remote\s+terminal\s+unit/i,                 ["RTU"]],
-  [/programmable\s+logic\s+controller|\bplc\s+(?:programming|ladder|hmi|scada|configuration)/i, ["PLC"]],
+  [/programmable\s+logic\s+controller|\bplc\s+(?:programming|integration|configuration|config|ladder|hmi|scada)/i, ["PLC integration", "PLC configuration", "PLC programming", "programmable logic controller"]],
   [/process\s+(?:control|instrumentation)|industrial\s+(?:control|automation)/i, ["industrial controls"]],
   [/\bmetering\b|smart\s+metering/i,                    ["metering"]],
   [/\bpower\s+distribution\b|\bhigh[- ]voltage|\bsubstation\b/i, ["power distribution"]],
@@ -387,6 +389,7 @@ export const REQUIREMENT_STOP_WORDS = new Set([
   "test","testing","automation","automated","unit",
   "data","cloud","digital","software","technical",
   "engineering","engineer","developer","developers",
+  "field","roles","sales","plc",
   // Soft-skill / behavioral phrases
   "designing","delivering","supporting","optimising","optimizing",
   "maintaining","ensuring","implementing","managing","building",

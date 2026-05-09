@@ -75,22 +75,22 @@ describe("requirement signal extraction", () => {
     // Legitimate PLC phrase form does fire.
     expect(extractDistinctiveSignalsFromRequirement(
       "PLC programming experience with ladder logic and HMI integration"
-    )).toEqual(expect.arrayContaining(["PLC"]));
+    )).toEqual(expect.arrayContaining(["PLC programming"]));
 
     expect(extractDistinctiveSignalsFromRequirement(
       "Programmable logic controller configuration and ladder logic"
-    )).toEqual(expect.arrayContaining(["PLC"]));
+    )).toEqual(expect.arrayContaining(["programmable logic controller"]));
   });
 
   it("PCI anchor requires PCI-DSS phrase — bare 'PCI' (PCIe / PCI bus) does NOT trigger", () => {
     // Embedded engineer's "PCIe driver" must not pass a PCI-DSS gate.
     expect(extractSignalsFromRequirement(
       "Embedded firmware engineer with PCIe driver development experience"
-    )).not.toEqual(expect.arrayContaining(["iso 27001", "security compliance"]));
+    )).not.toEqual(expect.arrayContaining(["pci dss", "security compliance"]));
 
     expect(extractSignalsFromRequirement(
       "PCI-DSS compliance experience for payment processing"
-    )).toEqual(expect.arrayContaining(["iso 27001", "security compliance"]));
+    )).toEqual(expect.arrayContaining(["pci dss", "security compliance"]));
   });
 
   it("compliance signals: ISMS / GRC / information security governance", () => {
@@ -140,19 +140,26 @@ describe("requirement signal extraction", () => {
     )).not.toEqual(expect.arrayContaining(["technical sales"]));
   });
 
-  it("ISMS / SOC 2 / SCADA are NOT in DISTINCTIVE — too easily confused with adjacent ops roles", () => {
-    // Wait — SCADA IS distinctive now. ISMS / SOC 2 are NOT (per design — see
-    // requirement-signals.ts comment). This test locks the policy so a future
-    // refactor doesn't accidentally add ISMS to DISTINCTIVE and over-block.
+  it("ISMS is distinctive, while SOC 2 stays out of DISTINCTIVE", () => {
+    // ISMS is exact enough to gate on. SOC 2 is intentionally not distinctive:
+    // many relevant GRC / compliance profiles won't list it in snippets.
     const ismsTerms = extractDistinctiveSignalsFromRequirement(
       "ISMS lead with ISO 27001 implementation"
     );
-    expect(ismsTerms).toEqual(expect.arrayContaining(["ISO 27001"]));
-    expect(ismsTerms).not.toEqual(expect.arrayContaining(["ISMS"]));
+    expect(ismsTerms).toEqual(expect.arrayContaining(["ISO 27001", "ISMS"]));
 
     const soc2Terms = extractDistinctiveSignalsFromRequirement(
       "SOC 2 Type 2 audit experience"
     );
     expect(soc2Terms).not.toEqual(expect.arrayContaining(["SOC 2"]));
+  });
+
+  it("PLC requirements do not create a bare PLC signal that matches company suffixes", () => {
+    const signals = extractSignalsFromRequirement("PLC integration and configuration experience");
+    expect(signals).toEqual(expect.arrayContaining(["plc integration", "plc configuration"]));
+    expect(signals).not.toContain("plc");
+
+    expect(signals.some((signal) => signalMatchesText("Senior engineer at Vodafone PLC", signal))).toBe(false);
+    expect(signals.some((signal) => signalMatchesText("PLC configuration and HMI integration", signal))).toBe(true);
   });
 });
