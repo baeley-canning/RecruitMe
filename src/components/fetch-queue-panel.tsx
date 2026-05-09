@@ -1,15 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Loader2, CheckCircle2, AlertCircle, Clock, ChevronDown, ChevronUp, Puzzle } from "lucide-react";
+import { X, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type FetchState = "queued" | "waiting" | "fetching" | "done" | "error";
+export type FetchState = "waiting" | "fetching" | "done" | "error";
 
 export interface FetchStatus {
   state: FetchState;
   message: string;
-  queuePosition?: number;
   startedAt?: number; // epoch ms — set when fetch begins
 }
 
@@ -20,9 +19,9 @@ interface FetchQueuePanelProps {
   onCancel: (candidateId: string) => void;
 }
 
-const STATE_ORDER: FetchState[] = ["fetching", "waiting", "queued", "error", "done"];
+const STATE_ORDER: FetchState[] = ["fetching", "waiting", "error", "done"];
 
-// If a session has been waiting/queued this long without advancing, the
+// If a session has been waiting this long without advancing, the
 // extension is almost certainly not running. Show the install hint.
 const EXTENSION_HINT_MS = 15_000;
 
@@ -53,32 +52,27 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
   if (entries.length === 0) return null;
 
   const counts = {
-    active:    entries.filter(([, s]) => s.state === "fetching" || s.state === "waiting").length,
-    queued:    entries.filter(([, s]) => s.state === "queued").length,
-    done:      entries.filter(([, s]) => s.state === "done").length,
-    error:     entries.filter(([, s]) => s.state === "error").length,
+    active: entries.filter(([, s]) => s.state === "fetching" || s.state === "waiting").length,
+    done:   entries.filter(([, s]) => s.state === "done").length,
+    error:  entries.filter(([, s]) => s.state === "error").length,
   };
   const total  = entries.length;
   const pct    = total > 0 ? Math.round((counts.done / total) * 100) : 0;
-  const allDone = counts.active === 0 && counts.queued === 0;
+  const allDone = counts.active === 0;
 
   // Show the extension-install hint when something has been stuck waiting
   // for more than EXTENSION_HINT_MS — the extension probably isn't running.
   const showExtensionHint = entries.some(([, s]) =>
-    (s.state === "waiting" || s.state === "queued") &&
+    s.state === "waiting" &&
     s.startedAt !== undefined &&
     now - s.startedAt > EXTENSION_HINT_MS
   );
 
-  // Sort: active first, then queued by position, then errors, then done
+  // Sort: active first, then errors, then done
   const sorted = [...entries].sort(([, a], [, b]) => {
     const ai = STATE_ORDER.indexOf(a.state);
     const bi = STATE_ORDER.indexOf(b.state);
-    if (ai !== bi) return ai - bi;
-    if (a.state === "queued" && b.state === "queued") {
-      return (a.queuePosition ?? 99) - (b.queuePosition ?? 99);
-    }
-    return 0;
+    return ai - bi;
   });
 
   return (
@@ -111,7 +105,6 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
             <p className="text-[11px] text-slate-400 mt-0.5">
               {counts.done}/{total} done
               {counts.active > 0 && ` · ${counts.active} active`}
-              {counts.queued > 0 && ` · ${counts.queued} queued`}
             </p>
           )}
         </div>
@@ -161,7 +154,6 @@ function FetchRow({ candidateId, status, name, onCancel }: { candidateId: string
       <div className="flex-shrink-0">
         {status.state === "fetching" && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
         {status.state === "waiting"  && <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />}
-        {status.state === "queued"   && <Clock   className="w-4 h-4 text-slate-300" />}
         {status.state === "done"     && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
         {status.state === "error"    && <AlertCircle  className="w-4 h-4 text-red-400" />}
       </div>
@@ -169,13 +161,10 @@ function FetchRow({ candidateId, status, name, onCancel }: { candidateId: string
         <p className="text-xs font-medium text-slate-800 truncate">{name}</p>
         <p className={cn(
           "text-[11px] truncate",
-          status.state === "error"  ? "text-red-500" :
-          status.state === "done"   ? "text-emerald-600" :
-          status.state === "queued" ? "text-slate-400" : "text-slate-500"
+          status.state === "error" ? "text-red-500" :
+          status.state === "done"  ? "text-emerald-600" : "text-slate-500"
         )}>
-          {status.state === "queued" && status.queuePosition
-            ? `#${status.queuePosition} in queue`
-            : status.message}
+          {status.message}
         </p>
       </div>
       {isActive && elapsed && (

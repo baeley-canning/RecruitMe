@@ -307,6 +307,23 @@ describe("RecruitMe content script", () => {
     expect(context.looksLikeJsonOrTrackingNoise(`Skills: C#, .NET, ASP.NET MVC, Web API, Razor, JavaScript, TypeScript, React, AWS, Docker`)).toBe(false);
   });
 
+  it("extension defaults manualOnlyMode to true at every storage read", () => {
+    // Every chrome.storage.local.get({ manualOnlyMode: ... }) must default to
+    // true. A fresh install with no stored config has to land in manual-only,
+    // not silently turn on auto-capture against LinkedIn. A regression here
+    // would re-introduce the original LinkedIn-rate-limit risk.
+    const files = ["background.js", "content.js", "popup.js", "options.js"];
+    for (const file of files) {
+      const code = fs.readFileSync(path.join(__dirname, file), "utf8");
+      const matches = code.match(/manualOnlyMode:\s*(true|false)/g) ?? [];
+      // At least background.js must declare the default; the others may not
+      // touch it. Whatever they declare, it must be true.
+      for (const m of matches) {
+        expect(`${file} → ${m}`).toBe(`${file} → manualOnlyMode: true`);
+      }
+    }
+  });
+
   it("rejects a second capture session while the tab is already capturing", () => {
     const { listeners } = loadContentScriptContext({
       location: { href: "https://www.linkedin.com/in/jane-candidate/" },

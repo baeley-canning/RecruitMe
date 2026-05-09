@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { showToast } from "@/components/ui/toast";
 import { CandidateCard } from "@/components/candidate-card";
+import { orchestrateFetchProfile } from "@/lib/fetch-profile-orchestrator";
 import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueuePanel } from "@/components/fetch-queue-panel";
@@ -198,11 +199,10 @@ export default function JobDetailPage({
   const [scoringId, setScoringId] = useState<string | null>(null);
   const [fetchStatuses, setFetchStatuses] = useState<Record<string, FetchStatus>>({});
   const [fetchPanelDismissed, setFetchPanelDismissed] = useState(false);
-  // Local FIFO queue of candidateIds waiting to be fetched.
-  // Only one fetch fires at a time — drainFetchQueue picks up the next
-  // item whenever a fetch slot becomes free.
-  const fetchQueueRef = useRef<string[]>([]);
-  const MAX_CONCURRENT_FETCHES = 1;
+  // Each Fetch click creates its own server session immediately and the
+  // extension paces actual LinkedIn captures via its own rate limiter — so
+  // there is no client-side queue. The recruiter can have N sessions in
+  // flight; the extension grinds through them in age order.
   // Empty array = no filter (show all). Multiple entries = OR-filter across statuses.
   const [filter, setFilter] = useState<string[]>([]);
   // Progressive rendering — render the first N candidates initially, expand on
@@ -242,6 +242,10 @@ export default function JobDetailPage({
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
     consecutiveNetworkErrors: number;
+    // Set by handleCancelFetch when the user cancels before the session POST
+    // resolves, so the orchestrator's .then can short-circuit instead of
+    // navigating an orphan tab and starting a stale poll loop.
+    aborted: boolean;
   }
   const jobRef = useRef<Job | null>(null);
   const activeFetchesRef = useRef<Map<string, FetchEntry>>(new Map());
@@ -293,15 +297,16 @@ export default function JobDetailPage({
         // every time the page reloads.
         const serverCreatedAt = s.createdAt ? new Date(s.createdAt).getTime() : Date.now() - 60_000;
         const serverUpdatedAt = s.updatedAt ? new Date(s.updatedAt).getTime() : serverCreatedAt;
-        const entry = {
+        const entry: FetchEntry = {
           sessionId: s.sessionId,
           candidateId: s.candidateId,
           startedAt: serverCreatedAt,
           processingStartedAt: s.status === "processing" ? serverUpdatedAt : null,
           lastKnownStatus: s.status as "pending" | "processing",
           done: false,
-          pollInterval: null as ReturnType<typeof setInterval> | null,
+          pollInterval: null,
           consecutiveNetworkErrors: 0,
+          aborted: false,
         };
         activeFetchesRef.current.set(s.candidateId, entry);
         setFetchStatuses((prev) => ({
@@ -489,20 +494,23 @@ export default function JobDetailPage({
   };
 
   const handleCancelFetch = useCallback((candidateId: string) => {
-    // Stop polling
     const entry = activeFetchesRef.current.get(candidateId);
-    if (entry?.pollInterval) clearInterval(entry.pollInterval);
+    if (entry) {
+      // Mark aborted so the in-flight orchestrator .then bails out instead of
+      // navigating the tab and starting a polling interval.
+      entry.aborted = true;
+      if (entry.pollInterval) clearInterval(entry.pollInterval);
+    }
     activeFetchesRef.current.delete(candidateId);
-    // Remove from local queue
-    fetchQueueRef.current = fetchQueueRef.current.filter((id) => id !== candidateId);
-    // Cancel the session on the server
+    // Cancel the session on the server only if we actually have one — the
+    // POST may not have resolved yet, in which case the orchestrator's
+    // aborted-branch handles the eventual DELETE.
     if (entry?.sessionId) {
       fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
         method: "DELETE", credentials: "include",
       }).catch(() => {});
     }
     setFetchStatuses((prev) => { const next = { ...prev }; delete next[candidateId]; return next; });
-    drainFetchQueueRef.current();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleScore = useCallback(async (candidateId: string) => {
@@ -554,8 +562,6 @@ export default function JobDetailPage({
     }).catch(() => {});
     setFetchStatuses((prev) => ({ ...prev, [candidateId]: { state, message } }));
     clearCandidateStatus(candidateId, state === "done" ? 4000 : 6000, state);
-    // Slot freed — start next item from the queue
-    drainFetchQueueRef.current();
   };
 
   const pollCandidateFetch = async (candidateId: string) => {
@@ -662,57 +668,23 @@ export default function JobDetailPage({
   pollCandidateFetchRef.current = pollCandidateFetch;
   finishFetchRef.current = finishFetch;
 
-  // Must NOT be async — window.open is blocked after an await.
-  // Drain: while there's a free fetch slot and queue items, start the next one.
-  // The active count is re-read every iteration so we don't over-drain when
-  // multiple slots free at once (with MAX=1 a stale read would empty the queue
-  // in one shot and dispatch every queued item simultaneously).
-  const drainFetchQueueRef = useRef<() => void>(() => {});
-  drainFetchQueueRef.current = () => {
-    while (
-      activeFetchesRef.current.size < MAX_CONCURRENT_FETCHES &&
-      fetchQueueRef.current.length > 0
-    ) {
-      const nextId = fetchQueueRef.current.shift()!;
-      fetchQueueRef.current.forEach((id, i) => {
-        setFetchStatuses((prev) => prev[id] ? { ...prev, [id]: { ...prev[id], queuePosition: i + 1 } } : prev);
-      });
-      startFetchRef.current(nextId);
-    }
-  };
-  const startFetchRef = useRef<(candidateId: string) => void>(() => {});
-
+  // The Fetch click handler MUST NOT await before window.open — losing the
+  // user-gesture flag triggers the popup blocker. We open a blank tab inside
+  // the gesture, POST the session, then navigate the existing tab to
+  // LinkedIn. Race fix: opening LinkedIn directly meant the extension's
+  // /pending check could fire before the session existed, bailing in
+  // manual-only mode.
   const handleFetchProfile = useCallback((candidateId: string) => {
     const candidate = job?.candidates.find((c) => c.id === candidateId);
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
-    setFetchPanelDismissed(false); // show panel when a new fetch starts
+    const linkedinUrl = candidate.linkedinUrl;
+    setFetchPanelDismissed(false);
 
-    // Open the LinkedIn tab AND create the server fetch session immediately.
-    // Earlier versions deferred session creation behind a client-side queue,
-    // but the extension polls /pending?linkedinUrl=… as soon as the LinkedIn
-    // tab finishes loading — if no session exists yet, manual-only mode bails
-    // and the queued capture sits forever. Each candidate is independent;
-    // the extension paces actual captures via its own rate limiter, so
-    // creating multiple sessions in flight is fine and necessary.
-    window.open(candidate.linkedinUrl, "_blank", "noopener,noreferrer");
-    startFetchRef.current(candidateId);
-  }, [job]);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  // The real fetch logic, extracted so drainFetchQueue can also call it.
-  const handleFetchProfileImplRef = useRef<(candidateId: string) => void>(() => {});
-  startFetchRef.current = (candidateId: string) => handleFetchProfileImplRef.current(candidateId);
-
-  const handleFetchProfileImpl = useCallback((candidateId: string) => {
-    const candidate = job?.candidates.find((c) => c.id === candidateId);
-    if (!candidate?.linkedinUrl) return;
-    if (activeFetchesRef.current.has(candidateId)) return;
-
-    // Reserve the slot SYNCHRONOUSLY. Without this, the drain's while-loop
-    // re-reads activeFetchesRef.current.size and sees the stale 0 between
-    // iterations because the real entry is only set inside the async POST
-    // block below — the loop would then dispatch every queued candidate at
-    // once instead of one per slot.
+    // Reserve the active slot synchronously so a second click can't race.
+    // The `aborted` flag lets handleCancelFetch interrupt an in-flight POST
+    // — without it, cancelling mid-POST would still navigate the orphan tab
+    // and leak a polling interval against a deleted placeholder.
     const placeholder: FetchEntry = {
       sessionId: "",
       candidateId,
@@ -722,6 +694,7 @@ export default function JobDetailPage({
       done: false,
       pollInterval: null,
       consecutiveNetworkErrors: 0,
+      aborted: false,
     };
     activeFetchesRef.current.set(candidateId, placeholder);
 
@@ -730,57 +703,89 @@ export default function JobDetailPage({
       [candidateId]: { state: "waiting", message: "Starting capture...", startedAt: Date.now() },
     }));
 
-    void (async () => {
-      try {
+    // Open the blank tab inside the user gesture. NO `noopener` — Chrome and
+    // Safari return null when noopener is set, which would mean window.open
+    // gives us nothing to navigate later. We need the WindowProxy to call
+    // location.href once the session POST returns. We deliberately do NOT
+    // pass the LinkedIn URL: that's the race we're closing.
+    const win = window.open("about:blank", "_blank");
+
+    void orchestrateFetchProfile({
+      linkedinUrl,
+      openBlankTab: () => win
+        ? { setUrl: (url) => { win.location.href = url; }, close: () => win.close() }
+        : null,
+      postFetchSession: async () => {
         const start = await fetch("/api/extension/fetch-session", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ jobId: id, candidateId }),
         });
-        const session = (await start.json()) as { sessionId?: string; error?: string; message?: string; status?: string };
-
+        const session = (await start.json()) as { sessionId?: string; error?: string; message?: string };
         if (!start.ok || !session.sessionId) {
-          // Free the slot we reserved so the queue can advance.
-          activeFetchesRef.current.delete(candidateId);
-          drainFetchQueueRef.current();
-          setFetchStatuses((prev) => ({
-            ...prev,
-            [candidateId]: { state: "error", message: session.error ?? "Could not start capture" },
-          }));
-          clearCandidateStatus(candidateId, 6000, "error");
-          return;
+          return { ok: false as const, error: session.error ?? "Could not start capture" };
         }
-
-        setFetchStatuses((prev) => ({
-          ...prev,
-          [candidateId]: {
-            state: "waiting",
-            message: session.message ?? "Waiting for browser extension to capture",
-            startedAt: Date.now(),
-          },
-        }));
-
-        // Promote the placeholder to the real entry now that we have the sessionId.
-        placeholder.sessionId = session.sessionId;
-        // 2500ms balances UI responsiveness against API hammering. With the
-        // tab-hidden gate inside pollCandidateFetch, idle tabs cost nothing.
-        placeholder.pollInterval = setInterval(() => {
-          void pollCandidateFetchRef.current(candidateId);
-        }, 2500);
-      } catch {
-        // Free the slot we reserved so the queue can continue.
+        return {
+          ok: true as const,
+          session: { sessionId: session.sessionId, message: session.message ?? null },
+        };
+      },
+      isAborted: () => placeholder.aborted,
+    }).then((outcome) => {
+      if (outcome.kind === "aborted") {
+        // Server may have created a session before cancel landed — DELETE it
+        // so it doesn't sit pending forever.
+        if (outcome.sessionId) {
+          void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(outcome.sessionId)}`, {
+            method: "DELETE", credentials: "include",
+          }).catch(() => {});
+        }
+        return;
+      }
+      if (outcome.kind === "popup_blocked") {
         activeFetchesRef.current.delete(candidateId);
         setFetchStatuses((prev) => ({
           ...prev,
-          [candidateId]: { state: "error", message: "Network error starting capture" },
+          [candidateId]: { state: "error", message: "Popup blocked — allow popups for this site to fetch profiles" },
+        }));
+        clearCandidateStatus(candidateId, 8000, "error");
+        return;
+      }
+      if (outcome.kind === "session_failed") {
+        activeFetchesRef.current.delete(candidateId);
+        setFetchStatuses((prev) => ({
+          ...prev,
+          [candidateId]: { state: "error", message: outcome.message },
         }));
         clearCandidateStatus(candidateId, 6000, "error");
-        drainFetchQueueRef.current();
+        return;
       }
-    })();
-  }, [id, job]);
-  handleFetchProfileImplRef.current = handleFetchProfileImpl;
+      // Success — promote placeholder, start polling.
+      placeholder.sessionId = outcome.sessionId;
+      setFetchStatuses((prev) => ({
+        ...prev,
+        [candidateId]: {
+          state: "waiting",
+          message: outcome.message,
+          startedAt: Date.now(),
+        },
+      }));
+      const interval = setInterval(() => {
+        void pollCandidateFetchRef.current(candidateId);
+      }, 2500);
+      placeholder.pollInterval = interval;
+      // Tiny window: handleCancelFetch may have flipped `aborted` between the
+      // isAborted check inside the orchestrator and this point. If so, kill
+      // the interval we just set so it doesn't dangle for the session lifetime.
+      if (placeholder.aborted) {
+        clearInterval(interval);
+        void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(outcome.sessionId)}`, {
+          method: "DELETE", credentials: "include",
+        }).catch(() => {});
+      }
+    });
+  }, [id, job]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wrap a candidate PATCH with consistent error handling + success toast.
   // Recruiter does these every minute; silent failures here are how lost
@@ -1991,11 +1996,9 @@ ${toHtml(job.rawJd)}
                     scoring={scoringId === candidate.id}
                     fetchingProfile={
                       fetchStatuses[candidate.id]?.state === "waiting" ||
-                      fetchStatuses[candidate.id]?.state === "fetching" ||
-                      fetchStatuses[candidate.id]?.state === "queued"
+                      fetchStatuses[candidate.id]?.state === "fetching"
                     }
                     fetchQueueState={fetchStatuses[candidate.id]?.state}
-                    fetchQueuePosition={fetchStatuses[candidate.id]?.queuePosition}
                     contactCount={candidate._count?.contactEvents ?? 0}
                   />
                 </div>

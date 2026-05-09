@@ -611,7 +611,11 @@ async function capturePendingSessionInTab(tabId, pending, preferredBase = "") {
 async function maybeAutoCapture(tabId, linkedinUrl) {
   // Manual-only mode: skip all auto-capture. The recruiter navigates to the
   // profile themselves and triggers capture via the popup. Toggle in Options.
-  const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: false });
+  // Default MUST be true (manual-only) to match every other gate in this file
+  // (lines 71, 665, 726, 923, 951, 1173). A false default here was the
+  // outlier — it meant a fresh install with no stored config silently turned
+  // on auto-capture against LinkedIn the first time content.js ran.
+  const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
   if (manualOnlyMode) {
     console.log("[RecruitMe] Auto-capture skipped (manual-only mode is ON)");
     return;
