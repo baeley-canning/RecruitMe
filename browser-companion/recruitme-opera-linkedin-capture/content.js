@@ -1411,6 +1411,10 @@ function buildOverlayShell() {
         from { opacity:0; transform:scale(0.88) translateY(6px); }
         to   { opacity:1; transform:scale(1)    translateY(0);   }
       }
+      @keyframes recruitme-spin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -1565,24 +1569,102 @@ function capturedBannerHTML(name, at) {
   `;
 }
 
+// Live "in progress" banner — for the window between Fetch click and capture
+// completion. Tells the recruiter their action was registered without making
+// them open the popup or guess. label is "Queued" or "Capturing now..."
+function pendingBannerHTML(label, name) {
+  return `
+    <div style="
+      display:flex;align-items:center;gap:10px;
+      padding:10px 14px;
+      background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%);
+      border-bottom:1px solid #bfdbfe;
+      color:#1e40af;
+    ">
+      <span style="
+        display:inline-flex;align-items:center;justify-content:center;
+        width:22px;height:22px;border-radius:50%;
+        background:#3b82f6;color:#fff;
+        flex-shrink:0;
+        box-shadow:0 2px 6px rgba(59,130,246,0.30);
+      ">
+        <span style="
+          display:inline-block;width:10px;height:10px;
+          border:2px solid #fff;border-top-color:transparent;
+          border-radius:50%;
+          animation:recruitme-spin 0.9s linear infinite;
+        "></span>
+      </span>
+      <div style="flex:1;min-width:0;">
+        <p style="margin:0;font-weight:600;font-size:12px;color:#1e3a8a;">
+          ${escapeHtml(label)}
+        </p>
+        <p style="margin:1px 0 0;font-size:11px;color:#1e40af;">
+          ${name ? escapeHtml(name) + " · " : ""}sent to RecruitMe
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+// Returns one of: { kind: "captured", name, at } | { kind: "pending"|"processing", name } | null
+// Combines the local recentCaptures state with a live /pending query so the
+// bubble can show the in-flight state, not just post-completion.
+async function getCaptureStatusForCurrentProfile(linkedinUrl) {
+  // Live status from the server — this catches the "I just clicked Fetch"
+  // case where there's nothing in recentCaptures yet but the session
+  // exists with status=pending or processing.
+  const live = await new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: "check-pending", linkedinUrl }, (response) => {
+        resolve(response && response.ok ? response : null);
+      });
+    } catch { resolve(null); }
+  });
+
+  if (live && live.active) {
+    if (live.status === "processing") {
+      return { kind: "processing", name: live.candidateName || "Profile" };
+    }
+    if (live.status === "pending") {
+      return { kind: "pending", name: live.candidateName || "Profile" };
+    }
+  }
+
+  // Otherwise check the local recentCaptures cache for a recent success.
+  const cached = await getCapturedStateForCurrentProfile();
+  if (cached) return { kind: "captured", name: cached.name, at: cached.at };
+  return null;
+}
+
+function statusBannerHTML(status) {
+  if (!status) return "";
+  if (status.kind === "captured") return capturedBannerHTML(status.name, status.at);
+  if (status.kind === "processing") return pendingBannerHTML("Capturing now…", status.name);
+  if (status.kind === "pending") return pendingBannerHTML("Queued for capture", status.name);
+  return "";
+}
+
 // Render the small floating ball that shows when the overlay is minimised.
-// Click anywhere on the ball (or the + icon) to expand back to the full bubble.
-// When `capturedState` is provided, the ball is green with a ✓ to signal
-// "sent to RecruitMe" without the recruiter needing to expand it.
-function showMinimizedBall(capturedState) {
+// Three visual states based on the capture status of the current profile:
+//   - pending/processing → blue with a spinner (capture in flight)
+//   - captured            → green with a ✓ (sent to RecruitMe)
+//   - none                → blue with R + a + badge (default)
+function showMinimizedBall(status) {
   removeOverlay();
-  // Also remove any previous ball so we don't stack two.
   document.getElementById(MIN_BALL_ID)?.remove();
 
   const posStyle = overlayPos.left !== undefined
     ? `left:${overlayPos.left}px;top:${overlayPos.top}px`
     : `right:${overlayPos.right}px;bottom:${overlayPos.bottom}px`;
 
-  const captured = !!capturedState;
-  const grad = captured
+  const isCaptured  = status?.kind === "captured";
+  const isPending   = status?.kind === "pending" || status?.kind === "processing";
+
+  const grad = isCaptured
     ? "linear-gradient(135deg,#10b981 0%,#059669 100%)"
     : "linear-gradient(135deg,#3b82f6 0%,#2563eb 100%)";
-  const shadow = captured
+  const shadow = isCaptured
     ? "0 4px 10px rgba(16,185,129,0.30), 0 8px 24px rgba(15,23,42,0.18)"
     : "0 4px 10px rgba(37,99,235,0.30), 0 8px 24px rgba(15,23,42,0.18)";
 
@@ -1591,11 +1673,15 @@ function showMinimizedBall(capturedState) {
   ball.type = "button";
   ball.setAttribute(
     "aria-label",
-    captured ? `Captured ${capturedState.name} — click to expand` : "Expand RecruitMe overlay",
+    isCaptured ? `Captured ${status.name} — click to expand`
+      : isPending ? `Capturing ${status.name} — click to expand`
+      : "Expand RecruitMe overlay",
   );
-  ball.title = captured
-    ? `Sent to RecruitMe: ${capturedState.name}`
-    : "Expand RecruitMe (click +)";
+  ball.title = isCaptured
+    ? `Sent to RecruitMe: ${status.name}`
+    : isPending
+      ? (status.kind === "processing" ? `Capturing now: ${status.name}` : `Queued: ${status.name}`)
+      : "Expand RecruitMe (click +)";
   ball.style.cssText = `
     position:fixed;${posStyle};
     z-index:2147483647;
@@ -1608,20 +1694,27 @@ function showMinimizedBall(capturedState) {
     transition:transform 0.15s, box-shadow 0.15s;
     animation:recruitme-pop 0.18s cubic-bezier(0.34,1.56,0.64,1) both;
   `;
-  ball.innerHTML = captured
+  ball.innerHTML = isCaptured
     ? `<span style="font-size:18px;line-height:1;">✓</span>`
-    : `
-      <span style="font-size:14px;line-height:1;">R</span>
-      <span style="
-        position:absolute;bottom:-2px;right:-2px;
-        width:18px;height:18px;border-radius:50%;
-        background:#fff;color:#2563eb;
-        display:flex;align-items:center;justify-content:center;
-        font-size:14px;font-weight:700;line-height:1;
-        box-shadow:0 2px 6px rgba(15,23,42,0.20);
-        border:1px solid #dbeafe;
-      " aria-hidden="true">+</span>
-    `;
+    : isPending
+      ? `<span style="
+          display:inline-block;width:14px;height:14px;
+          border:2px solid #fff;border-top-color:transparent;
+          border-radius:50%;
+          animation:recruitme-spin 0.9s linear infinite;
+        "></span>`
+      : `
+        <span style="font-size:14px;line-height:1;">R</span>
+        <span style="
+          position:absolute;bottom:-2px;right:-2px;
+          width:18px;height:18px;border-radius:50%;
+          background:#fff;color:#2563eb;
+          display:flex;align-items:center;justify-content:center;
+          font-size:14px;font-weight:700;line-height:1;
+          box-shadow:0 2px 6px rgba(15,23,42,0.20);
+          border:1px solid #dbeafe;
+        " aria-hidden="true">+</span>
+      `;
   ball.onmouseover = () => { ball.style.transform = "scale(1.08)"; };
   ball.onmouseout  = () => { ball.style.transform = "scale(1)";    };
 
@@ -1863,61 +1956,87 @@ async function renderProfileMatchOverlay(linkedinUrl) {
   if (lastMatchQueriedUrl === linkedinUrl) return;
   lastMatchQueriedUrl = linkedinUrl;
 
-  // Fetch capture status alongside match data so the bubble can show
-  // "Sent to RecruitMe" if this profile was captured recently.
-  const capturedPromise = getCapturedStateForCurrentProfile().catch(() => null);
+  // Two parallel fetches: match data (slow) and live capture status (fast).
+  // The capture banner needs to surface even when match data fails or
+  // hasn't returned yet.
+  const statusPromise = getCaptureStatusForCurrentProfile(linkedinUrl).catch(() => null);
+  const matchPromise  = sendToServiceWorker({ type: "query-profile-match", linkedinUrl }, 8000)
+    .catch(() => null);
 
-  try {
-    const res = await sendToServiceWorker({ type: "query-profile-match", linkedinUrl }, 8000);
-    const captured = await capturedPromise;
-    if (!res?.ok || !res.data) {
-      // No match data, but if we have a captured banner state, paint it standalone.
-      if (captured) paintStandaloneCapturedBanner(captured.name);
-      return;
-    }
-    const data = res.data;
-    const onActive = (data.onActiveJobs || []).length > 0;
-    const hasMatchContent = onActive || data.inLibrary || (data.suggestedJobs || []).length > 0;
-    if (!hasMatchContent && !captured) {
-      // Genuinely unknown candidate AND no recent capture — nothing to show.
-      return;
-    }
+  const [status, res] = await Promise.all([statusPromise, matchPromise]);
 
-    // Build closure that paints the overlay using THIS data. Stashed in a
-    // module variable so the minimised ball can call it on click without
-    // re-querying the service worker.
-    const builder = () => {
-      const container = buildOverlayShell();
-      if (hasMatchContent) {
-        if (onActive) {
-          renderOnActiveJobs(container, data, res.serverBase);
-        } else {
-          renderSuggestedJobs(container, data, linkedinUrl, res.serverBase);
-        }
-      }
-      // Prepend the "Sent to RecruitMe" banner above whatever match content
-      // rendered, or use it as the sole content for a captured-but-unmatched
-      // profile. The recruiter immediately sees their action was received.
-      if (captured) {
-        container.insertAdjacentHTML("afterbegin", capturedBannerHTML(captured.name, captured.at));
-      }
-      document.body.appendChild(container);
-    };
-    lastOverlayBuilder = builder;
+  const data = res?.ok ? res.data : null;
+  const onActive = data ? (data.onActiveJobs || []).length > 0 : false;
+  const hasMatchContent = data
+    ? (onActive || data.inLibrary || (data.suggestedJobs || []).length > 0)
+    : false;
 
-    if (overlayMinimized) {
-      // Recruiter previously minimised on another profile — keep the ball
-      // visible rather than popping the full bubble back open.
-      showMinimizedBall(captured);
-    } else {
-      builder();
-    }
-  } catch {
-    // Silent — recruiter sees no overlay rather than an error toast.
-    // Still paint the captured banner if we have one.
-    const captured = await capturedPromise;
-    if (captured) paintStandaloneCapturedBanner(captured.name);
+  if (!hasMatchContent && !status) {
+    // No match data AND no capture state — genuinely nothing to show.
+    return;
   }
+
+  // Build closure that paints the overlay. Stashed in a module variable so
+  // the minimised ball can call it on click without re-querying.
+  const builder = () => {
+    const container = buildOverlayShell();
+    if (hasMatchContent && data && res) {
+      if (onActive) {
+        renderOnActiveJobs(container, data, res.serverBase);
+      } else {
+        renderSuggestedJobs(container, data, linkedinUrl, res.serverBase);
+      }
+    }
+    // Always prepend the status banner when present, above whatever match
+    // content rendered (or as the sole content for captured/pending
+    // profiles that don't match any job).
+    const banner = statusBannerHTML(status);
+    if (banner) container.insertAdjacentHTML("afterbegin", banner);
+    document.body.appendChild(container);
+  };
+  lastOverlayBuilder = builder;
+
+  if (overlayMinimized) {
+    // Recruiter previously minimised — keep the ball visible. Pass the
+    // status so the ball can render green ✓ when captured, or blue spinner
+    // when pending/processing.
+    showMinimizedBall(status);
+  } else {
+    builder();
+  }
+
+  // Re-poll while a capture is in progress so the bubble updates from
+  // "Queued" → "Capturing now…" → "✓ Sent to RecruitMe" without the
+  // recruiter having to refresh.
+  if (status && (status.kind === "pending" || status.kind === "processing")) {
+    schedulePendingPoll(linkedinUrl);
+  }
+}
+
+// Poll the bubble's status banner every 5s while a capture is in flight,
+// up to 3 minutes. Stops as soon as the status moves to "captured" or null.
+let pendingPollTimer = null;
+function schedulePendingPoll(linkedinUrl) {
+  if (pendingPollTimer) clearTimeout(pendingPollTimer);
+  const startedAt = Date.now();
+  const tick = async () => {
+    if (Date.now() - startedAt > 3 * 60_000) return;
+    if (location.href.replace(/[?#].*$/, "") !== linkedinUrl) return; // user navigated away
+    const status = await getCaptureStatusForCurrentProfile(linkedinUrl).catch(() => null);
+    if (status?.kind === "captured" || !status) {
+      // Force a re-render with the new status — bypass the lastMatchQueriedUrl cache.
+      lastMatchQueriedUrl = "";
+      removeOverlay();
+      void renderProfileMatchOverlay(linkedinUrl);
+      return;
+    }
+    // Still pending/processing — keep polling and re-render to refresh the label.
+    lastMatchQueriedUrl = "";
+    removeOverlay();
+    void renderProfileMatchOverlay(linkedinUrl);
+    pendingPollTimer = setTimeout(tick, 5000);
+  };
+  pendingPollTimer = setTimeout(tick, 5000);
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

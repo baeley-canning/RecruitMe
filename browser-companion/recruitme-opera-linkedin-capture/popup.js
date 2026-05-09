@@ -10,7 +10,7 @@ const setupCard         = document.getElementById("setupCard");
 const autoCaptureCard   = document.getElementById("autoCaptureCard");
 const autoCaptureLine   = document.getElementById("autoCaptureLine");
 const autoCaptureCounts = document.getElementById("autoCaptureCounts");
-const recentCaptures      = document.getElementById("recentCaptures");
+const recentCapturesCard  = document.getElementById("recentCapturesCard");
 const recentCapturesList  = document.getElementById("recentCapturesList");
 
 function openSettings() {
@@ -77,44 +77,46 @@ function escapeHtml(s) {
 async function refreshAutoCaptureCard() {
   try {
     const r = await sendMessage({ type: "get-auto-capture-status" });
+
+    // Auto-capture queue card — only relevant when manualOnlyMode is OFF.
     if (r.manualOnlyMode) {
       autoCaptureCard.style.display = "none";
-      return;
-    }
-    autoCaptureCard.style.display = "block";
-    if (r.paused) {
-      autoCaptureLine.textContent = `Paused — resumes ${fmtCountdown(r.pausedUntil)}`;
-      autoCaptureLine.style.color = "#b45309";
-    } else if (r.hourly >= r.hourlyCap || r.daily >= r.dailyCap) {
-      autoCaptureLine.textContent = "Cap reached — waiting for the window to roll over";
-      autoCaptureLine.style.color = "#b45309";
-    } else if (Array.isArray(r.recentCaptures) && r.recentCaptures.length > 0 && Date.now() - r.recentCaptures[0].at < 5 * 60_000) {
-      // Highlight a fresh capture for ~5 min so the recruiter sees their
-      // last result clearly when they open the popup.
-      const last = r.recentCaptures[0];
-      autoCaptureLine.textContent = `✔ Captured ${last.name} ${fmtRelativeAgo(last.at)}`;
-      autoCaptureLine.style.color = "#047857";
     } else {
-      autoCaptureLine.textContent = "Active — capturing one profile every 90–240s";
-      autoCaptureLine.style.color = "#047857";
+      autoCaptureCard.style.display = "block";
+      if (r.paused) {
+        autoCaptureLine.textContent = `Paused — resumes ${fmtCountdown(r.pausedUntil)}`;
+        autoCaptureLine.style.color = "#b45309";
+      } else if (r.hourly >= r.hourlyCap || r.daily >= r.dailyCap) {
+        autoCaptureLine.textContent = "Cap reached — waiting for the window to roll over";
+        autoCaptureLine.style.color = "#b45309";
+      } else if (Array.isArray(r.recentCaptures) && r.recentCaptures.length > 0 && Date.now() - r.recentCaptures[0].at < 5 * 60_000) {
+        const last = r.recentCaptures[0];
+        autoCaptureLine.textContent = `✔ Captured ${last.name} ${fmtRelativeAgo(last.at)}`;
+        autoCaptureLine.style.color = "#047857";
+      } else {
+        autoCaptureLine.textContent = "Active — capturing one profile every 90–240s";
+        autoCaptureLine.style.color = "#047857";
+      }
+      autoCaptureCounts.textContent = `${r.hourly}/${r.hourlyCap} this hour · ${r.daily}/${r.dailyCap} today`;
     }
-    autoCaptureCounts.textContent = `${r.hourly}/${r.hourlyCap} this hour · ${r.daily}/${r.dailyCap} today`;
 
-    // Render the recent-captures rolling history (last 5).
+    // Recent captures card — visible in BOTH modes so manual-mode recruiters
+    // still see what they've successfully captured.
     if (Array.isArray(r.recentCaptures) && r.recentCaptures.length > 0) {
-      recentCaptures.style.display = "block";
+      recentCapturesCard.style.display = "block";
       recentCapturesList.innerHTML = r.recentCaptures.slice(0, 5).map((c) => {
         const safeName = escapeHtml(c.name ?? "candidate");
-        return `<p class="tiny" style="margin:2px 0;color:#475569;display:flex;justify-content:space-between;gap:8px;">
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">✔ ${safeName}</span>
+        return `<p class="tiny" style="margin:3px 0;color:#475569;display:flex;justify-content:space-between;gap:8px;">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#065f46;">✔ ${safeName}</span>
           <span style="color:#94a3b8;flex-shrink:0;">${fmtRelativeAgo(c.at)}</span>
         </p>`;
       }).join("");
     } else {
-      recentCaptures.style.display = "none";
+      recentCapturesCard.style.display = "none";
     }
   } catch {
     autoCaptureCard.style.display = "none";
+    recentCapturesCard.style.display = "none";
   }
 }
 
