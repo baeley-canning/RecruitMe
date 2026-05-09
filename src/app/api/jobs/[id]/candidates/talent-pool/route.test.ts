@@ -15,6 +15,7 @@ const dbMocks = vi.hoisted(() => ({
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
+    orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -136,7 +137,8 @@ describe("talent-pool ingestion route", () => {
       expect.any(String),
       expect.any(Object),
       null,
-      scoringConfigMocks.customWeights
+      scoringConfigMocks.customWeights,
+      "org-1"
     );
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("talent_pool");

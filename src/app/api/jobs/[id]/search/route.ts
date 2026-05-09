@@ -22,6 +22,7 @@ import { buildTargetLocationLabel, extractKnownLocationTargets, inferCandidateLo
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { buildTalentPoolMap } from "@/lib/talent-pool";
+import { getAccessibleOrgIds } from "@/lib/org-access";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
@@ -606,7 +607,12 @@ async function runSearchBackground(args: {
         maxPages: MAX_PAGES,
         maxPageRetries: MAX_PAGE_RETRIES,
         emptyRoundsBeforeStop: EMPTY_ROUNDS_BEFORE_STOP,
-        keyFn: (candidate) => `${candidate.linkedinUrl}|${candidate.matchedQuery ?? ""}`,
+        // Dedupe by linkedinUrl ONLY. Including matchedQuery here means the
+        // same person surfaced by two query variants counts twice toward the
+        // raw target, ending the search before we've found enough unique
+        // people. The first occurrence's matchedQuery is retained on the
+        // SearchResult itself.
+        keyFn: (candidate) => candidate.linkedinUrl,
         getPage: async (page, attempt) => {
           const offset = page * PAGE_SIZE;
           const queriesForAttempt = limitQueriesForAttempt(searchQueries, page, attempt);
@@ -896,9 +902,16 @@ async function runSearchBackground(args: {
     // For any search result whose LinkedIn URL already has a full profile in our
     // DB (usually from a different job), reuse that profile instead of fetching
     // again. Existing snippet rows in this job are upgraded in-place.
+    // Reuse profiles from any org the caller has library access to (own org +
+    // cross-org library_read grants). Owner bypasses the filter. The synthetic
+    // AuthResult only sets fields getAccessibleOrgIds reads (it keys on orgId
+    // and short-circuits owners; userId is unused by that helper).
+    const poolScope: string | string[] | null = isOwner
+      ? null
+      : (await getAccessibleOrgIds({ userId: "", orgId, isOwner: false })) ?? [];
     const poolMap = await buildTalentPoolMap(
       allNormed.map((r) => r.linkedinUrl),
-      isOwner ? null : orgId,
+      poolScope,
     );
     const allNew = allNormed.filter((r) => !existingByUrl.has(r.linkedinUrl));
     const upgradeExisting = allNormed.filter((r) => {
@@ -1030,7 +1043,7 @@ async function runSearchBackground(args: {
           try {
             const breakdown = hasFullProfile
               ? applyLocationFitOverride(
-                  await scoreCandidateStructured(textToScore, parsedRoleForScoring, salary, weights),
+                  await scoreCandidateStructured(textToScore, parsedRoleForScoring, salary, weights, orgId),
                   candidateLocation,
                   targetLocation,
                   parsedRoleForScoring.location_rules,

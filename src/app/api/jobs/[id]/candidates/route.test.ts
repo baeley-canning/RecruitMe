@@ -137,7 +137,8 @@ describe("manual candidate ingestion route", () => {
       expect.any(String),
       expect.any(Object),
       null,
-      scoringConfigMocks.customWeights
+      scoringConfigMocks.customWeights,
+      "org-1"
     );
     expect(dbMocks.prisma.candidate.update.mock.calls[0][0].data.scoreBreakdown).toContain("\"version\":2");
     expect(dbMocks.prisma.candidate.update.mock.calls[0][0].data.acceptanceScore).toBe(66);

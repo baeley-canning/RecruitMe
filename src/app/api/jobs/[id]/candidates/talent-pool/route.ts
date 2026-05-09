@@ -20,6 +20,7 @@ import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { locationMatches, expandLocationKeywords } from "@/lib/location";
 import { getCityCoords, getCityKeywordsWithinRadius, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { getAccessibleOrgIds } from "@/lib/org-access";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
@@ -99,13 +100,21 @@ export async function POST(
     })).map((c) => c.linkedinUrl).filter(Boolean)
   );
 
-  // 2. Pull all candidates from OTHER jobs in the same org that have a full profile.
+  // 2. Pull all candidates with a full profile from any org the caller can
+  // read (own org + cross-org library_read grants). Owners see all.
+  const accessibleOrgIds = await getAccessibleOrgIds(auth);
   const poolRows = await prisma.candidate.findMany({
     where: {
       jobId: { not: jobId },
       profileText: { not: null },
-      // Owners can see across all orgs; regular users are scoped to their own.
-      ...(auth.isOwner ? {} : { job: { orgId: auth.orgId } }),
+      ...(accessibleOrgIds === null
+        ? {}
+        : {
+            OR: [
+              { job: { orgId: { in: accessibleOrgIds } } },
+              { jobId: null, orgId: { in: accessibleOrgIds } },
+            ],
+          }),
     },
     select: {
       id: true,
@@ -187,7 +196,7 @@ export async function POST(
     let locationFitScore: number | null = null;
 
     try {
-      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary, weights);
+      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary, weights, auth.orgId);
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         row.location,

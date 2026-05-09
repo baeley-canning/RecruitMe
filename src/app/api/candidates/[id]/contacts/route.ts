@@ -1,12 +1,24 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getAuth, verifyAnyAuth, unauthorized } from "@/lib/session";
+import { getAuth, verifyAnyAuth, unauthorized, type AuthResult } from "@/lib/session";
+import { getAccessibleOrgIds } from "@/lib/org-access";
 
-async function requireAccess(candidateId: string, orgId: string | null, isOwner: boolean) {
-  const c = await prisma.candidate.findUnique({ where: { id: candidateId }, select: { orgId: true } });
+async function requireAccess(candidateId: string, auth: AuthResult) {
+  const c = await prisma.candidate.findUnique({
+    where: { id: candidateId },
+    select: { orgId: true, job: { select: { orgId: true } } },
+  });
   if (!c) return false;
-  return isOwner || c.orgId === orgId;
+  if (auth.isOwner) return true;
+  const candidateOrg = c.orgId ?? c.job?.orgId ?? null;
+  if (candidateOrg && candidateOrg === auth.orgId) return true;
+  // Allow contacts for cross-org library candidates the caller has been
+  // granted access to. Without this, the extension bubble shows Messaged /
+  // Called buttons for a shared profile but the API 404s when they click.
+  const accessible = await getAccessibleOrgIds(auth);
+  if (accessible === null) return true;
+  return Boolean(candidateOrg && accessible.includes(candidateOrg));
 }
 
 export async function GET(
@@ -16,7 +28,7 @@ export async function GET(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-  if (!await requireAccess(id, auth.orgId, auth.isOwner)) {
+  if (!await requireAccess(id, auth)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -57,7 +69,7 @@ export async function POST(
   const auth = await verifyAnyAuth(req) ?? await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-  if (!await requireAccess(id, auth.orgId, auth.isOwner)) {
+  if (!await requireAccess(id, auth)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

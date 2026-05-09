@@ -20,6 +20,7 @@ const dbMocks = vi.hoisted(() => ({
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
+    orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -231,7 +232,8 @@ describe("search import route", () => {
       fullProfile,
       expect.any(Object),
       null,
-      scoringConfigMocks.customWeights
+      scoringConfigMocks.customWeights,
+      "org-1"
     );
     expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({

@@ -182,7 +182,8 @@ describe("candidate file CV upload", () => {
       cvText.trim(),
       parsedRole,
       { min: 90000, max: 120000 },
-      scoringConfigMocks.customWeights
+      scoringConfigMocks.customWeights,
+      "org-1"
     );
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({

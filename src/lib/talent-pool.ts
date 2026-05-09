@@ -96,8 +96,10 @@ export interface TalentPoolEntry {
  * normalised URL → TalentPoolEntry for every URL that already has a full
  * profile stored in our DB.
  *
- * orgId — when provided, only considers candidates whose job belongs to that
- * org (enforces org isolation). Pass null to search across all orgs (owner).
+ * orgScope:
+ *   - string         → single org (enforces strict isolation)
+ *   - string[]       → multiple orgs (caller's own + cross-org grants)
+ *   - null/undefined → all orgs (owner / no filtering)
  *
  * "Full profile" = enough captured text to be reusable for another job.
  * When multiple Candidate rows exist for the same URL, we prefer the one
@@ -105,7 +107,7 @@ export interface TalentPoolEntry {
  */
 export async function buildTalentPoolMap(
   linkedinUrls: string[],
-  orgId?: string | null,
+  orgScope?: string | string[] | null,
 ): Promise<Map<string, TalentPoolEntry>> {
   if (linkedinUrls.length === 0) return new Map();
 
@@ -121,6 +123,21 @@ export async function buildTalentPoolMap(
 
   if (normMap.size === 0) return new Map();
 
+  // Translate orgScope into a Prisma filter. The same candidate row could
+  // sit on a job (job.orgId) or be a library-only row (jobId=null, orgId on
+  // the candidate itself), so we OR both shapes when scoping by org.
+  const orgFilter = (() => {
+    if (orgScope == null) return {};
+    const ids = Array.isArray(orgScope) ? orgScope : [orgScope];
+    if (ids.length === 0) return { id: "__none__" };
+    return {
+      OR: [
+        { job: { orgId: { in: ids } } },
+        { jobId: null, orgId: { in: ids } },
+      ],
+    };
+  })();
+
   // Fetch all candidates with a full profile whose URL is in our set.
   // We pull all matching rows and pick the best one per URL in JS because
   // SQLite doesn't support window functions in the version Prisma targets.
@@ -128,8 +145,7 @@ export async function buildTalentPoolMap(
     where: {
       linkedinUrl: { in: [...normMap.keys()] },
       profileText: { not: null },
-      // Scope to the caller's org when one is set; owners see all profiles.
-      ...(orgId != null ? { job: { orgId } } : {}),
+      ...orgFilter,
     },
     select: {
       id: true,

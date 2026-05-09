@@ -257,7 +257,7 @@ export async function POST(
           // re-scored with that role's tuning, not a generic org default.
           const weights = await getJobScoringWeights(candidate.job.scoringWeights, auth.orgId);
           const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-            scoreCandidateStructured(text, parsedRole, salary, weights),
+            scoreCandidateStructured(text, parsedRole, salary, weights, auth.orgId),
             predictAcceptance(text, parsedRole, salary),
           ]);
           if (rawBreakdown.status === "fulfilled") {

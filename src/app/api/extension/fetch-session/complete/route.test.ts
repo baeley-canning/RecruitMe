@@ -7,8 +7,14 @@ const linkedinCaptureMocks = vi.hoisted(() => ({
   applyAiEnrichmentInBackground: vi.fn(),
   updateSessionInQueue: vi.fn(),
 }));
+const sessionMocks = vi.hoisted(() => ({
+  verifyExtensionAuth: vi.fn(async () => ({ userId: "u-1", orgId: "org-1", isOwner: false })),
+}));
 
 vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
+vi.mock("@/lib/session", () => sessionMocks);
+
+const AUTH_HEADER = { "Content-Type": "application/json", Authorization: "Basic dXNlcjpwYXNz" };
 
 import { POST } from "./route";
 
@@ -39,7 +45,7 @@ describe("extension capture completion route", () => {
   it("returns 202 immediately after stage 1 fast-save and fires stage 2 in background", async () => {
     const req = new Request("http://localhost/api/extension/fetch-session/complete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: AUTH_HEADER,
       body: JSON.stringify({
         sessionId: "sess-1",
         linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
@@ -98,7 +104,7 @@ describe("extension capture completion route", () => {
 
     const req = new Request("http://localhost/api/extension/fetch-session/complete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: AUTH_HEADER,
       body: JSON.stringify({
         sessionId: "sess-ranjana",
         linkedinUrl: "https://www.linkedin.com/in/ranjanatyagi/",
@@ -124,7 +130,7 @@ describe("extension capture completion route", () => {
 
     const req = new Request("http://localhost/api/extension/fetch-session/complete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: AUTH_HEADER,
       body: JSON.stringify({
         sessionId: "sess-1",
         linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
@@ -146,7 +152,7 @@ describe("extension capture completion route", () => {
 
     const req = new Request("http://localhost/api/extension/fetch-session/complete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: AUTH_HEADER,
       body: JSON.stringify({
         sessionId: "sess-1",
         linkedinUrl: "https://www.linkedin.com/in/pat-lee/",

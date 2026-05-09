@@ -8,6 +8,7 @@ import {
   saveCapturedProfileFast,
   updateSessionInQueue,
 } from "@/lib/linkedin-capture";
+import { verifyExtensionAuth } from "@/lib/session";
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
@@ -62,6 +63,13 @@ async function processBackgroundScoring(args: {
 }
 
 export async function POST(req: Request) {
+  // AUTH: without this anyone could write profileText into any session by
+  // guessing a sessionId, poisoning the candidate row before AI scoring runs.
+  const auth = await verifyExtensionAuth(req);
+  if (!auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: extensionCorsHeaders(req) });
+  }
+
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: extensionCorsHeaders(req) });
@@ -72,6 +80,16 @@ export async function POST(req: Request) {
 
   if (!session) {
     return NextResponse.json({ error: "No matching capture session" }, { status: 404, headers: extensionCorsHeaders(req) });
+  }
+
+  // Caller must own the session or be a platform owner. Sessions with an
+  // orgId set are never writable cross-org; truly legacy sessions (no userId
+  // AND no orgId) remain accepted so existing rows aren't orphaned.
+  const sameUser = Boolean(session.userId) && session.userId === auth.userId;
+  const sameOrg  = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
+  const legacy   = !session.userId && !session.orgId;
+  if (!auth.isOwner && !sameUser && !sameOrg && !legacy) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
   }
 
   if (!linkedInProfileMatches(session.linkedinUrl, linkedinUrl)) {

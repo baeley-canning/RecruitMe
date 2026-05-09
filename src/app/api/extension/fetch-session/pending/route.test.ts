@@ -4,8 +4,16 @@ const linkedinCaptureMocks = vi.hoisted(() => ({
   findSessionInQueue: vi.fn(),
   linkedInProfileMatches: vi.fn((a: string, b: string) => a.toLowerCase() === b.toLowerCase()),
 }));
+const sessionMocks = vi.hoisted(() => ({
+  verifyExtensionAuth: vi.fn(async () => ({ userId: "u-1", orgId: "org-1", isOwner: false })),
+}));
 
 vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
+vi.mock("@/lib/session", () => sessionMocks);
+
+function authedRequest(url: string) {
+  return new Request(url, { headers: { Authorization: "Basic dXNlcjpwYXNz" } });
+}
 
 import { GET } from "./route";
 
@@ -27,7 +35,7 @@ describe("extension fetch-session pending route", () => {
     });
 
     const res = await GET(
-      new Request(
+      authedRequest(
         "http://localhost/api/extension/fetch-session/pending?linkedinUrl=https%3A%2F%2Fwww.linkedin.com%2Fin%2Falex-legg%2F"
       )
     );
@@ -49,7 +57,7 @@ describe("extension fetch-session pending route", () => {
     });
 
     const res = await GET(
-      new Request(
+      authedRequest(
         "http://localhost/api/extension/fetch-session/pending?linkedinUrl=https%3A%2F%2Fwww.linkedin.com%2Fin%2Falex-legg%2F"
       )
     );
@@ -79,7 +87,7 @@ describe("extension fetch-session pending route", () => {
     });
 
     const res = await GET(
-      new Request(
+      authedRequest(
         "http://localhost/api/extension/fetch-session/pending?linkedinUrl=https%3A%2F%2Fwww.linkedin.com%2Fin%2Franjanatyagi%2F"
       )
     );

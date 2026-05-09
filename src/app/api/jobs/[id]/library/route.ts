@@ -18,6 +18,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { getAccessibleOrgIds, candidateOrgFilter } from "@/lib/org-access";
 
 export async function GET(
   req: Request,
@@ -43,16 +44,13 @@ export async function GET(
     existing.map((c) => c.linkedinUrl?.toLowerCase()).filter(Boolean) as string[]
   );
 
-  // Org-scoped library: anything with a profile, in this org (or anywhere if owner).
+  // Library scope: caller's own org plus any orgs the caller has been granted
+  // library_read access to (cross-org subscription). Owner sees all.
+  const accessibleOrgIds = await getAccessibleOrgIds(auth);
   const candidates = await prisma.candidate.findMany({
     where: {
       profileText: { not: null },
-      ...(auth.isOwner ? {} : {
-        OR: [
-          { job: { orgId: auth.orgId } },
-          { jobId: null, orgId: auth.orgId },
-        ],
-      }),
+      ...candidateOrgFilter(accessibleOrgIds),
     },
     orderBy: { createdAt: "desc" },
     take: 500, // generous upper bound; client filters down further
@@ -119,18 +117,14 @@ export async function POST(
     : null;
   const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
-  // Pull source candidates with full profile text — scoping to the caller's
-  // org unless they're owner. Prevents importing another org's profiles.
+  // Pull source candidates with full profile text — same library scope as
+  // GET (own org + granted-access orgs). Owner bypasses.
+  const accessibleOrgIds = await getAccessibleOrgIds(auth);
   const sourceCandidates = await prisma.candidate.findMany({
     where: {
       id: { in: parsed.data.candidateIds },
       profileText: { not: null },
-      ...(auth.isOwner ? {} : {
-        OR: [
-          { job: { orgId: auth.orgId } },
-          { jobId: null, orgId: auth.orgId },
-        ],
-      }),
+      ...candidateOrgFilter(accessibleOrgIds),
     },
   });
 

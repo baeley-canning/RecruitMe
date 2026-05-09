@@ -4,8 +4,12 @@ const linkedinCaptureMocks = vi.hoisted(() => ({
   findSessionInQueue: vi.fn(),
   updateSessionInQueue: vi.fn(),
 }));
+const sessionMocks = vi.hoisted(() => ({
+  verifyExtensionAuth: vi.fn(async () => ({ userId: "u-1", orgId: "org-1", isOwner: false })),
+}));
 
 vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
+vi.mock("@/lib/session", () => sessionMocks);
 
 import { POST } from "./route";
 
@@ -34,7 +38,7 @@ describe("extension capture error route", () => {
   it("marks a pending extension capture as failed", async () => {
     const req = new Request("http://localhost/api/extension/fetch-session/error", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: "Basic dXNlcjpwYXNz" },
       body: JSON.stringify({
         sessionId: "sess-1",
         error: "RecruitMe could not attach to the LinkedIn tab.",

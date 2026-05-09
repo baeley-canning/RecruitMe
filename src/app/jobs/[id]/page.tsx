@@ -663,17 +663,20 @@ export default function JobDetailPage({
   finishFetchRef.current = finishFetch;
 
   // Must NOT be async — window.open is blocked after an await.
-  // Drain: if a fetch slot is free and the queue has items, start the next one.
+  // Drain: while there's a free fetch slot and queue items, start the next one.
+  // The active count is re-read every iteration so we don't over-drain when
+  // multiple slots free at once (with MAX=1 a stale read would empty the queue
+  // in one shot and dispatch every queued item simultaneously).
   const drainFetchQueueRef = useRef<() => void>(() => {});
   drainFetchQueueRef.current = () => {
-    const active = activeFetchesRef.current.size;
-    while (active < MAX_CONCURRENT_FETCHES && fetchQueueRef.current.length > 0) {
+    while (
+      activeFetchesRef.current.size < MAX_CONCURRENT_FETCHES &&
+      fetchQueueRef.current.length > 0
+    ) {
       const nextId = fetchQueueRef.current.shift()!;
-      // Update queue positions for remaining items
       fetchQueueRef.current.forEach((id, i) => {
         setFetchStatuses((prev) => prev[id] ? { ...prev, [id]: { ...prev[id], queuePosition: i + 1 } } : prev);
       });
-      // Fire the actual fetch
       startFetchRef.current(nextId);
     }
   };
@@ -686,11 +689,14 @@ export default function JobDetailPage({
     if (fetchQueueRef.current.includes(candidateId)) return;
     setFetchPanelDismissed(false); // show panel when a new fetch starts
 
-    // If at capacity, queue without opening a tab. With MAX_CONCURRENT_FETCHES=1
-    // and the rate-pacing in the extension, opening a tab per click would dump
-    // a stack of LinkedIn tabs at the user — the same fingerprint the jitter
-    // logic exists to avoid. Queued items won't get a tab until the user re-
-    // triggers them (clicks Fetch again after the first one completes).
+    // Always open the LinkedIn profile here, inside the user gesture, so Chrome
+    // doesn't block the popup. Even when the candidate is queued behind capacity
+    // we open the tab now — the drain runs from a poll callback, which has no
+    // user-gesture context, so window.open from there would be blocked. Result:
+    // user sees a tab per click; the queue paces server-side capture sessions.
+    window.open(candidate.linkedinUrl, "_blank", "noopener,noreferrer");
+
+    // If at capacity, add to queue
     if (activeFetchesRef.current.size >= MAX_CONCURRENT_FETCHES) {
       const pos = fetchQueueRef.current.length + 1;
       fetchQueueRef.current.push(candidateId);
@@ -700,11 +706,6 @@ export default function JobDetailPage({
       }));
       return;
     }
-
-    // Slot free — open the LinkedIn profile synchronously, inside the user
-    // gesture, so Chrome opens a tab in the current window (not a popup or
-    // separate window). Any await before this call would forfeit the gesture.
-    window.open(candidate.linkedinUrl, "_blank", "noopener,noreferrer");
     startFetchRef.current(candidateId);
   }, [job]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -716,6 +717,23 @@ export default function JobDetailPage({
     const candidate = job?.candidates.find((c) => c.id === candidateId);
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
+
+    // Reserve the slot SYNCHRONOUSLY. Without this, the drain's while-loop
+    // re-reads activeFetchesRef.current.size and sees the stale 0 between
+    // iterations because the real entry is only set inside the async POST
+    // block below — the loop would then dispatch every queued candidate at
+    // once instead of one per slot.
+    const placeholder: FetchEntry = {
+      sessionId: "",
+      candidateId,
+      startedAt: Date.now(),
+      processingStartedAt: null,
+      lastKnownStatus: "pending",
+      done: false,
+      pollInterval: null,
+      consecutiveNetworkErrors: 0,
+    };
+    activeFetchesRef.current.set(candidateId, placeholder);
 
     setFetchStatuses((prev) => ({
       ...prev,
@@ -733,6 +751,9 @@ export default function JobDetailPage({
         const session = (await start.json()) as { sessionId?: string; error?: string; message?: string; status?: string };
 
         if (!start.ok || !session.sessionId) {
+          // Free the slot we reserved so the queue can advance.
+          activeFetchesRef.current.delete(candidateId);
+          drainFetchQueueRef.current();
           setFetchStatuses((prev) => ({
             ...prev,
             [candidateId]: { state: "error", message: session.error ?? "Could not start capture" },
@@ -750,29 +771,21 @@ export default function JobDetailPage({
           },
         }));
 
-        const entry: FetchEntry = {
-          sessionId: session.sessionId,
-          candidateId,
-          startedAt: Date.now(),
-          processingStartedAt: null,
-          lastKnownStatus: "pending",
-          done: false,
-          pollInterval: null,
-          consecutiveNetworkErrors: 0,
-        };
-        activeFetchesRef.current.set(candidateId, entry);
+        // Promote the placeholder to the real entry now that we have the sessionId.
+        placeholder.sessionId = session.sessionId;
         // 2500ms balances UI responsiveness against API hammering. With the
         // tab-hidden gate inside pollCandidateFetch, idle tabs cost nothing.
-        entry.pollInterval = setInterval(() => {
+        placeholder.pollInterval = setInterval(() => {
           void pollCandidateFetchRef.current(candidateId);
         }, 2500);
       } catch {
+        // Free the slot we reserved so the queue can continue.
+        activeFetchesRef.current.delete(candidateId);
         setFetchStatuses((prev) => ({
           ...prev,
           [candidateId]: { state: "error", message: "Network error starting capture" },
         }));
         clearCandidateStatus(candidateId, 6000, "error");
-        // Free the slot even on error so the queue can continue
         drainFetchQueueRef.current();
       }
     })();

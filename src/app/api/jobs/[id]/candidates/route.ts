@@ -89,7 +89,7 @@ export async function POST(
     const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
     try {
-      const rawBreakdown = await scoreCandidateStructured(body.profileText, parsedRole, salary, weights);
+      const rawBreakdown = await scoreCandidateStructured(body.profileText, parsedRole, salary, weights, auth.orgId);
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         location || null,

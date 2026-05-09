@@ -4,6 +4,7 @@ import { buildScoreBreakdown, CATEGORY_WEIGHTS_V2 } from "@/lib/scoring";
 const dbMocks = vi.hoisted(() => ({
   prisma: {
     candidate: { findMany: vi.fn(), upsert: vi.fn() },
+    orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -33,6 +34,7 @@ vi.mock("@/lib/scoring-config", () => ({
 }));
 
 import { GET, POST } from "./route";
+import { invalidateAccessCache } from "@/lib/org-access";
 
 function makeBreakdown() {
   return buildScoreBreakdown({
@@ -57,6 +59,9 @@ function makeBreakdown() {
 describe("library browse / add route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The org-access cache is module-level and persists across tests; clear
+    // it so each test sees the orgAccessGrant.findMany mock it sets up.
+    invalidateAccessCache("org-1");
     sessionMocks.getAuth.mockResolvedValue({ userId: "u1", orgId: "org-1", isOwner: false });
     sessionMocks.requireJobAccess.mockResolvedValue({
       job: {
@@ -138,6 +143,31 @@ describe("library browse / add route", () => {
     const upsertCall = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
     expect(upsertCall.create.source).toBe("talent_pool");
     expect(upsertCall.create.jobId).toBe("job-1");
+  });
+
+  it("GET surfaces candidates from a granted partner org (cross-org library_read)", async () => {
+    // Viewer org-1 has been granted library_read on org-2.
+    dbMocks.prisma.orgAccessGrant.findMany.mockResolvedValueOnce([
+      { providerOrgId: "org-2", scope: "library_read" },
+    ]);
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([]) // existing URLs in this job
+      .mockResolvedValueOnce([
+        // partner candidate from org-2 — should be returned
+        { id: "lib-partner", name: "From Org 2", headline: null, location: null, linkedinUrl: "https://www.linkedin.com/in/p2/", matchScore: 60, createdAt: new Date(), job: { title: "Other role" }, archivedJobTitle: null },
+      ]);
+
+    const res = await GET(new Request("http://localhost/api/jobs/job-1/library"), {
+      params: Promise.resolve({ id: "job-1" }),
+    });
+    expect(res.status).toBe(200);
+    // The library findMany must be invoked with a where clause that lists
+    // BOTH org-1 (viewer's own) and org-2 (granted) — proving the cross-org
+    // wiring made it through to Prisma rather than being dropped at the route.
+    const libCall = dbMocks.prisma.candidate.findMany.mock.calls[1][0];
+    const whereClause = JSON.stringify(libCall.where);
+    expect(whereClause).toContain("org-1");
+    expect(whereClause).toContain("org-2");
   });
 
   it("POST rejects empty candidateIds", async () => {
