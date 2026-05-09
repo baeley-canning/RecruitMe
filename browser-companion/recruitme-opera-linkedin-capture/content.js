@@ -1499,7 +1499,49 @@ function showMinimizedBall() {
   `;
   ball.onmouseover = () => { ball.style.transform = "scale(1.08)"; };
   ball.onmouseout  = () => { ball.style.transform = "scale(1)";    };
+
+  // Drag support — same pattern as the bubble's makeDraggable but with a
+  // click-vs-drag threshold so the recruiter can either reposition the ball
+  // (drag >3px) or expand it back to the full bubble (clean click <3px).
+  let dragging = false;
+  let movedPx = 0;
+  let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+  ball.style.cursor = "grab";
+  ball.addEventListener("mousedown", (e) => {
+    dragging = true;
+    movedPx = 0;
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = ball.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop  = rect.top;
+    ball.style.transition = "none";
+    ball.style.cursor = "grabbing";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    movedPx = Math.max(movedPx, Math.abs(dx), Math.abs(dy));
+    const newLeft = Math.max(0, Math.min(window.innerWidth  - ball.offsetWidth,  startLeft + dx));
+    const newTop  = Math.max(0, Math.min(window.innerHeight - ball.offsetHeight, startTop  + dy));
+    ball.style.left   = newLeft + "px";
+    ball.style.top    = newTop  + "px";
+    ball.style.right  = "auto";
+    ball.style.bottom = "auto";
+    // Persist position so the bubble re-opens at the same spot.
+    overlayPos = { left: newLeft, top: newTop };
+  });
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    ball.style.cursor = "grab";
+  });
+
   ball.addEventListener("click", () => {
+    // Don't expand if this was the end of a drag (user moved >3px).
+    if (movedPx > 3) return;
     overlayMinimized = false;
     document.getElementById(MIN_BALL_ID)?.remove();
     // Re-render the last-known overlay state without re-fetching.
