@@ -18,6 +18,7 @@ import {
   StickyNote,
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 
 interface CandidateFile {
   id: string;
@@ -374,9 +375,9 @@ export default function CandidateDetailPage({
                     {candidate.location}
                   </span>
                 )}
-                {candidate.linkedinUrl && (
+                {displayableLinkedinUrl(candidate.linkedinUrl) && (
                   <a
-                    href={candidate.linkedinUrl}
+                    href={displayableLinkedinUrl(candidate.linkedinUrl)!}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 text-sm text-[#0077B5] hover:text-[#005582] font-medium transition-colors"

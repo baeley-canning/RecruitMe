@@ -686,26 +686,16 @@ export default function JobDetailPage({
     const candidate = job?.candidates.find((c) => c.id === candidateId);
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
-    if (fetchQueueRef.current.includes(candidateId)) return;
     setFetchPanelDismissed(false); // show panel when a new fetch starts
 
-    // Always open the LinkedIn profile here, inside the user gesture, so Chrome
-    // doesn't block the popup. Even when the candidate is queued behind capacity
-    // we open the tab now — the drain runs from a poll callback, which has no
-    // user-gesture context, so window.open from there would be blocked. Result:
-    // user sees a tab per click; the queue paces server-side capture sessions.
+    // Open the LinkedIn tab AND create the server fetch session immediately.
+    // Earlier versions deferred session creation behind a client-side queue,
+    // but the extension polls /pending?linkedinUrl=… as soon as the LinkedIn
+    // tab finishes loading — if no session exists yet, manual-only mode bails
+    // and the queued capture sits forever. Each candidate is independent;
+    // the extension paces actual captures via its own rate limiter, so
+    // creating multiple sessions in flight is fine and necessary.
     window.open(candidate.linkedinUrl, "_blank", "noopener,noreferrer");
-
-    // If at capacity, add to queue
-    if (activeFetchesRef.current.size >= MAX_CONCURRENT_FETCHES) {
-      const pos = fetchQueueRef.current.length + 1;
-      fetchQueueRef.current.push(candidateId);
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: { state: "queued", message: "Waiting in queue", queuePosition: pos },
-      }));
-      return;
-    }
     startFetchRef.current(candidateId);
   }, [job]);  // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { ScoreBadge } from "@/components/score-badge";
 import { ShareShortlistButton } from "@/components/job/share-shortlist-button";
+import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { cn, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
@@ -114,9 +115,9 @@ function CandidateBrief({
                 <span className="font-bold text-slate-900 text-base">
                   #{rank} — {candidate.name}
                 </span>
-                {candidate.linkedinUrl && (
+                {displayableLinkedinUrl(candidate.linkedinUrl) && (
                   <a
-                    href={candidate.linkedinUrl}
+                    href={displayableLinkedinUrl(candidate.linkedinUrl)!}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-[#0A66C2] hover:opacity-80 transition-opacity print:hidden"
@@ -227,9 +228,9 @@ function CandidateBrief({
 
         {/* Actions */}
         <div className="flex items-center justify-between pt-3 border-t border-slate-100 print:hidden">
-          {candidate.linkedinUrl ? (
+          {displayableLinkedinUrl(candidate.linkedinUrl) ? (
             <a
-              href={candidate.linkedinUrl}
+              href={displayableLinkedinUrl(candidate.linkedinUrl)!}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-sm text-[#0A66C2] hover:opacity-80 font-medium transition-opacity"

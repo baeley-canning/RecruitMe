@@ -28,6 +28,7 @@ import {
   profileSourceSummary,
   getRadarDimensions,
   locationFitBadge,
+  displayableLinkedinUrl,
 } from "./candidate/helpers";
 import { ScoreBadge } from "./score-badge";
 import { ScoreRadar } from "./score-radar";
@@ -652,9 +653,9 @@ function ProfileDrawer({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="font-bold text-slate-900 text-base leading-tight">{candidate.name}</h2>
-              {candidate.linkedinUrl && !editingLinkedIn && (
+              {displayableLinkedinUrl(candidate.linkedinUrl) && !editingLinkedIn && (
                 <a
-                  href={candidate.linkedinUrl}
+                  href={displayableLinkedinUrl(candidate.linkedinUrl)!}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-slate-400 hover:text-[#0A66C2] transition-colors"
@@ -730,7 +731,7 @@ function ProfileDrawer({
             >
               <X className="w-5 h-5" />
             </button>
-            {onFetchProfile && candidate.linkedinUrl && (
+            {onFetchProfile && displayableLinkedinUrl(candidate.linkedinUrl) && (
               fetchQueueState === "queued" ? (
                 <span className="text-[11px] text-amber-500 flex items-center gap-1 font-medium">
                   <span className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin inline-block" />
@@ -1026,8 +1027,8 @@ export const CandidateCard = memo(function CandidateCard({
                 >
                   {candidate.name}
                 </button>
-                {candidate.linkedinUrl && (
-                  <a href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer"
+                {displayableLinkedinUrl(candidate.linkedinUrl) && (
+                  <a href={displayableLinkedinUrl(candidate.linkedinUrl)!} target="_blank" rel="noopener noreferrer"
                     className="text-slate-400 hover:text-[#0A66C2] transition-colors flex-shrink-0"
                     title="Open LinkedIn profile">
                     <LinkedInIcon className="w-3.5 h-3.5" />
@@ -1346,9 +1347,9 @@ export const CandidateCard = memo(function CandidateCard({
                     <button onClick={() => setEditingLinkedIn(false)} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
                   </div>
                 </div>
-              ) : candidate.linkedinUrl ? (
-                <a href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline truncate block max-w-full">{candidate.linkedinUrl}</a>
+              ) : displayableLinkedinUrl(candidate.linkedinUrl) ? (
+                <a href={displayableLinkedinUrl(candidate.linkedinUrl)!} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:underline truncate block max-w-full">{displayableLinkedinUrl(candidate.linkedinUrl)}</a>
               ) : (
                 <p className="text-xs text-slate-400">No LinkedIn URL — add one to enable profile fetch</p>
               )}
@@ -1437,7 +1438,7 @@ export const CandidateCard = memo(function CandidateCard({
               candidate scored low but actually fits. Only shown in early funnel
               stages where messaging is the natural next action; gated on
               linkedinUrl since "messaged about this role" presumes a channel. */}
-          {["new", "reviewing", "shortlisted", "contacted"].includes(candidate.status) && candidate.linkedinUrl && (
+          {["new", "reviewing", "shortlisted", "contacted"].includes(candidate.status) && displayableLinkedinUrl(candidate.linkedinUrl) && (
             <Button
               size="sm"
               variant="ghost"
@@ -1496,7 +1497,7 @@ export const CandidateCard = memo(function CandidateCard({
           )}
 
           {/* Fetch profile */}
-          {candidate.linkedinUrl && (
+          {displayableLinkedinUrl(candidate.linkedinUrl) && (
             fetchQueueState === "queued" ? (
               <Button size="sm" variant="ghost" disabled className="text-amber-500 font-medium">
                 <span className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin inline-block mr-1" />

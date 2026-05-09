@@ -4,7 +4,27 @@ import { prisma } from "@/lib/db";
 import { getAuth, verifyAnyAuth, unauthorized, type AuthResult } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 
-async function requireAccess(candidateId: string, auth: AuthResult) {
+// Read access: only candidates that belong to the caller's own org (or owner).
+// Reads return notes / userNames from every contact event on the candidate, so
+// we don't widen this to cross-org granted access — that would leak partner-
+// org recruiter notes to anyone with a library_read grant.
+async function requireReadAccess(candidateId: string, auth: AuthResult) {
+  const c = await prisma.candidate.findUnique({
+    where: { id: candidateId },
+    select: { orgId: true, job: { select: { orgId: true } } },
+  });
+  if (!c) return false;
+  if (auth.isOwner) return true;
+  const candidateOrg = c.orgId ?? c.job?.orgId ?? null;
+  return Boolean(candidateOrg && candidateOrg === auth.orgId);
+}
+
+// Write access: own org plus any cross-org library_read grant. The caller logs
+// THEIR OWN contact event tagged with their orgId; reads are still org-scoped,
+// so this doesn't leak existing history — it just lets a recruiter with a
+// shared-library subscription log "I messaged this person" against a partner-
+// org candidate so the extension bubble's Messaged / Called buttons work.
+async function requireWriteAccess(candidateId: string, auth: AuthResult) {
   const c = await prisma.candidate.findUnique({
     where: { id: candidateId },
     select: { orgId: true, job: { select: { orgId: true } } },
@@ -13,9 +33,6 @@ async function requireAccess(candidateId: string, auth: AuthResult) {
   if (auth.isOwner) return true;
   const candidateOrg = c.orgId ?? c.job?.orgId ?? null;
   if (candidateOrg && candidateOrg === auth.orgId) return true;
-  // Allow contacts for cross-org library candidates the caller has been
-  // granted access to. Without this, the extension bubble shows Messaged /
-  // Called buttons for a shared profile but the API 404s when they click.
   const accessible = await getAccessibleOrgIds(auth);
   if (accessible === null) return true;
   return Boolean(candidateOrg && accessible.includes(candidateOrg));
@@ -28,7 +45,7 @@ export async function GET(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-  if (!await requireAccess(id, auth)) {
+  if (!await requireReadAccess(id, auth)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -69,7 +86,7 @@ export async function POST(
   const auth = await verifyAnyAuth(req) ?? await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
-  if (!await requireAccess(id, auth)) {
+  if (!await requireWriteAccess(id, auth)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

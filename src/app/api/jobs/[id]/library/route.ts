@@ -149,15 +149,21 @@ export async function POST(
     }
 
     try {
+      // For library candidates with no real LinkedIn URL, synthesise a stable
+      // key from source.id and store it as the linkedinUrl too — otherwise
+      // re-importing the same source-row produces a duplicate, because the
+      // unique constraint sees `library:src-1` in the where but `null` in the
+      // create row, so the upsert never finds a match.
+      const linkedinUrl = source.linkedinUrl ?? `library:${source.id}`;
       await prisma.candidate.upsert({
-        where: { jobId_linkedinUrl: { jobId: id, linkedinUrl: source.linkedinUrl ?? `library:${source.id}` } },
+        where: { jobId_linkedinUrl: { jobId: id, linkedinUrl } },
         create: {
           jobId: id,
           orgId: job.orgId ?? null,
           name: source.name,
           headline: source.headline,
           location: source.location,
-          linkedinUrl: source.linkedinUrl,
+          linkedinUrl,
           profileText: source.profileText,
           source: "talent_pool",
           status: "new",

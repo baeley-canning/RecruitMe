@@ -5,7 +5,11 @@ const linkedinCaptureMocks = vi.hoisted(() => ({
   linkedInProfileMatches: vi.fn((a: string, b: string) => a.toLowerCase() === b.toLowerCase()),
 }));
 const sessionMocks = vi.hoisted(() => ({
-  verifyExtensionAuth: vi.fn(async () => ({ userId: "u-1", orgId: "org-1", isOwner: false })),
+  verifyExtensionAuth: vi.fn(
+    async (_req: Request): Promise<{ userId: string; orgId: string | null; isOwner: boolean } | null> => ({
+      userId: "u-1", orgId: "org-1", isOwner: false,
+    })
+  ),
 }));
 
 vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
@@ -68,6 +72,33 @@ describe("extension fetch-session pending route", () => {
     expect(body.active).toBe(true);
     expect(body.status).toBe("processing");
     expect(body.message).toBe("Profile received - scoring with AI");
+  });
+
+  it("returns 401 when no auth header is present", async () => {
+    sessionMocks.verifyExtensionAuth.mockResolvedValueOnce(null);
+    const res = await GET(new Request("http://localhost/api/extension/fetch-session/pending?linkedinUrl=https%3A%2F%2Fwww.linkedin.com%2Fin%2Falex%2F"));
+    expect(res.status).toBe(401);
+    expect(linkedinCaptureMocks.findSessionInQueue).not.toHaveBeenCalled();
+  });
+
+  it("hides a session from a different org from a non-owner caller", async () => {
+    // Caller is org-1, session belongs to org-2 — predicate must reject it.
+    sessionMocks.verifyExtensionAuth.mockResolvedValueOnce({ userId: "u-1", orgId: "org-1", isOwner: false });
+    linkedinCaptureMocks.findSessionInQueue.mockImplementation(async (predicate: (session: { linkedinUrl: string; status: string; userId?: string; orgId?: string }) => boolean) => {
+      const session = {
+        sessionId: "sess-org2",
+        linkedinUrl: "https://www.linkedin.com/in/alex/",
+        status: "pending",
+        userId: "u-2",
+        orgId: "org-2",
+      };
+      return predicate(session) ? session : null;
+    });
+
+    const res = await GET(authedRequest("http://localhost/api/extension/fetch-session/pending?linkedinUrl=https%3A%2F%2Fwww.linkedin.com%2Fin%2Falex%2F"));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.active).toBe(false); // not visible
   });
 
   it("uses LinkedIn alias matching for redirected canonical profile URLs", async () => {

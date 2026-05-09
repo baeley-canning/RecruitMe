@@ -100,3 +100,11 @@ export function locationFitBadge(score: number | null | undefined) {
     label: "Location mismatch",
   };
 }
+
+// Library imports without a real LinkedIn URL store a synthetic `library:src-*`
+// key so the (jobId, linkedinUrl) unique constraint can dedupe re-imports.
+// Anything not starting with http(s) is internal — never render as a link.
+export function displayableLinkedinUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  return /^https?:\/\//i.test(url) ? url : null;
+}

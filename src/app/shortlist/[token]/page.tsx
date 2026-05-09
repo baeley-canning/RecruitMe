@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { ScoreBadge } from "@/components/score-badge";
+import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { MapPin, ExternalLink, Briefcase, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface PublicCandidate {
@@ -96,9 +97,9 @@ export default async function PublicShortlistPage({
                       {c.location && (
                         <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.location}</span>
                       )}
-                      {c.linkedinUrl && (
+                      {displayableLinkedinUrl(c.linkedinUrl) && (
                         <a
-                          href={c.linkedinUrl}
+                          href={displayableLinkedinUrl(c.linkedinUrl)!}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center gap-1 text-blue-600 hover:text-blue-700"

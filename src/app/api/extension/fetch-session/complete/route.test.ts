@@ -8,7 +8,11 @@ const linkedinCaptureMocks = vi.hoisted(() => ({
   updateSessionInQueue: vi.fn(),
 }));
 const sessionMocks = vi.hoisted(() => ({
-  verifyExtensionAuth: vi.fn(async () => ({ userId: "u-1", orgId: "org-1", isOwner: false })),
+  verifyExtensionAuth: vi.fn(
+    async (_req: Request): Promise<{ userId: string; orgId: string | null; isOwner: boolean } | null> => ({
+      userId: "u-1", orgId: "org-1", isOwner: false,
+    })
+  ),
 }));
 
 vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
@@ -40,6 +44,51 @@ describe("extension capture completion route", () => {
       identity: { profileTextHash: "hash-1", profileUnchanged: false },
     });
     linkedinCaptureMocks.applyAiEnrichmentInBackground.mockResolvedValue({ applied: true });
+  });
+
+  it("returns 401 when no auth header is present", async () => {
+    sessionMocks.verifyExtensionAuth.mockResolvedValueOnce(null);
+    const req = new Request("http://localhost/api/extension/fetch-session/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "sess-1",
+        linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+        profileText: "x".repeat(250),
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+    expect(linkedinCaptureMocks.saveCapturedProfileFast).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when the session belongs to a different org", async () => {
+    sessionMocks.verifyExtensionAuth.mockResolvedValueOnce({ userId: "u-attacker", orgId: "org-attacker", isOwner: false });
+    linkedinCaptureMocks.findSessionInQueue.mockResolvedValueOnce({
+      sessionId: "sess-target",
+      jobId: "job-1",
+      candidateId: "cand-target",
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      candidateName: "Pat Lee",
+      status: "pending",
+      message: "Waiting for capture",
+      userId: "u-victim",
+      orgId: "org-victim",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const req = new Request("http://localhost/api/extension/fetch-session/complete", {
+      method: "POST",
+      headers: AUTH_HEADER,
+      body: JSON.stringify({
+        sessionId: "sess-target",
+        linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+        profileText: "x".repeat(250),
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    expect(linkedinCaptureMocks.saveCapturedProfileFast).not.toHaveBeenCalled();
   });
 
   it("returns 202 immediately after stage 1 fast-save and fires stage 2 in background", async () => {
