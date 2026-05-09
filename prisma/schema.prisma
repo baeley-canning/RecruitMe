@@ -180,12 +180,17 @@ model ContactEvent {
   orgId       String?
   userId      String   // who logged it
   userName    String   // display name snapshot so it shows even if user is deleted
-  type        String   // "message" | "call" | "email" | "other"
+  // Which role the contact was about. Optional — older events have null.
+  // Not a hard FK so the event survives if the job is deleted; we resolve
+  // titles via a separate Job lookup at read time.
+  jobId       String?
+  type        String   // "message" | "call" | "email" | "ai_outreach_generated" | "other"
   note        String?  // optional free text
   createdAt   DateTime @default(now())
 
   @@index([candidateId])
   @@index([orgId])
+  @@index([jobId])
 }
 
 // Recruiter score corrections — captures explicit "this score is wrong" signals.

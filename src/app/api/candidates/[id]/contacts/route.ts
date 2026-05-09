@@ -23,9 +23,19 @@ export async function GET(
   const events = await prisma.contactEvent.findMany({
     where: { candidateId: id },
     orderBy: { createdAt: "desc" },
-    select: { id: true, type: true, note: true, userName: true, userId: true, createdAt: true },
+    select: { id: true, type: true, note: true, userName: true, userId: true, jobId: true, createdAt: true },
   });
-  return NextResponse.json(events);
+  // Resolve job titles so the UI can show "re: [Role]" without N+1 lookups.
+  const jobIds = [...new Set(events.map((e) => e.jobId).filter((id): id is string => Boolean(id)))];
+  const jobs = jobIds.length === 0 ? [] : await prisma.job.findMany({
+    where: { id: { in: jobIds } },
+    select: { id: true, title: true },
+  });
+  const titleById = new Map(jobs.map((j) => [j.id, j.title]));
+  return NextResponse.json(events.map((e) => ({
+    ...e,
+    jobTitle: e.jobId ? titleById.get(e.jobId) ?? null : null,
+  })));
 }
 
 const PostSchema = z.object({
@@ -33,6 +43,10 @@ const PostSchema = z.object({
   // show "outreach drafted N days ago" and warn before re-generating.
   type: z.enum(["message", "call", "email", "other", "ai_outreach_generated"]),
   note: z.string().max(500).optional(),
+  // Which job this contact was about — lets the bubble surface "re: [Role]"
+  // so a different recruiter on the same org knows which conversation it
+  // continues. Optional for backward compat with old extension versions.
+  jobId: z.string().min(1).optional(),
 });
 
 export async function POST(
@@ -50,7 +64,26 @@ export async function POST(
   const parsed = PostSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
 
-  const { type, note } = parsed.data;
+  const { type, note, jobId } = parsed.data;
+
+  // If jobId provided, verify the recruiter's org owns it and the candidate
+  // is on it — prevents an attacker (or extension bug) tagging a contact
+  // event against a job they shouldn't see.
+  let resolvedJobId: string | null = null;
+  if (jobId) {
+    const job = await prisma.job.findUnique({
+      where: { id: jobId },
+      select: { orgId: true, candidates: { where: { id }, select: { id: true } } },
+    });
+    const orgOk = auth.isOwner || job?.orgId === auth.orgId;
+    const candidateOnJob = (job?.candidates ?? []).length > 0;
+    if (job && orgOk && candidateOnJob) {
+      resolvedJobId = jobId;
+    }
+    // Silent fall-through to null — bad jobId is logged as un-attributed
+    // rather than rejecting the whole event.
+  }
+
   const user = await prisma.user.findUnique({ where: { id: auth.userId }, select: { username: true } });
   const event = await prisma.contactEvent.create({
     data: {
@@ -60,6 +93,7 @@ export async function POST(
       userName: user?.username ?? auth.userId,
       type,
       note: note?.trim() || null,
+      jobId: resolvedJobId,
     },
   });
   return NextResponse.json(event, { status: 201 });

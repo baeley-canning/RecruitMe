@@ -1776,6 +1776,9 @@ function renderOnActiveJobs(container, data, serverBase) {
   const moreCount = (data.onActiveJobs || []).length - jobs.length;
   // Use first candidateId for contact logging (all jobs have same candidate)
   const firstCandidateId = jobs[0]?.candidateId || "";
+  // Default the contact-log to the first active job. The dropdown below
+  // lets the recruiter pick a different one when the candidate is on multiple.
+  const defaultJobId = jobs[0]?.jobId || "";
 
   const jobPills = jobs.map((j) =>
     `<a href="${base}/jobs/${encodeURIComponent(j.jobId)}" target="_blank" rel="noopener" style="
@@ -1787,21 +1790,47 @@ function renderOnActiveJobs(container, data, serverBase) {
   ).join(" ");
 
   const contacts = (data.recentContacts || []).slice(0, 2);
+  // "re: [Role]" suffix — clickable link to that job page when present so a
+  // recruiter can jump straight to the role context for a colleague's contact.
+  const roleSuffix = (c) => {
+    if (!c.jobId || !c.jobTitle) return "";
+    const url = `${base}/jobs/${encodeURIComponent(c.jobId)}`;
+    return ` · re: <a href="${url}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;">${escapeHtml(c.jobTitle)}</a>`;
+  };
   const contactRows = contacts.map((c) =>
-    `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#64748b;padding:3px 0">
-      <span style="font-size:13px">${c.type === "call" ? "📞" : c.type === "email" ? "✉️" : "💬"}</span>
-      <span><strong style="color:#475569">${escapeHtml(c.userName)}</strong> ${escapeHtml(c.type)}d <span style="color:#94a3b8">· ${escapeHtml(c.relativeDate)}</span>${c.note ? `<br><span style="color:#94a3b8;padding-left:19px;display:block">${escapeHtml(c.note)}</span>` : ""}</span>
+    `<div style="display:flex;align-items:flex-start;gap:6px;font-size:11px;color:#64748b;padding:3px 0">
+      <span style="font-size:13px;line-height:1.4">${c.type === "call" ? "📞" : c.type === "email" ? "✉️" : "💬"}</span>
+      <span style="flex:1;min-width:0">
+        <strong style="color:#475569">${escapeHtml(c.userName)}</strong> ${escapeHtml(c.type)}d <span style="color:#94a3b8">· ${escapeHtml(c.relativeDate)}</span>${roleSuffix(c)}${c.note ? `<br><span style="color:#94a3b8">${escapeHtml(c.note)}</span>` : ""}
+      </span>
     </div>`
   ).join("");
 
+  // Job picker — only shown when the candidate is on 2+ active jobs so the
+  // recruiter can specify which role the contact is about. Dropdown sits
+  // right above the Messaged/Called buttons.
+  const jobPicker = jobs.length > 1 ? `
+    <div style="margin-top:10px;border-top:1px solid #f1f5f9;padding-top:10px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#64748b">
+        <span>About:</span>
+        <select id="recruitme-contact-job" style="
+          flex:1;font-size:11px;padding:4px 6px;
+          border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#1e293b;
+        ">
+          ${jobs.map((j) => `<option value="${escapeHtml(j.jobId)}">${escapeHtml(j.jobTitle)}</option>`).join("")}
+        </select>
+      </label>
+    </div>` : "";
+
   const logButtons = firstCandidateId ? `
-    <div style="display:flex;gap:6px;margin-top:10px;border-top:1px solid #f1f5f9;padding-top:10px">
-      <button class="recruitme-log-contact" data-type="message" data-candidate-id="${escapeHtml(firstCandidateId)}" style="
+    ${jobPicker}
+    <div style="display:flex;gap:6px;margin-top:${jobs.length > 1 ? 6 : 10}px;${jobs.length > 1 ? "" : "border-top:1px solid #f1f5f9;padding-top:10px"}">
+      <button class="recruitme-log-contact" data-type="message" data-candidate-id="${escapeHtml(firstCandidateId)}" data-default-job-id="${escapeHtml(defaultJobId)}" style="
         flex:1;display:flex;align-items:center;justify-content:center;gap:4px;
         background:#f0fdf4;border:1px solid #86efac;color:#15803d;
         border-radius:8px;padding:5px 8px;font-size:11px;font-weight:500;cursor:pointer;
       ">💬 Messaged</button>
-      <button class="recruitme-log-contact" data-type="call" data-candidate-id="${escapeHtml(firstCandidateId)}" style="
+      <button class="recruitme-log-contact" data-type="call" data-candidate-id="${escapeHtml(firstCandidateId)}" data-default-job-id="${escapeHtml(defaultJobId)}" style="
         flex:1;display:flex;align-items:center;justify-content:center;gap:4px;
         background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;
         border-radius:8px;padding:5px 8px;font-size:11px;font-weight:500;cursor:pointer;
@@ -1830,11 +1859,16 @@ function renderOnActiveJobs(container, data, serverBase) {
     btn.addEventListener("click", async () => {
       const candidateId = btn.getAttribute("data-candidate-id");
       const contactType = btn.getAttribute("data-type");
+      const defaultJobId = btn.getAttribute("data-default-job-id") || "";
+      // Use the dropdown-selected job when the recruiter picked one,
+      // otherwise the default (single-job case = the only job).
+      const picker = container.querySelector("#recruitme-contact-job");
+      const jobId  = (picker && picker.value) || defaultJobId;
       const statusEl = container.querySelector("#recruitme-contact-status");
       container.querySelectorAll(".recruitme-log-contact").forEach((b) => { b.disabled = true; b.style.opacity = "0.6"; });
       if (statusEl) { statusEl.style.display = "block"; statusEl.textContent = "Logging…"; }
       try {
-        const res = await sendToServiceWorker({ type: "log-contact", candidateId, contactType }, 8000);
+        const res = await sendToServiceWorker({ type: "log-contact", candidateId, contactType, jobId }, 8000);
         if (!res?.ok) throw new Error(res?.error || "Failed");
         if (statusEl) { statusEl.style.color = "#059669"; statusEl.textContent = `✓ ${contactType === "call" ? "Call" : "Message"} logged`; }
         // Refresh overlay after 1.5s to show updated contact history

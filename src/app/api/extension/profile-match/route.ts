@@ -91,15 +91,31 @@ export async function GET(req: Request) {
         where: { candidateId: { in: candidateIds }, ...(!auth.isOwner ? { orgId: auth.orgId } : {}) },
         orderBy: { createdAt: "desc" },
         take: 3,
-        select: { userName: true, type: true, note: true, createdAt: true },
+        select: { userName: true, type: true, note: true, jobId: true, createdAt: true },
       })
     : [];
+
+  // Resolve role titles for the contact rows so the bubble can render
+  // "Kasia messaged · re: Senior Java Developer" without an extra round-trip.
+  const contactJobIds = [...new Set(contactEvents.map((e) => e.jobId).filter((id): id is string => Boolean(id)))];
+  const contactJobs = contactJobIds.length === 0 ? [] : await prisma.job.findMany({
+    where: { id: { in: contactJobIds } },
+    select: { id: true, title: true },
+  });
+  const contactJobTitleById = new Map(contactJobs.map((j) => [j.id, j.title]));
 
   const now = Date.now();
   const recentContacts = contactEvents.map((e) => {
     const diffDays = Math.round((now - new Date(e.createdAt).getTime()) / 86_400_000);
     const relativeDate = diffDays === 0 ? "today" : diffDays === 1 ? "yesterday" : `${diffDays}d ago`;
-    return { userName: e.userName, type: e.type, note: e.note, relativeDate };
+    return {
+      userName: e.userName,
+      type: e.type,
+      note: e.note,
+      relativeDate,
+      jobId: e.jobId ?? null,
+      jobTitle: e.jobId ? contactJobTitleById.get(e.jobId) ?? null : null,
+    };
   });
 
   return NextResponse.json({

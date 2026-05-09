@@ -1092,7 +1092,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "log-contact") {
-    const { candidateId, contactType, note } = message;
+    const { candidateId, contactType, note, jobId } = message;
     if (!candidateId || !contactType) {
       sendResponse({ ok: false, error: "candidateId and contactType required" });
       return false;
@@ -1102,7 +1102,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       {
         method: "POST",
         timeoutMs: 10000,
-        body: JSON.stringify({ type: contactType, note: note || undefined }),
+        body: JSON.stringify({
+          type: contactType,
+          note: note || undefined,
+          // Tag the contact with the role it was about so the bubble can
+          // render "re: [Role]" for other recruiters in the same org.
+          jobId: jobId || undefined,
+        }),
       },
       "",
       { rememberFailure: false }
