@@ -112,6 +112,23 @@ async function isUnderCap() {
   return counts.hourly < hourlyCap && counts.daily < dailyCap;
 }
 
+// ─── Recent captures (popup history) ──────────────────────────────────────
+// Persist the last few completed captures so the popup can show "Last
+// captured: Jane Smith 2 min ago" without re-fetching from the server.
+const MAX_RECENT_CAPTURES = 8;
+
+async function recordRecentCapture(candidateName, sessionId) {
+  if (!candidateName) return;
+  try {
+    const { recentCaptures } = await chrome.storage.local.get({ recentCaptures: [] });
+    const next = [
+      { name: candidateName, sessionId: sessionId || "", at: Date.now() },
+      ...recentCaptures.filter((r) => r?.sessionId !== sessionId),
+    ].slice(0, MAX_RECENT_CAPTURES);
+    await chrome.storage.local.set({ recentCaptures: next });
+  } catch { /* non-fatal */ }
+}
+
 // ─── Auto-pause (LinkedIn detection backoff) ──────────────────────────────
 async function isAutoPaused() {
   const { autoPausedUntil } = await chrome.storage.local.get({ autoPausedUntil: 0 });
@@ -703,13 +720,16 @@ async function processNextCapture() {
 }
 
 async function ensurePendingCaptureAlarm() {
-  // Slow heartbeat that re-checks the queue every 5 minutes. Most scheduling
-  // happens via NEXT_CAPTURE_ALARM driven by capture-complete handlers; this
-  // alarm is the safety net that picks the loop back up if the SW restarts
-  // mid-pause or the previous schedule was missed.
-  const existing = await chrome.alarms.get(PENDING_CAPTURE_ALARM);
-  if (existing) return;
-  await chrome.alarms.create(PENDING_CAPTURE_ALARM, { periodInMinutes: 5 });
+  // Heartbeat that picks up sessions newly created in the app. When auto-
+  // capture is on, a 5-min gap was the cause of the recruiter clicking
+  // Fetch then having to manually open profiles — drop to 1 min so a new
+  // session is captured automatically within ~60s. Manual mode keeps the
+  // 5-min cadence (nothing to fire there, no point waking up often).
+  const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
+  const periodInMinutes = manualOnlyMode ? 5 : 1;
+  // chrome.alarms.create replaces an existing alarm with the same name, so
+  // toggling manualOnlyMode in options can re-tune this alarm via set-config.
+  await chrome.alarms.create(PENDING_CAPTURE_ALARM, { periodInMinutes });
 }
 
 async function getActiveLinkedInTab() {
@@ -770,6 +790,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     // Quota was already reserved at dispatch time; just schedule next.
     void scheduleNextCapture().catch(() => {});
+    void recordRecentCapture(message.candidateName, message.sessionId).catch(() => {});
     void clearExtensionError().catch(() => {});
     sendResponse({ ok: true });
     return false;
@@ -823,6 +844,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         // Quota was already reserved at dispatch time; just schedule next.
         void scheduleNextCapture().catch(() => {});
+        void recordRecentCapture(candidateName, sessionId).catch(() => {});
         void clearExtensionError().catch(() => {});
         sendResponse({ ok: true });
       } catch (error) {
@@ -882,9 +904,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const counts        = await getCaptureCounts();
       const caps          = await getCaps();
       const paused        = await isAutoPaused();
-      const { autoPausedUntil, autoPausedReason, manualOnlyMode } = await chrome.storage.local.get({
-        autoPausedUntil: 0, autoPausedReason: "", manualOnlyMode: true,
+      const { autoPausedUntil, autoPausedReason, manualOnlyMode, recentCaptures } = await chrome.storage.local.get({
+        autoPausedUntil: 0, autoPausedReason: "", manualOnlyMode: true, recentCaptures: [],
       });
+      // Opening the popup is a strong signal the user wants something to
+      // happen — opportunistically kick the loop so any queued sessions
+      // get picked up immediately instead of waiting for the next alarm.
+      if (!manualOnlyMode) void processNextCapture().catch(() => {});
       sendResponse({
         ok: true,
         manualOnlyMode,
@@ -895,7 +921,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         daily: counts.daily,
         hourlyCap: caps.hourlyCap,
         dailyCap: caps.dailyCap,
+        recentCaptures: Array.isArray(recentCaptures) ? recentCaptures.slice(0, 5) : [],
       });
+    })();
+    return true;
+  }
+
+  if (message?.type === "manual-only-changed") {
+    // Re-tune the heartbeat to match the new mode and kick the loop if
+    // the user just turned auto-capture ON (so any queued sessions get
+    // picked up immediately without waiting for the next alarm tick).
+    void (async () => {
+      await ensurePendingCaptureAlarm();
+      const { manualOnlyMode } = await chrome.storage.local.get({ manualOnlyMode: true });
+      if (!manualOnlyMode) void processNextCapture().catch(() => {});
+      sendResponse({ ok: true });
     })();
     return true;
   }

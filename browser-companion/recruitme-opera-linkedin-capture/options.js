@@ -79,6 +79,11 @@ manualOnlyToggle.addEventListener("change", async () => {
   const enabled = manualOnlyToggle.checked;
   await chrome.storage.local.set({ manualOnlyMode: enabled });
   setManualOnlyUI(enabled);
+  // Tell the background to re-tune the heartbeat alarm interval — auto mode
+  // checks for new sessions every 1 min, manual mode every 5 min.
+  try {
+    await sendMessage({ type: "manual-only-changed" });
+  } catch { /* non-fatal */ }
 });
 
 function setStatus(element, message, kind = "") {
