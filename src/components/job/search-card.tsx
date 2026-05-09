@@ -72,35 +72,42 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       .catch(() => {});
   }, [jobId, searchResult]);
 
+  const runTalentPoolSearch = async ({ refreshOnlyWhenAdded }: { refreshOnlyWhenAdded: boolean }) => {
+    setSearchingPool(true);
+    setPoolError("");
+    setPoolResult(null);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/candidates/talent-pool`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxResults }),
+      });
+      const data = await res.json() as { count?: number; error?: string; message?: string };
+      if (!res.ok || data.error) {
+        setPoolError(data.error ?? "Talent pool search failed");
+        return;
+      }
+
+      const count = data.count ?? 0;
+      setPoolResult({ count, message: data.message });
+      if (count > 0 || !refreshOnlyWhenAdded) onComplete();
+    } catch {
+      setPoolError("Talent pool search failed. Check your connection.");
+    } finally {
+      setSearchingPool(false);
+    }
+  };
+
   const handleSearch = async () => {
     setSearching(true);
     setSearchError("");
     setSearchResult(null);
     setSearchTimedOut(false);
-    setPoolResult(null);
-    setPoolError("");
 
-    // Run the talent-pool query in parallel — it's local (no SerpAPI cost) and
-    // usually returns in seconds, so by the time the LinkedIn search completes
-    // pool candidates have already populated the candidate list.
-    void (async () => {
-      try {
-        const poolRes = await fetch(`/api/jobs/${jobId}/candidates/talent-pool`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ maxResults }),
-        });
-        const poolData = await poolRes.json() as { count?: number; error?: string; message?: string };
-        if (poolRes.ok && !poolData.error) {
-          setPoolResult({ count: poolData.count ?? 0, message: poolData.message });
-          if ((poolData.count ?? 0) > 0) onComplete();
-        }
-        // Pool errors are swallowed: the LinkedIn search is the primary path
-        // and surfacing two error states confuses the user.
-      } catch {
-        // ignore; LinkedIn path is authoritative
-      }
-    })();
+    // Run the whole-library talent-pool query in parallel with LinkedIn. The
+    // search API itself only reuses pool profiles whose URL also appears in
+    // fresh LinkedIn results; this route is the true independent library pass.
+    void runTalentPoolSearch({ refreshOnlyWhenAdded: true });
 
     try {
       const res = await fetch(`/api/jobs/${jobId}/search`, {
@@ -136,20 +143,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   };
 
   const handleSearchPool = async () => {
-    setSearchingPool(true);
-    setPoolError("");
-    setPoolResult(null);
-    try {
-      const res = await fetch(`/api/jobs/${jobId}/candidates/talent-pool`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxResults }),
-      });
-      const data = await res.json() as { count?: number; error?: string; message?: string };
-      if (!res.ok || data.error) { setPoolError(data.error ?? "Talent pool search failed"); }
-      else { setPoolResult({ count: data.count ?? 0, message: data.message }); onComplete(); }
-    } catch { setPoolError("Talent pool search failed. Check your connection."); }
-    finally { setSearchingPool(false); }
+    await runTalentPoolSearch({ refreshOnlyWhenAdded: false });
   };
 
   if (hasSerpApi === false) {
@@ -305,6 +299,11 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                 {poolError && (
                   <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />{poolError}
+                  </p>
+                )}
+                {searchingPool && (
+                  <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />Searching candidate library…
                   </p>
                 )}
               </div>
