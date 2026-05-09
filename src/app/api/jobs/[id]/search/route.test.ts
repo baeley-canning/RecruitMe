@@ -72,6 +72,7 @@ vi.mock("@/lib/scoring-config", () => ({
 }));
 
 import { POST } from "./route";
+import { buildSearchEvaluation } from "@/lib/search-evaluation";
 
 function makeBreakdown() {
   return buildScoreBreakdown({
@@ -338,5 +339,71 @@ describe("search import route", () => {
     const importedNames = dbMocks.prisma.candidate.upsert.mock.calls.map((call) => call[0].create.name);
     expect(importedNames).toEqual(["Relevant Developer"]);
     expect(dbMocks.prisma.searchSession.create.mock.calls[0][0].data.queries).toContain("Sybase dba");
+  });
+});
+
+describe("buildSearchEvaluation — distinctive-anchor warning hint", () => {
+  // Locks the recruiter-visible warning string. If a future regex/prompt
+  // change drops the "Looking for: SCADA, RTU, metering" hint, these
+  // tests fail and the gap surfaces in CI.
+
+  it("includes distinctive anchors in the WARNING when rejection rate is high", () => {
+    const msg = buildSearchEvaluation({
+      collected: 1,
+      avgScore: 35,
+      totalExamined: 20,
+      candidatesRejected: 18,
+      totalFiltered: 18,  // 90% rejected
+      sawRetryableSearchFailure: false,
+      distinctiveAnchors: ["SCADA", "RTU", "metering", "industrial controls"],
+    });
+    expect(msg).toMatch(/^WARNING/);
+    expect(msg).toContain("Looking for: SCADA, RTU, metering, industrial controls");
+    expect(msg).toContain("none found in most snippets");
+  });
+
+  it("truncates to 4 anchors when more are passed (UX cap)", () => {
+    const msg = buildSearchEvaluation({
+      collected: 1,
+      avgScore: 35,
+      totalExamined: 20,
+      candidatesRejected: 18,
+      totalFiltered: 18,
+      sawRetryableSearchFailure: false,
+      distinctiveAnchors: ["SCADA", "RTU", "metering", "industrial controls", "power distribution", "HV"],
+    });
+    expect(msg).toContain("SCADA, RTU, metering, industrial controls");
+    expect(msg).not.toContain("power distribution");
+    expect(msg).not.toContain("HV"); // truncated
+  });
+
+  it("OMITS the anchor hint when no distinctive anchors are passed", () => {
+    const msg = buildSearchEvaluation({
+      collected: 1,
+      avgScore: 35,
+      totalExamined: 20,
+      candidatesRejected: 18,
+      totalFiltered: 18,
+      sawRetryableSearchFailure: false,
+      distinctiveAnchors: [],
+    });
+    expect(msg).toMatch(/^WARNING/);
+    expect(msg).not.toContain("Looking for:");
+    expect(msg).not.toContain("none found in most snippets");
+  });
+
+  it("OMITS the anchor hint when rejection rate is low (no high-rejection warning)", () => {
+    const msg = buildSearchEvaluation({
+      collected: 15,
+      avgScore: 60,
+      totalExamined: 20,
+      candidatesRejected: 5,
+      totalFiltered: 5,  // 25% rejected — under 80% threshold
+      sawRetryableSearchFailure: false,
+      distinctiveAnchors: ["SCADA", "RTU"],
+    });
+    // Should be the OK message, not the warning — anchor hint isn't relevant
+    expect(msg).toMatch(/^OK/);
+    expect(msg).not.toContain("Looking for:");
   });
 });

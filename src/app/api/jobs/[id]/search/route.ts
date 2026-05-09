@@ -29,10 +29,11 @@ import {
 } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
-import { buildTalentPoolMap } from "@/lib/talent-pool";
+import { buildTalentPoolMap, type TalentPoolEntry } from "@/lib/talent-pool";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
+import { buildSearchEvaluation } from "@/lib/search-evaluation";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
 import { getJobScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
@@ -46,7 +47,7 @@ import {
   SCORE_CUTOFF_SNIPPET,
 } from "@/lib/provisional-scoring";
 import {
-  extractDistinctiveSignalsFromRequirement,
+  extractRoleAwareDistinctiveAnchors,
   extractSignalsFromRequirement,
   normalizeSignalText,
   signalMatchesText,
@@ -179,28 +180,24 @@ const BING_DELAY_MS = 150;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
-  const terms = new Set<string>();
   // Only must-haves and knockout criteria — nice-to-haves must not widen the
   // source gate, or a "nice to have React" on a Salesforce role would let any
   // React developer through regardless of Salesforce absence.
-  const requirements = [
-    ...(parsedRole.must_haves ?? []),
-    ...(parsedRole.skills_required ?? []),
-    ...(parsedRole.knockout_criteria ?? []),
-  ];
-
-  for (const requirement of requirements) {
-    extractDistinctiveSignalsFromRequirement(requirement).forEach((term) => terms.add(term));
-  }
-
-  // Previously sliced to 5. The provisional-scoring cap reads the full set,
-  // so on a role with >5 distinctive must-haves the source gate and the cap
-  // diverged: source gate gated on the first 5, cap on all of them. A
-  // candidate satisfying anchor #6 would pass the cap (no cap fires) but
-  // fail the gate (anchor #6 wasn't in the gate's slice). Removing the cap
-  // unifies behaviour. The 4-anchor display cap in buildSearchEvaluation
-  // is unaffected — that's a UX truncation in the warning string only.
-  return [...terms];
+  //
+  // Role-aware: for hybrid IT-ops roles ("Technology Support Manager", "IT
+  // Operations Manager"), ISMS / ISO 27001 are stripped from the distinctive
+  // set so they don't act as hard source-gate filters. They still inform the
+  // SCORE through TECH alias matching and the importance multiplier — they
+  // just don't gate. Pure compliance roles ("ISMS Lead", "CISO") keep the
+  // full distinctive set including ISMS / ISO 27001.
+  return extractRoleAwareDistinctiveAnchors({
+    title: parsedRole.title,
+    requirements: [
+      ...(parsedRole.must_haves ?? []),
+      ...(parsedRole.skills_required ?? []),
+      ...(parsedRole.knockout_criteria ?? []),
+    ],
+  });
 }
 
 function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {
@@ -221,38 +218,6 @@ function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {
 }
 
 const DB_ANCHOR_RE = /\b(sql|sybase|oracle|postgres|mysql|db2|database|rdbms|snowflake|dynamo)\b/i;
-
-function buildSearchEvaluation(opts: {
-  collected: number;
-  avgScore: number | null;
-  totalExamined: number;       // all raw profiles before ANY filtering
-  candidatesRejected: number;  // rejected at source gate only
-  totalFiltered: number;       // all filters combined (source gate + seniority + overseas + name)
-  sawRetryableSearchFailure: boolean;
-  distinctiveAnchors?: string[]; // surfaced in WARNING so recruiters know what was missing
-}): string {
-  const { collected, avgScore, totalExamined, totalFiltered, sawRetryableSearchFailure, distinctiveAnchors } = opts;
-  // Use total filtered for rejection rate — source gate is only one filter
-  const rejectionRate = totalExamined > 0 ? totalFiltered / totalExamined : 0;
-
-  if (collected === 0 && sawRetryableSearchFailure)
-    return "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.";
-  if (collected === 0)
-    return "FAIL — No candidates found. Try: broader location (e.g. 'New Zealand' instead of a specific city), Re-analyse to refresh search terms, or add more skills to the job description.";
-  if (rejectionRate >= 0.80 && totalExamined >= 10) {
-    const anchorHint = distinctiveAnchors && distinctiveAnchors.length > 0
-      ? ` Looking for: ${distinctiveAnchors.slice(0, 4).join(", ")} — none found in most snippets.`
-      : "";
-    return `WARNING — ${Math.round(rejectionRate * 100)}% of search results filtered out before scoring.${anchorHint} The role's required skills may be too narrow for the available pool — try Re-analyse, then Search Again`;
-  }
-  if (collected <= 2)
-    return `WARNING — only ${collected} candidate${collected !== 1 ? "s" : ""} found. Try a broader search location or Re-analyse the JD with more context`;
-  if (avgScore !== null && avgScore >= 88)
-    return `WARNING — average score ${avgScore}% is unusually high. The role may have had no requirements when candidates were last scored — click Re-score all`;
-  if (avgScore !== null && avgScore < 28)
-    return `WARNING — average score ${avgScore}%; search found profiles but they don't match requirements well. Check anchor terms or add more JD detail`;
-  return `OK — ${collected} candidate${collected !== 1 ? "s" : ""} found, average score ${avgScore ?? "n/a"}%`;
-}
 
 function buildSearchQueries(parsedRole: ParsedRole): string[] {
   const baseTitle = cleanQuery(parsedRole.title);
@@ -948,10 +913,25 @@ async function runSearchBackground(args: {
     const poolScope: string | string[] | null = isOwner
       ? null
       : (await getAccessibleOrgIds({ userId: "", orgId, isOwner: false })) ?? [];
-    const poolMap = await buildTalentPoolMap(
-      allNormed.map((r) => r.linkedinUrl),
-      poolScope,
-    );
+    // Pool reuse is a credit-saving optimisation, not a correctness
+    // requirement. If the lookup fails (DB timeout, transient pool error)
+    // proceed with an empty pool map rather than aborting the whole search —
+    // we can still score candidates against LinkedIn snippets and full PDL
+    // fetches. Reported via reportError so the failure is visible.
+    let poolMap = new Map<string, TalentPoolEntry>();
+    try {
+      poolMap = await buildTalentPoolMap(
+        allNormed.map((r) => r.linkedinUrl),
+        poolScope,
+      );
+    } catch (err) {
+      console.warn("[search] talent pool lookup failed — continuing without pool reuse", err);
+      reportError(err instanceof Error ? err : new Error(String(err)), {
+        scope: "search.talentPoolLookup",
+        jobId,
+        urlCount: allNormed.length,
+      });
+    }
     const allNew = allNormed.filter((r) => !existingByUrl.has(r.linkedinUrl));
     const upgradeExisting = allNormed.filter((r) => {
       const existing = existingByUrl.get(r.linkedinUrl);

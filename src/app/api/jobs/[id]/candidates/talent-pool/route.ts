@@ -25,14 +25,20 @@ import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
-import { extractDistinctiveSignalsFromRequirement } from "@/lib/requirement-signals";
+import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 
-// Re-derive distinctive terms from a parsedRole — same logic as search/route.ts.
+// Re-derive distinctive terms from a parsedRole — role-aware so hybrid IT-ops
+// roles ("Technology Support Manager") don't gate the pool on ISMS/ISO 27001
+// when the role's secondary compliance requirement would otherwise reject
+// good IT-ops candidates whose full profile doesn't surface the acronym.
 function distinctiveTerms(parsedRole: ParsedRole): string[] {
-  const terms = new Set<string>();
-  const musts = [...(parsedRole.must_haves ?? []), ...(parsedRole.knockout_criteria ?? [])];
-  for (const req of musts) extractDistinctiveSignalsFromRequirement(req).forEach((t) => terms.add(t.toLowerCase()));
-  return [...terms];
+  return extractRoleAwareDistinctiveAnchors({
+    title: parsedRole.title,
+    requirements: [
+      ...(parsedRole.must_haves ?? []),
+      ...(parsedRole.knockout_criteria ?? []),
+    ],
+  }).map((t) => t.toLowerCase());
 }
 
 const BodySchema = z.object({

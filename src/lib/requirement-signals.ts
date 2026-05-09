@@ -456,6 +456,102 @@ export function extractDistinctiveSignalsFromRequirement(requirement: string): s
   return [...signals];
 }
 
+// ─── Role archetype detection ────────────────────────────────────────────────
+// Used to decide whether ISMS / ISO 27001 should act as a HARD source-gate
+// anchor (yes for pure-compliance roles, no for hybrid IT-ops roles).
+//
+// The split exists because:
+//   - "ISMS Lead", "Information Security Manager" → real candidates for these
+//     roles WILL surface ISMS/ISO 27001 in their LinkedIn snippet. Gating is
+//     accurate.
+//   - "Technology Support Manager", "IT Operations Manager", "Head of IT" →
+//     candidates for these roles often have ISMS/ISO 27001 EXPERIENCE without
+//     surfacing the acronym in a LinkedIn snippet. Gating silently drops them.
+//
+// We default to "hybrid" (no ISMS/ISO gating) on ambiguous titles. The cost of
+// over-gating a real compliance role is much worse than the cost of letting a
+// few non-ISMS profiles into a compliance search — recruiters can dismiss
+// false positives, but silently rejected candidates are never surfaced.
+const PURE_COMPLIANCE_TITLE_RE = /\b(?:isms\s+lead|information\s+security\s+(?:lead|manager|officer|director|head)|head\s+of\s+(?:information\s+)?security|chief\s+information\s+security\s+officer|ciso|compliance\s+(?:lead|manager|officer|director|head|specialist|analyst)|grc\s+(?:lead|manager|analyst)|risk\s+(?:and\s+)?compliance\s+(?:lead|manager|director)|security\s+governance\s+(?:lead|manager)|iso\s*27001\s+(?:lead\s+)?(?:auditor|implementer|consultant)|pci\s+dss\s+(?:auditor|consultant|qsa)|soc\s*2\s+(?:auditor|consultant)|infosec\s+(?:lead|manager)|cyber\s*security\s+(?:lead|manager|director|officer))\b/i;
+
+// Compliance terms whose source-gating is suppressed for hybrid roles.
+const COMPLIANCE_GATE_TERMS = new Set(["ISO 27001", "ISMS"]);
+
+export function isPureComplianceRole(title: string | null | undefined): boolean {
+  if (!title) return false;
+  return PURE_COMPLIANCE_TITLE_RE.test(title);
+}
+
+// Domain groups: anchors that all describe the same NZ-scarce candidate
+// pool. If a role requires ANY anchor in the group, candidates surfacing
+// ANY OTHER anchor in the same group should pass the gate — they're
+// fishing in the same pool. The alternative (per-anchor strict matching)
+// rejects "Substation commissioning engineer" for a "SCADA engineer" role
+// even though those candidates are clearly adjacent in the NZ market.
+//
+// Keep groups TIGHT — only true domain peers. Expanding a group too far
+// (e.g. adding "Salesforce" to power) would defeat the gate's purpose.
+const ANCHOR_DOMAIN_GROUPS: ReadonlyArray<ReadonlySet<string>> = [
+  new Set([
+    "SCADA",
+    "RTU",
+    "PLC integration",
+    "PLC programming",
+    "PLC configuration",
+    "programmable logic controller",
+    "industrial controls",
+    "metering",
+    "power distribution",
+  ]),
+];
+
+function expandDomainAnchors(anchors: Set<string>): Set<string> {
+  const result = new Set(anchors);
+  for (const group of ANCHOR_DOMAIN_GROUPS) {
+    let touched = false;
+    for (const anchor of anchors) {
+      if (group.has(anchor)) { touched = true; break; }
+    }
+    if (touched) for (const t of group) result.add(t);
+  }
+  return result;
+}
+
+/**
+ * Role-aware distinctive anchors. Two adjustments on top of the raw
+ * DISTINCTIVE alias output:
+ *
+ *  1. **Compliance carve-out**: HYBRID IT-ops/leadership roles strip
+ *     ISMS / ISO 27001 from the gate so they don't reject good IT-ops
+ *     candidates whose snippets lack those acronyms. PURE compliance
+ *     roles (ISMS Lead, CISO, Compliance Manager) keep the full set.
+ *
+ *  2. **Domain-group expansion**: when a role requires ANY anchor in a
+ *     domain group (e.g. SCADA), accept any OTHER anchor from the same
+ *     group (RTU, PLC, substation/HV → power distribution, metering,
+ *     industrial controls) as adjacency evidence. Stops a SCADA-only
+ *     role JD from rejecting plainly-adjacent substation engineers.
+ *
+ * Use this — not extractDistinctiveSignalsFromRequirement directly —
+ * wherever the result is consumed as a SOURCE GATE or SPECIALIST ANCHOR
+ * CAP. Pure scoring/coverage paths (where ISMS still informs the score
+ * but doesn't gate) can keep using the underlying extractor.
+ */
+export function extractRoleAwareDistinctiveAnchors(args: {
+  title: string | null | undefined;
+  requirements: string[];
+}): string[] {
+  const isPure = isPureComplianceRole(args.title);
+  const all = new Set<string>();
+  for (const r of args.requirements) {
+    extractDistinctiveSignalsFromRequirement(r).forEach((t) => all.add(t));
+  }
+  const filtered = isPure
+    ? all
+    : new Set([...all].filter((term) => !COMPLIANCE_GATE_TERMS.has(term)));
+  return [...expandDomainAnchors(filtered)];
+}
+
 // Patterns for technologies rare enough to be used as hard search anchors in the
 // legacy fallback path (roles parsed before anchor_terms was added).
 // Deliberately narrow: common tech like Azure, .NET, SQL is NOT listed here because

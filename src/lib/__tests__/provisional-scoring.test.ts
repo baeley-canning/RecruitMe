@@ -131,7 +131,14 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
     anchor_terms: [],
   });
 
-  it("rejects generic 'Senior IT Manager' snippet for Tech & Solution Support Manager role", () => {
+  it("does NOT hard-reject generic 'Senior IT Manager' on a HYBRID IT role with light ISMS/ISO 27001 must-haves", () => {
+    // Role-aware design (Option C): for hybrid IT-ops roles ("Technology and
+    // Solution Support Manager", "IT Operations Manager"), ISMS / ISO 27001
+    // are NOT distinctive source-gate anchors — they inform scoring but
+    // don't cap. Otherwise we silently drop good IT-ops candidates whose
+    // LinkedIn snippets don't surface those acronyms. The candidate gets a
+    // moderate snippet score and either passes through to Claude full-profile
+    // scoring or remains visible at the floor.
     const score = buildProvisionalSearchScore(
       {
         name: "Bob Johnson",
@@ -139,6 +146,43 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
         snippet: "Leads IT infrastructure and operations for a 300-person company.",
       },
       complianceRole,
+      "Wellington",
+      "Wellington",
+      "Wellington office",
+      false,
+      undefined,
+      deps,
+    );
+    // Cap MUST NOT fire — hybrid title strips ISMS/ISO 27001 from anchors.
+    // Score lands above the snippet cutoff (30) so the candidate is visible.
+    expect(score.overall).toBeGreaterThan(SPECIALIST_SNIPPET_NO_ANCHOR_CAP);
+    expect(score.overall).toBeGreaterThanOrEqual(SCORE_CUTOFF_SNIPPET);
+  });
+
+  it("DOES hard-reject generic 'Senior IT Manager' on a PURE compliance role (ISMS Lead / CISO)", () => {
+    // The flip side of the role-aware gate: when the role TITLE is genuinely
+    // a pure compliance role, ISMS / ISO 27001 ARE distinctive anchors and
+    // a generic IT Manager candidate without them must be capped. This
+    // protects pure-compliance searches from flooding with random IT
+    // candidates.
+    const pureComplianceRole = makeRole({
+      title: "ISMS Lead",
+      location: "Wellington",
+      must_haves: [
+        "ISO 27001 ISMS implementation",
+        "Information security governance",
+        "Risk and compliance leadership",
+      ],
+      skills_required: ["ISO 27001", "ISMS", "GRC"],
+      anchor_terms: [],
+    });
+    const score = buildProvisionalSearchScore(
+      {
+        name: "Bob Johnson",
+        headline: "Senior IT Manager at Foo Corp",
+        snippet: "Leads IT infrastructure and operations for a 300-person company.",
+      },
+      pureComplianceRole,
       "Wellington",
       "Wellington",
       "Wellington office",
@@ -435,6 +479,186 @@ describe("buildProvisionalSearchScore — specialist snippet cap", () => {
       );
       expect(score.overall).toBeLessThan(SCORE_CUTOFF_SNIPPET);
     });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  //  False-positive matrix — these candidates MUST NOT pass specialist gates
+  //  even when superficial keywords might suggest they should.
+  // ──────────────────────────────────────────────────────────────────────────
+  describe("false-positive matrix — superficially-matching candidates that should be capped", () => {
+    const scadaPowerRole = makeRole({
+      title: "SCADA Engineer (POWER)",
+      location: "Christchurch",
+      must_haves: ["SCADA systems", "RTU configuration", "PLC programming"],
+      skills_required: ["SCADA", "RTU", "PLC integration"],
+    });
+
+    const ismsLeadRole = makeRole({
+      title: "ISMS Lead",
+      location: "Wellington",
+      must_haves: ["ISO 27001 ISMS implementation", "PCI DSS compliance experience"],
+      skills_required: ["ISO 27001", "ISMS", "PCI DSS"],
+    });
+
+    const expectCappedOrFiltered = (overall: number) => {
+      // Either capped to SPECIALIST_SNIPPET_NO_ANCHOR_CAP (25) or filtered
+      // by the route at SCORE_CUTOFF_SNIPPET (30). Both outcomes prove
+      // the candidate doesn't reach the recruiter for these roles.
+      expect(overall).toBeLessThan(SCORE_CUTOFF_SNIPPET);
+    };
+
+    it("'Technical Support Engineer at Xero' MUST NOT pass POWER role gate", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "X", headline: "Technical Support Engineer at Xero", snippet: "API integrations and customer support." },
+        scadaPowerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+
+    it("'Sales Engineer (SaaS demos)' MUST NOT pass POWER role gate", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "S", headline: "Sales Engineer at Atlassian", snippet: "Pre-sales demos and customer onboarding for SaaS platforms." },
+        scadaPowerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+
+    it("'UX/HMI designer (mobile)' MUST NOT pass POWER role gate (HMI here means Human-Machine Interface in design context)", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "D", headline: "UX Designer", snippet: "HMI design for mobile checkout flows; Figma component libraries." },
+        scadaPowerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+
+    it("'DevOps engineer (CI/CD process control)' MUST NOT pass POWER role gate", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "D", headline: "Senior DevOps Engineer", snippet: "Automated CI/CD process control for Kubernetes deployments." },
+        scadaPowerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+
+    it("'RPA developer (process automation)' MUST NOT pass POWER role gate", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "R", headline: "RPA Developer", snippet: "Process automation across deployment workflows for an RPA platform." },
+        scadaPowerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+
+    it("'PCIe firmware engineer' MUST NOT pass an ISMS Lead role gate (PCIe ≠ PCI DSS)", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "F", headline: "Embedded Firmware Engineer", snippet: "PCIe driver development and ARM Cortex bare-metal." },
+        ismsLeadRole, "Wellington", "Wellington", "Wellington office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+
+    it("'Senior engineer at Vodafone PLC' MUST NOT pass POWER role gate via company-suffix collision", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "V", headline: "Senior Engineer at Vodafone PLC", snippet: "Cloud platform and enterprise telco network engineering." },
+        scadaPowerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+
+    it("'Generic Operating Systems Engineer (power management)' MUST NOT pass POWER role gate", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "O", headline: "Senior Systems Engineer", snippet: "Operating systems power management and cloud platform engineering." },
+        scadaPowerRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+      );
+      expectCappedOrFiltered(score.overall);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  //  True-positive matrix — pure compliance roles MUST surface ISMS/ISO 27001
+  //  / SOC 2 / PCI DSS candidates with anchor evidence
+  // ──────────────────────────────────────────────────────────────────────────
+  describe("true-positive matrix — pure compliance candidates pass on pure compliance roles", () => {
+    const ismsLeadRole = makeRole({
+      title: "ISMS Lead",
+      location: "Wellington",
+      must_haves: [
+        "ISO 27001 ISMS implementation",
+        "Information security governance",
+        "Risk and compliance leadership",
+      ],
+      skills_required: ["ISO 27001", "ISMS", "GRC"],
+    });
+
+    it("'ISO 27001 Lead Implementer' passes the gate on ISMS Lead role", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "L", headline: "ISO 27001 Lead Implementer at Spark", snippet: "ISMS implementation and ISO 27001 certification audits across SaaS platforms." },
+        ismsLeadRole, "Wellington", "Wellington", "Wellington office", false, undefined, deps,
+      );
+      expect(score.overall).toBeGreaterThanOrEqual(SCORE_CUTOFF_SNIPPET);
+    });
+
+    it("'GRC Manager with security governance experience' passes the gate", () => {
+      const score = buildProvisionalSearchScore(
+        { name: "G", headline: "GRC Manager at BNZ", snippet: "Information security governance, ISMS audits and ISO 27001 readiness across enterprise." },
+        ismsLeadRole, "Wellington", "Wellington", "Wellington office", false, undefined, deps,
+      );
+      expect(score.overall).toBeGreaterThanOrEqual(SCORE_CUTOFF_SNIPPET);
+    });
+
+    it("'SOC 2 auditor' passes — note SOC 2 surfaces via TECH alias to security compliance", () => {
+      // SOC 2 isn't in DISTINCTIVE (intentionally — see requirement-signals.ts
+      // comments) but it IS in TECH (security_compliance), so it informs
+      // must-have coverage and the role gates on ISMS/ISO 27001 which the
+      // candidate also has.
+      const score = buildProvisionalSearchScore(
+        { name: "S", headline: "SOC 2 Auditor at Deloitte", snippet: "ISO 27001 ISMS implementation and SOC 2 Type 2 audit experience for SaaS clients." },
+        ismsLeadRole, "Wellington", "Wellington", "Wellington office", false, undefined, deps,
+      );
+      expect(score.overall).toBeGreaterThanOrEqual(SCORE_CUTOFF_SNIPPET);
+    });
+
+    it("'PCI DSS QSA' passes a PCI DSS-required role", () => {
+      const pciRole = makeRole({
+        title: "PCI DSS Auditor",
+        location: "Wellington",
+        must_haves: ["PCI DSS audit experience for payment processors", "ISO 27001 ISMS"],
+        skills_required: ["PCI DSS", "ISO 27001"],
+      });
+      const score = buildProvisionalSearchScore(
+        { name: "P", headline: "PCI DSS QSA at Datacom", snippet: "PCI DSS compliance audits for payment processing and ISO 27001 readiness." },
+        pciRole, "Wellington", "Wellington", "Wellington office", false, undefined, deps,
+      );
+      expect(score.overall).toBeGreaterThanOrEqual(SCORE_CUTOFF_SNIPPET);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  //  POWER true-positive matrix — anchor candidates pass strict POWER role
+  // ──────────────────────────────────────────────────────────────────────────
+  describe("POWER true-positive matrix — anchor candidates pass strict POWER role", () => {
+    const scadaRole = makeRole({
+      title: "SCADA Engineer",
+      location: "Christchurch",
+      must_haves: ["SCADA systems experience", "RTU configuration"],
+      skills_required: ["SCADA", "RTU"],
+    });
+
+    const trueCandidates: Array<{ headline: string; snippet: string }> = [
+      { headline: "Senior SCADA Engineer at Transpower", snippet: "SCADA migration and substation telemetry." },
+      { headline: "RTU Engineer at Mercury", snippet: "Remote terminal unit rollout and substation automation." },
+      { headline: "Industrial Controls Engineer", snippet: "PLC programming, ladder logic and HMI integration with SCADA." },
+      { headline: "Substation Engineer at Vector", snippet: "HV switchgear, substation commissioning and protection relays." },
+      { headline: "Field Service Engineer at Genesis", snippet: "Smart metering and data logging across the upper North Island." },
+    ];
+
+    for (const c of trueCandidates) {
+      it(`passes the gate: "${c.headline}"`, () => {
+        const score = buildProvisionalSearchScore(
+          { name: "C", ...c },
+          scadaRole, "Christchurch", "Christchurch", "Christchurch office", false, undefined, deps,
+        );
+        expect(score.overall).toBeGreaterThanOrEqual(SCORE_CUTOFF_SNIPPET);
+      });
+    }
   });
 
   // ── Common-role regression: must NOT change behaviour for ordinary roles ──

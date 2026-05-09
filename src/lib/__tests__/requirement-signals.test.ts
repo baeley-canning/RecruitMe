@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   extractDistinctiveSignalsFromRequirement,
+  extractRoleAwareDistinctiveAnchors,
   extractSignalsFromRequirement,
+  isPureComplianceRole,
   signalMatchesText,
 } from "../requirement-signals";
 
@@ -262,6 +264,132 @@ describe("requirement signal extraction", () => {
     expect(extractDistinctiveSignalsFromRequirement(
       "Senior systems engineer for cloud platform"
     )).not.toEqual(expect.arrayContaining(["power distribution"]));
+  });
+
+  // ── Role-aware distinctive anchors (Option C) ─────────────────────────────
+  describe("isPureComplianceRole — title classification", () => {
+    it("flags genuinely pure compliance / security titles as PURE", () => {
+      expect(isPureComplianceRole("ISMS Lead")).toBe(true);
+      expect(isPureComplianceRole("Information Security Manager")).toBe(true);
+      expect(isPureComplianceRole("Head of Information Security")).toBe(true);
+      expect(isPureComplianceRole("Chief Information Security Officer")).toBe(true);
+      expect(isPureComplianceRole("CISO")).toBe(true);
+      expect(isPureComplianceRole("Compliance Manager")).toBe(true);
+      expect(isPureComplianceRole("GRC Lead")).toBe(true);
+      expect(isPureComplianceRole("Risk and Compliance Manager")).toBe(true);
+      expect(isPureComplianceRole("ISO 27001 Lead Implementer")).toBe(true);
+      expect(isPureComplianceRole("PCI DSS QSA")).toBe(true);
+      expect(isPureComplianceRole("SOC 2 Auditor")).toBe(true);
+      expect(isPureComplianceRole("InfoSec Lead")).toBe(true);
+      expect(isPureComplianceRole("Cybersecurity Director")).toBe(true);
+    });
+
+    it("flags hybrid IT-ops titles as NOT pure (so ISMS/ISO 27001 don't gate)", () => {
+      expect(isPureComplianceRole("Technology and Solution Support Manager")).toBe(false);
+      expect(isPureComplianceRole("IT Operations Manager")).toBe(false);
+      expect(isPureComplianceRole("Head of IT Operations")).toBe(false);
+      expect(isPureComplianceRole("Senior IT Manager")).toBe(false);
+      expect(isPureComplianceRole("Technical Support Manager")).toBe(false);
+      expect(isPureComplianceRole("Infrastructure Engineer")).toBe(false);
+      expect(isPureComplianceRole("Software Engineer")).toBe(false);
+      expect(isPureComplianceRole("Senior Software Engineer")).toBe(false);
+      expect(isPureComplianceRole("DevOps Engineer")).toBe(false);
+    });
+
+    it("handles null / empty titles safely (no false PURE)", () => {
+      expect(isPureComplianceRole(null)).toBe(false);
+      expect(isPureComplianceRole(undefined)).toBe(false);
+      expect(isPureComplianceRole("")).toBe(false);
+    });
+  });
+
+  describe("extractRoleAwareDistinctiveAnchors — strips ISMS/ISO 27001 for hybrid only", () => {
+    const ismsRequirements = [
+      "ISO 27001 ISMS implementation experience",
+      "Information security governance",
+    ];
+
+    it("KEEPS ISMS / ISO 27001 in anchors for a PURE compliance role", () => {
+      const anchors = extractRoleAwareDistinctiveAnchors({
+        title: "ISMS Lead",
+        requirements: ismsRequirements,
+      });
+      expect(anchors).toEqual(expect.arrayContaining(["ISMS", "ISO 27001"]));
+    });
+
+    it("STRIPS ISMS / ISO 27001 from anchors for a HYBRID IT-ops role", () => {
+      const anchors = extractRoleAwareDistinctiveAnchors({
+        title: "Technology and Solution Support Manager",
+        requirements: ismsRequirements,
+      });
+      expect(anchors).not.toEqual(expect.arrayContaining(["ISMS"]));
+      expect(anchors).not.toEqual(expect.arrayContaining(["ISO 27001"]));
+    });
+
+    it("KEEPS non-compliance distinctive anchors regardless of role type", () => {
+      // POWER role anchors are unaffected by the role-archetype filter —
+      // SCADA / RTU still gate even on a (hypothetical) hybrid title.
+      const anchors = extractRoleAwareDistinctiveAnchors({
+        title: "Industrial Operations Manager",
+        requirements: [
+          "SCADA systems experience",
+          "RTU configuration",
+          "Smart metering rollout",
+        ],
+      });
+      expect(anchors).toEqual(expect.arrayContaining(["SCADA", "RTU", "metering"]));
+    });
+
+    it("hybrid IT role with MIXED anchors — keeps non-compliance, strips compliance", () => {
+      const anchors = extractRoleAwareDistinctiveAnchors({
+        title: "IT Operations Manager",
+        requirements: [
+          "Kubernetes orchestration",
+          "ISO 27001 ISMS oversight",
+          "Salesforce administration",
+        ],
+      });
+      expect(anchors).toEqual(expect.arrayContaining(["Kubernetes", "Salesforce"]));
+      expect(anchors).not.toEqual(expect.arrayContaining(["ISMS"]));
+      expect(anchors).not.toEqual(expect.arrayContaining(["ISO 27001"]));
+    });
+
+    it("domain-group expansion: SCADA-only role accepts substation/HV/metering as adjacent", () => {
+      // A role that only mentions SCADA/RTU should still treat substation /
+      // HV / metering / industrial-controls candidates as in-pool. They're
+      // all the same NZ-scarce industrial-utility pool. Without this, the
+      // gate is unforgivingly narrow on real recruiting data.
+      const anchors = extractRoleAwareDistinctiveAnchors({
+        title: "SCADA Engineer",
+        requirements: ["SCADA systems experience", "RTU configuration"],
+      });
+      // Group expansion brings in the rest of the power-domain pool.
+      expect(anchors).toEqual(expect.arrayContaining([
+        "SCADA", "RTU", "metering", "industrial controls", "power distribution",
+        "PLC integration", "PLC programming", "PLC configuration",
+      ]));
+    });
+
+    it("domain-group expansion does NOT leak into unrelated roles", () => {
+      // A Salesforce role doesn't suddenly accept SCADA candidates — the
+      // domain group only expands when the role actually has a power-domain
+      // anchor.
+      const anchors = extractRoleAwareDistinctiveAnchors({
+        title: "Salesforce Developer",
+        requirements: ["Salesforce administration", "Apex programming"],
+      });
+      expect(anchors).toEqual(expect.arrayContaining(["Salesforce"]));
+      expect(anchors).not.toEqual(expect.arrayContaining(["SCADA", "RTU", "metering"]));
+    });
+
+    it("null title falls through to hybrid (safer default — strips compliance)", () => {
+      const anchors = extractRoleAwareDistinctiveAnchors({
+        title: null,
+        requirements: ["ISO 27001 ISMS"],
+      });
+      // Better to UNDER-gate than over-gate when title is missing.
+      expect(anchors).not.toEqual(expect.arrayContaining(["ISMS"]));
+    });
   });
 
   it("PLC requirements do not create a bare PLC signal that matches company suffixes", () => {

@@ -20,7 +20,11 @@ import {
 } from "./scoring";
 import { applyLocationFitOverride } from "./score-utils";
 import { isNzLocation } from "./location";
-import { extractDistinctiveSignalsFromRequirement, extractSignalsFromRequirement } from "./requirement-signals";
+import {
+  extractDistinctiveSignalsFromRequirement,
+  extractRoleAwareDistinctiveAnchors,
+  extractSignalsFromRequirement,
+} from "./requirement-signals";
 import type { ParsedRole } from "./ai";
 import type { ScoringWeights } from "./scoring-config";
 import type { ScoreBreakdown } from "./scoring";
@@ -204,16 +208,19 @@ export function buildProvisionalSearchScore(
   // earlier implementation matched the SHORT alias literally against the
   // haystack and produced a false negative for every candidate who used
   // the long form (the agents found this on a re-audit).
-  const distinctiveAnchors = new Set<string>();
-  for (const requirement of [
-    ...(parsedRole.must_haves ?? []),
-    ...(parsedRole.skills_required ?? []),
-    ...(parsedRole.knockout_criteria ?? []),
-  ]) {
-    extractDistinctiveSignalsFromRequirement(requirement).forEach((t) =>
-      distinctiveAnchors.add(t.toLowerCase()),
-    );
-  }
+  // Role-aware: hybrid IT-ops roles strip ISMS/ISO 27001 from the gate so
+  // they don't cap candidates whose snippets lack the acronym. See
+  // extractRoleAwareDistinctiveAnchors for the rationale.
+  const distinctiveAnchors = new Set<string>(
+    extractRoleAwareDistinctiveAnchors({
+      title: parsedRole.title,
+      requirements: [
+        ...(parsedRole.must_haves ?? []),
+        ...(parsedRole.skills_required ?? []),
+        ...(parsedRole.knockout_criteria ?? []),
+      ],
+    }).map((t) => t.toLowerCase()),
+  );
   if (distinctiveAnchors.size > 0) {
     // Reuse the candidateSignals set already built for coverage matching.
     const anyAnchorPresent = [...distinctiveAnchors].some((anchor) =>

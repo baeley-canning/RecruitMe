@@ -144,3 +144,108 @@ describe("talent-pool ingestion route", () => {
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("talent_pool");
   });
 });
+
+// ── Cap-bypass regression: pool candidates must use FULL-PROFILE Claude scoring
+//    even on specialist hybrid roles. The snippet-only specialist cap
+//    (SPECIALIST_SNIPPET_NO_ANCHOR_CAP=25) MUST NOT apply to pool candidates.
+//    If a future refactor accidentally wires buildProvisionalSearchScore into
+//    this path, this test catches it.
+describe("talent-pool ingestion route — full-profile Claude bypass on specialist roles", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // POWER role with distinctive must-haves (SCADA / RTU / metering). The
+    // snippet specialist cap WOULD fire if a candidate's *snippet* lacked
+    // those anchors. We're proving full-profile pool candidates dodge it.
+    const powerRole = {
+      id: "job-power",
+      isRemote: false,
+      parsedRole: JSON.stringify({
+        title: "Senior POWER Systems Engineer",
+        location: "Christchurch",
+        location_rules: "Christchurch office",
+        must_haves: ["SCADA systems", "RTU configuration", "Smart metering"],
+        nice_to_haves: [],
+        knockout_criteria: [],
+        skills_required: ["SCADA", "RTU", "metering"],
+        skills_preferred: [],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+    };
+    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: powerRole, error: null });
+    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    dbMocks.prisma.job.findUnique.mockResolvedValue(powerRole);
+    // Pool candidate has a SCADA-heavy full profile (passes the pre-score
+    // distinctive-term filter). The point of THIS test is the bypass: the
+    // route uses Claude full-profile scoring, not a snippet cap.
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])  // existing-by-job
+      .mockResolvedValueOnce([
+        {
+          id: "pool-2",
+          name: "Sam Engineer",
+          headline: "Senior SCADA Engineer at Mercury NZ",
+          location: "Christchurch, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/sam-engineer/",
+          profileText: "Sam Engineer\nSenior SCADA Engineer\nChristchurch, New Zealand\n\nAbout\nLed SCADA migration projects across Mercury NZ generation assets. RTU configuration for substation telemetry. Smart metering rollout across the Lower South Island. ".repeat(8),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
+      id: "cand-power",
+      createdAt: new Date(),
+      ...create,
+    }));
+    // Claude returns 65 — well above the snippet cap (25). If snippet-mode
+    // scoring leaked in, the result would be 25 (or below the 30 cutoff).
+    aiMocks.scoreCandidateStructured.mockImplementation(() => buildScoreBreakdown({
+      categories: {
+        skill_fit: { score: 80, weight: CATEGORY_WEIGHTS_V2.skill_fit, evidence: "SCADA stack." },
+        location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Christchurch." },
+        seniority_fit: { score: 65, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Senior." },
+        title_fit: { score: 75, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "SCADA engineer." },
+        domain_fit: { score: 60, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Energy." },
+        nice_to_have_fit: { score: 50, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some bonus." },
+      },
+      must_have_coverage: [
+        { requirement: "SCADA systems", status: "confirmed", evidence: "SCADA migration." },
+        { requirement: "RTU configuration", status: "confirmed", evidence: "RTU rollout." },
+        { requirement: "Smart metering", status: "confirmed", evidence: "Metering project." },
+      ],
+      nice_to_have_coverage: [],
+      reasons_for: ["Strong SCADA spine."],
+      reasons_against: [],
+      missing_evidence: [],
+      recruiter_summary: "Strong specialist match.",
+      profileCharCount: 4000,
+      claudeOverallScore: 65,
+    }));
+  });
+
+  it("scores a pool candidate via Claude full-profile path (NOT snippet cap) on a specialist role", async () => {
+    const req = new Request("http://localhost/api/jobs/job-power/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 1, minScore: 0, radiusKm: 25 }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.count).toBe(1);
+    // Proof point #1: Claude full-profile scoring was called.
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledTimes(1);
+    // Proof point #2: the saved score is Claude's verdict (65), not the
+    // snippet cap (25). If buildProvisionalSearchScore leaked in, the
+    // overall would be 25 (or filtered below the 30 cutoff).
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
+    const upsertCall = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
+    expect(upsertCall.create.matchScore).toBe(65);
+    // Source flag still set so the UI knows this is a pool import.
+    expect(upsertCall.create.source).toBe("talent_pool");
+  });
+});
