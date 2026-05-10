@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, Pencil, X } from "lucide-react";
 import { CopyButton } from "../copy-button";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ function profileSourceSummary(c: ProfileTextSectionProps["candidate"]): string {
 
 export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: ProfileTextSectionProps) {
   void _jobId; // currently unused — re-score targets candidate.jobId server-side
+  const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [mode, setMode] = useState<"append" | "replace">("append");
   const [draft, setDraft] = useState("");
@@ -63,9 +65,12 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
       );
       setDraft("");
       setEditing(false);
-      // Force the parent to refresh.
+      // router.refresh() re-runs the server component for the current
+      // route — gets fresh candidate data WITHOUT reloading the page or
+      // closing the drawer. Recruiter sees the updated score inline.
+      // Parent-passed onSaved still wins if provided (custom refresh).
       if (onSaved) onSaved();
-      else window.location.reload();
+      else router.refresh();
     } catch {
       setError("Save failed — check your connection and try again.");
     } finally {
