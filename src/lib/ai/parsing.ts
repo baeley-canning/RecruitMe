@@ -102,11 +102,34 @@ function ensureSkillNotes(value: unknown): SkillNote[] {
     .filter((note) => note.skill.length > 0 && note.alternatives.length > 0);
 }
 
+// Last-resort fallback when Claude returns unparseable JSON twice. Rather
+// than throw "Failed to parse JSON from AI response" (which blocks the
+// whole flow), produce a minimal ParsedRole with the title regex-extracted
+// from the JD so the recruiter can at least save the job and edit the
+// fields manually. The recruiter sees title pre-filled; everything else is
+// empty — they fill in details or re-run Analyse later.
+function buildMinimalFallbackRole(jd: string): Partial<ParsedRole> {
+  let title = "";
+  for (const rawLine of jd.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.length < 4 || line.length > 120) continue;
+    if (/^(?:job description|hiring brief|position description|jd|role|about (?:the |us|the role|the company)|responsible to|reports to|date|version|page)$/i.test(line)) continue;
+    title = line;
+    break;
+  }
+  return {
+    title,
+    company: "",
+    location: "",
+  };
+}
+
 // ─── AI function ───────────────────────────────────────────────────────────────
 
 export async function parseJobDescription(jd: string): Promise<ParsedRole> {
   const scarceBlock = buildScarceSkillsPromptBlock();
-  const text = await chat(`${PARSING_SYSTEM_CONTEXT}
+  const promptBody = `${PARSING_SYSTEM_CONTEXT}
 
 Input (JD or hiring brief):
 ${jd.slice(0, 8000)}
@@ -116,12 +139,51 @@ ${PARSING_JSON_SCHEMA}
 ${PARSING_RULES}
 
 NZ Scarce Skills (authoritative list — use ONLY these for type "scarce" notes):
-${scarceBlock}`, 0.1, 2048, {
-    provider: getJobParsingProvider(),
-    model: SONNET,
-  });
+${scarceBlock}`;
 
-  const parsed = parseJson<Partial<ParsedRole>>(text);
+  // 8192 max_tokens: bumped from 4096 after observing "Failed to parse JSON
+  // from AI response" on verbose hybrid roles where Claude's output exceeded
+  // the previous limit and got truncated mid-string. The recovery logic in
+  // parseJson handles minor truncation but full-blown 4096 cuts produce
+  // unrecoverable JSON.
+  const callOnce = async (extraNudge: string = "") => {
+    return chat(`${promptBody}${extraNudge ? `\n\n${extraNudge}` : ""}`, 0.1, 8192, {
+      provider: getJobParsingProvider(),
+      model: SONNET,
+    });
+  };
+
+  // Try once, retry once with a stricter "output ONLY valid JSON" nudge if
+  // the first attempt produces unparseable output. Single retry is the
+  // sweet spot — multiple retries on the same prompt rarely help, but a
+  // re-roll with a stronger instruction often does.
+  let text = await callOnce();
+  let parsed: Partial<ParsedRole>;
+  try {
+    parsed = parseJson<Partial<ParsedRole>>(text);
+  } catch (firstErr) {
+    const head = text.slice(0, 400);
+    const tail = text.length > 400 ? text.slice(-400) : "";
+    console.warn(
+      `[parseJobDescription] JSON parse failed on first attempt (length=${text.length}); retrying with stricter nudge. Head: ${head}\n…Tail: ${tail}`,
+    );
+    try {
+      text = await callOnce(
+        "CRITICAL: Your previous response was NOT valid JSON. Output EXACTLY one JSON object matching the schema above. No prose, no markdown, no comments. Begin with `{` and end with `}`. Every string value must be properly quoted and escaped.",
+      );
+      parsed = parseJson<Partial<ParsedRole>>(text);
+    } catch (secondErr) {
+      const head2 = text.slice(0, 400);
+      console.error(
+        `[parseJobDescription] JSON parse failed on retry too (length=${text.length}). Head: ${head2}`,
+      );
+      // Last-resort minimal parse: extract title from first line of JD so
+      // the recruiter at least has SOMETHING to start editing rather than
+      // a hard error blocking the whole flow.
+      parsed = buildMinimalFallbackRole(jd);
+      console.warn(`[parseJobDescription] using minimal regex fallback (title="${parsed.title}")`);
+    }
+  }
 
   const normalizedRole = {
     title: ensureString(parsed.title),

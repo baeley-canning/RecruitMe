@@ -192,11 +192,20 @@ async function findOllamaBase(): Promise<string> {
 // ─── Shared JSON parser ────────────────────────────────────────────────────────
 
 export function parseJson<T>(text: string): T {
-  // Match either an object {...} or array [...]
-  const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-  if (!match) throw new Error("No JSON found in AI response");
+  // Find earliest opening brace/bracket and treat that as the JSON start.
+  const firstObj = text.indexOf("{");
+  const firstArr = text.indexOf("[");
+  const start = firstObj === -1
+    ? firstArr
+    : firstArr === -1 ? firstObj : Math.min(firstObj, firstArr);
+  if (start === -1) throw new Error("No JSON found in AI response");
 
-  const raw = match[0];
+  // Take from the first opener to the last matching closer (greedy) so any
+  // markdown / prose around the JSON gets stripped.
+  const lastObj = text.lastIndexOf("}");
+  const lastArr = text.lastIndexOf("]");
+  const end = Math.max(lastObj, lastArr);
+  const raw = end > start ? text.slice(start, end + 1) : text.slice(start);
 
   // 1. Try raw
   try { return JSON.parse(raw) as T; } catch { /* continue */ }
@@ -209,18 +218,69 @@ export function parseJson<T>(text: string): T {
   const detrailed = normalized.replace(/,\s*([}\]])/g, "$1");
   try { return JSON.parse(detrailed) as T; } catch { /* continue */ }
 
-  // 4. Balance unclosed braces (handles truncated responses)
-  let opens = 0, closes = 0;
-  for (const ch of detrailed) {
-    if (ch === "{") opens++;
-    else if (ch === "}") closes++;
-  }
-  const needed = opens - closes;
-  if (needed > 0 && needed < 6) {
-    try { return JSON.parse(detrailed + "}".repeat(needed)) as T; } catch { /* continue */ }
+  // 4. Recover from truncation: walk the text tracking string/escape state and
+  //    collect every position that could be a safe cut point (after `,`, `}`,
+  //    `]`, or a closing string quote). Try them from latest to earliest,
+  //    closing any open containers, and return the first variant that parses.
+  //    Common failure modes when max_tokens is hit: truncation mid-string,
+  //    mid-key, mid-number, mid-array.
+  const recovered = repairTruncatedJson(text.slice(start));
+  for (const candidate of recovered) {
+    try { return JSON.parse(candidate) as T; } catch { /* continue */ }
   }
 
   throw new Error("Failed to parse JSON from AI response");
+}
+
+// Returns candidate repairs of a possibly-truncated JSON value, ordered from
+// most-content-preserved to least. Each candidate is a syntactically balanced
+// string (open braces/brackets closed) — JSON validity still depends on
+// whether the cut point produced a valid tail.
+function repairTruncatedJson(input: string): string[] {
+  const safePoints: number[] = [];
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (inString) {
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = false; safePoints.push(i); }
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "," || ch === "}" || ch === "]") safePoints.push(i);
+  }
+
+  const candidates: string[] = [];
+  // Try cut points latest-first so we keep the most data when a tail parses.
+  for (let k = safePoints.length - 1; k >= 0; k--) {
+    let body = input.slice(0, safePoints[k] + 1);
+    // Strip trailing comma so we don't produce ",}" or ",]".
+    body = body.replace(/,\s*$/, "");
+    if (!body) continue;
+
+    // Walk the trimmed body to figure out which closers are still owed.
+    const stack: Array<"{" | "["> = [];
+    let s = false, e = false;
+    for (const ch of body) {
+      if (s) {
+        if (e) { e = false; continue; }
+        if (ch === "\\") { e = true; continue; }
+        if (ch === '"') s = false;
+        continue;
+      }
+      if (ch === '"') { s = true; continue; }
+      if (ch === "{" || ch === "[") stack.push(ch);
+      else if (ch === "}" || ch === "]") stack.pop();
+    }
+    if (s) continue; // trimmed mid-string somehow — skip
+    let closers = "";
+    while (stack.length) closers += stack.pop() === "{" ? "}" : "]";
+    candidates.push(body + closers);
+  }
+  return candidates;
 }
 
 export const SONNET = "claude-sonnet-4-6";
