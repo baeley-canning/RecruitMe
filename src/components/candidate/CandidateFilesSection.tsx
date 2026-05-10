@@ -11,6 +11,8 @@ export interface DrawerFile {
   mimeType: string;
   size: number;
   createdAt: string;
+  scored?: boolean;
+  processingError?: string;
 }
 
 function formatBytes(bytes: number) {
@@ -89,11 +91,13 @@ function DrawerUploadZone({ candidateId, onUploaded }: { candidateId: string; on
       const res = await fetch(`/api/candidates/${candidateId}/files`, { method: "POST", body: form });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setError(json.error ?? "Upload failed");
+        setError(json.message ?? json.error ?? "Upload failed");
       } else {
         const data = await res.json();
         onUploaded(data);
-        if (type === "cv" && data.scored === false) {
+        if (type === "cv" && data.processingError) {
+          setNotice(data.processingError);
+        } else if (type === "cv" && data.scored === false) {
           setNotice("CV saved — no score generated because this job hasn't been parsed yet.");
         } else if (type === "cv" && data.scored) {
           setNotice("CV uploaded and scored.");

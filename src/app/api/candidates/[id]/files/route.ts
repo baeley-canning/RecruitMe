@@ -173,6 +173,7 @@ export async function POST(
   // then update profileText and auto-score.
   // Done after saving so the file is always persisted even if parsing fails.
   if (type === "cv") {
+    try {
     const rawExtracted = await extractText(buffer, file.type, file.name);
     if (rawExtracted && rawExtracted.trim().length > 100) {
       // Fix 1: Clean garbled PDF text through AI before scoring.
@@ -327,6 +328,14 @@ export async function POST(
 
       await prisma.candidate.update({ where: { id }, data: updates });
       return NextResponse.json({ ...created, scored }, { status: 201 });
+    }
+    } catch (err) {
+      reportError(err, { route: "cv-upload:postprocess", candidateId: id, orgId: auth.orgId });
+      return NextResponse.json({
+        ...created,
+        scored: false,
+        processingError: "CV uploaded, but RecruitMe could not extract or score it yet. The file is saved.",
+      }, { status: 201 });
     }
   }
 

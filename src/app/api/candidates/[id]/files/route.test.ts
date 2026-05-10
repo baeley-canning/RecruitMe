@@ -199,4 +199,21 @@ describe("candidate file CV upload", () => {
       }),
     }));
   });
+
+  it("still returns the saved file when CV post-processing fails after upload", async () => {
+    aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
+    dbMocks.prisma.candidate.update.mockRejectedValueOnce(new Error("profileText column write failed"));
+
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body).toEqual(expect.objectContaining({
+      id: "file-1",
+      filename: "cv.txt",
+      scored: false,
+      processingError: expect.stringContaining("CV uploaded"),
+    }));
+    expect(dbMocks.prisma.candidateFile.create).toHaveBeenCalled();
+  });
 });
