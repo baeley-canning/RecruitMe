@@ -417,7 +417,33 @@ ${escapeXmlForPrompt(profileSlice)}
     recruiter_summary?: string;
   };
 
-  const raw = parseJson<RawAI>(text);
+  // Unwrapped parseJson previously hard-failed when Claude returned
+  // malformed output (truncation, wrapped in prose, partial JSON). On the
+  // capture pipeline this surfaced as a silent null score and the
+  // recruiter saw "Captured but scoring failed" with no path forward. Now
+  // we fall through to a stub breakdown built from the deterministic Stage
+  // 1 evidence — at least the matchedSignals from gate become confirmed
+  // must-haves on the candidate record.
+  let raw: RawAI;
+  try {
+    raw = parseJson<RawAI>(text);
+  } catch (err) {
+    console.warn(
+      `[scoring] JSON parse failed; falling back to deterministic-only breakdown. Response head: ${text.slice(0, 200)}`,
+      err,
+    );
+    return buildStubBreakdown({
+      parsedRoleMustHaves:   mustHaves,
+      parsedRoleNiceToHaves: niceToHaves,
+      profileCharCount:      profileText.length,
+      reasonInsufficient:    "AI scoring response was unparseable — review profile manually or re-score.",
+      visibleSignals: {
+        headline: parsedRole.title ?? null,
+        location: parsedRole.location ?? null,
+      },
+      weights,
+    });
+  }
 
   const parseCategory = (key: keyof NonNullable<RawAI["categories"]>, weight: number): CategoryScore => ({
     score:    clamp(raw.categories?.[key]?.score),

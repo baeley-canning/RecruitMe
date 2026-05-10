@@ -400,7 +400,15 @@ Rules:
     { provider: getJobParsingProvider(), model: SONNET }
   );
 
-  return sanitizeCandidateProfileDraft(parseJson<EvidenceCandidateProfileDraft>(text), source);
+  try {
+    return sanitizeCandidateProfileDraft(parseJson<EvidenceCandidateProfileDraft>(text), source);
+  } catch (err) {
+    console.warn(
+      `[draftCandidateProfile] JSON parse failed; returning empty sanitized draft. Response head: ${text.slice(0, 200)}`,
+      err,
+    );
+    return sanitizeCandidateProfileDraft({} as EvidenceCandidateProfileDraft, source);
+  }
 }
 
 export async function extractCandidateInfo(

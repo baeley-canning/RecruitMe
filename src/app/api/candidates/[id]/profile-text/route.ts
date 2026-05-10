@@ -27,7 +27,11 @@ import { getJobScoringWeights } from "@/lib/scoring-config";
 import type { ParsedRole } from "@/lib/ai";
 
 const PatchSchema = z.object({
-  text: z.string().min(1).max(200_000),
+  text: z
+    .string()
+    .min(1)
+    .max(200_000)
+    .refine((s) => s.trim().length > 0, "text cannot be whitespace-only"),
   mode: z.enum(["replace", "append"]).default("append"),
 });
 
@@ -66,25 +70,35 @@ export async function PATCH(
   }
   const { text, mode } = parsed.data;
 
-  const newProfileText = mode === "replace" || !candidate.profileText
-    ? text.trim()
-    : `${candidate.profileText.trim()}${APPEND_SEPARATOR}${text.trim()}`;
-
-  // First, save the new text. We'll attempt to re-score next; even if the
-  // re-score fails the text is persisted so the recruiter can refresh and
-  // see the update.
-  const baseUpdates: Record<string, unknown> = {
-    profileText: newProfileText,
-    profileTextHash: null,
-    matchScore: null,
-    matchReason: null,
-    scoreBreakdown: null,
-    acceptanceScore: null,
-    acceptanceReason: null,
-    profileCapturedAt: new Date(),
-  };
-
-  await prisma.candidate.update({ where: { id }, data: baseUpdates });
+  // Race-safe append: re-read the candidate's current profileText INSIDE
+  // a transaction so a concurrent edit from another recruiter doesn't get
+  // silently overwritten. If two recruiters both append simultaneously,
+  // both appends survive (one comes first, the second sees the merged
+  // text and appends to it). Replace mode still wins-the-write last.
+  const newProfileText = await prisma.$transaction(async (tx) => {
+    const fresh = await tx.candidate.findUnique({
+      where: { id },
+      select: { profileText: true },
+    });
+    const existing = fresh?.profileText ?? candidate.profileText ?? "";
+    const merged = mode === "replace" || !existing
+      ? text.trim()
+      : `${existing.trim()}${APPEND_SEPARATOR}${text.trim()}`;
+    await tx.candidate.update({
+      where: { id },
+      data: {
+        profileText: merged,
+        profileTextHash: null,
+        matchScore: null,
+        matchReason: null,
+        scoreBreakdown: null,
+        acceptanceScore: null,
+        acceptanceReason: null,
+        profileCapturedAt: new Date(),
+      },
+    });
+    return merged;
+  });
 
   // Re-score against the candidate's current job, if there is one and it
   // has a parsed role. Otherwise just return — the candidate library
