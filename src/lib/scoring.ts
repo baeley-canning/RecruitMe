@@ -221,7 +221,7 @@ const YEAR_RANGE_RE = new RegExp(
 );
 const EXPERIENCE_HEADING_RE = /(?:^|\n)\s*(experience|work history|employment history|career history)\s*(?:\n|$)/i;
 const PROFILE_SECTION_HEADING_RE = /(?:^|\n)\s*(about|experience|work history|employment history|career history|education|skills|top skills|licenses|certifications|licenses & certifications)\s*(?:\n|$)/i;
-const STUB_SIGNAL_RE = /\b(?:near[- ]empty|empty stub|profile (?:is |appears )?(?:a )?stub|no work history|no visible work history|no skills (?:list )?visible|without (?:a )?full cv|do not progress without|insufficient profile|profile capture (?:is )?incomplete|missing work history)\b/i;
+const STUB_SIGNAL_RE = /\b(?:near[- ]empty|empty stub|profile (?:is |appears )?(?:a )?stub|no work history|no visible work history|no skills (?:list )?visible|without (?:a )?full cv|do not progress (?:or reject )?without|do not (?:progress|reject) without|insufficient profile|(?:profile|linkedin) capture (?:is |appears )?incomplete|missing work history|capture is incomplete|cannot be (?:fairly )?assessed)\b/i;
 
 // ─── Deterministic Stage 1: signal presence + sufficiency gate ────────────
 //
@@ -399,6 +399,20 @@ export function analyseProfileCaptureCompleteness(args: {
   recruiterSummary?: string;
   reasonsAgainst?: string[];
   missingEvidence?: string[];
+  /**
+   * When true, ONLY fire the warning if the AI itself flagged the profile
+   * as a stub (Claude's prose contains "do not progress without",
+   * "near-empty stub", "no work history", etc.). Skip the text-only
+   * branch (year-range count + heading detection).
+   *
+   * Used after the Stage 1 deterministic gate has cleared a profile —
+   * Stage 1 already analysed the text-only signals; we don't want to
+   * double-gate. But we still listen to Claude when it reads the prose
+   * and recognises "current role captured but historical roles missed"
+   * (Brendan's partial-capture failure mode). That AI signal is real
+   * and Stage 1 can't see it (it only sees regex over raw text).
+   */
+  aiOnly?: boolean;
 }): ProfileCaptureWarning | null {
   const profileText = args.profileText.replace(/\r/g, "").trim();
   if (profileText.length < 2000) return null;
@@ -409,6 +423,16 @@ export function analyseProfileCaptureCompleteness(args: {
     ...(args.missingEvidence ?? []),
   ].filter(Boolean).join("\n");
   const aiSaysStub = STUB_SIGNAL_RE.test(aiText);
+
+  // Post-Stage-1 path: only the AI signal counts.
+  if (args.aiOnly) {
+    if (!aiSaysStub) return null;
+    return {
+      code: "incomplete_capture",
+      message: "LinkedIn capture appears incomplete — Claude flagged missing work history. Upload CV or re-fetch the full profile before assessing.",
+      evidence: ["AI assessment described the profile as a stub or requested a full CV/work history"],
+    };
+  }
 
   const yearRanges = profileText.match(YEAR_RANGE_RE) ?? [];
   const hasExperienceHeading = EXPERIENCE_HEADING_RE.test(profileText);

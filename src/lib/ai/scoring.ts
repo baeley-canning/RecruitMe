@@ -547,19 +547,23 @@ ${escapeXmlForPrompt(profileSlice)}
   const missingEvidence = stringArray(raw.missing_evidence).filter(
     (evidence) => !statementContradictedByStoredSignals(evidence, repairedStoredSignals)
   );
-  // Stage 1 already deliberately let this profile through. The post-Claude
-  // capture analysis uses stricter rules (≥2 year ranges + Experience
-  // heading or AI-said-stub) and would otherwise nuke scores for profiles
-  // the gate intentionally accepted (e.g. junior with one role, history
-  // condensed in About, etc.). Skip the second pass when Stage 1 cleared.
-  const profileCaptureWarning = gate.sufficient
-    ? null
-    : analyseProfileCaptureCompleteness({
-        profileText,
-        recruiterSummary,
-        reasonsAgainst,
-        missingEvidence,
-      });
+  // Two-stage capture analysis:
+  //   - Stage 1 (already ran above): text-only — refused to score if no
+  //     dated roles AND no signal hits AND no section markers.
+  //   - Stage 2 (here, AI-only when Stage 1 cleared): listens to Claude's
+  //     prose. Catches PARTIAL captures Stage 1 can't detect — e.g. when
+  //     the extension grabbed the candidate's CURRENT role (so rolesDetected
+  //     > 0) but missed the historical roles where the must-haves actually
+  //     live. Claude reads the prose and says "do not progress without
+  //     full work history"; we honour that even if Stage 1 cleared.
+  //   - When Stage 1 has NOT cleared we'd never reach here (early return).
+  const profileCaptureWarning = analyseProfileCaptureCompleteness({
+    profileText,
+    recruiterSummary,
+    reasonsAgainst,
+    missingEvidence,
+    aiOnly: true,
+  });
 
   // When the capture is incomplete we MUST NOT show Claude's fabricated
   // rejection narrative. The candidate's missing skills aren't really missing
