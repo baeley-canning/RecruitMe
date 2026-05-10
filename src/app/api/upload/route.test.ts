@@ -74,14 +74,23 @@ describe("upload route", () => {
       salaryEnabled: true,
       salaryMin: 110000,
       salaryMax: 140000,
+      source: "ai",
     });
   });
 
-  it("still succeeds when prefill parsing fails", async () => {
+  it("falls back to regex prefill when AI parse throws — better than empty form", async () => {
     aiMocks.parseJobDescription.mockRejectedValue(new Error("model offline"));
 
     const formData = new FormData();
-    formData.append("file", new File(["Senior engineer brief"], "brief.txt", { type: "text/plain" }));
+    // Realistic JD shape — first line is the title, "Location: X" follows.
+    formData.append(
+      "file",
+      new File(
+        ["Senior Software Engineer\n\nResponsible to:\nEngineering Manager\nLocation: Wellington, New Zealand\n"],
+        "brief.txt",
+        { type: "text/plain" },
+      ),
+    );
     formData.append("mode", "job-brief");
 
     const req = new Request("http://localhost/api/upload", {
@@ -93,7 +102,9 @@ describe("upload route", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.text).toBe("Senior engineer brief");
-    expect(body.prefill).toBeUndefined();
+    expect(body.prefillFallback).toBe(true);
+    expect(body.prefill?.title).toBe("Senior Software Engineer");
+    expect(body.prefill?.location).toBe("Wellington, New Zealand");
+    expect(body.prefill?.source).toBe("regex");
   });
 });

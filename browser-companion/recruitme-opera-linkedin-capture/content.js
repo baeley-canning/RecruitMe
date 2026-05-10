@@ -422,8 +422,25 @@ function getSectionDefinitionForHeading(heading) {
   return PROFILE_SECTION_DEFINITIONS.find((definition) => definition.headingRe.test(heading)) || null;
 }
 
+// LinkedIn renders section headings as <h2><span aria-hidden="true">Experience</span><span class="visually-hidden">Experience</span></h2>.
+// innerText only returns rendered text, which on LinkedIn's a11y wrapping
+// can return EMPTY for the heading (visually-hidden uses clip:rect to hide
+// from sighted users; aria-hidden visibility depends on CSS). Result: every
+// section appears headerless and the scraper falls through to "no Experience
+// detected" → /details/experience/ deep-fetch never runs → Brendan-class
+// captures stay thin. Use textContent (returns ALL text including hidden
+// spans), then trim; dedup logic in cleanText collapses any whitespace.
+function readHeadingText(headingNode) {
+  if (!headingNode) return "";
+  // Prefer aria-hidden="true" span (visible to sighted users); fall back to
+  // textContent which catches every variant including visually-hidden copy.
+  const visible = headingNode.querySelector("span[aria-hidden='true']");
+  const raw = visible?.textContent ?? headingNode.textContent ?? headingNode.innerText ?? "";
+  return cleanText(raw);
+}
+
 function getSectionHeading(container) {
-  const heading = cleanText(container.querySelector("h2, h3")?.innerText || "");
+  const heading = readHeadingText(container.querySelector("h2, h3"));
   if (heading) return heading;
 
   const idMatch = Array.from(container.querySelectorAll("[id]"))
@@ -457,7 +474,7 @@ function findSectionContainers(main, definition) {
 
   for (const heading of Array.from(main.querySelectorAll("h2, h3"))) {
     if (!(heading instanceof HTMLElement)) continue;
-    const headingText = cleanText(heading.innerText || "");
+    const headingText = readHeadingText(heading);
     if (!definition.headingRe.test(headingText)) continue;
     addContainer(heading);
   }
@@ -791,8 +808,20 @@ async function fetchExperienceDetailsText(profileBaseUrl) {
     useful.push(line);
   }
 
-  if (useful.length < 3 || useful.join("\n").length < 160) {
+  // Threshold lowered from (3 lines / 160 chars) to (2 lines / 80 chars) to
+  // match the other deep-page extractor (fetchDetailsPageText). LinkedIn's
+  // /details/experience/ page sometimes renders short entries (job title +
+  // dates only) that contain genuine work-history evidence; the previous
+  // floor was rejecting Brendan-class profiles where the historical roles
+  // were captured as 2 dense lines.
+  if (useful.length < 2 || useful.join("\n").length < 80) {
     meta.reason = "too_thin";
+    meta.chars = useful.join("\n").length;
+    console.warn("[RecruitMe] experience deep-page too_thin", {
+      lines: useful.length,
+      chars: useful.join("\n").length,
+      url: detailsUrl,
+    });
     return { text: "", meta };
   }
 
@@ -863,6 +892,19 @@ async function enrichWithExperienceDetails(mainCapture, profileBaseUrl) {
       before: mainCapture.profileText.length,
       after: capture.profileText.length,
       mode,
+      deepChars: fetchMeta.chars,
+    });
+  } else {
+    // Make failures audible. Without this, Brendan-class captures are
+    // silent: extension submits a thin profile, server scores it 22%, no
+    // log explains why the deep fetch didn't help.
+    console.warn("[RecruitMe] experience deep-fetch did NOT enrich capture", {
+      fetchOutcome: fetchMeta.reason,
+      mergeMode: mode,
+      mainChars: mainCapture.profileText.length,
+      deepChars: fetchMeta.chars,
+      finalUrl: fetchMeta.finalUrl,
+      status: fetchMeta.status,
     });
   }
   return { capture, sectionMeta };

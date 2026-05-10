@@ -36,7 +36,7 @@ describe("inferRemoteRole", () => {
 });
 
 describe("deriveJobBriefUploadPrefill", () => {
-  it("returns a usable prefill from parsed role data", () => {
+  it("returns a usable prefill from parsed role data (source: ai)", () => {
     expect(
       deriveJobBriefUploadPrefill({
         title: "Senior Software Engineer",
@@ -53,10 +53,11 @@ describe("deriveJobBriefUploadPrefill", () => {
       salaryEnabled: true,
       salaryMin: 110000,
       salaryMax: 140000,
+      source: "ai",
     });
   });
 
-  it("returns null when nothing useful was parsed", () => {
+  it("returns null when nothing useful was parsed and no jdText fallback provided", () => {
     expect(
       deriveJobBriefUploadPrefill({
         title: "",
@@ -66,5 +67,25 @@ describe("deriveJobBriefUploadPrefill", () => {
         salary_band: "",
       })
     ).toBeNull();
+  });
+
+  it("falls back to regex extraction when AI returns empty title — uses jdText first line", () => {
+    const result = deriveJobBriefUploadPrefill(
+      { title: "", company: "", location: "" },
+      "Technical Support and Sales Engineer - POWER\n\nResponsible to:\nTechnical Support and Sales Engineer Manager\nLocation: Wellington, New Zealand\n",
+    );
+    expect(result).not.toBeNull();
+    expect(result?.title).toBe("Technical Support and Sales Engineer - POWER");
+    expect(result?.location).toBe("Wellington, New Zealand");
+    expect(result?.source).toBe("merged");
+  });
+
+  it("AI fields take precedence over regex when both present", () => {
+    const result = deriveJobBriefUploadPrefill(
+      { title: "AI-extracted Title", company: "", location: "Auckland" },
+      "Some Other Title\nLocation: Wellington\n",
+    );
+    expect(result?.title).toBe("AI-extracted Title");   // AI wins
+    expect(result?.location).toBe("Auckland");          // AI wins
   });
 });

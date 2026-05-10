@@ -616,7 +616,6 @@ function ProfileDrawer({
     () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
     [candidate.scoreBreakdown]
   );
-  const captureIncomplete = breakdown?.profile_capture_warning?.code === "incomplete_capture";
   const matchReason = useMemo(
     () => safeParseJson<{ summary?: string; reasoning?: string } | null>(candidate.matchReason, null),
     [candidate.matchReason]
@@ -717,14 +716,6 @@ function ProfileDrawer({
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <ScoreBadge score={candidate.matchScore} size="sm" />
-              {captureIncomplete && (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800"
-                  title={breakdown?.profile_capture_warning?.message ?? "Score is based on partial LinkedIn data"}
-                >
-                  <AlertTriangle className="w-3 h-3" />Partial profile
-                </span>
-              )}
               {!hasFetchedProfile && (
                 <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
               )}
@@ -981,7 +972,6 @@ export const CandidateCard = memo(function CandidateCard({
   // is missing from the captured text. Suppress the misleading 12%-style score
   // and Claude's fabricated rejection narrative; show "Unscored — capture
   // incomplete" + an Upload CV CTA so the recruiter has an obvious next step.
-  const captureIncomplete = breakdown?.profile_capture_warning?.code === "incomplete_capture";
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
   const radarDimensions = getRadarDimensions(breakdown, matchReason?.dimensions);
   const profileChars = candidate.profileText?.trim().length ?? 0;
@@ -1115,14 +1105,6 @@ export const CandidateCard = memo(function CandidateCard({
               <div className="flex items-center gap-2">
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
-                {captureIncomplete && (
-                  <span
-                    className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800"
-                    title={breakdown?.profile_capture_warning?.message ?? "Score is based on partial LinkedIn data"}
-                  >
-                    <AlertTriangle className="w-3 h-3" />Partial
-                  </span>
-                )}
                 {!hasFetchedProfile && (
                   <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
                 )}
@@ -1211,29 +1193,6 @@ export const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
-      {captureIncomplete && (
-        <div className="mx-4 mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-amber-800">Partial profile — directional score only</p>
-              <p className="text-xs text-amber-800 mt-0.5">
-                Score reflects visible LinkedIn content (headline, location, current role). Full work history was not captured, so must-haves can&apos;t be verified directly. Use this as a ranking signal at sourcing — confirm fit at CV / phone-interview stage.
-              </p>
-              {onFetchProfile && displayableLinkedinUrl(candidate.linkedinUrl) && (
-                <button
-                  type="button"
-                  onClick={() => onFetchProfile(candidate.id)}
-                  className="mt-1.5 text-xs font-medium text-amber-900 underline hover:text-amber-700"
-                >
-                  Re-fetch full profile →
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* AI summary + reasoning */}
       <ScoreBreakdownPanel
         breakdown={breakdown}
@@ -1249,23 +1208,6 @@ export const CandidateCard = memo(function CandidateCard({
           {/* v2 breakdown: reasons for / against + missing evidence */}
           {breakdown && breakdown.version === 2 && (
             <>
-              {breakdown.profile_capture_warning && (
-                <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
-                  <p className="text-xs font-medium text-amber-700 mb-1">Capture warning</p>
-                  <p className="text-xs text-amber-800">{breakdown.profile_capture_warning.message}</p>
-                  {breakdown.profile_capture_warning.evidence.length > 0 && (
-                    <ul className="mt-1 space-y-0.5">
-                      {breakdown.profile_capture_warning.evidence.map((e, i) => (
-                        <li key={i} className="text-xs text-amber-800 flex items-start gap-1">
-                          <span className="mt-0.5 flex-shrink-0">·</span>
-                          {e}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-
               {(breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
                 <div className="grid grid-cols-2 gap-3">
                   {breakdown.reasons_for?.length > 0 && (
