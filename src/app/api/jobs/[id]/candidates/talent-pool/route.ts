@@ -165,6 +165,16 @@ export async function POST(
   let skippedScore = 0;
   let skippedOverseas = 0;
 
+  // Hard time budget. Without this the whole library can stall the request
+  // for many minutes (each AI call has a 90s timeout but the loop has none),
+  // and Railway's proxy then kills the connection — the browser fetch sits
+  // pending forever. 90s is generous enough for ~15-20 candidates to score
+  // sequentially; the rest are reported back as `unscoredRemaining` so the
+  // recruiter can re-run the search to keep going through the pool.
+  const startedAt = Date.now();
+  const TIME_BUDGET_MS = 90_000;
+  let stoppedEarly = false;
+
   // For specialist roles (SAFe Scrum Master, C++/Sybase developer, etc.) the pool
   // should only import candidates who have at least one distinctive term in their
   // full profile. Without this gate, every Wellington developer in the pool gets
@@ -174,6 +184,11 @@ export async function POST(
   const isSpecialistRole = roleTerms.length > 0;
 
   for (let i = 0; i < candidates.length && saved.length < maxResults; i++) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      stoppedEarly = true;
+      console.warn(`[talent-pool] time budget exceeded — stopping at ${i}/${candidates.length}, saved ${saved.length}`);
+      break;
+    }
     const row = candidates[i];
     const loc = row.location ?? "";
 
@@ -211,7 +226,14 @@ export async function POST(
     let matchScore: number | null = null;
 
     try {
-      const rawBreakdown = await scoreCandidateStructured(profileText, parsedRole, salary, weights, auth.orgId);
+      // Per-candidate cap: if one profile stalls Claude (or hits the SDK's
+      // own 90s timeout), don't let it consume the whole route's budget —
+      // skip this candidate and move on so the others still get a chance.
+      const PER_CANDIDATE_MS = 25_000;
+      const rawBreakdown = await Promise.race([
+        scoreCandidateStructured(profileText, parsedRole, salary, weights, auth.orgId),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("score timeout")), PER_CANDIDATE_MS)),
+      ]);
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         row.location,
@@ -286,19 +308,28 @@ export async function POST(
     }
   }
 
-  console.log(`[talent-pool] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore}, overseas ${skippedOverseas}`);
+  console.log(`[talent-pool] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore}, overseas ${skippedOverseas}, stoppedEarly=${stoppedEarly}`);
   void recordUsage(auth.orgId, auth.userId, "score_all", { jobId, scored: saved.length, source: "talent_pool" });
 
   const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
+  const partialNote = stoppedEarly
+    ? " (Library is large — only the first batch was scored this run; click search again to keep going.)"
+    : "";
 
   if (sorted.length === 0) {
     const reason = skippedScore > 0
-      ? `Scored ${scored} pool candidates but none cleared ${minScore}% — try lowering the minimum score.`
+      ? `Scored ${scored} pool candidates but none cleared ${minScore}% — try lowering the minimum score.${partialNote}`
       : skippedOverseas > 0
-        ? `Skipped ${skippedOverseas} overseas candidate${skippedOverseas !== 1 ? "s" : ""}; no NZ-based pool candidates matched.`
-        : "No pool candidates matched this role's location or requirements.";
-    return NextResponse.json({ count: 0, candidates: [], message: reason, skippedOverseas });
+        ? `Skipped ${skippedOverseas} overseas candidate${skippedOverseas !== 1 ? "s" : ""}; no NZ-based pool candidates matched.${partialNote}`
+        : `No pool candidates matched this role's location or requirements.${partialNote}`;
+    return NextResponse.json({ count: 0, candidates: [], message: reason, skippedOverseas, stoppedEarly });
   }
 
-  return NextResponse.json({ count: sorted.length, candidates: sorted, skippedOverseas });
+  return NextResponse.json({
+    count: sorted.length,
+    candidates: sorted,
+    skippedOverseas,
+    stoppedEarly,
+    ...(stoppedEarly ? { message: `Imported ${sorted.length} from the library so far.${partialNote}` } : {}),
+  });
 }
