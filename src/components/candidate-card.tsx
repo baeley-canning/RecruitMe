@@ -59,6 +59,7 @@ import { ScoreBreakdownPanel } from "./candidate/ScoreBreakdownPanel";
 import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
 import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
 import { UploadCvButton } from "./candidate/UploadCvButton";
+import { ProfileTextSection } from "./candidate/ProfileTextSection";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
 import { ScoreCorrectionButton } from "./candidate/score-correction-button";
 import { CaptureMetadataPanel } from "./candidate/capture-metadata-panel";
@@ -853,31 +854,15 @@ function ProfileDrawer({
             <ContactLog candidateId={candidate.id} />
           </div>
 
-          {/* Full profile text */}
-          {candidate.profileText ? (
-            <div>
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">LinkedIn Capture</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">{profileSourceSummary(candidate)}</p>
-                </div>
-                <CopyButton text={candidate.profileText} />
-              </div>
-              {candidate.captureMetadata && (
-                <div className="mb-2">
-                  <CaptureMetadataPanel raw={candidate.captureMetadata} />
-                </div>
-              )}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl max-h-[50vh] overflow-y-auto">
-                <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
-                  {candidate.profileText}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center">
-              <p className="text-sm text-slate-400">No profile text captured yet.</p>
-              <p className="text-xs text-slate-400 mt-1">Use &ldquo;Fetch profile&rdquo; to pull the full LinkedIn profile.</p>
+          {/* Full profile text — viewable + editable. Editing is the
+              manual override when the LinkedIn extension capture missed
+              part of the candidate's history (Brendan-class: extension
+              grabbed only the current role; recruiter pastes the older
+              C++/Sybase work in here, candidate is re-scored). */}
+          <ProfileTextSection candidate={candidate} jobId={jobId} />
+          {candidate.captureMetadata && candidate.profileText && (
+            <div className="mt-2">
+              <CaptureMetadataPanel raw={candidate.captureMetadata} />
             </div>
           )}
         </div>
