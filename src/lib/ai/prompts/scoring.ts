@@ -50,15 +50,15 @@ Set overall_score to your direct holistic verdict of how well this candidate fit
 - 0–19: no match — wrong domain, wrong level, or critical must-haves all absent
 CRITICAL: if you have written reasons_against that describe fundamental blockers (core skill absent, wrong domain entirely, clearly wrong seniority), your overall_score MUST be below 40. Do not let a good location or one confirmed credential push a fundamentally mismatched candidate above 50. The score should reflect the hiring decision, not a balanced average.
 
-INCOMPLETE PROFILE RULE — read carefully, this is the most important rule:
-If the captured profile is missing the work history (no Experience section, fewer than 2 dated roles, or fewer than ~2000 chars of substantive work content), you CANNOT fairly score this candidate. Absence of evidence is NOT evidence of absence on a stub capture — the relevant facts may exist on LinkedIn but the capture missed them.
-In that case you MUST:
-- Set "overall_score": null
-- Leave "reasons_against": [] EMPTY. Do NOT invent rejection reasons from absent data ("no mention of X" is a stub artefact, not a candidate flaw).
-- Set ALL must_have_coverage statuses to "unknown" with evidence "Not visible — capture incomplete".
-- Set "recruiter_summary" to: "LinkedIn capture is incomplete — do not progress or reject without full work history or CV."
-- "reasons_for" may include things visible in the captured text (current title, location, company), but keep them factual.
-A null overall_score is a feature, not a failure: it tells the recruiter "we don't yet have enough to assess" instead of "we assessed and rejected." The recruiter will be prompted to upload a CV or re-capture; the score will be redone with better data.`;
+PARTIAL CAPTURE RULE — read carefully, this is the most important rule:
+LinkedIn captures are often partial — recruiters sometimes get only the headline + About + current role, not the historical work. Absence of evidence on a partial capture is NOT evidence of absence — the relevant facts may exist on LinkedIn but the scrape missed them. You will be scoring at SOURCING stage, where the recruiter is ranking candidates to decide who to progress to CV / phone interview. They need a real number to rank by, not a "we don't know" verdict.
+When the capture is partial (no Experience section, fewer than 2 dated roles, must-haves not visible in text):
+- DO produce an overall_score from what IS visible (location, headline, current title, current employer). Score 30-50 is appropriate when only headline + location + current role are captured. Don't push above 55 on partial data.
+- DO mark unverifiable must-haves as "unknown" — never "missing" or "negative". "Missing" implies you checked and it's not there; "unknown" reflects "couldn't see in current capture".
+- Leave "reasons_against": [] EMPTY. Do NOT invent rejection reasons from absent data ("no mention of X" on a partial capture is a scrape artefact, not a candidate flaw). The recruiter will see a "partial profile" badge alongside the score and decide whether to progress.
+- "reasons_for" may include factual signals visible in the captured text (current title, employer, location).
+- Keep "recruiter_summary" honest: e.g. "Lead Engineer at Xero (Wellington) — visible LinkedIn data only; full work history not captured. Treat as directional ranking signal."
+The recruiter's question at sourcing stage is "who do I progress to the next funnel stage?", not "who do I hire?". Give them a directional score they can rank by.`;
 
 export const SCORING_CATEGORY_RULES = `Category score rules:
 - skill_fit: 80+ = most must-have skills confirmed; 60-79 = several confirmed; 40-59 = adjacent; 0-39 = mismatch

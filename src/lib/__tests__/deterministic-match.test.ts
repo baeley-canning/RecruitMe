@@ -228,10 +228,11 @@ describe("buildStubBreakdown — synthetic breakdown returned when gate refuses 
     });
     expect(breakdown.must_have_coverage).toHaveLength(2);
     for (const c of breakdown.must_have_coverage) {
-      // Critical: NEVER 'missing' on a stub — that's the lie that destroyed
-      // recruiter trust on Brendan. Always 'unknown'.
+      // Critical: NEVER 'missing' on a partial capture — that's the lie that
+      // destroyed recruiter trust on Brendan. Always 'unknown' with prose
+      // explaining why.
       expect(c.status).toBe("unknown");
-      expect(c.evidence).toMatch(/capture incomplete/i);
+      expect(c.evidence).toMatch(/not visible.*current capture|may exist in full work history/i);
     }
   });
 
@@ -249,24 +250,31 @@ describe("buildStubBreakdown — synthetic breakdown returned when gate refuses 
     expect(breakdown.reasons_against.every((r) => /capture (?:appears )?incomplete|do not (?:reject|progress)/i.test(r))).toBe(true);
   });
 
-  it("recruiter_summary is the safe canonical message", () => {
+  it("recruiter_summary explains the partial capture and frames it as a sourcing-stage signal", () => {
     const breakdown = buildStubBreakdown({
       parsedRoleMustHaves: ["C++"],
       parsedRoleNiceToHaves: [],
       profileCharCount: 8234,
       reasonInsufficient: "stub",
     });
-    expect(breakdown.recruiter_summary).toMatch(/capture is incomplete/i);
-    expect(breakdown.recruiter_summary).toMatch(/do not progress or reject/i);
+    expect(breakdown.recruiter_summary).toMatch(/visible linkedin data|partial|not.*captured/i);
+    // Should NOT instruct recruiter to upload CV — that's wrong at sourcing
+    // stage. The recruiter ranks candidates here; CV comes later in the funnel.
+    expect(breakdown.recruiter_summary).not.toMatch(/upload cv|CV/);
   });
 
-  it("overall is 0 (sentinel) so deriveUpdateData translates to matchScore=null", () => {
+  it("overall is a real number (NOT a 0 sentinel) — recruiter needs ranking signal at sourcing stage", () => {
     const breakdown = buildStubBreakdown({
       parsedRoleMustHaves: ["C++"],
       parsedRoleNiceToHaves: [],
       profileCharCount: 8234,
       reasonInsufficient: "stub",
+      visibleSignals: { headline: "Senior Engineer at Xero", location: "Wellington" },
     });
-    expect(breakdown.overall).toBe(0);
+    // Score reflects visible content (location, seniority, title) — NOT 0.
+    // Capped at 50 by data-quality rules so partial captures can't outrank
+    // genuinely strong candidates.
+    expect(breakdown.overall).toBeGreaterThan(0);
+    expect(breakdown.overall).toBeLessThanOrEqual(50);
   });
 });

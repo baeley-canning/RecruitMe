@@ -346,47 +346,77 @@ export function runDeterministicMatch(args: {
 }
 
 /**
- * Build a synthetic ScoreBreakdown for the pre-Claude stub gate path. No
- * AI is called. The breakdown surfaces the warning, sets all must-haves to
- * "unknown" with a clear reason, and leaves the negative-side outputs
- * empty so the UI doesn't show fabricated rejection narratives.
+ * Build a ScoreBreakdown for the pre-Claude pipeline path when Stage 1
+ * couldn't establish enough signal to call Claude meaningfully. We still
+ * produce a real score from the visible content (location, headline,
+ * seniority) — at sourcing stage the recruiter is ranking candidates to
+ * decide who to progress, NOT making a hire decision. Withholding the
+ * score hides the candidate; producing a low one with a clear "partial
+ * capture" flag lets the recruiter decide.
  *
- * Use only when `runDeterministicMatch().sufficient === false`.
+ * Must-haves the regex couldn't verify are marked "unknown" (NOT
+ * "missing") with explanatory evidence. reasons_against stays empty —
+ * we never fabricate rejection text from absent data.
  */
 export function buildStubBreakdown(args: {
   parsedRoleMustHaves: string[];
   parsedRoleNiceToHaves: string[];
   profileCharCount: number;
   reasonInsufficient: string;
+  /** What we CAN see in the captured text — positive signals to score on. */
+  visibleSignals?: {
+    /** "Lead Engineer - Quality at Xero" — yields seniority + title + employer fit. */
+    headline?: string | null;
+    /** Wellington, Auckland, etc. — yields location_fit. */
+    location?: string | null;
+  };
   weights?: ScoringWeights;
 }): ScoreBreakdown {
+  const visibleSignals = args.visibleSignals ?? {};
+  // Score what's visible. Headline + location are usually captured even on
+  // partial scrapes. We can't assess skills (must-haves not in capture), so
+  // skill/domain stay neutral-low. The result is a directional 30-50% score
+  // tagged as low-confidence — the recruiter sees the candidate, sees the
+  // partial-capture flag, decides whether to dig further.
+  const headline = visibleSignals.headline ?? "";
+  const titleLooksSenior = /\b(senior|lead|principal|head|director|manager|staff)\b/i.test(headline);
+  const titleLooksJunior = /\b(junior|graduate|intern|trainee)\b/i.test(headline);
+
+  const titleFit = headline ? (titleLooksSenior ? 60 : titleLooksJunior ? 30 : 50) : 30;
+  const seniorityFit = titleLooksSenior ? 65 : titleLooksJunior ? 35 : 50;
+  const locationFit = visibleSignals.location ? 75 : 40;
+
   return buildScoreBreakdown({
     categories: {
-      skill_fit:        { score: 0, weight: args.weights?.skill_fit ?? CATEGORY_WEIGHTS_V2.skill_fit, evidence: "Cannot assess from incomplete capture." },
-      location_fit:     { score: 0, weight: args.weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit, evidence: "Cannot assess from incomplete capture." },
-      seniority_fit:    { score: 0, weight: args.weights?.seniority_fit ?? CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Cannot assess from incomplete capture." },
-      title_fit:        { score: 0, weight: args.weights?.title_fit ?? CATEGORY_WEIGHTS_V2.title_fit, evidence: "Cannot assess from incomplete capture." },
-      domain_fit:       { score: 0, weight: args.weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Cannot assess from incomplete capture." },
-      nice_to_have_fit: { score: 0, weight: args.weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Cannot assess from incomplete capture." },
+      skill_fit:        { score: 30, weight: args.weights?.skill_fit ?? CATEGORY_WEIGHTS_V2.skill_fit, evidence: "Skills section not visible in current capture — can't verify must-haves directly." },
+      location_fit:     { score: locationFit, weight: args.weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit, evidence: visibleSignals.location ? `Location visible: ${visibleSignals.location}.` : "Location not visible." },
+      seniority_fit:    { score: seniorityFit, weight: args.weights?.seniority_fit ?? CATEGORY_WEIGHTS_V2.seniority_fit, evidence: headline ? `Inferred from headline: "${headline}".` : "Headline not visible." },
+      title_fit:        { score: titleFit, weight: args.weights?.title_fit ?? CATEGORY_WEIGHTS_V2.title_fit, evidence: headline ? `Headline: "${headline}".` : "Title not visible." },
+      domain_fit:       { score: 40, weight: args.weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Domain not assessable without work history." },
+      nice_to_have_fit: { score: 40, weight: args.weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Nice-to-haves not assessable without work history." },
     },
     must_have_coverage: args.parsedRoleMustHaves.map((req) => ({
       requirement: req,
       status:      "unknown" as MustHaveCoverageStatus,
-      evidence:    "Not visible — capture incomplete.",
+      evidence:    "Not visible in current capture — may exist in full work history.",
     })),
     nice_to_have_coverage: args.parsedRoleNiceToHaves.map((req) => ({
       requirement: req,
       status:      "absent" as NiceToHaveCoverageStatus,
-      evidence:    "Not visible — capture incomplete.",
+      evidence:    "Not visible in current capture.",
     })),
-    reasons_for:           [],
+    reasons_for:           [
+      ...(headline ? [`${headline} — visible from current capture.`] : []),
+      ...(visibleSignals.location ? [`Located in ${visibleSignals.location}.`] : []),
+    ],
+    // Critical: do NOT fabricate rejection reasons from absent data.
     reasons_against:       [],
-    missing_evidence:      [],
-    recruiter_summary:     "LinkedIn capture is incomplete — do not progress or reject without full work history or CV.",
+    missing_evidence:      ["Full work history not captured — must-haves can't be verified from current data."],
+    recruiter_summary:     "Score reflects visible LinkedIn data only — work history not fully captured. Treat as directional ranking signal at sourcing stage.",
     profileCharCount:      args.profileCharCount,
     profileCaptureWarning: {
       code:     "incomplete_capture",
-      message:  "LinkedIn capture is incomplete — upload CV or re-fetch the full profile before assessing.",
+      message:  "Partial LinkedIn capture — score is based on visible content (headline, location, seniority). Full work history was not pulled.",
       evidence: [args.reasonInsufficient],
     },
     weights:            args.weights,
@@ -669,17 +699,15 @@ export function buildScoreBreakdown(params: {
       );
     }
   }
-  // Stub captures: force a 0 sentinel. The breakdown still serialises and is
-  // used to surface the warning + evidence; persistence layers translate this
-  // sentinel into matchScore=null so stubs sort to the bottom and don't
-  // pollute averages. The UI gates display on profile_capture_warning, not
-  // on this number — but if anything reads `overall` directly without the
-  // gate, 0 is the safest fail.
-  const overall = params.profileCaptureWarning
-    ? 0
-    : params.claudeOverallScore != null
-      ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
-      : formulaOverall;
+  // Partial captures: still produce a real score from visible content
+  // (location, seniority, title) but cap to 50 — the recruiter at sourcing
+  // stage needs a number to rank candidates, but we shouldn't let a thin
+  // capture push past the moderate-match threshold. The breakdown still
+  // carries profile_capture_warning so the UI shows a "partial profile"
+  // confidence badge alongside the score.
+  const overall = params.claudeOverallScore != null
+    ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
+    : formulaOverall;
 
   const evidenceCoverage = computeEvidenceCoverageScore(
     params.must_have_coverage,

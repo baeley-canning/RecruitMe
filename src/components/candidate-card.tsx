@@ -716,29 +716,26 @@ function ProfileDrawer({
               )}
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              {captureIncomplete ? (
+              <ScoreBadge score={candidate.matchScore} size="sm" />
+              {captureIncomplete && (
                 <span
-                  className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800 font-medium"
-                  title={breakdown?.profile_capture_warning?.message ?? "Capture incomplete — score withheld until full profile or CV is provided"}
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800"
+                  title={breakdown?.profile_capture_warning?.message ?? "Score is based on partial LinkedIn data"}
                 >
-                  <AlertTriangle className="w-3 h-3" />Unscored — capture incomplete
+                  <AlertTriangle className="w-3 h-3" />Partial profile
                 </span>
-              ) : (
-                <>
-                  <ScoreBadge score={candidate.matchScore} size="sm" />
-                  {!hasFetchedProfile && (
-                    <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
-                  )}
-                  {candidate.acceptanceScore != null && (
-                    <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
-                  )}
-                  <ScoreCorrectionButton
-                    jobId={jobId}
-                    candidateId={candidate.id}
-                    currentScore={candidate.matchScore}
-                  />
-                </>
               )}
+              {!hasFetchedProfile && (
+                <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
+              )}
+              {candidate.acceptanceScore != null && (
+                <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
+              )}
+              <ScoreCorrectionButton
+                jobId={jobId}
+                candidateId={candidate.id}
+                currentScore={candidate.matchScore}
+              />
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
@@ -1099,7 +1096,7 @@ export const CandidateCard = memo(function CandidateCard({
               {/* Single data-quality badge replaces the previous trio (Minimal /
                   Snippet / Provisional) — shows the worst-case warning for this
                   candidate so the recruiter sees one clear signal, not clutter. */}
-              {!captureIncomplete && candidate.matchScore != null && (() => {
+              {candidate.matchScore != null && (() => {
                 const tag =
                   breakdown?.data_quality === "minimal" ? { label: "Thin profile", tone: "red", title: "Very little profile data — score is speculative until the full profile is fetched" } :
                   breakdown?.data_quality === "snippet" ? { label: "Snippet only", tone: "orange", title: "Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" } :
@@ -1116,16 +1113,16 @@ export const CandidateCard = memo(function CandidateCard({
                 );
               })()}
               <div className="flex items-center gap-2">
-                {captureIncomplete ? (
-                  <span
-                    className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800 font-medium"
-                    title={breakdown?.profile_capture_warning?.message ?? "Capture incomplete — score withheld until full profile or CV is provided"}
-                  >
-                    <AlertTriangle className="w-3 h-3" />Unscored — capture incomplete
-                  </span>
-                ) : (<>
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
+                {captureIncomplete && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800"
+                    title={breakdown?.profile_capture_warning?.message ?? "Score is based on partial LinkedIn data"}
+                  >
+                    <AlertTriangle className="w-3 h-3" />Partial
+                  </span>
+                )}
                 {!hasFetchedProfile && (
                   <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
                 )}
@@ -1180,7 +1177,6 @@ export const CandidateCard = memo(function CandidateCard({
                     <ScoreRadar dimensions={radarDimensions} />
                   </div>
                 )}
-                </>)}
                 <Badge className={statusBadge(candidate.status)}>
                   {statusLabel(candidate.status)}
                 </Badge>
@@ -1220,9 +1216,9 @@ export const CandidateCard = memo(function CandidateCard({
           <div className="flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-amber-800">Profile capture incomplete — unscored</p>
+              <p className="text-xs font-semibold text-amber-800">Partial profile — directional score only</p>
               <p className="text-xs text-amber-800 mt-0.5">
-                The captured LinkedIn text is missing the work history, so the candidate can&apos;t be fairly assessed. Upload a CV or re-fetch the profile before deciding.
+                Score reflects visible LinkedIn content (headline, location, current role). Full work history was not captured, so must-haves can&apos;t be verified directly. Use this as a ranking signal at sourcing — confirm fit at CV / phone-interview stage.
               </p>
               {onFetchProfile && displayableLinkedinUrl(candidate.linkedinUrl) && (
                 <button
@@ -1234,10 +1230,6 @@ export const CandidateCard = memo(function CandidateCard({
                 </button>
               )}
             </div>
-            <UploadCvButton
-              candidateId={candidate.id}
-              onUploaded={() => window.location.reload()}
-            />
           </div>
         </div>
       )}
@@ -1274,7 +1266,7 @@ export const CandidateCard = memo(function CandidateCard({
                 </div>
               )}
 
-              {!captureIncomplete && (breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
+              {(breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
                 <div className="grid grid-cols-2 gap-3">
                   {breakdown.reasons_for?.length > 0 && (
                     <div>
@@ -1305,7 +1297,7 @@ export const CandidateCard = memo(function CandidateCard({
                 </div>
               )}
 
-              {!captureIncomplete && breakdown.missing_evidence?.length > 0 && (
+              {breakdown.missing_evidence?.length > 0 && (
                 <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
                   <p className="text-xs font-medium text-amber-700 mb-1">Missing evidence</p>
                   <ul className="space-y-0.5">

@@ -290,13 +290,24 @@ export async function scoreCandidateStructured(
   });
   if (dataQualityForGate === "full_profile" && !gate.sufficient) {
     console.warn(
-      `[scoring] deterministic gate refused to score: ${gate.reasonInsufficient ?? "insufficient evidence"} (chars=${gate.charCount}, roles=${gate.rolesDetected}, matched=${gate.matchedSignals.length})`,
+      `[scoring] partial-capture path: ${gate.reasonInsufficient ?? "insufficient evidence"} (chars=${gate.charCount}, roles=${gate.rolesDetected}, matched=${gate.matchedSignals.length})`,
     );
+    // Extract visible signals from the captured text so we can score what
+    // we DO see (headline, location). At sourcing stage the recruiter
+    // needs a real number to rank candidates — withholding the score hides
+    // the candidate; producing a flagged partial-capture score lets the
+    // recruiter decide whether to dig further.
+    const headlineMatch = profileText.match(/(?:^|\n)\s*([A-Z][^\n]{4,80})\s*\n/);
+    const visibleHeadline = headlineMatch ? headlineMatch[1].trim() : null;
+    const locationMatch = profileText.match(/\b(Wellington|Auckland|Christchurch|Hamilton|Tauranga|Dunedin|Palmerston North|Napier|Hastings|Nelson|Rotorua|Whangarei|Invercargill|New Plymouth|Whanganui|Gisborne|Timaru|Levin|Masterton|Porirua|Hutt|Upper Hutt|Lower Hutt)\b/i);
+    const visibleLocation = locationMatch ? locationMatch[1] : (parsedRole.location || null);
+
     return buildStubBreakdown({
       parsedRoleMustHaves:  mustHaves,
       parsedRoleNiceToHaves: niceToHaves,
       profileCharCount:     profileText.length,
       reasonInsufficient:   gate.reasonInsufficient ?? "Capture incomplete",
+      visibleSignals:       { headline: visibleHeadline, location: visibleLocation },
       weights,
     });
   }
@@ -507,17 +518,17 @@ ${escapeXmlForPrompt(profileSlice)}
   };
 
   // Use Claude's direct holistic verdict if present.
-  // null is a deliberate signal under the INCOMPLETE PROFILE RULE — Claude
-  // refuses to score a stub capture; we honour that and let
-  // analyseProfileCaptureCompleteness flag the candidate downstream.
+  // We tolerate but do NOT honour null — at sourcing stage we always need a
+  // ranking number. If Claude returns null (older prompt cohort or model
+  // confusion), fall through to the formula-derived score from the
+  // category breakdown.
   let claudeOverallScore: number | null = null;
-  if (raw.overall_score === null) {
-    claudeOverallScore = null;
-  } else if (typeof raw.overall_score === "number") {
+  if (typeof raw.overall_score === "number") {
     claudeOverallScore = Math.min(100, Math.max(0, Math.round(raw.overall_score)));
+  } else if (raw.overall_score === null) {
+    console.warn("[scoring] Claude returned null overall_score — falling back to formula score from categories");
   } else {
     // Claude failed to include overall_score — this should never happen given the prompt.
-    // Log it so we can detect if the model starts ignoring the field.
     console.warn("[scoring] Claude did not return overall_score — falling back to formula");
   }
 
@@ -565,21 +576,14 @@ ${escapeXmlForPrompt(profileSlice)}
     aiOnly: true,
   });
 
-  // When the capture is incomplete we MUST NOT show Claude's fabricated
-  // rejection narrative. The candidate's missing skills aren't really missing
-  // — they're hidden behind a failed scrape. Null out the score and clear the
-  // negative-side outputs; buildScoreBreakdown will inject the safe banner
-  // copy ("LinkedIn capture appears incomplete — do not reject or progress
-  // without CV") in its place.
+  // When the capture is incomplete we KEEP Claude's score (recruiter needs
+  // a ranking number at sourcing stage) but suppress any fabricated
+  // rejection narrative — Claude can't honestly say "no evidence of X"
+  // when the scrape missed the relevant section. The new prompt tells
+  // Claude not to fabricate, but we strip defensively in case it does.
   let suppressedReasonsAgainst = reasonsAgainst;
   let suppressedMissingEvidence = missingEvidence;
   if (profileCaptureWarning) {
-    if (claudeOverallScore !== null) {
-      console.warn(
-        `[scoring] Claude returned ${claudeOverallScore} alongside an incomplete-capture warning — discarding the score; recruiter will be prompted to upload CV / re-capture`,
-      );
-    }
-    claudeOverallScore = null;
     suppressedReasonsAgainst = [];
     suppressedMissingEvidence = [];
   }

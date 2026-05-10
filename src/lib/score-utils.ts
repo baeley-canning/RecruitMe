@@ -7,14 +7,14 @@ import type { ScoringWeights } from "./scoring-config";
  * Shared by the single-score route, score-all route, and search route.
  */
 export function deriveUpdateData(breakdown: ScoreBreakdown): Record<string, unknown> {
-  // Stub captures persist matchScore as null so they sort to the bottom of
-  // every job view, don't count toward avgScore, and don't display a
-  // misleading 12%-style score in the UI. The full breakdown JSON still
-  // serialises (so the warning + evidence + reasons stay queryable) — the
-  // scalar matchScore is the only thing nulled.
-  const isStubCapture = breakdown.profile_capture_warning?.code === "incomplete_capture";
+  // matchScore is ALWAYS a number — never null. At sourcing stage the
+  // recruiter is deciding who to progress to the next funnel stage (CV /
+  // phone interview). They need a score even on partial LinkedIn captures
+  // so they can rank candidates. The breakdown's profile_capture_warning
+  // stays as informational metadata so the UI can surface "low confidence
+  // — partial profile" alongside the score, not in place of it.
   return {
-    matchScore:     isStubCapture ? null : breakdown.overall,
+    matchScore:     breakdown.overall,
     scoreBreakdown: JSON.stringify(breakdown),
     // Legacy matchReason — kept for radar chart and old-format cards
     matchReason: JSON.stringify({
