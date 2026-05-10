@@ -218,7 +218,11 @@ function shouldExpand(element) {
       ""
   );
   if (!label) return false;
-  if (!/^see more$|^show more$|^show \d+ more/i.test(label)) return false;
+  // Accept the standard inline-expand variants AND LinkedIn's "Show all N
+  // experiences / education / certifications" pattern. The latter is what
+  // appears under sections that have more entries than fit inline — without
+  // matching it we miss the click and historical roles never load.
+  if (!/^see more$|^show more$|^show \d+ more|^show all (?:\d+ )?(?:experiences?|education|certifications?|skills|projects?|publications?|volunteer)/i.test(label)) return false;
 
   const heading = parentSectionHeading(element);
   if (!heading || BLOCKED_SECTION_HEADING_RE.test(heading)) return false;
@@ -591,17 +595,44 @@ function collectProfileText(startUrl, options = {}) {
   };
 }
 
+// Year-range patterns inside a section. Mirrors server-side detection in
+// scoring.ts: catches "1998-2001", "Mar 1997 – Jun 1998", and the
+// LinkedIn "Since 2018" / "5 yrs" current-role markers.
+const SECTION_YEAR_RANGE_RE = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?\.?\s*(?:19|20)\d{2}\s*(?:[-–—]|to)\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?\.?\s*(?:19|20)\d{2}|present|current|now)|\bsince\s+(?:19|20)\d{2}|\b\d+\s*yrs?\b/gi;
+
+function countSectionRoles(profileText, sectionKey) {
+  const found = findSectionHeader(profileText, sectionKey);
+  if (!found) return 0;
+  const allHeaders = Object.values(SECTION_HEADERS).flat().map(escapeForRegex);
+  const nextRe = new RegExp(`\\n(${allHeaders.join("|")})\\n`, "i");
+  const after = profileText.slice(found.index + found.header.length + 1);
+  const nextRel = after.search(nextRe);
+  const sectionEnd = nextRel === -1 ? profileText.length : found.index + found.header.length + 1 + nextRel;
+  const sectionText = profileText.slice(found.index, sectionEnd);
+  return (sectionText.match(SECTION_YEAR_RANGE_RE) ?? []).length;
+}
+
 function needsDeeperCapture(capture) {
   const coreSectionCount = capture.sectionKeys.filter((key) => CORE_SECTION_KEYS.has(key)).length;
   const hasIntro = !!capture.profileText.split(/\n+/)[0] && !SAFE_SECTION_HEADING_RE.test(capture.profileText.split(/\n+/)[0]);
   const hasExperience = capture.sectionKeys.includes("experience");
   const hasEducation = capture.sectionKeys.includes("education");
 
+  // NEW: even when Experience is detected, the inline view often only shows
+  // the most recent 2-3 roles before "Show all N experiences" cuts off. If
+  // the captured Experience section has fewer than 3 dated roles, force the
+  // deep fetch — historical work is the most likely source of must-have
+  // signals (Brendan's C++ at NZ Customs and Sybase at ACC are 20+ years
+  // old, deep in his history).
+  const experienceRoleCount = hasExperience ? countSectionRoles(capture.profileText, "experience") : 0;
+  const experienceLooksThin = hasExperience && experienceRoleCount < 3;
+
   return (
     capture.profileText.length < MIN_EXPANDED_PROFILE_TEXT_CHARS ||
     !hasIntro ||
     coreSectionCount < 3 ||
-    (!hasExperience && !hasEducation)
+    (!hasExperience && !hasEducation) ||
+    experienceLooksThin
   );
 }
 
@@ -1103,6 +1134,18 @@ async function captureProfile() {
   let capture = collectProfileText(startUrl, { allowShort: true });
   const mainChars = capture.profileText.length;
   let lastSectionMetas = [];
+
+  // Surface the deep-fetch decision in DevTools so the user can verify the
+  // extension is doing what it should. Without this, the user sees no
+  // visible activity and assumes the extension stopped working.
+  const expRoles = countSectionRoles(capture.profileText, "experience");
+  console.log("[RecruitMe] capture decision", {
+    mainChars,
+    sections: capture.sectionKeys,
+    experienceRolesDetected: expRoles,
+    willDeepFetch: needsDeeperCapture(capture) || expRoles < 3,
+    note: expRoles < 3 ? "deep-fetch forced — fewer than 3 dated roles inline" : "main capture looks complete",
+  });
 
   const finalize = (cap) => {
     if (cap.profileText.length < 200) {
