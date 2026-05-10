@@ -1310,6 +1310,357 @@ function sendToServiceWorker(data, timeoutMs = 30000) {
   });
 }
 
+// ── Option A: cross-navigation capture state machine ────────────────────────
+// Background fetch of /details/experience/ (the previous "invisible" deep
+// fetch) gets blocked by LinkedIn anti-bot. The fix is to navigate the visible
+// tab to the details page, extract from the live DOM, then navigate back.
+// Navigation kills the content script, so progress has to live in
+// chrome.storage.local — every new content-script instance picks up where the
+// previous one left off via resumeNavigationCaptureIfNeeded().
+//
+// Stages:
+//   "navigating_to_details"        — main capture done, expecting the tab to
+//                                    arrive on /details/experience/
+//   "details_done_navigating_back" — deep extraction done, expecting the tab
+//                                    to return to the root profile to
+//                                    finalize + POST
+const NAV_CAPTURE_STATE_KEY = "recruitmeNavigationCapture";
+const NAV_CAPTURE_STALE_MS  = 5 * 60_000;
+const NAV_CAPTURE_SENTINEL  = "__recruitme_navigated__";
+const EXPERIENCE_DETAILS_PATH_RE = /\/in\/[^/]+\/details\/experience\/?/i;
+
+function readNavCaptureState() {
+  return new Promise((resolve) => {
+    if (!chrome?.storage?.local?.get) { resolve(null); return; }
+    try {
+      chrome.storage.local.get([NAV_CAPTURE_STATE_KEY], (result) => {
+        if (chrome.runtime.lastError) { resolve(null); return; }
+        resolve(result?.[NAV_CAPTURE_STATE_KEY] || null);
+      });
+    } catch { resolve(null); }
+  });
+}
+
+function writeNavCaptureState(state) {
+  return new Promise((resolve) => {
+    if (!chrome?.storage?.local?.set) { resolve(); return; }
+    try {
+      chrome.storage.local.set({ [NAV_CAPTURE_STATE_KEY]: state }, () => {
+        void chrome.runtime.lastError;
+        resolve();
+      });
+    } catch { resolve(); }
+  });
+}
+
+function clearNavCaptureState() {
+  return new Promise((resolve) => {
+    if (!chrome?.storage?.local?.remove) { resolve(); return; }
+    try {
+      chrome.storage.local.remove([NAV_CAPTURE_STATE_KEY], () => {
+        void chrome.runtime.lastError;
+        resolve();
+      });
+    } catch { resolve(); }
+  });
+}
+
+// Pull experience text out of the LIVE /details/experience/ DOM. We serialize
+// + re-parse so extractLinesFromDetachedDocument's destructive cleanup
+// (script/style/code removal) doesn't mutate the page the recruiter sees.
+function extractExperienceFromLiveDocument() {
+  let lines = [];
+  try {
+    const html = document.documentElement.outerHTML;
+    const doc  = new DOMParser().parseFromString(html, "text/html");
+    lines = extractLinesFromDetachedDocument(doc);
+  } catch (e) {
+    console.warn("[RecruitMe] extractExperienceFromLiveDocument failed:", e?.message || e);
+    return "";
+  }
+  while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
+
+  const useful = [];
+  const seen = new Set();
+  for (const line of lines) {
+    if (/^(experience|profile|linkedin|search)$/i.test(line)) continue;
+    if (/^skip to main content$/i.test(line)) continue;
+    if (/^(home|jobs|messaging|notifications|me|work|sign in|sign out|join now|about|accessibility|talent solutions|community guidelines|professional community policies|privacy & terms|brand policy|guest controls|language|ad options|why am i seeing this ad|manage your ad preferences|hide or report this ad|i don'?t want to see this ad)$/i.test(line)) continue;
+    const key = normalizeLineKey(line);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    useful.push(line);
+  }
+
+  if (useful.length < 2 || useful.join("\n").length < 80) return "";
+  return capSectionText(`Experience\n${useful.join("\n")}`);
+}
+
+// Light scroll helper used on the details page only — humanlike enough to
+// trigger LinkedIn's lazy-load without the full multi-minute scrollProfile.
+async function scrollDetailsPage() {
+  window.scrollTo({ top: 0, behavior: "auto" });
+  await sleep(400);
+  let lastH = document.body.scrollHeight;
+  for (let i = 0; i < 14; i += 1) {
+    window.scrollTo({ top: window.scrollY + Math.max(window.innerHeight * 0.8, 500), behavior: "auto" });
+    await sleep(550);
+    const h = document.body.scrollHeight;
+    const atBottom = window.scrollY + window.innerHeight >= h - 60;
+    if (h === lastH && atBottom) break;
+    lastH = h;
+  }
+  window.scrollTo({ top: 0, behavior: "auto" });
+  await sleep(300);
+}
+
+// Used by the navigation flow to send the saved main capture (no enrichAll)
+// across the chrome.storage boundary.
+function summarizeMainCaptureForState(capture, mainChars) {
+  return {
+    profileText: capture.profileText,
+    sectionKeys: capture.sectionKeys,
+    title: capture.title || "",
+    headline: capture.headline || "",
+    location: capture.location || "",
+    linkedinUrl: capture.linkedinUrl || "",
+    mainProfileChars: mainChars,
+  };
+}
+
+// Auto-capture orchestration with optional cross-navigation deep-fetch.
+// Mirrors captureProfile's main-page work, but instead of always calling
+// enrichAll (background fetch), it navigates to /details/experience/ when the
+// inline view doesn't already have ≥3 dated roles. The actual return-from-
+// details + POST is handled by resumeNavigationCaptureIfNeeded() in the
+// content-script instance that loads after the navigation back to root.
+//
+// Throws NAV_CAPTURE_SENTINEL when navigation has been kicked off — caller
+// must treat that as "not an error, just resume in a new lifecycle".
+async function captureWithOptionalDeepNavigation(sessionId, serverBase, expectedUrl) {
+  const startUrl = location.href.replace(/[?#].*$/, "");
+  console.log("[RecruitMe] captureWithOptionalDeepNavigation START", { url: startUrl, version: chrome?.runtime?.getManifest?.()?.version });
+  if (!isLinkedInProfilePage()) {
+    throw new Error("Not on a LinkedIn profile page");
+  }
+
+  await waitForMain();
+  await sleep(700);
+
+  const clicked = new Set();
+  if (!await expandInlineSections(clicked, { visibleOnly: true, passes: 2 })) {
+    throw new Error("Page navigated during capture - will retry automatically");
+  }
+  if (!await scrollProfile(clicked)) {
+    throw new Error("Page navigated during capture - will retry automatically");
+  }
+
+  let capture = collectProfileText(startUrl, { allowShort: true });
+  const mainCharsFirstPass = capture.profileText.length;
+
+  // If the first pass looks thin, run the broader expand+scroll once before
+  // deciding to deep-navigate — matches captureProfile's existing two-pass
+  // behaviour so we don't trigger needless navigations on profiles that just
+  // need more clicks to fully render inline.
+  if (needsDeeperCapture(capture)) {
+    if (!await expandInlineSections(clicked, { visibleOnly: false, passes: 6 })) {
+      throw new Error("Page navigated during capture - will retry automatically");
+    }
+    if (!await scrollProfile(clicked)) {
+      throw new Error("Page navigated during capture - will retry automatically");
+    }
+    capture = collectProfileText(startUrl, { allowShort: true });
+  }
+  const mainChars = capture.profileText.length;
+
+  const expRoles = countSectionRoles(capture.profileText, "experience");
+  const wantsDeepNav = needsDeeperCapture(capture) || expRoles < 3;
+  console.log("[RecruitMe] capture decision (navigation-aware)", {
+    mainCharsFirstPass,
+    mainChars,
+    sections: capture.sectionKeys,
+    experienceRolesDetected: expRoles,
+    wantsDeepNav,
+  });
+
+  if (wantsDeepNav) {
+    const detailsUrl = buildExperienceDetailsUrl(startUrl);
+    if (detailsUrl && chrome?.storage?.local) {
+      await writeNavCaptureState({
+        sessionId, serverBase, expectedUrl,
+        startUrl, detailsUrl,
+        mainCapture: summarizeMainCaptureForState(capture, mainChars),
+        deepText: null,
+        stage: "navigating_to_details",
+        startedAt: Date.now(),
+      });
+      console.log("[RecruitMe] navigating tab to /details/experience/", { detailsUrl });
+      try { location.assign(detailsUrl); } catch (e) {
+        console.warn("[RecruitMe] location.assign failed; clearing nav state", e?.message || e);
+        await clearNavCaptureState();
+        throw e;
+      }
+      // Throw a sentinel so runCaptureAndPost knows NOT to POST or report
+      // an error — the resume function on the next page lifecycle will
+      // continue from the saved state.
+      throw new Error(NAV_CAPTURE_SENTINEL);
+    }
+  }
+
+  // Inline path: same enrichment behaviour as the original captureProfile.
+  let r = await enrichAll(capture, startUrl);
+  let finalCapture = r.capture;
+  let sectionMetas = r.sectionMetas;
+
+  if (finalCapture.profileText.length < 200) {
+    await sleep(1200);
+    if (await scrollProfile(clicked)) {
+      const more = collectProfileText(startUrl, { allowShort: true });
+      r = await enrichAll(more, startUrl);
+      finalCapture = r.capture; sectionMetas = r.sectionMetas;
+    }
+  }
+
+  if (finalCapture.profileText.length < 200) {
+    throw new Error("Captured profile text did not contain enough usable profile text");
+  }
+
+  finalCapture.captureMeta = {
+    capturedAt: new Date().toISOString(),
+    mainProfileChars: mainChars,
+    finalProfileChars: finalCapture.profileText.length,
+    sections: sectionMetas,
+    captureMethod: "inline",
+  };
+  return finalCapture;
+}
+
+// Runs on script load. Reads chrome.storage.local for in-flight nav state and
+// either extracts (on details page) or finalizes + POSTs (on root page).
+async function resumeNavigationCaptureIfNeeded() {
+  const state = await readNavCaptureState();
+  if (!state) return;
+
+  // Stale state guard — covers the cases where the user closed the tab,
+  // navigated to a different site, or LinkedIn didn't redirect as expected.
+  if (Date.now() - (state.startedAt || 0) > NAV_CAPTURE_STALE_MS) {
+    console.warn("[RecruitMe] nav-capture state stale; clearing", { ageMs: Date.now() - (state.startedAt || 0) });
+    await clearNavCaptureState();
+    return;
+  }
+
+  // Slug must match the in-flight session — otherwise we're either on a
+  // different profile or another tab navigated us off-target.
+  const stateSlug   = normaliseLinkedInSlug(state.startUrl);
+  const currentSlug = normaliseLinkedInSlug(location.href);
+  if (!stateSlug || stateSlug !== currentSlug) return;
+
+  if (state.stage === "navigating_to_details") {
+    if (!EXPERIENCE_DETAILS_PATH_RE.test(location.href)) return; // not on details yet — wait for next tick
+
+    captureInProgress = true;
+    captureInProgressSessionId = state.sessionId || "";
+    try {
+      console.log("[RecruitMe] resume: on /details/experience/, waiting for content");
+      await waitForMain();
+      await sleep(800);
+      await scrollDetailsPage();
+
+      const deepText = extractExperienceFromLiveDocument();
+      console.log("[RecruitMe] resume: details extraction done", {
+        chars: deepText.length,
+        firstLine: deepText.split("\n").slice(0, 2).join(" | ").slice(0, 200),
+      });
+
+      await writeNavCaptureState({
+        ...state,
+        deepText,
+        stage: "details_done_navigating_back",
+      });
+
+      console.log("[RecruitMe] resume: navigating back to root profile", { startUrl: state.startUrl });
+      try { location.assign(state.startUrl); } catch (e) {
+        console.warn("[RecruitMe] back-navigation failed:", e?.message || e);
+      }
+      // Script will die during navigation — finalize runs in the next lifecycle.
+    } catch (err) {
+      console.warn("[RecruitMe] resume details step failed:", err?.message || err);
+      // Fall through: navigate back with no deepText. Finalize will still
+      // POST main-only rather than dropping the capture entirely.
+      await writeNavCaptureState({ ...state, deepText: null, stage: "details_done_navigating_back" });
+      try { location.assign(state.startUrl); } catch { /* unloading */ }
+    }
+    return;
+  }
+
+  if (state.stage === "details_done_navigating_back") {
+    if (!isRootLinkedInProfile(location.href)) return; // not back at root yet
+
+    captureInProgress = true;
+    captureInProgressSessionId = state.sessionId || "";
+    try {
+      // Brief settle pause; we don't actually need the live page since the
+      // mainCapture is already in storage.
+      await sleep(400);
+
+      const mainCap = state.mainCapture;
+      let finalText = mainCap.profileText;
+      let mergeMode = "skip";
+      let charsAdded = 0;
+
+      if (state.deepText && state.deepText.length > 0) {
+        const merged = mergeExperienceSection(mainCap, state.deepText);
+        finalText = merged.capture.profileText;
+        mergeMode = merged.mode;
+        charsAdded = merged.charsAdded;
+      }
+
+      const captureMeta = {
+        capturedAt: new Date().toISOString(),
+        mainProfileChars: mainCap.profileText.length,
+        finalProfileChars: finalText.length,
+        sections: [{
+          key: "experience",
+          fetched: true,
+          status: 200,
+          finalUrl: state.detailsUrl,
+          fetchOutcome: state.deepText ? "ok" : "empty",
+          deepChars: state.deepText?.length || 0,
+          mergeMode,
+          charsAdded,
+        }],
+        captureMethod: "navigation",
+      };
+
+      console.log("[RecruitMe] resume: POSTing capture", { chars: finalText.length, sessionId: state.sessionId, mergeMode });
+
+      await sendToServiceWorker({
+        type: "submit-capture-result",
+        sessionId: state.sessionId,
+        linkedinUrl: mainCap.linkedinUrl || state.startUrl,
+        profileText: finalText,
+        candidateName: mainCap.title || "",
+        captureMeta,
+        serverBase: state.serverBase,
+      }, 120_000);
+
+      console.log("[RecruitMe] resume: capture posted, clearing state");
+      await clearNavCaptureState();
+    } catch (err) {
+      const msg = (err?.message || "Capture failed (post-navigation)").slice(0, 500);
+      console.warn("[RecruitMe] resume finalize failed:", msg);
+      await sendToServiceWorker(
+        { type: "submit-capture-error", sessionId: state.sessionId, error: msg, serverBase: state.serverBase },
+        15_000,
+      ).catch(() => {});
+      await clearNavCaptureState();
+    } finally {
+      captureInProgress = false;
+      captureInProgressSessionId = "";
+    }
+  }
+}
+
 async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   console.log("[RecruitMe] runCaptureAndPost start", { sessionId, expectedUrl, currentUrl: location.href });
   let captureTimer;
@@ -1349,7 +1700,7 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
     const human = await isHumanPacedMode();
     const captureTimeoutMs = human ? 360_000 : 70_000;
     const capture = await Promise.race([
-      captureProfile(),
+      captureWithOptionalDeepNavigation(sessionId, serverBase, expectedUrl),
       new Promise((_, reject) => {
         captureTimer = setTimeout(
           () => reject(new Error("Profile capture timed out — reload the LinkedIn tab and try again")),
@@ -1377,6 +1728,13 @@ async function runCaptureAndPost(sessionId, serverBase, expectedUrl) {
   } catch (error) {
     clearTimeout(captureTimer);
     const msg = (error?.message || "Capture failed").slice(0, 500);
+    // Navigation sentinel: capture handed off to /details/experience/ + the
+    // resume function will finalize in the next content-script lifecycle.
+    // Don't POST an error — the recruiter would see "Capture failed" mid-flow.
+    if (msg === NAV_CAPTURE_SENTINEL) {
+      console.log("[RecruitMe] capture handed off to navigation resume");
+      return;
+    }
     console.warn("[RecruitMe] capture failed:", msg);
     await sendToServiceWorker(
       { type: "submit-capture-error", sessionId, error: msg, serverBase },
@@ -2340,10 +2698,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
+// Resume any in-flight navigation capture from a previous content-script
+// lifecycle. Runs at multiple delays because we may load before the LinkedIn
+// SPA has finished routing — early calls just no-op until the URL/DOM matches.
+void resumeNavigationCaptureIfNeeded();
+setTimeout(() => void resumeNavigationCaptureIfNeeded(), 1500);
+setTimeout(() => void resumeNavigationCaptureIfNeeded(), 4000);
+setTimeout(() => void resumeNavigationCaptureIfNeeded(), 8000);
+
 notifyBackground();
 setTimeout(notifyBackground, 1500);
 setTimeout(notifyBackground, 4000);
 setInterval(() => {
+  // Re-check resume on every observe tick so SPA URL transitions
+  // (root → /details/experience/ → root) get picked up promptly.
+  void resumeNavigationCaptureIfNeeded();
+
   if (!isLinkedInProfilePage()) {
     // Clean up the match overlay when the recruiter clicks off a profile —
     // we don't want a stale "On 2 jobs" pill (or its minimised ball)
