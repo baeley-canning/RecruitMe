@@ -24,6 +24,12 @@ export type NiceToHaveCoverageStatus = "confirmed" | "likely" | "absent";
 export type DataQuality = "full_profile" | "snippet" | "minimal";
 export type ConfidenceLevel = "high" | "medium" | "low";
 
+export interface ProfileCaptureWarning {
+  code: "incomplete_capture";
+  message: string;
+  evidence: string[];
+}
+
 // ─── Evidence item types ───────────────────────────────────────────────────────
 
 export interface MustHaveStatus {
@@ -78,6 +84,7 @@ export interface ScoreBreakdown {
     reasons: string[];
   };
   data_quality:      DataQuality;
+  profile_capture_warning?: ProfileCaptureWarning;
   recruiter_summary: string;
 }
 
@@ -205,6 +212,52 @@ export function classifyDataQuality(charCount: number): DataQuality {
   if (charCount >= 2000) return "full_profile";
   if (charCount >= 200)  return "snippet";
   return "minimal";
+}
+
+const MONTH_RE = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+const YEAR_RANGE_RE = new RegExp(
+  `\\b(?:${MONTH_RE}\\s+)?(?:19|20)\\d{2}\\s*(?:[-–—]|to)\\s*(?:(?:${MONTH_RE}\\s+)?(?:19|20)\\d{2}|present|current|now)\\b`,
+  "gi",
+);
+const EXPERIENCE_HEADING_RE = /(?:^|\n)\s*(experience|work history|employment history|career history)\s*(?:\n|$)/i;
+const PROFILE_SECTION_HEADING_RE = /(?:^|\n)\s*(about|experience|work history|employment history|career history|education|skills|top skills|licenses|certifications|licenses & certifications)\s*(?:\n|$)/i;
+const STUB_SIGNAL_RE = /\b(?:near[- ]empty|empty stub|profile (?:is |appears )?(?:a )?stub|no work history|no visible work history|no skills (?:list )?visible|without (?:a )?full cv|do not progress without|insufficient profile|profile capture (?:is )?incomplete|missing work history)\b/i;
+
+export function analyseProfileCaptureCompleteness(args: {
+  profileText: string;
+  recruiterSummary?: string;
+  reasonsAgainst?: string[];
+  missingEvidence?: string[];
+}): ProfileCaptureWarning | null {
+  const profileText = args.profileText.replace(/\r/g, "").trim();
+  if (profileText.length < 2000) return null;
+
+  const aiText = [
+    args.recruiterSummary,
+    ...(args.reasonsAgainst ?? []),
+    ...(args.missingEvidence ?? []),
+  ].filter(Boolean).join("\n");
+  const aiSaysStub = STUB_SIGNAL_RE.test(aiText);
+
+  const yearRanges = profileText.match(YEAR_RANGE_RE) ?? [];
+  const hasExperienceHeading = EXPERIENCE_HEADING_RE.test(profileText);
+  const looksLikeCapturedProfile = PROFILE_SECTION_HEADING_RE.test(profileText);
+  const hasVeryFewWorkEntries = yearRanges.length < 2;
+
+  if (!aiSaysStub && !looksLikeCapturedProfile) return null;
+  if (!aiSaysStub && (hasExperienceHeading || !hasVeryFewWorkEntries)) return null;
+
+  const evidence = [
+    `${yearRanges.length} dated work-history entr${yearRanges.length === 1 ? "y" : "ies"} detected`,
+  ];
+  if (!hasExperienceHeading) evidence.push("No clear Experience / Work history section detected");
+  if (aiSaysStub) evidence.push("AI assessment described the profile as a stub or requested a full CV/work history");
+
+  return {
+    code: "incomplete_capture",
+    message: "Profile capture may be incomplete — score is unreliable until CV, JobAdder, or full work history is checked.",
+    evidence,
+  };
 }
 
 export function computeMustHavePct(
@@ -349,6 +402,7 @@ export function buildScoreBreakdown(params: {
   missing_evidence:      string[];
   recruiter_summary:     string;
   profileCharCount:      number;
+  profileCaptureWarning?: ProfileCaptureWarning | null;
   weights?:              ScoringWeights;
   claudeOverallScore?:   number | null; // Claude's direct holistic verdict — overrides formula when present
 }): ScoreBreakdown {
@@ -362,6 +416,9 @@ export function buildScoreBreakdown(params: {
     dataQuality === "snippet"
       ? params.profileCharCount < 500 ? 54 : 65
       : dataQuality === "minimal" ? 40 : 100;
+  if (params.profileCaptureWarning) {
+    cap = Math.min(cap, 50);
+  }
 
   // Critical gate for snippets/minimal: if any 1.5× must-have is unconfirmed, cap hard —
   // the candidate cannot be presented as a real match until a full profile proves otherwise.
@@ -426,10 +483,25 @@ export function buildScoreBreakdown(params: {
     params.nice_to_have_coverage
   );
   const confidence = computeConfidence(params.profileCharCount, params.must_have_coverage);
+  if (params.profileCaptureWarning) {
+    confidence.score = Math.min(confidence.score, 35);
+    confidence.level = "low";
+    confidence.reasons = [
+      params.profileCaptureWarning.message,
+      ...confidence.reasons,
+    ].slice(0, 5);
+  }
 
   const effectiveReasonsAgainst = [...params.reasons_against];
+  if (params.profileCaptureWarning) {
+    effectiveReasonsAgainst.unshift("Profile capture appears incomplete — do not reject or progress without CV, JobAdder, or full work-history evidence");
+  }
   if (params.claudeOverallScore != null && params.claudeOverallScore > cap) {
-    effectiveReasonsAgainst.push(`Score capped at ${overall} — provisional snippet data; fetch full profile for reliable assessment`);
+    effectiveReasonsAgainst.push(
+      params.profileCaptureWarning
+        ? `Score capped at ${overall} — profile capture appears incomplete; fetch CV/JobAdder before deciding`
+        : `Score capped at ${overall} — provisional snippet data; fetch full profile for reliable assessment`
+    );
   } else if (params.claudeOverallScore == null && rawOverall > overall) {
     if (dataQuality !== "full_profile") {
       effectiveReasonsAgainst.push(`Score capped at ${overall} — provisional snippet data; fetch full profile for reliable assessment`);
@@ -443,6 +515,9 @@ export function buildScoreBreakdown(params: {
   // 2. Flag soft-skill-heavy JDs where the 36% must-have weight is being diluted by
   //    unmeasurable requirements — scoring is directional only in that case.
   const effectiveMissingEvidence = [...params.missing_evidence];
+  if (params.profileCaptureWarning) {
+    effectiveMissingEvidence.unshift("Full work history / CV / JobAdder profile is required before treating this score as reliable");
+  }
 
   const CLEARANCE_RE = /security clearance|secret vetting|confidential vetting|nz citizen|nz resident|work rights|right to work/i;
   const hasUnresolvedClearance = params.must_have_coverage.some(
@@ -477,6 +552,7 @@ export function buildScoreBreakdown(params: {
     missing_evidence:        effectiveMissingEvidence.slice(0, 4),
     confidence,
     data_quality:            dataQuality,
+    ...(params.profileCaptureWarning ? { profile_capture_warning: params.profileCaptureWarning } : {}),
     recruiter_summary:       params.recruiter_summary,
   };
 }

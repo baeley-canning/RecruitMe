@@ -1,5 +1,5 @@
 import { chat, parseJson, SONNET, resolveModelForDataQuality } from "./chat";
-import { classifyDataQuality } from "../scoring";
+import { analyseProfileCaptureCompleteness, classifyDataQuality } from "../scoring";
 import { getRecruitingContext } from "../recruiter-memory";
 import {
   buildScoreBreakdown,
@@ -426,6 +426,14 @@ ${escapeXmlForPrompt(profileSlice)}
     console.warn(`[scoring] Claude gave ${claudeOverallScore} but reasons_against contains blocker — capping to 45`);
     claudeOverallScore = Math.min(claudeOverallScore, 45);
   }
+  const recruiterSummary = typeof raw.recruiter_summary === "string" ? raw.recruiter_summary : "";
+  const missingEvidence = stringArray(raw.missing_evidence);
+  const profileCaptureWarning = analyseProfileCaptureCompleteness({
+    profileText,
+    recruiterSummary,
+    reasonsAgainst,
+    missingEvidence,
+  });
 
   return buildScoreBreakdown({
     categories,
@@ -433,9 +441,10 @@ ${escapeXmlForPrompt(profileSlice)}
     nice_to_have_coverage: niceToHaveCoverage,
     reasons_for:           stringArray(raw.reasons_for),
     reasons_against:       reasonsAgainst,
-    missing_evidence:      stringArray(raw.missing_evidence),
-    recruiter_summary:     typeof raw.recruiter_summary === "string" ? raw.recruiter_summary : "",
+    missing_evidence:      missingEvidence,
+    recruiter_summary:     recruiterSummary,
     profileCharCount:      profileText.length,
+    profileCaptureWarning,
     weights,
     claudeOverallScore,
   });

@@ -5,6 +5,7 @@ import {
   computeEvidenceCoverageScore,
   computeOverallScore,
   classifyDataQuality,
+  analyseProfileCaptureCompleteness,
   computeConfidence,
   buildScoreBreakdown,
   getMustHaveImportance,
@@ -610,5 +611,58 @@ describe("buildScoreBreakdown", () => {
 
     expect(bd.overall).toBeLessThanOrEqual(65);
     expect(bd.data_quality).toBe("snippet");
+  });
+
+  it("flags and caps long profile captures that appear to be missing work history", () => {
+    const warning = analyseProfileCaptureCompleteness({
+      profileText: [
+        "Brendan Lester",
+        "Lead Engineer - Quality at Xero",
+        "About",
+        "QA automation, Playwright, Salesforce automation and SDLC consultancy. ".repeat(80),
+      ].join("\n"),
+      recruiterSummary: "Profile is a near-empty stub with no work history visible; do not progress without a full CV.",
+      reasonsAgainst: ["No work history or skills list visible."],
+      missingEvidence: ["Full work history would materially change this assessment."],
+    });
+
+    expect(warning?.code).toBe("incomplete_capture");
+
+    const bd = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    allConfirmed,
+      nice_to_have_coverage: [],
+      reasons_for:           ["Based in Wellington"],
+      reasons_against:       ["Profile is a near-empty stub"],
+      missing_evidence:      ["Full work history"],
+      recruiter_summary:     "Profile is a near-empty stub.",
+      profileCharCount:      8234,
+      profileCaptureWarning: warning,
+      claudeOverallScore:    82,
+    });
+
+    expect(bd.profile_capture_warning?.code).toBe("incomplete_capture");
+    expect(bd.overall).toBeLessThanOrEqual(50);
+    expect(bd.confidence.level).toBe("low");
+    expect(bd.reasons_against[0]).toMatch(/Profile capture appears incomplete/);
+    expect(bd.missing_evidence[0]).toMatch(/Full work history/);
+  });
+
+  it("does not flag a long profile with multiple dated work-history entries", () => {
+    const warning = analyseProfileCaptureCompleteness({
+      profileText: [
+        "Experience",
+        "Technical Consultant / C++ Developer at ACC",
+        "Jun 1998 - Aug 2001",
+        "Microsoft Visual C++ developer using Sybase DB.",
+        "C++ Developer & Support at New Zealand Customs Service",
+        "Mar 1997 - Jun 1998",
+        "Solaris C++ developer supporting the CusMod platform.",
+        "Additional profile content. ".repeat(120),
+      ].join("\n"),
+      recruiterSummary: "Historic C++ and Sybase experience is visible.",
+    });
+
+    expect(warning).toBeNull();
   });
 });

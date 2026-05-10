@@ -20,6 +20,7 @@ import {
   FileText,
   Mail,
   Gauge,
+  AlertTriangle,
 } from "lucide-react";
 
 import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
@@ -296,6 +297,7 @@ function ConfidenceBadge({ breakdown }: { breakdown: ScoreBreakdown }) {
     snippet:      "Snippet only",
     minimal:      "Minimal data",
   }[data_quality];
+  const captureWarning = breakdown.profile_capture_warning;
 
   return (
     <>
@@ -327,9 +329,14 @@ function ConfidenceBadge({ breakdown }: { breakdown: ScoreBreakdown }) {
         >
           <div className="px-4 pt-3 pb-2 border-b border-slate-700">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-0.5">Scoring Confidence</p>
-            <p className="text-sm font-medium text-white">{cfg.label} · {qualityLabel}</p>
+            <p className="text-sm font-medium text-white">
+              {captureWarning ? "Capture warning" : cfg.label} · {qualityLabel}
+            </p>
           </div>
           <div className="px-4 py-2.5 space-y-1">
+            {captureWarning && (
+              <p className="text-xs text-amber-200 leading-snug">{captureWarning.message}</p>
+            )}
             {confidence.reasons.map((r, i) => (
               <p key={i} className="text-xs text-slate-300 leading-snug">· {r}</p>
             ))}
@@ -1180,6 +1187,20 @@ export const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
+      {breakdown?.profile_capture_warning && (
+        <div className="mx-4 mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-xs font-semibold text-amber-800">Profile capture may be incomplete</p>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Score is unreliable until CV, JobAdder, or full work history is checked.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* AI summary + reasoning */}
       <ScoreBreakdownPanel
         breakdown={breakdown}
@@ -1195,6 +1216,23 @@ export const CandidateCard = memo(function CandidateCard({
           {/* v2 breakdown: reasons for / against + missing evidence */}
           {breakdown && breakdown.version === 2 && (
             <>
+              {breakdown.profile_capture_warning && (
+                <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
+                  <p className="text-xs font-medium text-amber-700 mb-1">Capture warning</p>
+                  <p className="text-xs text-amber-800">{breakdown.profile_capture_warning.message}</p>
+                  {breakdown.profile_capture_warning.evidence.length > 0 && (
+                    <ul className="mt-1 space-y-0.5">
+                      {breakdown.profile_capture_warning.evidence.map((e, i) => (
+                        <li key={i} className="text-xs text-amber-800 flex items-start gap-1">
+                          <span className="mt-0.5 flex-shrink-0">·</span>
+                          {e}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               {(breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
                 <div className="grid grid-cols-2 gap-3">
                   {breakdown.reasons_for?.length > 0 && (
