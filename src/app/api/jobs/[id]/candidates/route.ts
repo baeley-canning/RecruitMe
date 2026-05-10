@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { extractCandidateInfo, predictAcceptance, scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
@@ -9,6 +10,7 @@ import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { shouldRejectAsOverseas } from "@/lib/location";
+import { reportError } from "@/lib/error-reporting";
 
 export async function GET(
   _req: Request,
@@ -42,6 +44,7 @@ export async function POST(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
+  try {
   const result = CreateCandidateSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
@@ -148,4 +151,20 @@ export async function POST(
     ...candidate,
     rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined,
   }, { status: 201 });
+  } catch (err) {
+    // P2002 = unique constraint violation. The only @@unique on Candidate is
+    // (jobId, linkedinUrl), so this means the recruiter pasted a LinkedIn URL
+    // that's already on this job. Surface a clear 409 instead of a bare 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return NextResponse.json(
+        { error: "A candidate with this LinkedIn URL is already on this job." },
+        { status: 409 },
+      );
+    }
+    reportError(err, { route: "candidates:post", jobId: id, orgId: auth.orgId });
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to add candidate" },
+      { status: 500 },
+    );
+  }
 }

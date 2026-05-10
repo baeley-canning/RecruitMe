@@ -46,8 +46,11 @@ export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: Ad
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ linkedinUrl: url || undefined, profileText: text || undefined, autoScore: Boolean(text) }),
       });
-      const created = await res.json() as { id?: string; error?: string };
-      if (!res.ok) { setError(created.error ?? "Failed to add candidate"); return; }
+      const created = await res.json().catch(() => ({})) as { id?: string; error?: string };
+      if (!res.ok) {
+        setError(created.error ?? `Failed to add candidate (${res.status})`);
+        return;
+      }
       onComplete(created.id);
     } finally { setAdding(false); }
   };
