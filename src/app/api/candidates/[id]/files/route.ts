@@ -113,20 +113,31 @@ export async function POST(
   const file = formData.get("file");
   const type = (formData.get("type") as string | null) ?? "other";
 
-  if (!(file instanceof File)) {
+  // Duck-type check — `File` isn't a guaranteed global on every Node runtime
+  // (Railway's was throwing `File is not defined`), so we verify the
+  // properties we actually use rather than the class identity.
+  if (
+    !file ||
+    typeof file === "string" ||
+    typeof (file as { arrayBuffer?: unknown }).arrayBuffer !== "function" ||
+    typeof (file as { name?: unknown }).name !== "string" ||
+    typeof (file as { size?: unknown }).size !== "number"
+  ) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
+  // Now safe to treat as a File-like for the rest of the route.
+  const upload = file as { name: string; type: string; size: number; arrayBuffer: () => Promise<ArrayBuffer> };
   if (!["cv", "cover_letter", "other"].includes(type)) {
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });
   }
-  if (file.size > MAX_FILE_SIZE) {
+  if (upload.size > MAX_FILE_SIZE) {
     return NextResponse.json({ error: "File too large (max 10 MB)" }, { status: 413 });
   }
-  if (!ALLOWED_EXTS.test(file.name) && !ALLOWED_TYPES.includes(file.type)) {
+  if (!ALLOWED_EXTS.test(upload.name) && !ALLOWED_TYPES.includes(upload.type)) {
     return NextResponse.json({ error: "File type not allowed. Use PDF, Word, or plain text." }, { status: 415 });
   }
 
-  const buffer = Buffer.from(await file.arrayBuffer());
+  const buffer = Buffer.from(await upload.arrayBuffer());
   const base64 = buffer.toString("base64");
   const fileHash = createHash("sha256").update(buffer).digest("hex").slice(0, 32);
 
@@ -161,10 +172,10 @@ export async function POST(
     data: {
       candidateId: id,
       type,
-      filename: file.name,
-      mimeType: file.type || "application/octet-stream",
+      filename: upload.name,
+      mimeType: upload.type || "application/octet-stream",
       data: base64,
-      size: file.size,
+      size: upload.size,
     },
     select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },
   });
@@ -174,14 +185,14 @@ export async function POST(
   // Done after saving so the file is always persisted even if parsing fails.
   if (type === "cv") {
     try {
-    const rawExtracted = await extractText(buffer, file.type, file.name);
+    const rawExtracted = await extractText(buffer, upload.type, upload.name);
     if (rawExtracted && rawExtracted.trim().length > 100) {
       // Fix 1: Clean garbled PDF text through AI before scoring.
       // PDFs from complex multi-column layouts produce broken line breaks and jumbled
       // columns — cleanCvText() normalises this into readable prose.
       // Word docs extracted via mammoth are already clean; only PDFs need this.
       let cvText = rawExtracted.trim();
-      if (file.name.toLowerCase().endsWith(".pdf") && cvText.length > 200) {
+      if (upload.name.toLowerCase().endsWith(".pdf") && cvText.length > 200) {
         try {
           cvText = await cleanCvText(cvText);
         } catch {
