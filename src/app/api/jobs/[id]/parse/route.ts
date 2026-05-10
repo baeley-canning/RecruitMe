@@ -74,22 +74,44 @@ export async function POST(
     const existing = safeParseJson<ParsedRole | null>(job.parsedRole, null);
     const parsedRole = await parseJobDescription(job.rawJd);
 
-    // Hard-fail when the parse produced no requirements at all — neither
-    // must_haves nor the legacy skills_required. Saving an empty role would
-    // poison downstream scoring (every candidate scores ~50% from empty
-    // coverage). Tell the recruiter explicitly so they expand the JD.
+    // Empty-requirements case. Two distinct sub-cases — distinguishable by
+    // whether the title came through:
+    //   (a) JD genuinely has no requirements (recruiter pasted just a
+    //       responsibilities blurb). The parse will have title + maybe
+    //       seniority but truly zero must-haves. Hard-fail with a clear
+    //       message asking for more JD detail.
+    //   (b) Claude returned malformed JSON twice → parseJobDescription's
+    //       minimal-fallback path produced title only. Still empty
+    //       requirements but the JD itself was probably fine. Don't
+    //       hard-fail — save the role with the warning so the recruiter
+    //       gets a job with the title pre-filled and can add must-haves
+    //       manually rather than being blocked.
     const mustHaveCount = (parsedRole.must_haves ?? []).length;
     const skillsRequiredCount = (parsedRole.skills_required ?? []).length;
+    const responsibilitiesCount = (parsedRole.responsibilities ?? []).length;
+    const seniorityPresent = Boolean(parsedRole.seniority_band);
     if (mustHaveCount === 0 && skillsRequiredCount === 0) {
-      return NextResponse.json(
-        {
-          error:
-            "We couldn't pull any specific requirements out of this job description. " +
-            "Add a few lines about the must-have skills, seniority, and tools, then re-analyse.",
-          empty_role: true,
-        },
-        { status: 422 }
+      const aiCompleteParse = responsibilitiesCount > 0 || seniorityPresent;
+      if (aiCompleteParse) {
+        // Case (a): AI got OTHER fields out, just no requirements →
+        // the JD itself is too thin. Hard-fail with clear guidance.
+        return NextResponse.json(
+          {
+            error:
+              "We couldn't pull any specific requirements out of this job description. " +
+              "Add a few lines about the must-have skills, seniority, and tools, then re-analyse.",
+            empty_role: true,
+          },
+          { status: 422 }
+        );
+      }
+      // Case (b): AI failed completely, only title made it through the
+      // regex fallback. Save it anyway with a warning the UI surfaces.
+      console.warn(
+        `[parse] AI extraction returned only title (parse fell through to regex fallback). Saving anyway with empty_role warning so recruiter can edit fields.`,
       );
+      // Fall through — the role will be saved with whatever fields exist.
+      // The response below adds a warning flag.
     }
 
     // Preserve recruiter overrides that represent deliberate decisions.
@@ -134,7 +156,19 @@ export async function POST(
     }).catch((err) => console.error("[parse] history write failed:", err));
 
     void recordUsage(auth.orgId, auth.userId, "parse", { jobId: id });
-    return NextResponse.json({ parsedRole, changes, evaluation });
+    // Surface the regex-fallback path so the UI can show a "review and fill
+    // missing fields" hint rather than letting the recruiter assume the
+    // parse was complete. mustHaveCount===0 && skillsRequiredCount===0 at
+    // this point means the case (b) branch above let it through.
+    const fellBackToRegex =
+      (parsedRole.must_haves ?? []).length === 0 &&
+      (parsedRole.skills_required ?? []).length === 0;
+    return NextResponse.json({
+      parsedRole,
+      changes,
+      evaluation,
+      ...(fellBackToRegex ? { warning: "AI parse returned no requirements — title saved from regex fallback. Edit fields manually or re-analyse." } : {}),
+    });
   } catch (err) {
     console.error("JD parse error:", err);
     return NextResponse.json(

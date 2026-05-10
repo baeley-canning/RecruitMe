@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { withRetry } from "@/lib/ai/chat";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
@@ -34,9 +35,14 @@ export async function POST(
       : null;
     const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
+    // Wrapped in withRetry to match score-all behaviour. Without this a
+    // single transient 429/502/503 from Anthropic surfaces as a hard error
+    // to the recruiter clicking Re-score, while the same transient handled
+    // by score-all retries silently. Inconsistent resilience confused
+    // recruiters who'd see "scoring failed" on manual click but not bulk.
     const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-      scoreCandidateStructured(candidate.profileText, parsedRole, salary, weights, auth.orgId),
-      predictAcceptance(candidate.profileText, parsedRole, salary),
+      withRetry(() => scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId)),
+      withRetry(() => predictAcceptance(candidate.profileText!, parsedRole, salary)),
     ]);
 
     if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
