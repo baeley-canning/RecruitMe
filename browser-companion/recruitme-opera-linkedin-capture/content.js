@@ -771,6 +771,14 @@ function extractLinesFromDetachedDocument(doc) {
   const root = doc.querySelector("main") || doc.body;
   if (!root) return [];
 
+  // Strip script/style/code blocks BEFORE extraction — LinkedIn embeds tens
+  // of KB of Ember prerender JSON in <code> tags inside <main>, which
+  // textContent would pull through. Removing them up front lets us safely
+  // use textContent fallback below.
+  for (const noise of root.querySelectorAll("script, style, code, noscript")) {
+    noise.remove();
+  }
+
   const selectors = [
     "main h1",
     "main h2",
@@ -780,6 +788,13 @@ function extractLinesFromDetachedDocument(doc) {
     "main span[aria-hidden='true']",
     "main span.visually-hidden",
     "main div[aria-label]",
+    // LinkedIn's current /details/<section>/ pages render entries inside
+    // listitem divs and data-view-name'd component wrappers. Without these
+    // selectors, the entire deep page's content is invisible to extraction.
+    "main div[role='listitem']",
+    "main article",
+    "main div[data-view-name]",
+    "main span[dir='ltr']",
   ];
   const raw = [];
 
@@ -792,12 +807,17 @@ function extractLinesFromDetachedDocument(doc) {
     if (value) raw.push(value);
   }
 
-  // Intentionally NO root.textContent fallback. Detached documents have no
-  // layout, so textContent on <main> includes content inside <script>/<code>
-  // hydration blocks — LinkedIn embeds tens of KB of Ember prerender JSON
-  // there. When LinkedIn changes the deep-page layout and our scoped
-  // selectors miss, returning empty is correct; merging JSON garbage into
-  // the profile poisons the AI score (observed at 99,989 chars / 12% match).
+  // Last-resort fallback: if scoped selectors returned almost nothing
+  // (LinkedIn changed their DOM and our selectors no longer match), pull
+  // textContent from the whole main tree. We've already stripped script/
+  // style/code/noscript above, so this no longer drags JSON garbage in.
+  // Threshold: <30 lines means our targeted selectors likely missed the
+  // primary content.
+  if (raw.length < 30) {
+    const fullText = cleanText(root.textContent || "");
+    if (fullText.length > 0) raw.push(fullText);
+  }
+
   return filterProfileLines(raw.flatMap(splitIntoLines));
 }
 
@@ -826,6 +846,12 @@ async function fetchExperienceDetailsText(profileBaseUrl) {
 
   const doc = new DOMParser().parseFromString(fetched.html, "text/html");
   const lines = extractLinesFromDetachedDocument(doc);
+  console.log("[RecruitMe] /details/experience/ raw extraction", {
+    htmlBytes: fetched.html.length,
+    linesExtracted: lines.length,
+    firstFiveLines: lines.slice(0, 5),
+    finalUrl: fetched.finalUrl,
+  });
   while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
 
   const useful = [];
@@ -833,6 +859,9 @@ async function fetchExperienceDetailsText(profileBaseUrl) {
   for (const line of lines) {
     if (/^(experience|profile|linkedin|search)$/i.test(line)) continue;
     if (/^skip to main content$/i.test(line)) continue;
+    // Filter LinkedIn nav / footer / ad clutter that the broader textContent
+    // fallback now captures. Keep the work-history content intact.
+    if (/^(home|jobs|messaging|notifications|me|work|sign in|sign out|join now|about|accessibility|talent solutions|community guidelines|professional community policies|privacy & terms|brand policy|guest controls|language|ad options|why am i seeing this ad|manage your ad preferences|hide or report this ad|i don'?t want to see this ad)$/i.test(line)) continue;
     const key = normalizeLineKey(line);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -1113,20 +1142,25 @@ async function enrichAll(capture, startUrl) {
 
 async function captureProfile() {
   const startUrl = location.href.replace(/[?#].*$/, "");
+  console.log("[RecruitMe] captureProfile START", { url: startUrl, version: chrome?.runtime?.getManifest?.()?.version });
   if (!isLinkedInProfilePage()) {
     throw new Error("Not on a LinkedIn profile page");
   }
 
   await waitForMain();
+  console.log("[RecruitMe] waitForMain complete");
   await sleep(700);
 
   const clicked = new Set();
   const expandedAtTop = await expandInlineSections(clicked, { visibleOnly: true, passes: 2 });
+  console.log("[RecruitMe] first expandInlineSections done", { ok: expandedAtTop, clicks: clicked.size });
   if (!expandedAtTop) {
     throw new Error("Page navigated during capture - will retry automatically");
   }
 
+  console.log("[RecruitMe] starting scrollProfile (you should see the page scroll now)");
   const scrolled = await scrollProfile(clicked);
+  console.log("[RecruitMe] scrollProfile done", { ok: scrolled });
   if (!scrolled) {
     throw new Error("Page navigated during capture - will retry automatically");
   }
