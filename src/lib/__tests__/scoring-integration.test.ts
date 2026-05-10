@@ -364,3 +364,64 @@ describe("Snippet cap: location override cannot boost snippet above cap", () => 
     expect(after.overall).toBeLessThanOrEqual(65);
   });
 });
+
+// ─── 11. Stored LinkedIn evidence beats model misses ──────────────────────────
+
+describe("Deterministic evidence repair for exact stored profile signals", () => {
+  it("does not preserve missing C++/Sybase verdicts when LinkedIn text literally contains them", async () => {
+    mockChat.mockResolvedValue(claudeResponse({
+      overall_score: 12,
+      skill_fit: 10,
+      must_have_coverage: [
+        { requirement: "Strong C++ engineering experience", status: "missing", evidence: "No mention of C++ anywhere in the profile" },
+        { requirement: "Sybase database experience", status: "missing", evidence: "No mention of Sybase anywhere in the profile" },
+      ],
+      reasons_against: [
+        "No mention of C++ or Sybase anywhere in the profile — critical requirements absent.",
+        "Current title is Lead Engineer - Quality, suggesting QA/test engineering focus.",
+      ],
+      recruiter_summary: "Profile appears to lack C++ and Sybase.",
+    }));
+
+    const profileText = [
+      "Brendan Lester",
+      "Lead Engineer - Quality at Xero",
+      "Wellington, New Zealand",
+      "Experience",
+      "Technical Consultant / C++ Developer at ACC",
+      "Jun 1998 - Aug 2001 · 3 yrs 3 mos",
+      "Full stack, Microsoft Visual C++ developer (Sybase DB) at ACC on the Pathway team.",
+      "Later responsible for operational stability and availability of the platform.",
+      "C++ Developer & Support",
+      "New Zealand Customs Service · Full-time",
+      "Mar 1997 - Jun 1998 · 1 yr 4 mos",
+      "Solaris C++Developer for Intelligence, Goods and Passenger business streams within the new CusMod solution.",
+      "Additional profile content. ".repeat(130),
+    ].join("\n");
+
+    const result = await scoreCandidateStructured(profileText, {
+      ...baseParsedRole,
+      title: "Technical Consultant / C++ Developer",
+      must_haves: [
+        "Strong C++ engineering experience",
+        "Sybase database experience",
+      ],
+      skills_required: ["C++", "Sybase"],
+    });
+
+    expect(result.must_have_coverage).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        requirement: "Strong C++ engineering experience",
+        status: "likely_historical",
+      }),
+      expect.objectContaining({
+        requirement: "Sybase database experience",
+        status: "likely_historical",
+      }),
+    ]));
+    expect(result.must_have_coverage[0].evidence).toContain("Stored LinkedIn/profile text contains exact requirement signal");
+    expect(result.reasons_for[0]).toContain("Stored LinkedIn/profile text contains exact critical signal");
+    expect(result.reasons_against.join(" ")).not.toMatch(/No mention of C\+\+ or Sybase/);
+    expect(result.overall).toBeGreaterThan(12);
+  });
+});

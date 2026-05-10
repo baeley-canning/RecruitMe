@@ -636,6 +636,8 @@ export function signalMatchesText(text: string, signal: string): boolean {
   const haystack = normalizeSignalText(text);
   const needle = normalizeSignalText(signal);
   if (!needle) return false;
+  if (needle === "c++") return /\bc\+\+/i.test(text);
+  if (needle === "c#") return /\bc#/i.test(text);
   if (needle.length <= 4) {
     return new RegExp(
       `(?:^|\\s)${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`

@@ -43,6 +43,7 @@ describe("requirement signal extraction", () => {
     expect(signalMatchesText("NoSQL MongoDB engineer", "sql")).toBe(false);
     expect(signalMatchesText("Access management specialist", "css")).toBe(false);
     expect(signalMatchesText("C++ Linux engineer", "c++")).toBe(true);
+    expect(signalMatchesText("Solaris C++Developer for CusMod", "c++")).toBe(true);
   });
 
   it("extracts distinctive anchors for source gating and query intent", () => {

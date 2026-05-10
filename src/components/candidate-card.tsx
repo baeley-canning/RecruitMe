@@ -1194,7 +1194,7 @@ export const CandidateCard = memo(function CandidateCard({
             <div>
               <p className="text-xs font-semibold text-amber-800">Profile capture may be incomplete</p>
               <p className="text-xs text-amber-800 mt-0.5">
-                Score is unreliable until CV, JobAdder, or full work history is checked.
+                Score is unreliable until CV or full work history is checked.
               </p>
             </div>
           </div>

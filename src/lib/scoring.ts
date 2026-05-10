@@ -189,7 +189,7 @@ export function getMustHaveImportance(requirement: string): number {
   if (/\bperformance test|load test|jmeter|loadrunner|gatling|neoload\b/i.test(r)) return 1.3;
   // Primary/rare technologies — if explicitly required and confirmed missing on a full profile,
   // no amount of location/domain/seniority alignment rescues the candidate.
-  if (/\bc\+\+\b/i.test(r)) return 1.5;
+  if (/\bc\+\+/i.test(r)) return 1.5;
   if (/\bsybase\b|\bcobol\b|\bmainframe\b/i.test(r)) return 1.5; // legacy/rare: absence is a blocker
   // NZ-scarce industrial / compliance specialisms — same scarcity reasoning as
   // legacy DBs. PLC is phrase-anchored to dodge company-suffix collision
@@ -255,7 +255,7 @@ export function analyseProfileCaptureCompleteness(args: {
 
   return {
     code: "incomplete_capture",
-    message: "Profile capture may be incomplete — score is unreliable until CV, JobAdder, or full work history is checked.",
+    message: "LinkedIn capture may be incomplete — upload CV or check the full work history before deciding.",
     evidence,
   };
 }
@@ -494,12 +494,12 @@ export function buildScoreBreakdown(params: {
 
   const effectiveReasonsAgainst = [...params.reasons_against];
   if (params.profileCaptureWarning) {
-    effectiveReasonsAgainst.unshift("Profile capture appears incomplete — do not reject or progress without CV, JobAdder, or full work-history evidence");
+    effectiveReasonsAgainst.unshift("LinkedIn capture appears incomplete — do not reject or progress without CV or full work-history evidence");
   }
   if (params.claudeOverallScore != null && params.claudeOverallScore > cap) {
     effectiveReasonsAgainst.push(
       params.profileCaptureWarning
-        ? `Score capped at ${overall} — profile capture appears incomplete; fetch CV/JobAdder before deciding`
+        ? `Score capped at ${overall} — LinkedIn capture appears incomplete; upload CV before deciding`
         : `Score capped at ${overall} — provisional snippet data; fetch full profile for reliable assessment`
     );
   } else if (params.claudeOverallScore == null && rawOverall > overall) {
@@ -516,7 +516,7 @@ export function buildScoreBreakdown(params: {
   //    unmeasurable requirements — scoring is directional only in that case.
   const effectiveMissingEvidence = [...params.missing_evidence];
   if (params.profileCaptureWarning) {
-    effectiveMissingEvidence.unshift("Full work history / CV / JobAdder profile is required before treating this score as reliable");
+    effectiveMissingEvidence.unshift("Full work history from LinkedIn or CV is required before treating this score as reliable");
   }
 
   const CLEARANCE_RE = /security clearance|secret vetting|confidential vetting|nz citizen|nz resident|work rights|right to work/i;

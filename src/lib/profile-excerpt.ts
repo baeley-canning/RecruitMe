@@ -190,7 +190,7 @@ export function buildRequirementAwareProfileExcerpt(
     const index = lines.findIndex((line) => lineIncludesTerm(line, term));
     if (index === -1) continue;
     const start = Math.max(0, index - 2);
-    const end = Math.min(lines.length, index + 3);
+    const end = Math.min(lines.length, index + 7);
     const snippet = lines.slice(start, end).join("\n");
     const key = snippet.toLowerCase();
     if (seen.has(key)) continue;

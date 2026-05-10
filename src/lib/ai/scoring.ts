@@ -4,11 +4,17 @@ import { getRecruitingContext } from "../recruiter-memory";
 import {
   buildScoreBreakdown,
   CATEGORY_WEIGHTS_V2,
+  getMustHaveImportance,
   type ScoreBreakdown,
   type MustHaveStatus,
   type NiceToHaveStatus,
   type CategoryScore,
 } from "../scoring";
+import {
+  extractSignalsFromRequirement,
+  normalizeSignalText,
+  signalMatchesText,
+} from "../requirement-signals";
 import {
   buildRequirementAwareProfileExcerpt,
   buildProfileExcerpt,
@@ -111,6 +117,63 @@ export function evidenceLooksGrounded(evidence: string, profileLower: string): b
     .filter((t) => !EVIDENCE_BENIGN_WORDS.has(t));
   if (tokens.length === 0) return true; // no testable content
   return tokens.some((t) => profileLower.includes(t));
+}
+
+const EXACT_PROFILE_EVIDENCE_SIGNALS = new Set([
+  "c++",
+  "cpp",
+  "sybase",
+  "cobol",
+  "mainframe",
+  "scada",
+  "rtu",
+  "isms",
+  "iso 27001",
+  "programmable logic controller",
+  "plc programming",
+  "plc integration",
+  "plc configuration",
+]);
+
+function exactRequirementSignalsInProfile(requirement: string, profileText: string): string[] {
+  if (getMustHaveImportance(requirement) < 1.5) return [];
+
+  const matches = new Set<string>();
+  for (const signal of extractSignalsFromRequirement(requirement)) {
+    const normalized = normalizeSignalText(signal);
+    if (!EXACT_PROFILE_EVIDENCE_SIGNALS.has(normalized)) continue;
+    if (signalMatchesText(profileText, normalized)) matches.add(normalized);
+  }
+
+  return [...matches];
+}
+
+function repairMissingMustHaveFromStoredProfile(
+  requirement: string,
+  coverage: MustHaveStatus,
+  profileText: string
+): { coverage: MustHaveStatus; repairedSignals: string[] } {
+  if (coverage.status !== "missing" && coverage.status !== "negative" && coverage.status !== "unknown") {
+    return { coverage, repairedSignals: [] };
+  }
+
+  const repairedSignals = exactRequirementSignalsInProfile(requirement, profileText);
+  if (repairedSignals.length === 0) return { coverage, repairedSignals: [] };
+
+  return {
+    repairedSignals,
+    coverage: {
+      requirement,
+      status: "likely_historical",
+      evidence: `Stored LinkedIn/profile text contains exact requirement signal(s): ${repairedSignals.join(", ")}. Model marked this unresolved, so RecruitMe preserved the evidence conservatively; review recency manually.`,
+    },
+  };
+}
+
+function statementContradictedByStoredSignals(statement: string, signals: Set<string>): boolean {
+  if (signals.size === 0) return false;
+  if (!/\b(no evidence|no mention|not mentioned|absent|missing|lacks?|zero evidence)\b/i.test(statement)) return false;
+  return [...signals].some((signal) => signalMatchesText(statement, signal));
 }
 
 // ─── AI functions ──────────────────────────────────────────────────────────────
@@ -333,8 +396,15 @@ ${escapeXmlForPrompt(profileSlice)}
   const POSITIVE_NTH = new Set<NiceToHaveStatus["status"]>(["confirmed", "likely"]);
 
   const usedMustHaveIndexes = new Set<number>();
+  const repairedStoredSignals = new Set<string>();
   const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
     const match = findCoverageMatch(requirement, rawMustHaveCoverage, usedMustHaveIndexes);
+    const repair = (coverage: MustHaveStatus) => {
+      const repaired = repairMissingMustHaveFromStoredProfile(requirement, coverage, profileText);
+      repaired.repairedSignals.forEach((signal) => repairedStoredSignals.add(signal));
+      return repaired.coverage;
+    };
+
     if (match) {
       // If Claude claims this is positive but the evidence string contains
       // no token that appears anywhere in the profile, treat it as a
@@ -347,17 +417,17 @@ ${escapeXmlForPrompt(profileSlice)}
           evidence: `Model claimed positive evidence but it was not found in the profile text — review manually.`,
         };
       }
-      return {
+      return repair({
         requirement,
         status: match.status,
         evidence: match.evidence,
-      };
+      });
     }
-    return {
+    return repair({
       requirement,
       status: "unknown",
       evidence: "No coverage returned by model for this must-have.",
-    };
+    });
   });
 
   const usedNiceToHaveIndexes = new Set<number>();
@@ -414,7 +484,9 @@ ${escapeXmlForPrompt(profileSlice)}
   //   B — evidence-of-absence phrases tied to experience/background nouns
   //       (fire when Claude says "no evidence of X experience" — specific enough
   //       to avoid false positives on incidental nice-to-have gaps)
-  const reasonsAgainst = stringArray(raw.reasons_against);
+  const reasonsAgainst = stringArray(raw.reasons_against).filter(
+    (reason) => !statementContradictedByStoredSignals(reason, repairedStoredSignals)
+  );
   const hasExplicitBlocker = reasonsAgainst.some((r) =>
     /\b(entirely absent|completely absent|fundamental mismatch|wrong domain entirely|not a match|critical requirement.*missing|missing.*critical|clearly unsuitable|unsuitable for|completely wrong|domain mismatch|level mismatch|(?:dis|un)qualif\w*|ruled out)\b/i.test(r) ||
     /\bno evidence (?:of|for) .{0,50}(?:experience|background|expertise|skills?|usage|history|exposure)\b/i.test(r) ||
@@ -427,7 +499,9 @@ ${escapeXmlForPrompt(profileSlice)}
     claudeOverallScore = Math.min(claudeOverallScore, 45);
   }
   const recruiterSummary = typeof raw.recruiter_summary === "string" ? raw.recruiter_summary : "";
-  const missingEvidence = stringArray(raw.missing_evidence);
+  const missingEvidence = stringArray(raw.missing_evidence).filter(
+    (evidence) => !statementContradictedByStoredSignals(evidence, repairedStoredSignals)
+  );
   const profileCaptureWarning = analyseProfileCaptureCompleteness({
     profileText,
     recruiterSummary,
@@ -435,11 +509,23 @@ ${escapeXmlForPrompt(profileSlice)}
     missingEvidence,
   });
 
+  if (repairedStoredSignals.size > 0 && claudeOverallScore !== null) {
+    console.warn(
+      `[scoring] Claude missed exact stored profile signal(s): ${[...repairedStoredSignals].join(", ")} — using formula score from repaired coverage`
+    );
+    claudeOverallScore = null;
+  }
+
   return buildScoreBreakdown({
     categories,
     must_have_coverage:    mustHaveCoverage,
     nice_to_have_coverage: niceToHaveCoverage,
-    reasons_for:           stringArray(raw.reasons_for),
+    reasons_for:           [
+      ...(repairedStoredSignals.size > 0
+        ? [`Stored LinkedIn/profile text contains exact critical signal(s): ${[...repairedStoredSignals].join(", ")}.`]
+        : []),
+      ...stringArray(raw.reasons_for),
+    ],
     reasons_against:       reasonsAgainst,
     missing_evidence:      missingEvidence,
     recruiter_summary:     recruiterSummary,

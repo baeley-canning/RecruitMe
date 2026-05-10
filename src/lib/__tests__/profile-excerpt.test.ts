@@ -88,4 +88,44 @@ describe("buildRequirementAwareProfileExcerpt", () => {
 
     expect(requirementAware).not.toContain("Built NoSQL document models");
   });
+
+  it("preserves Brendan-style historic C++ and Sybase evidence even when deep in the profile", () => {
+    const recentFiller = Array.from({ length: 90 }, (_, index) =>
+      `Lead Engineer - Quality recent line ${index + 1}: Playwright automation, Salesforce testing and QA leadership.`
+    ).join("\n");
+    const historicEvidence = [
+      "Technical Consultant / C++ Developer at ACC",
+      "Xacta Consulting",
+      "Jun 1998 - Aug 2001 · 3 yrs 3 mos",
+      "Full stack, Microsoft Visual C++ developer (Sybase DB) at ACC on the Pathway team.",
+      "Later responsible for operational stability and availability of the platform.",
+      "C++ Developer & Support",
+      "New Zealand Customs Service · Full-time",
+      "Mar 1997 - Jun 1998 · 1 yr 4 mos",
+      "Solaris C++Developer for Intelligence, Goods and Passenger business streams within the new CusMod solution.",
+    ].join("\n");
+    const profileText = [
+      "Brendan Lester",
+      "Lead Engineer - Quality",
+      "Wellington, New Zealand",
+      "About",
+      "QA automation and SDLC consultancy.",
+      "Experience",
+      recentFiller,
+      historicEvidence,
+    ].join("\n");
+
+    const baseline = buildProfileExcerpt(profileText, 1400);
+    const requirementAware = buildRequirementAwareProfileExcerpt(profileText, 1400, [
+      "Strong C++ engineering experience",
+      "Sybase database experience",
+    ]);
+
+    expect(baseline).not.toContain("Sybase DB");
+    expect(requirementAware).toContain("Microsoft Visual C++ developer");
+    expect(requirementAware).toContain("Sybase DB");
+    expect(requirementAware).toContain("New Zealand Customs Service");
+    expect(requirementAware).toContain("Solaris C++Developer");
+    expect(requirementAware).toContain("CusMod");
+  });
 });

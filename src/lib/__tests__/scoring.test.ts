@@ -210,6 +210,11 @@ describe("getMustHaveImportance — degree requirements", () => {
     expect(getMustHaveImportance("Ability to obtain NZ security clearance")).toBe(1.0);
     expect(getMustHaveImportance("Must be eligible for security clearance")).toBe(1.0);
   });
+
+  it("returns 1.5 for C++ despite punctuation boundaries", () => {
+    expect(getMustHaveImportance("Strong C++ engineering experience")).toBe(1.5);
+    expect(getMustHaveImportance("Microsoft Visual C++ developer")).toBe(1.5);
+  });
 });
 
 // ─── computeNiceToHavePct ──────────────────────────────────────────────────────
@@ -644,7 +649,7 @@ describe("buildScoreBreakdown", () => {
     expect(bd.profile_capture_warning?.code).toBe("incomplete_capture");
     expect(bd.overall).toBeLessThanOrEqual(50);
     expect(bd.confidence.level).toBe("low");
-    expect(bd.reasons_against[0]).toMatch(/Profile capture appears incomplete/);
+    expect(bd.reasons_against[0]).toMatch(/LinkedIn capture appears incomplete/);
     expect(bd.missing_evidence[0]).toMatch(/Full work history/);
   });
 
