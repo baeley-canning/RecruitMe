@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
+import { extensionCorsHeaders } from "@/lib/extension-cors";
 
 const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-opera-linkedin-capture");
 
@@ -13,16 +13,16 @@ export async function OPTIONS(req: Request) {
  * Returns the current extension version so the browser extension can compare
  * against its own version and prompt users to re-download when behind.
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const manifest = JSON.parse(
       fs.readFileSync(path.join(EXTENSION_DIR, "manifest.json"), "utf8")
     ) as { version?: string };
     return NextResponse.json(
       { version: manifest.version ?? "unknown", updateUrl: "/linkedin-setup" },
-      { headers: EXTENSION_CORS }
+      { headers: extensionCorsHeaders(req) }
     );
   } catch {
-    return NextResponse.json({ version: "unknown" }, { headers: EXTENSION_CORS });
+    return NextResponse.json({ version: "unknown" }, { headers: extensionCorsHeaders(req) });
   }
 }

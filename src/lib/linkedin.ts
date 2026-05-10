@@ -4,6 +4,15 @@ export function normaliseLinkedInUrl(raw: string): string {
   return `https://www.linkedin.com/in/${slug.toLowerCase()}`;
 }
 
+// Validate that a string is genuinely a linkedin.com/in/<slug> URL. Used by
+// extension API routes — without this, callers can submit any URL and have
+// the server persist it as the candidate's linkedinUrl.
+const LINKEDIN_PROFILE_URL_RE = /^https?:\/\/(?:[a-z0-9-]+\.)?linkedin\.com\/in\/[^/?#\s]+/i;
+export function isLinkedInProfileUrl(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return LINKEDIN_PROFILE_URL_RE.test(raw.trim());
+}
+
 export function linkedInSlugAliasKey(raw: string): string {
   const match = raw.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
   const slug = match ? match[1] : raw.replace(/[?#].*$/, "").replace(/\/$/, "");

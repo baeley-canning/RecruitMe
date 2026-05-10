@@ -19,9 +19,14 @@ const corsMocks = vi.hoisted(() => ({
   extensionCorsHeaders: vi.fn(() => ({ "Access-Control-Allow-Origin": "*" })),
 }));
 
+const usageMocks = vi.hoisted(() => ({
+  checkRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/extension-cors", () => corsMocks);
+vi.mock("@/lib/usage", () => usageMocks);
 
 import { GET, OPTIONS } from "./route";
 
@@ -29,6 +34,7 @@ describe("extension profile-match route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionMocks.verifyExtensionAuth.mockResolvedValue({ userId: "u1", orgId: "org-1", isOwner: false });
+    usageMocks.checkRateLimit.mockResolvedValue({ allowed: true });
   });
 
   it("returns 401 without auth", async () => {

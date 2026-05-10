@@ -147,26 +147,23 @@ describe("saveCapturedProfileFast (stage 1)", () => {
     ).rejects.toThrow(/enough usable profile text/);
   });
 
-  it("returns candidate even when the linkedinUrl collides with another candidate (P2002)", async () => {
+  it("rejects the capture when the linkedinUrl collides with another candidate (P2002)", async () => {
+    // Previously this path silently stripped the linkedinUrl and wrote
+    // someone else's profile text into the wrong candidate row. Now it
+    // refuses the write so the recruiter can route to the canonical record.
     const collision = new dbMocks.Prisma.PrismaClientKnownRequestError("dup url", "P2002");
-    dbMocks.prisma.candidate.update
-      .mockRejectedValueOnce(collision)
-      .mockImplementationOnce(({ data }) =>
-        Promise.resolve({ id: "cand-1", ...data }),
-      );
+    dbMocks.prisma.candidate.update.mockRejectedValueOnce(collision);
 
-    const { candidate } = await saveCapturedProfileFast({
-      jobId: "job-1",
-      candidateId: "cand-1",
-      profileText: PROFILE_TEXT,
-      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
-    });
-
-    expect(candidate.id).toBe("cand-1");
-    // Second call should NOT include linkedinUrl.
-    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(2);
-    const [, secondCall] = dbMocks.prisma.candidate.update.mock.calls;
-    expect((secondCall[0] as { data: Record<string, unknown> }).data.linkedinUrl).toBeUndefined();
+    await expect(
+      saveCapturedProfileFast({
+        jobId: "job-1",
+        candidateId: "cand-1",
+        profileText: PROFILE_TEXT,
+        linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+      }),
+    ).rejects.toThrow(/DUPLICATE_LINKEDIN_URL/);
+    // We must NOT retry without the URL — that's the bug the new behaviour fixes.
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
   });
 
   it("does not preserve a stale score when a similar recapture changes the score hash", async () => {

@@ -192,16 +192,31 @@ export async function POST(
       // LinkedIn gives current-role context + headline signal; CV gives the full
       // detailed bullet history. Together they score better than either alone,
       // and a CV-only swap would lose LinkedIn's current-employer signal.
+      //
+      // When the combined text exceeds the 50_000-char column limit, preserve
+      // the CV intact (more authoritative for full work history) and trim the
+      // LinkedIn portion. Naively slicing the concatenation chops the CV in
+      // half mid-sentence and the next score sees a broken last role.
       const existingText = candidate.profileText?.trim() ?? "";
       const hasLinkedInCapture = Boolean(candidate.profileCapturedAt) || candidate.source === "extension";
+      const TEXT_CAP = 50_000;
+      const SEP = "\n\n--- CV ---\n\n";
+
+      const mergeWithLinkedInTrim = (linkedin: string, cv: string): string => {
+        const cvSlice = cv.slice(0, TEXT_CAP);
+        if (cvSlice.length === TEXT_CAP) return cvSlice; // CV alone fills the cap
+        const remaining = TEXT_CAP - cvSlice.length - SEP.length;
+        if (remaining <= 0) return `${SEP}${cvSlice}`.slice(-TEXT_CAP);
+        return `${linkedin.slice(0, remaining)}${SEP}${cvSlice}`;
+      };
 
       let text: string;
-      if (hasLinkedInCapture && existingText.length >= 200) {
-        text = `${existingText}\n\n--- CV ---\n\n${cvText}`.slice(0, 50000);
+      if (hasLinkedInCapture && existingText.length >= 200 && cvText) {
+        text = mergeWithLinkedInTrim(existingText, cvText);
       } else if (existingText && cvText && existingText !== cvText) {
-        text = `${existingText}\n\n--- CV ---\n\n${cvText}`.slice(0, 50000);
+        text = mergeWithLinkedInTrim(existingText, cvText);
       } else {
-        text = (cvText || existingText).slice(0, 50000);
+        text = (cvText || existingText).slice(0, TEXT_CAP);
       }
 
       // Field-level enrichment: pull name / headline / location out of the CV

@@ -1,4 +1,4 @@
-import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
+import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifyExtensionAuth, jobsWhere } from "@/lib/session";
@@ -31,6 +31,6 @@ export async function GET(req: Request) {
       company: job.company,
       candidateCount: job._count.candidates,
     })),
-    { headers: EXTENSION_CORS }
+    { headers: extensionCorsHeaders(req) }
   );
 }

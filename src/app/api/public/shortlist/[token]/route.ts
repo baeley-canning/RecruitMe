@@ -16,7 +16,9 @@ export async function GET(
 ) {
   const { token } = await params;
 
-  if (!token || token.length < 16) {
+  // 32-byte base64url tokens are exactly 43 chars (no padding). Reject anything
+  // that doesn't look like a valid token rather than touching the DB on garbage.
+  if (!token || !/^[A-Za-z0-9_-]{40,64}$/.test(token)) {
     return NextResponse.json({ error: "Invalid share link" }, { status: 404 });
   }
 
@@ -28,6 +30,7 @@ export async function GET(
       company: true,
       location: true,
       parsedRole: true,
+      shareTokenExpiresAt: true,
       candidates: {
         where: { status: "shortlisted" },
         orderBy: { matchScore: "desc" },
@@ -47,6 +50,12 @@ export async function GET(
   });
 
   if (!job) {
+    return NextResponse.json({ error: "Shortlist not found" }, { status: 404 });
+  }
+
+  // Expired tokens 404 like missing ones — don't tell the caller the share
+  // ever existed. Recruiter can rotate to issue a fresh URL.
+  if (job.shareTokenExpiresAt && job.shareTokenExpiresAt.getTime() < Date.now()) {
     return NextResponse.json({ error: "Shortlist not found" }, { status: 404 });
   }
 

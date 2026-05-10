@@ -57,7 +57,8 @@ When the capture is partial (no Experience section, fewer than 2 dated roles, mu
 - DO mark unverifiable must-haves as "unknown" — never "missing" or "negative". "Missing" implies you checked and it's not there; "unknown" reflects "couldn't see in current capture".
 - Leave "reasons_against": [] EMPTY. Do NOT invent rejection reasons from absent data ("no mention of X" on a partial capture is a scrape artefact, not a candidate flaw). The recruiter will see a "partial profile" badge alongside the score and decide whether to progress.
 - "reasons_for" may include factual signals visible in the captured text (current title, employer, location).
-- Keep "recruiter_summary" honest: e.g. "Lead Engineer at Xero (Wellington) — visible LinkedIn data only; full work history not captured. Treat as directional ranking signal."
+- Keep "recruiter_summary" honest: e.g. "[CAPTURE_PARTIAL] Lead Engineer at Xero (Wellington) — visible LinkedIn data only; full work history not captured. Treat as directional ranking signal."
+- ALWAYS prefix the recruiter_summary with the literal token "[CAPTURE_PARTIAL] " when scoring on a partial capture (do not use this token otherwise). This is a deterministic marker the server uses to flag partial captures in the UI; the visible prose follows the token.
 The recruiter's question at sourcing stage is "who do I progress to the next funnel stage?", not "who do I hire?". Give them a directional score they can rank by.`;
 
 export const SCORING_CATEGORY_RULES = `Category score rules:

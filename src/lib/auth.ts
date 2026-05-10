@@ -14,6 +14,54 @@ if (process.env.NODE_ENV === "production" && !process.env.NEXTAUTH_SECRET?.trim(
 const MAX_ATTEMPTS = 10;
 const WINDOW_MS = 15 * 60 * 1000;
 
+// In-process fallback. The DB is the source of truth across replicas, but if
+// Postgres is degraded we still need to rate-limit — otherwise a flood lands
+// during exactly the failure mode where everything else is slow. Bounded
+// LRU-style: cap entries so a flood of unique usernames can't OOM the worker.
+const IN_PROC_CAP = 5_000;
+const inProcAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function pruneInProcExpired() {
+  const now = Date.now();
+  for (const [key, entry] of inProcAttempts) {
+    if (entry.resetAt <= now) inProcAttempts.delete(key);
+  }
+  if (inProcAttempts.size > IN_PROC_CAP) {
+    // Evict oldest first (insertion order on Map iteration).
+    const overflow = inProcAttempts.size - IN_PROC_CAP;
+    const it = inProcAttempts.keys();
+    for (let i = 0; i < overflow; i++) {
+      const next = it.next();
+      if (next.done) break;
+      inProcAttempts.delete(next.value);
+    }
+  }
+}
+
+function bumpInProc(key: string) {
+  pruneInProcExpired();
+  const now = Date.now();
+  const existing = inProcAttempts.get(key);
+  if (existing && existing.resetAt > now) {
+    existing.count += 1;
+  } else {
+    inProcAttempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
+  }
+}
+
+function inProcLockState(key: string): { locked: boolean; minsLeft: number } {
+  const entry = inProcAttempts.get(key);
+  if (!entry) return { locked: false, minsLeft: 0 };
+  if (entry.resetAt <= Date.now()) {
+    inProcAttempts.delete(key);
+    return { locked: false, minsLeft: 0 };
+  }
+  if (entry.count >= MAX_ATTEMPTS) {
+    return { locked: true, minsLeft: Math.ceil((entry.resetAt - Date.now()) / 60000) };
+  }
+  return { locked: false, minsLeft: 0 };
+}
+
 export async function recordLoginFailure(key: string): Promise<void> {
   const now = new Date();
   const resetAt = new Date(now.getTime() + WINDOW_MS);
@@ -23,20 +71,33 @@ export async function recordLoginFailure(key: string): Promise<void> {
       update: { count: { increment: 1 } },
       create: { key, count: 1, resetAt },
     });
-  } catch { /* non-fatal */ }
+  } catch {
+    // DB write failed — fall back to in-process counter so the brute-force
+    // ceiling still applies during a Postgres degradation.
+    bumpInProc(key);
+    return;
+  }
+  // Mirror to in-process so concurrent checks during this request stay
+  // consistent. The DB remains source of truth across replicas.
+  bumpInProc(key);
 }
 
 export async function clearLoginFailures(key: string): Promise<void> {
+  inProcAttempts.delete(key);
   try {
     await prisma.loginAttempt.deleteMany({ where: { key } });
   } catch { /* non-fatal */ }
 }
 
 export async function checkLoginLocked(key: string): Promise<{ locked: boolean; minsLeft: number }> {
+  // Local-first check: even when the DB is healthy, if this process has
+  // already seen MAX_ATTEMPTS, lock immediately without round-tripping.
+  const local = inProcLockState(key);
+  if (local.locked) return local;
+
   try {
     const entry = await prisma.loginAttempt.findUnique({ where: { key } });
     if (!entry) return { locked: false, minsLeft: 0 };
-    // Expired window — clean up and allow
     if (new Date() >= entry.resetAt) {
       await prisma.loginAttempt.deleteMany({ where: { key } });
       return { locked: false, minsLeft: 0 };
@@ -45,8 +106,13 @@ export async function checkLoginLocked(key: string): Promise<{ locked: boolean; 
       const minsLeft = Math.ceil((entry.resetAt.getTime() - Date.now()) / 60000);
       return { locked: true, minsLeft };
     }
-  } catch { /* non-fatal — fail open so a DB outage doesn't lock everyone out */ }
-  return { locked: false, minsLeft: 0 };
+    return { locked: false, minsLeft: 0 };
+  } catch {
+    // DB read failed — fall back to in-process. This fails CLOSED in the
+    // sense that any prior in-process strikes still apply; we don't reset
+    // the counter on a DB blip.
+    return local;
+  }
 }
 
 const authUrl =

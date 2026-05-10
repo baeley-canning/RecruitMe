@@ -57,7 +57,11 @@ describe("shortlist share route", () => {
       params: Promise.resolve({ id: "job-1" }),
     });
     expect(res.status).toBe(200);
-    expect(dbMocks.prisma.job.update.mock.calls[0][0].data).toEqual({ shareToken: null });
+    // DELETE clears both the token and its expiry stamp.
+    expect(dbMocks.prisma.job.update.mock.calls[0][0].data).toEqual({
+      shareToken: null,
+      shareTokenExpiresAt: null,
+    });
   });
 
   it("GET returns the current token (or null)", async () => {

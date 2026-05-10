@@ -307,7 +307,7 @@ export default function CandidateProfilesPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${draft.candidateName.replace(/[^a-zA-Z0-9]/g, "_")}_Candidate_Profile.docx`;
+      a.download = `${(draft.candidateName.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "") || "Candidate")}_Candidate_Profile.docx`;
       a.click();
       URL.revokeObjectURL(url);
       setStep("download");

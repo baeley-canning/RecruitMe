@@ -40,9 +40,15 @@ export default function LoginPage() {
       );
       setLoading(false);
     } else {
-      const target = result?.url && result.url.startsWith(window.location.origin)
-        ? result.url
-        : "/jobs";
+      // Compare parsed origins, not string prefixes — `startsWith` lets
+      // `https://app.example.com.evil.com` masquerade as a same-origin URL.
+      let target = "/jobs";
+      if (result?.url) {
+        try {
+          const next = new URL(result.url, window.location.origin);
+          if (next.origin === window.location.origin) target = next.pathname + next.search + next.hash;
+        } catch { /* fall through to default */ }
+      }
       window.location.replace(target);
     }
   };

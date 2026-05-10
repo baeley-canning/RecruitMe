@@ -646,14 +646,19 @@ export async function saveCapturedProfileFast(args: {
     updated = await prisma.candidate.update({ where: { id: candidateId }, data: baseUpdate });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      // Another candidate in this job already has the same LinkedIn URL.
-      // Save everything except the URL — profile text is still valuable.
-      const without = { ...baseUpdate } as Record<string, unknown>;
-      delete without.linkedinUrl;
-      updated = await prisma.candidate.update({ where: { id: candidateId }, data: without });
-    } else {
-      throw err;
+      // Another candidate in this job already owns this LinkedIn URL — the
+      // canonical record. Refuse to write profileText/identity to the
+      // duplicate row; previously we stripped only the URL and copied
+      // someone else's text into the wrong record. Surface a clear error
+      // so the caller can route the recruiter to the existing candidate.
+      const e = new Error(
+        "DUPLICATE_LINKEDIN_URL: another candidate on this job already has this LinkedIn profile."
+      );
+      // @ts-expect-error attach status hint for callers/tests
+      e.status = 409;
+      throw e;
     }
+    throw err;
   }
   return { candidate: updated, identity };
 }

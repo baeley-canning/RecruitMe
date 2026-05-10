@@ -52,27 +52,39 @@ export async function PATCH(
     ...(body.interviewNotes !== undefined && { interviewNotes: body.interviewNotes }),
   };
 
-  // If status is changing, append to history and track contactedAt
+  // If status is changing, append to history and track contactedAt. The read
+  // (existing.statusHistory) and the write (data.statusHistory =
+  // JSON.stringify(history)) must run in a single transaction or two
+  // concurrent PATCHes can both read the same prior history and clobber each
+  // other's appended event. Serializable isolation prevents the lost-update.
   if (body.status !== undefined) {
-    const existing = await prisma.candidate.findUnique({
-      where: { id: candidateId },
-      select: { status: true, statusHistory: true, contactedAt: true },
-    });
+    const candidate = await prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.candidate.findUnique({
+          where: { id: candidateId },
+          select: { status: true, statusHistory: true, contactedAt: true },
+        });
 
-    data.status = body.status;
+        const txData: Record<string, unknown> = { ...data, status: body.status };
 
-    if (existing && body.status !== existing.status) {
-      const history = safeParseJson<Array<{ status: string; changedAt: string }>>(
-        existing.statusHistory,
-        []
-      );
-      history.push({ status: body.status, changedAt: new Date().toISOString() });
-      data.statusHistory = JSON.stringify(history);
+        if (existing && body.status !== existing.status) {
+          const history = safeParseJson<Array<{ status: string; changedAt: string }>>(
+            existing.statusHistory,
+            []
+          );
+          history.push({ status: body.status!, changedAt: new Date().toISOString() });
+          txData.statusHistory = JSON.stringify(history);
 
-      if (body.status === "contacted" && !existing.contactedAt) {
-        data.contactedAt = new Date();
-      }
-    }
+          if (body.status === "contacted" && !existing.contactedAt) {
+            txData.contactedAt = new Date();
+          }
+        }
+
+        return tx.candidate.update({ where: { id: candidateId }, data: txData });
+      },
+      { isolationLevel: "Serializable" }
+    );
+    return NextResponse.json(candidate);
   }
 
   const candidate = await prisma.candidate.update({

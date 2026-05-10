@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { chat } from "@/lib/ai";
+import { parseJson } from "@/lib/ai/chat";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
@@ -120,12 +121,13 @@ ${candidateBlurbs}`;
     const tokenBudget = Math.min(4096, Math.max(1024, candidates.length * 200));
     const text = await chat(prompt, 0.3, tokenBudget);
 
-    // Extract JSON array
-    const match = text.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error("No JSON array in response");
+    // parseJson handles the brace-balancing + trailing-comma fixup that the
+    // greedy `match(/\[[\s\S]*\]/)` previously got wrong when the model
+    // emitted prose around the array.
+    const parsed = parseJson<unknown>(text);
+    if (!Array.isArray(parsed)) throw new Error("Response was not a JSON array");
 
-    const parsed = JSON.parse(match[0]) as CandidateSummaryResult[];
-    summaries = parsed.filter(
+    summaries = (parsed as CandidateSummaryResult[]).filter(
       (s): s is CandidateSummaryResult =>
         typeof s === "object" && s !== null &&
         typeof s.id === "string" &&

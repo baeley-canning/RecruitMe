@@ -107,13 +107,16 @@ export async function DELETE(
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
 
-  // Stamp job context on candidates before deletion so library display is preserved
-  // after the SetNull cascade nulls out jobId.
-  await prisma.candidate.updateMany({
-    where: { jobId: id },
-    data: { archivedJobTitle: job.title, archivedJobCompany: job.company ?? null },
-  });
-
-  await prisma.job.delete({ where: { id } });
+  // Stamp job context on candidates before deletion so library display is
+  // preserved after the SetNull cascade nulls out jobId. Both writes must be
+  // atomic — a failed delete would leave candidates labelled "(archived)"
+  // next to a still-live job otherwise.
+  await prisma.$transaction([
+    prisma.candidate.updateMany({
+      where: { jobId: id },
+      data: { archivedJobTitle: job.title, archivedJobCompany: job.company ?? null },
+    }),
+    prisma.job.delete({ where: { id } }),
+  ]);
   return NextResponse.json({ ok: true });
 }

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
+import { getAuth, unauthorized } from "@/lib/session";
 
 export async function GET() {
+  // Require auth — leaks provider + model fingerprint to anonymous callers.
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+
   const provider = process.env.AI_PROVIDER ?? "claude";
 
   if (provider === "claude") {

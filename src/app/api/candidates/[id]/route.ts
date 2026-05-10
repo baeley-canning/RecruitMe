@@ -23,9 +23,28 @@ async function requireCandidateLibraryAccess(
   if (!candidate) {
     return { candidate: null, error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
-  const orgId = candidate.job?.orgId ?? candidate.orgId;
+  // candidate.orgId is the canonical org per schema.prisma — "copied from
+  // job.orgId on create; preserved after job deletion for auth scoping". Job
+  // is only consulted when the candidate row predates the orgId column.
+  // Reversing this priority let cross-org notes leak whenever a job's
+  // orgId disagreed with the candidate's preserved orgId.
+  const orgId = candidate.orgId ?? candidate.job?.orgId ?? null;
   if (!auth.isOwner && orgId !== auth.orgId) {
     return { candidate: null, error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+  }
+  // Defence in depth: if job.orgId disagrees with the canonical orgId, the
+  // row's history is suspect — strip the sensitive freeform fields rather
+  // than risk leaking another org's notes.
+  if (
+    candidate.job?.orgId &&
+    candidate.orgId &&
+    candidate.job.orgId !== candidate.orgId &&
+    !auth.isOwner
+  ) {
+    candidate.notes = null;
+    candidate.screeningData = null;
+    candidate.interviewNotes = null;
+    candidate.statusHistory = null;
   }
   return { candidate, error: null };
 }

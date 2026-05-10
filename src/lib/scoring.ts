@@ -221,7 +221,13 @@ const YEAR_RANGE_RE = new RegExp(
 );
 const EXPERIENCE_HEADING_RE = /(?:^|\n)\s*(experience|work history|employment history|career history)\s*(?:\n|$)/i;
 const PROFILE_SECTION_HEADING_RE = /(?:^|\n)\s*(about|experience|work history|employment history|career history|education|skills|top skills|licenses|certifications|licenses & certifications)\s*(?:\n|$)/i;
-const STUB_SIGNAL_RE = /\b(?:near[- ]empty|empty stub|profile (?:is |appears )?(?:a )?stub|no work history|no visible work history|no skills (?:list )?visible|without (?:a )?full cv|do not progress (?:or reject )?without|do not (?:progress|reject) without|insufficient profile|(?:profile|linkedin) capture (?:is |appears )?incomplete|missing work history|capture is incomplete|cannot be (?:fairly )?assessed)\b/i;
+// Tier 1 deterministic marker: the scoring prompt instructs Claude to prefix
+// recruiter_summary with [CAPTURE_PARTIAL] on partial captures. Detecting the
+// marker is robust to all phrasing drift. The legacy phrase patterns below
+// remain as a safety net for cases where the model omits the marker — same
+// detection behaviour we shipped before, just no longer the primary signal.
+const STUB_MARKER_RE = /\[CAPTURE[_ ]PARTIAL\]/i;
+const STUB_SIGNAL_RE = /\b(?:near[- ]empty|empty stub|profile (?:is |appears )?(?:a )?stub|no work history|no visible work history|no skills (?:list )?visible|without (?:a )?full cv|do not progress (?:or reject )?without|do not (?:progress|reject) without|insufficient profile|(?:profile|linkedin) capture (?:is |appears )?incomplete|missing work history|capture is incomplete|cannot be (?:fairly )?assessed|visible linkedin data only|directional ranking signal|partial capture)\b/i;
 
 // ─── Deterministic Stage 1: signal presence + sufficiency gate ────────────
 //
@@ -452,7 +458,11 @@ export function analyseProfileCaptureCompleteness(args: {
     ...(args.reasonsAgainst ?? []),
     ...(args.missingEvidence ?? []),
   ].filter(Boolean).join("\n");
-  const aiSaysStub = STUB_SIGNAL_RE.test(aiText);
+  // Two-tier detection: the deterministic marker is the primary signal
+  // (added to the scoring prompt and stable across model phrasings); the
+  // legacy phrase regex is the safety net for cases where the model omits
+  // the marker.
+  const aiSaysStub = STUB_MARKER_RE.test(aiText) || STUB_SIGNAL_RE.test(aiText);
 
   // Post-Stage-1 path: only the AI signal counts.
   if (args.aiOnly) {

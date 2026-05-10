@@ -203,11 +203,22 @@ export async function getRecruitingContext(
         recruiterScore: true,
         reason: true,
         roleTitle: true,
+        createdAt: true,
         candidate: { select: { headline: true, name: true } },
       },
     });
+    // Recency decay: a 2-year-old correction outranking a 1-week-old one is
+    // a calibration regression. Mirror the example-recency factor — corrections
+    // older than 60 days get a 0.75× multiplier on similarity so recent
+    // recruiter signal wins ties.
+    const RECENCY_FLOOR_MS = 60 * 24 * 60 * 60 * 1000;
+    const decay = (createdAt: Date) =>
+      Date.now() - createdAt.getTime() > RECENCY_FLOOR_MS ? 0.75 : 1.0;
     const relevant = corrections
-      .map((c) => ({ ...c, sim: titleSimilarity(parsedRole.title, c.roleTitle ?? "") }))
+      .map((c) => ({
+        ...c,
+        sim: titleSimilarity(parsedRole.title, c.roleTitle ?? "") * decay(c.createdAt),
+      }))
       .filter((c) => c.sim > 0.25)
       .sort((a, b) => b.sim - a.sim)
       .slice(0, MAX_CORRECTIONS_INJECTED);

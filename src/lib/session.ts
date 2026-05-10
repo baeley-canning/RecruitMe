@@ -139,13 +139,14 @@ export async function verifyExtensionAuth(req: Request): Promise<AuthResult | nu
 
   if (!username || !password) return null;
 
-  // Same brute-force protection as the NextAuth login path.
-  // Without this, the extension endpoint accepts unlimited password guesses.
+  // Same brute-force protection as the NextAuth login path. checkLoginLocked
+  // now has an in-process fallback when the DB is unreachable, so we trust
+  // its return value and don't swallow exceptions — failing closed for the
+  // extension is acceptable (the extension already retries) and prevents
+  // the brute-force ceiling from disappearing during a Postgres blip.
   const key = `ext:${username.toLowerCase().trim()}`;
-  try {
-    const { locked } = await checkLoginLocked(key);
-    if (locked) return null;
-  } catch { /* non-fatal — fail open rather than blocking the extension */ }
+  const { locked } = await checkLoginLocked(key).catch(() => ({ locked: true, minsLeft: 15 }));
+  if (locked) return null;
 
   const user = await prisma.user.findUnique({ where: { username } });
   if (!user) {

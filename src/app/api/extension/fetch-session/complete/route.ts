@@ -8,13 +8,16 @@ import {
   saveCapturedProfileFast,
   updateSessionInQueue,
 } from "@/lib/linkedin-capture";
+import { isLinkedInProfileUrl } from "@/lib/linkedin";
 import { verifyExtensionAuth } from "@/lib/session";
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
 const BodySchema = z.object({
   sessionId: z.string().min(1),
-  linkedinUrl: z.string().url().max(500),
+  linkedinUrl: z.string().url().max(500).refine(isLinkedInProfileUrl, {
+    message: "linkedinUrl must be a linkedin.com/in/<slug> URL",
+  }),
   profileText: z.string().min(100).max(100_000),
   // Extension-emitted proof of deep-page usage; opaque JSON, see import route.
   captureMeta: z.unknown().optional(),

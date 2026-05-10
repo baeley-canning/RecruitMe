@@ -36,7 +36,27 @@ export async function POST(
     return NextResponse.json({ error: `Score-all rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
   }
 
-  await prisma.job.update({ where: { id }, data: { lastScoredAt: new Date() } });
+  // Conditional cooldown stamp — only one score-all run can claim the job at
+  // a time. Two recruiters who hit the button simultaneously both pass the
+  // process-local rate limiter; without this guard they'd both stamp
+  // lastScoredAt and double-bill the AI. updateMany returns count=0 when the
+  // claim is already held; we bail with 429.
+  const SCORE_ALL_COOLDOWN_MS = 60_000;
+  const claim = await prisma.job.updateMany({
+    where: {
+      id,
+      OR: [
+        { lastScoredAt: null },
+        { lastScoredAt: { lt: new Date(Date.now() - SCORE_ALL_COOLDOWN_MS) } },
+      ],
+    },
+    data: { lastScoredAt: new Date() },
+  });
+  if (claim.count === 0) {
+    return NextResponse.json({
+      error: "Score-all is already running for this job. Wait a minute and try again.",
+    }, { status: 429 });
+  }
 
   // Select only the fields we need for scoring. Without this we fetch every
   // candidate's profileText (50KB+), scoreBreakdown (~5KB), matchReason etc —

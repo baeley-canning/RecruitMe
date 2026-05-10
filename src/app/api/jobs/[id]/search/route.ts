@@ -436,7 +436,7 @@ export async function POST(
     await prisma.savedSearch.updateMany({
       where: { id: savedSearchId, jobId: id, orgId: auth.orgId },
       data: { lastRunAt: new Date() },
-    }).catch(() => {});
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
   }
 
   const session = await prisma.searchSession.create({
@@ -481,7 +481,7 @@ export async function POST(
     prisma.searchSession.update({
       where: { id: session.id },
       data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search crashed" },
-    }).catch(() => {});
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
   });
 
   void recordUsage(auth.orgId, auth.userId, "search", { jobId: id, maxResults });
@@ -744,12 +744,12 @@ async function runSearchBackground(args: {
           evaluation: `OK — filled from talent pool (${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""}); LinkedIn search skipped to save credits.`,
           message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn search skipped — saved external credits.`,
         },
-      }).catch(() => {});
+      }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
       if (savedSearchId) {
         await prisma.savedSearch.updateMany({
           where: { id: savedSearchId, jobId, orgId },
           data: { lastResultCount: poolSaved.length },
-        }).catch(() => {});
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
       }
       return;
     }
@@ -889,7 +889,7 @@ async function runSearchBackground(args: {
             void prisma.searchSession.update({
               where: { id: sessionId },
               data: { message: `No results in ${searchLocation} — trying Auckland` },
-            }).catch(() => {});
+            }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
             const akQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
             aucklandOutcomes = [
               ...(await executeSearchTaskQueue(
@@ -912,7 +912,7 @@ async function runSearchBackground(args: {
                 ? `No results in ${searchLocation} — found ${aucklandItems.length} in Auckland`
                 : `No results in ${searchLocation} or Auckland — broadening to all of New Zealand`,
             },
-          }).catch(() => {});
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
 
           if (aucklandItems.length > 0) {
             return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes];
@@ -961,7 +961,7 @@ async function runSearchBackground(args: {
             message: "Rate-limited before any results were returned.",
             evaluation: "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.",
           },
-        }).catch(() => {});
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
         return;
       }
 
@@ -973,7 +973,7 @@ async function runSearchBackground(args: {
         void prisma.searchSession.update({
           where: { id: sessionId },
           data: { message: `No exact matches — trying adjacent skills (${anchorTermsForFallback.join(", ")} substitutes)` },
-        }).catch(() => {});
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
 
         const mkFallbackTasks = (provider: SearchProvider) =>
           fallbackQueries.map((q) => ({
@@ -1001,7 +1001,7 @@ async function runSearchBackground(args: {
               message: `${failedProvider} API key is invalid or expired.`,
               evaluation: `FAIL — ${failedProvider === "serpapi" ? "SerpAPI" : "Bing"} key rejected (401). Check Settings → API Keys and replace the key.`,
             },
-          }).catch(() => {});
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
           return;
         }
 
@@ -1019,7 +1019,7 @@ async function runSearchBackground(args: {
           void prisma.searchSession.update({
             where: { id: sessionId },
             data: { message: `No exact ${anchorTermsForFallback.join("/")} matches — showing ${allRaw.length} adjacent-skill candidates` },
-          }).catch(() => {});
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
           // Fall through to Phase 2 with the adjacent-skill results
         }
       }
@@ -1042,12 +1042,12 @@ async function runSearchBackground(args: {
               message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn returned no new profiles.`,
               evaluation: `OK — ${poolSaved.length} pool candidate${poolSaved.length !== 1 ? "s" : ""}; LinkedIn produced no additional results.`,
             },
-          }).catch(() => {});
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
           if (savedSearchId) {
             await prisma.savedSearch.updateMany({
               where: { id: savedSearchId, jobId, orgId },
               data: { lastResultCount: poolSaved.length },
-            }).catch(() => {});
+            }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
           }
           return;
         }
@@ -1058,7 +1058,7 @@ async function runSearchBackground(args: {
             message: "No profiles found.",
             evaluation: "FAIL — No candidates found. Try: set Location to 'New Zealand', click Re-analyse to refresh search terms, or broaden requirements in the JD.",
           },
-        }).catch(() => {});
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
         return;
       }
     }
@@ -1177,16 +1177,16 @@ async function runSearchBackground(args: {
             avgScore,
             message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn results were already imported.`,
           },
-        }).catch(() => {});
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
         if (savedSearchId) {
           await prisma.savedSearch.updateMany({
             where: { id: savedSearchId, jobId, orgId },
             data: { lastResultCount: poolSaved.length },
-          }).catch(() => {});
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
         }
         return;
       }
-      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
+      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
       return;
     }
 
@@ -1513,7 +1513,7 @@ async function runSearchBackground(args: {
       await prisma.searchSession.update({
         where: { id: sessionId },
         data: { status: sawRetryableSearchFailure ? "rate_limited" : "complete", message: reason },
-      }).catch(() => {});
+      }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
       return;
     }
 
@@ -1531,19 +1531,19 @@ async function runSearchBackground(args: {
         importedIds: JSON.stringify(sorted.map((c) => c.id)),
         message:     `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
       },
-    }).catch(() => {});
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
 
     if (savedSearchId) {
       await prisma.savedSearch.updateMany({
         where: { id: savedSearchId, jobId, orgId },
         data: { lastResultCount: sorted.length },
-      }).catch(() => {});
+      }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
     }
   } catch (err) {
     reportError(err, { route: "search:runBackground", jobId, orgId });
     await prisma.searchSession.update({
       where: { id: sessionId },
       data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search failed" },
-    }).catch(() => {});
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
   }
 }

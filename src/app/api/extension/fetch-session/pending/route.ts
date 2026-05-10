@@ -1,9 +1,10 @@
-import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
+import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import {
   findSessionInQueue,
   linkedInProfileMatches,
 } from "@/lib/linkedin-capture";
+import { isLinkedInProfileUrl } from "@/lib/linkedin";
 import { verifyExtensionAuth } from "@/lib/session";
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
@@ -24,7 +25,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const linkedinUrl = url.searchParams.get("linkedinUrl");
 
-  if (!linkedinUrl) {
+  if (!linkedinUrl || !isLinkedInProfileUrl(linkedinUrl)) {
     return NextResponse.json({ pending: false }, { status: 400, headers: extensionCorsHeaders(req) });
   }
 
@@ -49,7 +50,7 @@ export async function GET(req: Request) {
   });
 
   if (!session) {
-    return NextResponse.json({ pending: false, active: false, status: "idle" }, { headers: EXTENSION_CORS });
+    return NextResponse.json({ pending: false, active: false, status: "idle" }, { headers: extensionCorsHeaders(req) });
   }
 
   return NextResponse.json(
@@ -63,6 +64,6 @@ export async function GET(req: Request) {
       message: session.message,
       error: session.error,
     },
-    { headers: EXTENSION_CORS }
+    { headers: extensionCorsHeaders(req) }
   );
 }

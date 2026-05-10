@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import JSZip from "jszip";
 import fs from "fs";
 import path from "path";
+import { getAuth, unauthorized } from "@/lib/session";
 
 const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-opera-linkedin-capture");
 
@@ -17,6 +18,11 @@ const EXCLUDED = new Set([
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Require auth — the extension itself doesn't embed secrets, but reading the
+  // zip on every request does an unbounded fs scan + zip build per call.
+  // Without a gate, this is a free CPU/IO amplifier for any anonymous caller.
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
   try {
     const zip = new JSZip();
     const folder = zip.folder("recruitme-extension")!;

@@ -3,8 +3,23 @@ const DEFAULT_SERVER_BASES = [
   "https://recruitme.railway.app",
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "http://10.255.255.254:3000",
 ];
+
+// Bases that may receive the user's Basic-auth credentials. Anything outside
+// this set (or the configured serverBase / lastWorkingServerBase) gets probed
+// without credentials so a misconfigured / squatted host can't harvest them.
+const LOOPBACK_BASE_RE = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i;
+function isCredentialSafeBase(base, settings) {
+  if (!base) return false;
+  const normalised = base.replace(/\/+$/, "");
+  if (LOOPBACK_BASE_RE.test(normalised)) return true;
+  const configured = (settings?.serverBase || "").replace(/\/+$/, "");
+  const lastWorking = (settings?.lastWorkingServerBase || "").replace(/\/+$/, "");
+  return Boolean(
+    (configured && normalised.toLowerCase() === configured.toLowerCase()) ||
+    (lastWorking && normalised.toLowerCase() === lastWorking.toLowerCase())
+  );
+}
 
 const PENDING_CAPTURE_ALARM = "recruitme-pending-capture-check";
 const NEXT_CAPTURE_ALARM    = "recruitme-next-capture";
@@ -208,6 +223,7 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
 
   // Attach stored credentials automatically so every request is authenticated.
   const authHeader = await getBasicAuthHeader().catch(() => null);
+  const settings = await getStoredSettings().catch(() => ({}));
 
   for (const base of bases) {
     try {
@@ -218,7 +234,11 @@ async function requestRecruitMe(path, options = {}, preferredBase = "", override
       if (requestOptions.body && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
-      if (authHeader && !headers.has("Authorization")) {
+      // Only attach credentials to bases the user has explicitly configured
+      // (serverBase / lastWorkingServerBase) or loopback. A misconfigured or
+      // squatted railway.app fallback must not receive the recruiter's
+      // Basic-auth password.
+      if (authHeader && !headers.has("Authorization") && isCredentialSafeBase(base, settings)) {
         headers.set("Authorization", authHeader);
       }
 

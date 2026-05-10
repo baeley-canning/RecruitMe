@@ -75,11 +75,17 @@ export async function POST(req: Request) {
       qualifications,
     });
 
-    const safeName = candidateName.replace(/[^a-zA-Z0-9]/g, "_");
+    // Preserve Unicode letters/numbers (Māori macrons, accents, CJK) by
+    // matching on the Unicode property classes. The plain ASCII fallback is
+    // used as the legacy filename= for clients that don't speak filename*=,
+    // and the UTF-8 percent-encoded form is the modern RFC 5987 variant.
+    const asciiSafeName = candidateName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "Candidate";
+    const unicodeSafeName = candidateName.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "") || "Candidate";
+    const utf8Encoded = encodeURIComponent(`${unicodeSafeName}_Candidate_Profile.docx`);
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `attachment; filename="${safeName}_Candidate_Profile.docx"`,
+        "Content-Disposition": `attachment; filename="${asciiSafeName}_Candidate_Profile.docx"; filename*=UTF-8''${utf8Encoded}`,
         "Content-Length": String(buffer.length),
         "Cache-Control": "no-store",
       },

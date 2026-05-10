@@ -9,6 +9,10 @@ const dbMocks = vi.hoisted(() => ({
     },
     job: {
       update: vi.fn().mockResolvedValue({}),
+      // updateMany is the new conditional cooldown claim — return count: 1
+      // by default so the run proceeds; tests that simulate "another run is
+      // already in flight" can override to count: 0.
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     usageEvent: {
       count: vi.fn().mockResolvedValue(0),

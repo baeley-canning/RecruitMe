@@ -13,8 +13,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifyExtensionAuth, jobsWhere } from "@/lib/session";
 import { extensionCorsHeaders } from "@/lib/extension-cors";
-import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { isLinkedInProfileUrl, normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getAccessibleOrgIds } from "@/lib/org-access";
+import { checkRateLimit } from "@/lib/usage";
 
 export async function OPTIONS(req: Request) {
   return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
@@ -28,8 +29,16 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const rawUrl = url.searchParams.get("url");
-  if (!rawUrl) {
-    return NextResponse.json({ error: "url query param required" }, { status: 400, headers: extensionCorsHeaders(req) });
+  if (!rawUrl || !isLinkedInProfileUrl(rawUrl)) {
+    return NextResponse.json({ error: "Valid linkedin.com/in/<slug> url query param required" }, { status: 400, headers: extensionCorsHeaders(req) });
+  }
+
+  // Per-org rate limit. profile-match is otherwise an oracle for "is this
+  // candidate in any org's library" — without throttling, a compromised
+  // extension credential lets an attacker enumerate URL-by-URL.
+  const rateCheck = await checkRateLimit(auth.orgId, "capture");
+  if (!rateCheck.allowed) {
+    return NextResponse.json({ error: "Rate limit reached" }, { status: 429, headers: extensionCorsHeaders(req) });
   }
 
   let normUrl: string;

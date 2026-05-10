@@ -1,5 +1,6 @@
 const { app, BrowserWindow, shell, dialog, ipcMain } = require("electron");
 const { spawn, execFileSync } = require("child_process");
+const crypto = require("crypto");
 const path = require("path");
 const net = require("net");
 const fs = require("fs");
@@ -178,6 +179,29 @@ function waitForPort(port, maxMs = 30000) {
   });
 }
 
+// ── Per-install secret ────────────────────────────────────────────────────────
+
+// Each desktop install generates its own NextAuth secret on first launch and
+// persists it under userData. Using a hardcoded secret in the bundle would
+// let anyone with the binary forge session JWTs against any install — including
+// remote servers if a user reconfigures NEXTAUTH_URL.
+function ensureNextAuthSecret() {
+  const userDataPath = app.getPath("userData");
+  const secretPath = path.join(userDataPath, "nextauth.secret");
+  try {
+    if (fs.existsSync(secretPath)) {
+      const existing = fs.readFileSync(secretPath, "utf8").trim();
+      if (existing.length >= 32) return existing;
+    }
+  } catch (err) {
+    console.warn("[secret] read failed, regenerating:", err.message);
+  }
+  const fresh = crypto.randomBytes(48).toString("base64");
+  fs.mkdirSync(userDataPath, { recursive: true });
+  fs.writeFileSync(secretPath, fresh, { encoding: "utf8", mode: 0o600 });
+  return fresh;
+}
+
 // ── Database setup ────────────────────────────────────────────────────────────
 
 function ensureDatabase() {
@@ -219,8 +243,7 @@ function startProductionServer(port, dbPath) {
     NODE_ENV: "production",
     DATABASE_URL: `file:${dbPath}`,
     NEXTAUTH_URL: `http://localhost:${port}`,
-    // Fixed secret for the desktop build — safe because server only binds to localhost
-    NEXTAUTH_SECRET: "recruitme-desktop-2024-x04NrrFE401nkGNG4bSttqYYDM8brzx",
+    NEXTAUTH_SECRET: ensureNextAuthSecret(),
   };
 
   serverProcess = spawn(process.execPath, [serverJs], {
@@ -253,6 +276,8 @@ function createWindow(port) {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
     },
   });
 

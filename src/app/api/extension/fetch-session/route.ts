@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
+import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
 
   await addSessionToQueue(session);
 
-  return NextResponse.json(session, { headers: EXTENSION_CORS });
+  return NextResponse.json(session, { headers: extensionCorsHeaders(req) });
 }
 
 export async function GET(req: Request) {
@@ -76,14 +76,14 @@ export async function GET(req: Request) {
   // ?jobId= — web UI on page load, recover any in-progress capture sessions
   if (jobId && !sessionId) {
     const auth = await verifyAnyAuth(req);
-    if (!auth) return NextResponse.json({ sessions: [] }, { status: 401, headers: EXTENSION_CORS });
+    if (!auth) return NextResponse.json({ sessions: [] }, { status: 401, headers: extensionCorsHeaders(req) });
     const all = await getSessionQueue();
     const sessions = all.filter((s) =>
       s.jobId === jobId &&
       (s.status === "pending" || s.status === "processing") &&
       (auth.isOwner || s.orgId === auth.orgId || s.userId === auth.userId)
     );
-    return NextResponse.json({ sessions }, { headers: EXTENSION_CORS });
+    return NextResponse.json({ sessions }, { headers: extensionCorsHeaders(req) });
   }
 
   if (sessionId) {
@@ -112,10 +112,10 @@ export async function GET(req: Request) {
     // The web UI handles the no-candidate case by re-fetching the job.
     if (session.status === "completed" && auth) {
       const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
-      return NextResponse.json({ ...session, candidate }, { headers: EXTENSION_CORS });
+      return NextResponse.json({ ...session, candidate }, { headers: extensionCorsHeaders(req) });
     }
 
-    return NextResponse.json(session, { headers: EXTENSION_CORS });
+    return NextResponse.json(session, { headers: extensionCorsHeaders(req) });
   }
 
   // No sessionId = extension alarm / popup status query.
@@ -125,14 +125,14 @@ export async function GET(req: Request) {
   if (!auth) {
     // Return null rather than 401 so the popup shows "not configured" gracefully
     // rather than an error banner. The extension should prompt for credentials.
-    return NextResponse.json(null, { headers: EXTENSION_CORS });
+    return NextResponse.json(null, { headers: extensionCorsHeaders(req) });
   }
 
   const queue = await getSessionQueue();
   const visible = queue.filter(
     (s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId)
   );
-  return NextResponse.json(visible.length > 0 ? visible : null, { headers: EXTENSION_CORS });
+  return NextResponse.json(visible.length > 0 ? visible : null, { headers: extensionCorsHeaders(req) });
 }
 
 // Called by the extension as soon as content.js confirms the capture has
@@ -176,7 +176,7 @@ export async function DELETE(req: Request) {
   // Always require auth — sessionId is a UUID but is not a secret; allowing
   // unauthenticated deletion would let anyone cancel captures by guessing IDs.
   const auth = await verifyAnyAuth(req).catch(() => null);
-  if (!auth) return NextResponse.json({ cleared: false }, { headers: EXTENSION_CORS });
+  if (!auth) return NextResponse.json({ cleared: false }, { headers: extensionCorsHeaders(req) });
 
   if (sessionId) {
     // Verify the session belongs to this user / org before deleting.
@@ -185,17 +185,20 @@ export async function DELETE(req: Request) {
       const sameUser = !session.userId || session.userId === auth.userId;
       const sameOrg  = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
       if (!auth.isOwner && !sameUser && !sameOrg) {
-        return NextResponse.json({ cleared: false }, { headers: EXTENSION_CORS });
+        return NextResponse.json({ cleared: false }, { headers: extensionCorsHeaders(req) });
       }
     }
     await removeSessionFromQueue(sessionId);
-    return NextResponse.json({ cleared: true }, { headers: EXTENSION_CORS });
+    return NextResponse.json({ cleared: true }, { headers: extensionCorsHeaders(req) });
   }
 
-  // No sessionId = clear this user's sessions only.
+  // No sessionId = clear THIS user's sessions only. Previously this also
+  // cleared every session in the user's org, which let one user wipe
+  // colleagues' in-flight captures by accident. Org-wide clear is no longer
+  // exposed without an explicit sessionId.
   const queue = await getSessionQueue();
-  for (const s of queue.filter((s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId))) {
+  for (const s of queue.filter((s) => s.userId === auth.userId || (!s.userId && !s.orgId))) {
     await removeSessionFromQueue(s.sessionId);
   }
-  return NextResponse.json({ cleared: true }, { headers: EXTENSION_CORS });
+  return NextResponse.json({ cleared: true }, { headers: extensionCorsHeaders(req) });
 }

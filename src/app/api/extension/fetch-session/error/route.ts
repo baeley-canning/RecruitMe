@@ -1,4 +1,4 @@
-import { EXTENSION_CORS, extensionCorsHeaders } from "@/lib/extension-cors";
+import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { findSessionInQueue, updateSessionInQueue } from "@/lib/linkedin-capture";
@@ -48,5 +48,5 @@ export async function POST(req: Request) {
     error,
   });
 
-  return NextResponse.json(updated ?? { ok: true }, { headers: EXTENSION_CORS });
+  return NextResponse.json(updated ?? { ok: true }, { headers: extensionCorsHeaders(req) });
 }
