@@ -1,5 +1,5 @@
 import { chat, parseJson, SONNET, resolveModelForDataQuality } from "./chat";
-import { analyseProfileCaptureCompleteness, classifyDataQuality } from "../scoring";
+import { analyseProfileCaptureCompleteness, classifyDataQuality, runDeterministicMatch, buildStubBreakdown } from "../scoring";
 import { getRecruitingContext } from "../recruiter-memory";
 import {
   buildScoreBreakdown,
@@ -273,6 +273,34 @@ export async function scoreCandidateStructured(
   );
   const mustHaves = [...baseMustHaves, ...knockoutsNotInMustHaves].slice(0, 14);
 
+  // ── Stage 1: deterministic match + capture-sufficiency gate ───────────────
+  // Runs BEFORE Claude. Two outputs feed downstream:
+  //   1. `gate.sufficient = false` → skip Claude entirely, return a stub
+  //      breakdown that surfaces the warning. Prevents "12% with fabricated
+  //      reasons" on captures that look full (8000+ chars) but are missing
+  //      the work-history section. The Brendan Lester case is exactly this.
+  //   2. `gate.matchedSignals` → injected into the prompt as ground truth.
+  //      Claude can't say "C++ not found" if regex already proved it's there.
+  const dataQualityForGate = classifyDataQuality(profileText.length);
+  const gate = runDeterministicMatch({
+    profileText,
+    mustHaves,
+    expandSignals: extractSignalsFromRequirement,
+    matchSignal: signalMatchesText,
+  });
+  if (dataQualityForGate === "full_profile" && !gate.sufficient) {
+    console.warn(
+      `[scoring] deterministic gate refused to score: ${gate.reasonInsufficient ?? "insufficient evidence"} (chars=${gate.charCount}, roles=${gate.rolesDetected}, matched=${gate.matchedSignals.length})`,
+    );
+    return buildStubBreakdown({
+      parsedRoleMustHaves:  mustHaves,
+      parsedRoleNiceToHaves: niceToHaves,
+      profileCharCount:     profileText.length,
+      reasonInsufficient:   gate.reasonInsufficient ?? "Capture incomplete",
+      weights,
+    });
+  }
+
   const salaryLine    = salary?.min || salary?.max
     ? `Budget: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD` : "";
   const seniorityLine = parsedRole.seniority_band ? `Seniority: ${parsedRole.seniority_band}` : "";
@@ -313,9 +341,21 @@ export async function scoreCandidateStructured(
     SCORING_EQUIVALENCY_RULES,
   ].filter(Boolean).join("\n\n");
 
+  // Build the deterministic-evidence block — confirmed signals are
+  // ground truth Claude must not contradict. Each entry is XML-escaped:
+  // must-have strings come from recruiter-controlled JD text and we don't
+  // want a maliciously-shaped requirement (e.g. one containing a closing
+  // </candidate_profile> tag) to break out of the prompt structure.
+  const matchedBlock = gate.matchedSignals.length
+    ? `<deterministic_evidence>
+The following requirements are CONFIRMED present in the captured profile text via word-boundary regex match. You MUST mark them "confirmed" or "equivalent" — never "missing", "unknown", or "negative". You may add nuance about recency or depth, but cannot contradict regex evidence.
+${gate.matchedSignals.map((m, i) => `${i + 1}. ${escapeXmlForPrompt(m)}`).join("\n")}
+</deterministic_evidence>\n`
+    : "";
+
   const userPrompt = `Role: ${parsedRole.title} | ${parsedRole.location}${salaryLine ? ` | ${salaryLine}` : ""}${seniorityLine ? ` | ${seniorityLine}` : ""}
 
-Must-haves (numbered — include ALL in must_have_coverage):
+${matchedBlock}Must-haves (numbered — include ALL in must_have_coverage):
 ${mustHavesList}
 
 Nice-to-haves (numbered — include ALL in nice_to_have_coverage):
@@ -346,7 +386,7 @@ ${escapeXmlForPrompt(profileSlice)}
 
   type RawCat = { score?: number; evidence?: string };
   type RawAI = {
-    overall_score?: number;
+    overall_score?: number | null;
     categories?: {
       skill_fit?:        RawCat;
       location_fit?:     RawCat;
@@ -467,8 +507,13 @@ ${escapeXmlForPrompt(profileSlice)}
   };
 
   // Use Claude's direct holistic verdict if present.
+  // null is a deliberate signal under the INCOMPLETE PROFILE RULE — Claude
+  // refuses to score a stub capture; we honour that and let
+  // analyseProfileCaptureCompleteness flag the candidate downstream.
   let claudeOverallScore: number | null = null;
-  if (typeof raw.overall_score === "number") {
+  if (raw.overall_score === null) {
+    claudeOverallScore = null;
+  } else if (typeof raw.overall_score === "number") {
     claudeOverallScore = Math.min(100, Math.max(0, Math.round(raw.overall_score)));
   } else {
     // Claude failed to include overall_score — this should never happen given the prompt.
@@ -502,12 +547,38 @@ ${escapeXmlForPrompt(profileSlice)}
   const missingEvidence = stringArray(raw.missing_evidence).filter(
     (evidence) => !statementContradictedByStoredSignals(evidence, repairedStoredSignals)
   );
-  const profileCaptureWarning = analyseProfileCaptureCompleteness({
-    profileText,
-    recruiterSummary,
-    reasonsAgainst,
-    missingEvidence,
-  });
+  // Stage 1 already deliberately let this profile through. The post-Claude
+  // capture analysis uses stricter rules (≥2 year ranges + Experience
+  // heading or AI-said-stub) and would otherwise nuke scores for profiles
+  // the gate intentionally accepted (e.g. junior with one role, history
+  // condensed in About, etc.). Skip the second pass when Stage 1 cleared.
+  const profileCaptureWarning = gate.sufficient
+    ? null
+    : analyseProfileCaptureCompleteness({
+        profileText,
+        recruiterSummary,
+        reasonsAgainst,
+        missingEvidence,
+      });
+
+  // When the capture is incomplete we MUST NOT show Claude's fabricated
+  // rejection narrative. The candidate's missing skills aren't really missing
+  // — they're hidden behind a failed scrape. Null out the score and clear the
+  // negative-side outputs; buildScoreBreakdown will inject the safe banner
+  // copy ("LinkedIn capture appears incomplete — do not reject or progress
+  // without CV") in its place.
+  let suppressedReasonsAgainst = reasonsAgainst;
+  let suppressedMissingEvidence = missingEvidence;
+  if (profileCaptureWarning) {
+    if (claudeOverallScore !== null) {
+      console.warn(
+        `[scoring] Claude returned ${claudeOverallScore} alongside an incomplete-capture warning — discarding the score; recruiter will be prompted to upload CV / re-capture`,
+      );
+    }
+    claudeOverallScore = null;
+    suppressedReasonsAgainst = [];
+    suppressedMissingEvidence = [];
+  }
 
   if (repairedStoredSignals.size > 0 && claudeOverallScore !== null) {
     console.warn(
@@ -526,8 +597,8 @@ ${escapeXmlForPrompt(profileSlice)}
         : []),
       ...stringArray(raw.reasons_for),
     ],
-    reasons_against:       reasonsAgainst,
-    missing_evidence:      missingEvidence,
+    reasons_against:       suppressedReasonsAgainst,
+    missing_evidence:      suppressedMissingEvidence,
     recruiter_summary:     recruiterSummary,
     profileCharCount:      profileText.length,
     profileCaptureWarning,

@@ -20,7 +20,7 @@ export const SCORING_SYSTEM_CONTEXT = `You are a senior recruitment consultant s
 
 export const SCORING_JSON_SCHEMA = `Return EXACTLY this JSON structure:
 {
-  "overall_score": 0,
+  "overall_score": 0,            // integer 0–100, or null if profile is too thin to assess (see INCOMPLETE PROFILE RULE)
   "categories": {
     "skill_fit":        {"score":0,"evidence":"one sentence grounding the score in actual profile text"},
     "location_fit":     {"score":0,"evidence":"one sentence"},
@@ -48,7 +48,17 @@ Set overall_score to your direct holistic verdict of how well this candidate fit
 - 40–59: partial — relevant background but meaningful gaps; a stretch or requires significant development
 - 20–39: weak — one or two overlapping signals but fundamentally misaligned on core requirements
 - 0–19: no match — wrong domain, wrong level, or critical must-haves all absent
-CRITICAL: if you have written reasons_against that describe fundamental blockers (core skill absent, wrong domain entirely, clearly wrong seniority), your overall_score MUST be below 40. Do not let a good location or one confirmed credential push a fundamentally mismatched candidate above 50. The score should reflect the hiring decision, not a balanced average.`;
+CRITICAL: if you have written reasons_against that describe fundamental blockers (core skill absent, wrong domain entirely, clearly wrong seniority), your overall_score MUST be below 40. Do not let a good location or one confirmed credential push a fundamentally mismatched candidate above 50. The score should reflect the hiring decision, not a balanced average.
+
+INCOMPLETE PROFILE RULE — read carefully, this is the most important rule:
+If the captured profile is missing the work history (no Experience section, fewer than 2 dated roles, or fewer than ~2000 chars of substantive work content), you CANNOT fairly score this candidate. Absence of evidence is NOT evidence of absence on a stub capture — the relevant facts may exist on LinkedIn but the capture missed them.
+In that case you MUST:
+- Set "overall_score": null
+- Leave "reasons_against": [] EMPTY. Do NOT invent rejection reasons from absent data ("no mention of X" is a stub artefact, not a candidate flaw).
+- Set ALL must_have_coverage statuses to "unknown" with evidence "Not visible — capture incomplete".
+- Set "recruiter_summary" to: "LinkedIn capture is incomplete — do not progress or reject without full work history or CV."
+- "reasons_for" may include things visible in the captured text (current title, location, company), but keep them factual.
+A null overall_score is a feature, not a failure: it tells the recruiter "we don't yet have enough to assess" instead of "we assessed and rejected." The recruiter will be prompted to upload a CV or re-capture; the score will be redone with better data.`;
 
 export const SCORING_CATEGORY_RULES = `Category score rules:
 - skill_fit: 80+ = most must-have skills confirmed; 60-79 = several confirmed; 40-59 = adjacent; 0-39 = mismatch
@@ -59,6 +69,7 @@ export const SCORING_CATEGORY_RULES = `Category score rules:
 - nice_to_have_fit: 80+ = most nice-to-haves present; 50 = some; 20 = few; if none listed, score 50`;
 
 export const SCORING_MUST_HAVE_RULES = `must_have_coverage rules:
+- DETERMINISTIC EVIDENCE OVERRIDE: if the user prompt contains a "Deterministic evidence" block, every requirement listed there is CONFIRMED present in the profile text via regex match. You MUST mark those requirements as "confirmed" or "equivalent". You MUST NOT mark them "missing", "unknown", or "negative" — the regex has already found them. Your reasoning may add nuance about recency, depth, or fit, but you cannot contradict regex evidence.
 - "confirmed" = clearly and explicitly stated in the profile body (work descriptions, skills sections, or certifications). A job title alone (e.g. "C++ Developer") is NOT sufficient for "confirmed" — it is "likely" unless the profile body also explicitly mentions the skill. Check the actual work history for evidence, not just the headline.
 - "equivalent" = requirement uses an equivalency clause ("or equivalent experience", "or comparable experience", "preferred but not essential") AND the candidate's experience is sufficient to satisfy it — use the thresholds in the equivalency rules below
 - "likely" = strongly implied by concrete adjacent evidence in the profile — e.g. a specific technology or framework name implies an adjacent skill, or a detailed role description implies a practice. STRICT rule: "likely" requires ACTUAL evidence, not just the absence of contradiction. Do NOT use "likely" when: (1) the requirement is domain-specific (e.g. "hardware interfacing", "data acquisition", "IoT") and the candidate's profile is entirely in a different domain (e.g. pure security governance, pure software development) — that is "missing"; (2) a management title alone implies a specific technical domain (e.g. "IT Manager" does NOT imply "IT infrastructure project delivery" or "hardware interfacing" — those require explicit evidence); (3) you are reasoning "they probably have it" with no supporting text. If in doubt between "likely" and "missing", choose "missing" for detailed profiles (>5000 chars) where absence is informative.

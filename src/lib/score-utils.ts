@@ -7,8 +7,14 @@ import type { ScoringWeights } from "./scoring-config";
  * Shared by the single-score route, score-all route, and search route.
  */
 export function deriveUpdateData(breakdown: ScoreBreakdown): Record<string, unknown> {
+  // Stub captures persist matchScore as null so they sort to the bottom of
+  // every job view, don't count toward avgScore, and don't display a
+  // misleading 12%-style score in the UI. The full breakdown JSON still
+  // serialises (so the warning + evidence + reasons stay queryable) — the
+  // scalar matchScore is the only thing nulled.
+  const isStubCapture = breakdown.profile_capture_warning?.code === "incomplete_capture";
   return {
-    matchScore:     breakdown.overall,
+    matchScore:     isStubCapture ? null : breakdown.overall,
     scoreBreakdown: JSON.stringify(breakdown),
     // Legacy matchReason — kept for radar chart and old-format cards
     matchReason: JSON.stringify({

@@ -508,6 +508,10 @@ export async function searchTalentPoolForRole(args: {
         continue;
       }
 
+      // Stub captures from the new deterministic gate carry overall=0 + a
+      // profile_capture_warning. Drop them from the pool import — recruiter
+      // would just see them as "Unscored" and they'd pollute the result list.
+      if (breakdown.profile_capture_warning) continue;
       if (breakdown.overall < minScore) continue;
 
       scored.push({

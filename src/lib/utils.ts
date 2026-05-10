@@ -8,7 +8,13 @@ export function hashProfileText(text: string): string {
 }
 
 // Bumped when the cache key shape changes so old keys don't match.
-const SCORE_CACHE_VERSION = "score-context-v5-weights";
+// v5 → v6: deterministic Stage 1 gate added — refuses to score stub captures
+// (Brendan-class failure) and injects matched signals as ground truth into
+// the Claude prompt. Every score produced before this gate is potentially
+// suspect (stub captures got 12% with fabricated reasons); bumping the
+// version invalidates cached scores so the next re-score path runs through
+// the new gate.
+const SCORE_CACHE_VERSION = "score-context-v6-deterministic-gate";
 
 type ScoreCacheKeyInput = {
   profileText: string;

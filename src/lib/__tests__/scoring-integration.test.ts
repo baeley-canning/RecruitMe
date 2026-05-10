@@ -33,7 +33,15 @@ vi.mock("../ai/chat", async (importOriginal) => {
 // Minimum viable profile text (≥100 chars) for tests that just need the input guard to pass.
 const SHORT_PROFILE = "Senior React developer with TypeScript experience. Led frontend teams. Built production apps.";
 const SNIPPET_PROFILE = (SHORT_PROFILE + " Wellington-based. Available immediately.").padEnd(250, " React TypeScript frontend developer."); // 200-2000 chars = snippet quality
-const FULL_PROFILE   = "A".repeat(2500); // full_profile quality (≥2000)
+// full_profile quality — realistic enough to clear the deterministic Stage 1
+// gate (needs at least one year-range or must-have signal hit). The repeated
+// "A" filler the tests originally used now (correctly) fails the stub gate.
+const FULL_PROFILE = (
+  "Senior Frontend Engineer at AcmeCorp (2020 - present). Lead React + TypeScript developer. " +
+  "Previously: Frontend Engineer at BetaCorp (2017 - 2020), Software Developer at GammaCo (2014 - 2017). " +
+  "Skills: React, TypeScript, Node.js, REST APIs, frontend architecture. " +
+  "Wellington-based. Built production single-page apps and led teams of 4-6 engineers. "
+).repeat(8); // ~2400 chars, multiple year ranges, React + TypeScript signals
 
 // Helper: build a complete valid Claude scoring response
 function claudeResponse(overrides: {
@@ -286,7 +294,7 @@ describe("Edge case: Claude omits overall_score", () => {
       // NO overall_score field
     }));
     const result = await scoreCandidateStructured(
-      "A".repeat(3000),
+      FULL_PROFILE,
       baseParsedRole
     );
     // Should produce a valid score via formula fallback
@@ -306,7 +314,7 @@ describe("applyLocationFitOverride: preserves claudeOverallScore", () => {
       location_fit: 100, // Claude already knew they were local
     }));
     const breakdown = await scoreCandidateStructured(
-      "A".repeat(3000),
+      FULL_PROFILE,
       baseParsedRole
     );
     expect(breakdown.overall).toBe(42);
@@ -323,7 +331,7 @@ describe("applyLocationFitOverride: preserves claudeOverallScore", () => {
       location_fit: 50,
     }));
     const breakdown = await scoreCandidateStructured(
-      "A".repeat(3000),
+      FULL_PROFILE,
       baseParsedRole
     );
     expect(breakdown.overall).toBe(55);
@@ -342,7 +350,7 @@ describe("Data quality: full profile has no arbitrary cap", () => {
   it("full profile (>2000 chars) respects Claude score without cap", async () => {
     mockChat.mockResolvedValue(claudeResponse({ overall_score: 92 }));
     const result = await scoreCandidateStructured(
-      "A".repeat(2500), // full_profile quality
+      FULL_PROFILE, // full_profile quality (realistic — passes Stage 1 gate)
       baseParsedRole
     );
     expect(result.data_quality).toBe("full_profile");

@@ -58,6 +58,7 @@ import { isPlausibleLocation } from "@/lib/location";
 import { ScoreBreakdownPanel } from "./candidate/ScoreBreakdownPanel";
 import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
 import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
+import { UploadCvButton } from "./candidate/UploadCvButton";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
 import { ScoreCorrectionButton } from "./candidate/score-correction-button";
 import { CaptureMetadataPanel } from "./candidate/capture-metadata-panel";
@@ -615,6 +616,7 @@ function ProfileDrawer({
     () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
     [candidate.scoreBreakdown]
   );
+  const captureIncomplete = breakdown?.profile_capture_warning?.code === "incomplete_capture";
   const matchReason = useMemo(
     () => safeParseJson<{ summary?: string; reasoning?: string } | null>(candidate.matchReason, null),
     [candidate.matchReason]
@@ -714,18 +716,29 @@ function ProfileDrawer({
               )}
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <ScoreBadge score={candidate.matchScore} size="sm" />
-              {!hasFetchedProfile && (
-                <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
+              {captureIncomplete ? (
+                <span
+                  className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800 font-medium"
+                  title={breakdown?.profile_capture_warning?.message ?? "Capture incomplete — score withheld until full profile or CV is provided"}
+                >
+                  <AlertTriangle className="w-3 h-3" />Unscored — capture incomplete
+                </span>
+              ) : (
+                <>
+                  <ScoreBadge score={candidate.matchScore} size="sm" />
+                  {!hasFetchedProfile && (
+                    <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
+                  )}
+                  {candidate.acceptanceScore != null && (
+                    <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
+                  )}
+                  <ScoreCorrectionButton
+                    jobId={jobId}
+                    candidateId={candidate.id}
+                    currentScore={candidate.matchScore}
+                  />
+                </>
               )}
-              {candidate.acceptanceScore != null && (
-                <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
-              )}
-              <ScoreCorrectionButton
-                jobId={jobId}
-                candidateId={candidate.id}
-                currentScore={candidate.matchScore}
-              />
             </div>
           </div>
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
@@ -966,6 +979,12 @@ export const CandidateCard = memo(function CandidateCard({
   );
   const captureLabel = candidateSourceLabel(candidate);
   const hasExtensionCapture = candidate.source === "extension" && !!candidate.profileText;
+  // When the LinkedIn capture is incomplete, the score and "reasons against"
+  // are NOT trustworthy — the work history (which would prove the must-haves)
+  // is missing from the captured text. Suppress the misleading 12%-style score
+  // and Claude's fabricated rejection narrative; show "Unscored — capture
+  // incomplete" + an Upload CV CTA so the recruiter has an obvious next step.
+  const captureIncomplete = breakdown?.profile_capture_warning?.code === "incomplete_capture";
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
   const radarDimensions = getRadarDimensions(breakdown, matchReason?.dimensions);
   const profileChars = candidate.profileText?.trim().length ?? 0;
@@ -1080,7 +1099,7 @@ export const CandidateCard = memo(function CandidateCard({
               {/* Single data-quality badge replaces the previous trio (Minimal /
                   Snippet / Provisional) — shows the worst-case warning for this
                   candidate so the recruiter sees one clear signal, not clutter. */}
-              {candidate.matchScore != null && (() => {
+              {!captureIncomplete && candidate.matchScore != null && (() => {
                 const tag =
                   breakdown?.data_quality === "minimal" ? { label: "Thin profile", tone: "red", title: "Very little profile data — score is speculative until the full profile is fetched" } :
                   breakdown?.data_quality === "snippet" ? { label: "Snippet only", tone: "orange", title: "Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" } :
@@ -1097,6 +1116,14 @@ export const CandidateCard = memo(function CandidateCard({
                 );
               })()}
               <div className="flex items-center gap-2">
+                {captureIncomplete ? (
+                  <span
+                    className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800 font-medium"
+                    title={breakdown?.profile_capture_warning?.message ?? "Capture incomplete — score withheld until full profile or CV is provided"}
+                  >
+                    <AlertTriangle className="w-3 h-3" />Unscored — capture incomplete
+                  </span>
+                ) : (<>
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
                 {!hasFetchedProfile && (
@@ -1153,6 +1180,7 @@ export const CandidateCard = memo(function CandidateCard({
                     <ScoreRadar dimensions={radarDimensions} />
                   </div>
                 )}
+                </>)}
                 <Badge className={statusBadge(candidate.status)}>
                   {statusLabel(candidate.status)}
                 </Badge>
@@ -1187,16 +1215,29 @@ export const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
-      {breakdown?.profile_capture_warning && (
+      {captureIncomplete && (
         <div className="mx-4 mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
           <div className="flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="text-xs font-semibold text-amber-800">Profile capture may be incomplete</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-amber-800">Profile capture incomplete — unscored</p>
               <p className="text-xs text-amber-800 mt-0.5">
-                Score is unreliable until CV or full work history is checked.
+                The captured LinkedIn text is missing the work history, so the candidate can&apos;t be fairly assessed. Upload a CV or re-fetch the profile before deciding.
               </p>
+              {onFetchProfile && displayableLinkedinUrl(candidate.linkedinUrl) && (
+                <button
+                  type="button"
+                  onClick={() => onFetchProfile(candidate.id)}
+                  className="mt-1.5 text-xs font-medium text-amber-900 underline hover:text-amber-700"
+                >
+                  Re-fetch full profile →
+                </button>
+              )}
             </div>
+            <UploadCvButton
+              candidateId={candidate.id}
+              onUploaded={() => window.location.reload()}
+            />
           </div>
         </div>
       )}
@@ -1233,7 +1274,7 @@ export const CandidateCard = memo(function CandidateCard({
                 </div>
               )}
 
-              {(breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
+              {!captureIncomplete && (breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
                 <div className="grid grid-cols-2 gap-3">
                   {breakdown.reasons_for?.length > 0 && (
                     <div>
@@ -1264,7 +1305,7 @@ export const CandidateCard = memo(function CandidateCard({
                 </div>
               )}
 
-              {breakdown.missing_evidence?.length > 0 && (
+              {!captureIncomplete && breakdown.missing_evidence?.length > 0 && (
                 <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
                   <p className="text-xs font-medium text-amber-700 mb-1">Missing evidence</p>
                   <ul className="space-y-0.5">

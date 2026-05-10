@@ -223,6 +223,177 @@ const EXPERIENCE_HEADING_RE = /(?:^|\n)\s*(experience|work history|employment hi
 const PROFILE_SECTION_HEADING_RE = /(?:^|\n)\s*(about|experience|work history|employment history|career history|education|skills|top skills|licenses|certifications|licenses & certifications)\s*(?:\n|$)/i;
 const STUB_SIGNAL_RE = /\b(?:near[- ]empty|empty stub|profile (?:is |appears )?(?:a )?stub|no work history|no visible work history|no skills (?:list )?visible|without (?:a )?full cv|do not progress without|insufficient profile|profile capture (?:is )?incomplete|missing work history)\b/i;
 
+// ─── Deterministic Stage 1: signal presence + sufficiency gate ────────────
+//
+// Runs BEFORE Claude. Two jobs:
+//   (a) Stub gate — when the capture is too thin to score fairly, refuse to
+//       call Claude at all. Avoids the "12% with fabricated rejection
+//       reasons" failure mode that destroys recruiter trust (cf. Brendan
+//       Lester case — full LinkedIn history visible online but the scrape
+//       captured only headline + about, which Claude then "scored" as
+//       missing every must-have).
+//   (b) Ground-truth signal — for must-haves whose tokens ARE present in
+//       the profile text via regex match, surface them to Claude as
+//       confirmed evidence so it can't contradict them. Means Claude scores
+//       PRESENCE + nuance, not absence.
+
+export interface DeterministicMatch {
+  /** Must-haves with at least one regex/alias hit in the profile text. */
+  matchedSignals: string[];
+  /** Must-haves with NO regex/alias hits in the profile text. */
+  missingSignals: string[];
+  /** Year-range patterns ("1998 – 2001", "2017-present") detected. */
+  rolesDetected: number;
+  /** Char count of the profile text (post-trim). */
+  charCount: number;
+  /**
+   * Is this capture rich enough to score fairly? The gate that prevents
+   * Claude from being asked to fabricate a verdict on absent data.
+   *
+   * Sufficient when the profile has either (a) full-profile char count AND
+   * at least one work-history entry detected, OR (b) at least one role
+   * anchor matched. Snippet captures fall through to provisional scoring
+   * (handled separately) — this gate is for "we tried to capture a full
+   * profile but the scrape failed".
+   */
+  sufficient: boolean;
+  /** Human-readable reason when not sufficient — surfaced to UI/logs. */
+  reasonInsufficient?: string;
+}
+
+/**
+ * Run text-only Stage 1 checks. No AI. Pure deterministic regex over the
+ * captured text + the parsed JD must-haves. Cheap (~1ms) and the output is
+ * the source of truth that Claude can't contradict downstream.
+ *
+ * `signalMatchesText` is passed in to avoid coupling scoring.ts to
+ * requirement-signals.ts (already imported in plenty of consumers; keeps
+ * this function unit-testable in isolation).
+ */
+// Recently-employed candidates' LinkedIn captures often show "Since 2018"
+// or "5 yrs" instead of a YYYY-YYYY range. These also count as work-history
+// signals — a current role marker proves the Experience section was actually
+// captured. Without recognising them, the gate falsely refuses to score
+// real, currently-employed candidates.
+const CURRENT_ROLE_RE = /\b(?:since\s+(?:19|20)\d{2}|\d+\s*yrs?\b|\d+\s*mos?\b)/gi;
+
+export function runDeterministicMatch(args: {
+  profileText: string;
+  mustHaves: string[];
+  /** Caller-injected signal expansion + match. Production wires the
+   *  requirement-signals.ts implementations; tests inject lightweight
+   *  versions to lock specific behaviour. */
+  expandSignals: (req: string) => string[];
+  matchSignal: (haystack: string, signal: string) => boolean;
+}): DeterministicMatch {
+  const profileText = args.profileText.trim();
+  const charCount = profileText.length;
+  const yearRangeHits = (profileText.match(YEAR_RANGE_RE) ?? []).length;
+  const currentRoleHits = (profileText.match(CURRENT_ROLE_RE) ?? []).length;
+  const rolesDetected = yearRangeHits + currentRoleHits;
+
+  const matched: string[] = [];
+  const missing: string[] = [];
+  for (const req of args.mustHaves) {
+    const signals = args.expandSignals(req);
+    const hit = signals.some((s) => args.matchSignal(profileText, s));
+    if (hit) matched.push(req);
+    else missing.push(req);
+  }
+
+  // Sufficient = "we have enough captured text + signal evidence to ask
+  // Claude for a fair score". This is intentionally lenient — we only
+  // refuse to score when the capture is plainly incomplete (Brendan stub:
+  // chars look full but ZERO work entries detected). A genuinely thin
+  // junior profile (1 role, 2000+ chars, no must-haves matched) still
+  // passes the gate — Claude can read the prose and produce a fair "low
+  // match" score. The gate's job is to catch SCRAPE FAILURE, not to
+  // pre-judge candidate fit.
+  let sufficient = true;
+  let reasonInsufficient: string | undefined;
+  // Only refuse when ALL of:
+  //   - the profile is long enough to look full (≥2000 chars)
+  //   - there's at least one must-have to gate on (otherwise we have nothing
+  //     to detect by absence)
+  //   - no work-history markers detected (no year ranges AND no "since 2018"
+  //     / "N yrs" current-role markers)
+  //   - none of the must-haves' signals appear in the text
+  //   - no LinkedIn structural section markers (about / experience / skills /
+  //     education / etc.) — if those are present the scrape worked, the
+  //     candidate is just a poor fit and Claude should score them
+  const hasAnyMustHaves = args.mustHaves.length > 0;
+  const hasStructuralMarkers = PROFILE_SECTION_HEADING_RE.test(profileText) || EXPERIENCE_HEADING_RE.test(profileText);
+  if (
+    charCount >= 2000 &&
+    rolesDetected === 0 &&
+    hasAnyMustHaves &&
+    matched.length === 0 &&
+    !hasStructuralMarkers
+  ) {
+    sufficient = false;
+    reasonInsufficient =
+      "Profile is long enough to look like a full capture but contains no detectable work history (no dated roles, no must-have tokens, no LinkedIn section headers). Capture likely failed to expand the Experience section — re-fetch or upload CV before scoring.";
+  }
+
+  return {
+    matchedSignals: matched,
+    missingSignals: missing,
+    rolesDetected,
+    charCount,
+    sufficient,
+    reasonInsufficient,
+  };
+}
+
+/**
+ * Build a synthetic ScoreBreakdown for the pre-Claude stub gate path. No
+ * AI is called. The breakdown surfaces the warning, sets all must-haves to
+ * "unknown" with a clear reason, and leaves the negative-side outputs
+ * empty so the UI doesn't show fabricated rejection narratives.
+ *
+ * Use only when `runDeterministicMatch().sufficient === false`.
+ */
+export function buildStubBreakdown(args: {
+  parsedRoleMustHaves: string[];
+  parsedRoleNiceToHaves: string[];
+  profileCharCount: number;
+  reasonInsufficient: string;
+  weights?: ScoringWeights;
+}): ScoreBreakdown {
+  return buildScoreBreakdown({
+    categories: {
+      skill_fit:        { score: 0, weight: args.weights?.skill_fit ?? CATEGORY_WEIGHTS_V2.skill_fit, evidence: "Cannot assess from incomplete capture." },
+      location_fit:     { score: 0, weight: args.weights?.location_fit ?? CATEGORY_WEIGHTS_V2.location_fit, evidence: "Cannot assess from incomplete capture." },
+      seniority_fit:    { score: 0, weight: args.weights?.seniority_fit ?? CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Cannot assess from incomplete capture." },
+      title_fit:        { score: 0, weight: args.weights?.title_fit ?? CATEGORY_WEIGHTS_V2.title_fit, evidence: "Cannot assess from incomplete capture." },
+      domain_fit:       { score: 0, weight: args.weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Cannot assess from incomplete capture." },
+      nice_to_have_fit: { score: 0, weight: args.weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Cannot assess from incomplete capture." },
+    },
+    must_have_coverage: args.parsedRoleMustHaves.map((req) => ({
+      requirement: req,
+      status:      "unknown" as MustHaveCoverageStatus,
+      evidence:    "Not visible — capture incomplete.",
+    })),
+    nice_to_have_coverage: args.parsedRoleNiceToHaves.map((req) => ({
+      requirement: req,
+      status:      "absent" as NiceToHaveCoverageStatus,
+      evidence:    "Not visible — capture incomplete.",
+    })),
+    reasons_for:           [],
+    reasons_against:       [],
+    missing_evidence:      [],
+    recruiter_summary:     "LinkedIn capture is incomplete — do not progress or reject without full work history or CV.",
+    profileCharCount:      args.profileCharCount,
+    profileCaptureWarning: {
+      code:     "incomplete_capture",
+      message:  "LinkedIn capture is incomplete — upload CV or re-fetch the full profile before assessing.",
+      evidence: [args.reasonInsufficient],
+    },
+    weights:            args.weights,
+    claudeOverallScore: null,
+  });
+}
+
 export function analyseProfileCaptureCompleteness(args: {
   profileText: string;
   recruiterSummary?: string;
@@ -474,9 +645,17 @@ export function buildScoreBreakdown(params: {
       );
     }
   }
-  const overall = params.claudeOverallScore != null
-    ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
-    : formulaOverall;
+  // Stub captures: force a 0 sentinel. The breakdown still serialises and is
+  // used to surface the warning + evidence; persistence layers translate this
+  // sentinel into matchScore=null so stubs sort to the bottom and don't
+  // pollute averages. The UI gates display on profile_capture_warning, not
+  // on this number — but if anything reads `overall` directly without the
+  // gate, 0 is the safest fail.
+  const overall = params.profileCaptureWarning
+    ? 0
+    : params.claudeOverallScore != null
+      ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
+      : formulaOverall;
 
   const evidenceCoverage = computeEvidenceCoverageScore(
     params.must_have_coverage,
