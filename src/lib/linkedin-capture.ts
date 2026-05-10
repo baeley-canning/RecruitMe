@@ -8,7 +8,6 @@ import {
   type ParsedRole,
 } from "./ai";
 import { buildScoreCacheKey, safeParseJson } from "./utils";
-import { isProfileUnchanged } from "./talent-pool";
 import { normaliseLinkedInUrl } from "./linkedin";
 import {
   isConfirmedOutOfAreaForLocalRole,
@@ -337,7 +336,7 @@ async function buildIdentityData(args: {
   currentHeadline: string | null;
   currentLocation: string | null;
   currentStatus: string;
-  currentProfileText: string | null;
+  currentProfileTextHash: string | null;
   profileText: string;
   linkedinUrl: string;
 }): Promise<IdentityData> {
@@ -347,7 +346,7 @@ async function buildIdentityData(args: {
     currentHeadline,
     currentLocation,
     currentStatus,
-    currentProfileText,
+    currentProfileTextHash,
     profileText,
     linkedinUrl,
   } = args;
@@ -360,12 +359,6 @@ async function buildIdentityData(args: {
   if (!job) {
     throw new Error("Job not found");
   }
-
-  // If the new profile is very similar to the stored one, skip the expensive
-  // AI calls in stage 2 (saves ~2/3 of AI spend — the existing score is still valid).
-  const profileUnchanged =
-    !!currentProfileText &&
-    isProfileUnchanged(sanitizeCapturedLinkedInText(currentProfileText), cleanedProfileText);
 
   let name = currentName;
   let headline = currentHeadline;
@@ -398,6 +391,16 @@ async function buildIdentityData(args: {
         weights,
       })
     : null;
+  // Only skip Stage 2 when the existing score cache key proves the stored
+  // score was computed against this exact profile text and the current
+  // role/scoring inputs. A fuzzy "similar profile" shortcut is unsafe:
+  // LinkedIn can add a few older work-history lines (e.g. C++/Sybase) while
+  // the text remains 85% similar, and those lines can completely change the
+  // recruiting verdict.
+  const profileUnchanged =
+    !!profileTextHash &&
+    !!currentProfileTextHash &&
+    currentProfileTextHash === profileTextHash;
 
   return {
     cleanedProfileText,
@@ -590,7 +593,7 @@ async function buildCapturedCandidateData(args: {
   currentHeadline: string | null;
   currentLocation: string | null;
   currentStatus: string;
-  currentProfileText: string | null;
+  currentProfileTextHash: string | null;
   profileText: string;
   linkedinUrl: string;
 }) {
@@ -623,7 +626,7 @@ export async function saveCapturedProfileFast(args: {
     currentHeadline: candidate.headline,
     currentLocation: candidate.location,
     currentStatus: candidate.status,
-    currentProfileText: candidate.profileText,
+    currentProfileTextHash: candidate.profileTextHash,
     profileText: profileText.trim(),
     linkedinUrl,
   });
@@ -715,7 +718,7 @@ export async function importCapturedLinkedInProfileFast(args: {
     currentHeadline: existing?.headline ?? null,
     currentLocation: existing?.location ?? null,
     currentStatus: existing?.status ?? "new",
-    currentProfileText: existing?.profileText ?? null,
+    currentProfileTextHash: existing?.profileTextHash ?? null,
     profileText: profileText.trim(),
     linkedinUrl: cleanUrl,
   });

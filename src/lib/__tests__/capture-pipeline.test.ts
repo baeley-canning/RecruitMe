@@ -50,6 +50,17 @@ import {
   saveCapturedProfileFast,
   applyAiEnrichmentInBackground,
 } from "../linkedin-capture";
+import { buildScoreCacheKey } from "../utils";
+
+const testWeights = {
+  must_have: 0.36,
+  skill_fit: 0.22,
+  location_fit: 0.08,
+  seniority_fit: 0.10,
+  title_fit: 0.08,
+  domain_fit: 0.10,
+  nice_to_have_fit: 0.06,
+};
 
 const PROFILE_TEXT = "Pat Lee\nSenior Software Engineer at Acme Corp\nAbout\nTen years of full-stack development. Strong distributed systems background. Wellington, New Zealand. Built and shipped a microservice platform handling 50k tps with React, TypeScript, Postgres.";
 
@@ -82,6 +93,7 @@ describe("saveCapturedProfileFast (stage 1)", () => {
       headline: null,
       location: null,
       profileText: null,
+      profileTextHash: null,
     });
     dbMocks.prisma.candidate.update.mockImplementation(({ data }) =>
       Promise.resolve({ id: "cand-1", ...data }),
@@ -155,6 +167,76 @@ describe("saveCapturedProfileFast (stage 1)", () => {
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(2);
     const [, secondCall] = dbMocks.prisma.candidate.update.mock.calls;
     expect((secondCall[0] as { data: Record<string, unknown> }).data.linkedinUrl).toBeUndefined();
+  });
+
+  it("does not preserve a stale score when a similar recapture changes the score hash", async () => {
+    const oldText = `${PROFILE_TEXT}\n${"General LinkedIn boilerplate. ".repeat(80)}`;
+    const newText = `${oldText}\nExperience\nTechnical Consultant / C++ Developer at ACC\nMicrosoft Visual C++ developer using Sybase DB.\nC++ Developer & Support at New Zealand Customs Service on Solaris.`;
+    dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({
+      id: "cand-1",
+      jobId: "job-1",
+      name: "Pat Lee",
+      headline: "Senior Software Engineer",
+      location: "Wellington",
+      profileText: oldText,
+      profileTextHash: "hash-for-prior-shorter-profile",
+    });
+
+    const { identity } = await saveCapturedProfileFast({
+      jobId: "job-1",
+      candidateId: "cand-1",
+      profileText: newText,
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+    });
+
+    expect(identity.profileUnchanged).toBe(false);
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          profileText: expect.stringContaining("Technical Consultant / C++ Developer at ACC"),
+          matchScore: null,
+          scoreBreakdown: null,
+        }),
+      }),
+    );
+  });
+
+  it("preserves the existing score only when the stored profileTextHash exactly matches the new score hash", async () => {
+    const parsedRole = JSON.parse(baseJob.parsedRole);
+    const validHash = buildScoreCacheKey({
+      profileText: PROFILE_TEXT,
+      parsedRole,
+      salary: null,
+      jobLocation: baseJob.location,
+      isRemote: baseJob.isRemote,
+      weights: testWeights,
+    });
+    dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({
+      id: "cand-1",
+      jobId: "job-1",
+      name: "Pat Lee",
+      headline: "Senior Software Engineer",
+      location: "Wellington",
+      profileText: PROFILE_TEXT,
+      profileTextHash: validHash,
+    });
+
+    const { identity } = await saveCapturedProfileFast({
+      jobId: "job-1",
+      candidateId: "cand-1",
+      profileText: PROFILE_TEXT,
+      linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+    });
+
+    expect(identity.profileUnchanged).toBe(true);
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({
+          matchScore: null,
+          scoreBreakdown: null,
+        }),
+      }),
+    );
   });
 });
 
