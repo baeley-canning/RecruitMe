@@ -55,7 +55,9 @@ import {
 } from "@/lib/provisional-scoring";
 import {
   extractRoleAwareDistinctiveAnchors,
+  extractStrippedComplianceAnchors,
   extractSignalsFromRequirement,
+  extractDistinctiveSignalsFromRequirement,
   normalizeSignalText,
   signalMatchesText,
   extractLegacyAnchorTerms,
@@ -129,15 +131,35 @@ function looksUnderqualifiedForRole(result: SearchResult, parsedRole: ParsedRole
 function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole, profileText?: string | null, candidateLocation?: string | null) {
   const terms = extractDistinctiveRequirementTerms(parsedRole);
   if (terms.length === 0) {
-    // No distinctive technical anchors — the original behaviour was to let
-    // everyone through, which surfaced sales/marketing/wrong-family
-    // candidates on non-technical roles (the C++-on-Project-Manager bug).
-    // Instead, fall back to a title-family check: only reject when the
-    // candidate's title is clearly the WRONG family. Ambiguous candidate
-    // titles (e.g. bare "Consultant" / "Specialist" / "Solutions Lead")
-    // return null from extractTitleFamily and pass through — we don't reject
-    // on ambiguity, only on clearly-incompatible titles. Equally, if we
-    // can't classify the ROLE title (rare), we let everyone through.
+    // No distinctive technical anchors. Try the hybrid-role compliance
+    // fallback FIRST: a "Technology and Solution Support Manager" role has
+    // ISMS/ISO 27001 stripped by extractRoleAwareDistinctiveAnchors so it
+    // doesn't reject every IT-ops candidate, but a candidate WITH strong
+    // ISMS/ISO experience should still pass. We admit them via the
+    // stripped-compliance set instead of forcing them through the
+    // title-family check (where "Compliance Manager" would otherwise be
+    // rejected as security_grc vs support_ops).
+    const compliance = extractStrippedComplianceAnchors({
+      title: parsedRole.title,
+      requirements: [
+        ...(parsedRole.must_haves ?? []),
+        ...(parsedRole.knockout_criteria ?? []),
+      ],
+    });
+    if (compliance.length > 0) {
+      const text = candidateSearchText(result, profileText, candidateLocation);
+      const candidateCompliance = new Set(
+        extractDistinctiveSignalsFromRequirement(text).map((s) => s.toLowerCase()),
+      );
+      const matchesCompliance = compliance.some((anchor) => {
+        const lower = anchor.toLowerCase();
+        return candidateCompliance.has(lower) || textHasTerm(text, anchor);
+      });
+      if (matchesCompliance) return true;
+    }
+    // Otherwise fall back to title-family compatibility — same logic as
+    // before. Wrong-role-family candidates are rejected; ambiguous and
+    // clearly-compatible titles pass.
     return candidateTitleFitsRole(parsedRole.title, result.headline);
   }
 

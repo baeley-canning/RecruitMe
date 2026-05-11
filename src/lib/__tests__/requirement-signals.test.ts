@@ -3,6 +3,7 @@ import {
   extractDistinctiveSignalsFromRequirement,
   extractRoleAwareDistinctiveAnchors,
   extractSignalsFromRequirement,
+  extractStrippedComplianceAnchors,
   isPureComplianceRole,
   signalMatchesText,
 } from "../requirement-signals";
@@ -400,5 +401,45 @@ describe("requirement signal extraction", () => {
 
     expect(signals.some((signal) => signalMatchesText("Senior engineer at Vodafone PLC", signal))).toBe(false);
     expect(signals.some((signal) => signalMatchesText("PLC configuration and HMI integration", signal))).toBe(true);
+  });
+
+  // ── Hybrid-role compliance fallback ────────────────────────────────────
+  // extractRoleAwareDistinctiveAnchors strips ISMS/ISO 27001 for non-pure-
+  // compliance titles to avoid under-firing on IT-ops roles. But that
+  // leaves NO way for a candidate with strong ISMS evidence to pass the
+  // source gate on a hybrid role like "Technology and Solution Support
+  // Manager". extractStrippedComplianceAnchors returns the anchors that
+  // WERE stripped so the search gate can admit them as a second pass.
+  describe("extractStrippedComplianceAnchors — hybrid-role fallback", () => {
+    const hybridReqs = [
+      "ISO 27001 ISMS implementation",
+      "SOC 2 audit readiness",
+      "Linux infrastructure management",
+      "Active Directory and networking",
+    ];
+
+    it("returns ISMS + ISO 27001 for a hybrid title (NOT pure compliance)", () => {
+      const stripped = extractStrippedComplianceAnchors({
+        title: "Technology and Solution Support Manager",
+        requirements: hybridReqs,
+      });
+      expect(stripped).toEqual(expect.arrayContaining(["ISMS", "ISO 27001"]));
+    });
+
+    it("returns EMPTY for a PURE compliance title (anchors already in main set)", () => {
+      const stripped = extractStrippedComplianceAnchors({
+        title: "ISMS Lead",
+        requirements: hybridReqs,
+      });
+      expect(stripped).toEqual([]);
+    });
+
+    it("returns EMPTY when role has no compliance requirements", () => {
+      const stripped = extractStrippedComplianceAnchors({
+        title: "Senior Software Engineer",
+        requirements: ["C++ development", "Sybase database experience"],
+      });
+      expect(stripped).toEqual([]);
+    });
   });
 });

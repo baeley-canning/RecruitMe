@@ -552,6 +552,30 @@ export function extractRoleAwareDistinctiveAnchors(args: {
   return [...expandDomainAnchors(filtered)];
 }
 
+/**
+ * Hybrid-role variant of extractRoleAwareDistinctiveAnchors: returns the
+ * compliance anchors that were STRIPPED for non-pure-compliance titles.
+ * Used by the source gate to admit candidates from EITHER side of a hybrid
+ * role — e.g. for "Technology and Solution Support Manager" we want to
+ * accept both IT-ops candidates (via title-family fallback) AND security/GRC
+ * candidates whose snippet mentions ISMS / ISO 27001 / SOC 2 / PCI.
+ *
+ * Returns an empty array when:
+ *   - the role IS pure-compliance (anchors already in the main set)
+ *   - the role has no compliance requirements at all
+ */
+export function extractStrippedComplianceAnchors(args: {
+  title: string | null | undefined;
+  requirements: string[];
+}): string[] {
+  if (isPureComplianceRole(args.title)) return [];
+  const all = new Set<string>();
+  for (const r of args.requirements) {
+    extractDistinctiveSignalsFromRequirement(r).forEach((t) => all.add(t));
+  }
+  return [...all].filter((term) => COMPLIANCE_GATE_TERMS.has(term));
+}
+
 // Patterns for technologies rare enough to be used as hard search anchors in the
 // legacy fallback path (roles parsed before anchor_terms was added).
 // Deliberately narrow: common tech like Azure, .NET, SQL is NOT listed here because
