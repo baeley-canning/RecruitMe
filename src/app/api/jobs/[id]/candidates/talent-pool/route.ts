@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { scoreCandidatesBatch } from "@/lib/ai";
+import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
@@ -326,6 +327,11 @@ export async function POST(
 
   console.log(`[talent-pool] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore}, overseas ${skippedOverseas}, stoppedEarly=${stoppedEarly}`);
   void recordUsage(auth.orgId, auth.userId, "score_all", { jobId, scored: saved.length, source: "talent_pool" });
+
+  // Background phone enrichment for the just-saved candidates. The existing
+  // candidates' enriched-at timestamps + 90d cache mean re-imports of the
+  // same person across jobs don't re-burn credits.
+  for (const c of saved) enrichCandidateInBackground(c.id);
 
   const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
   const partialNote = stoppedEarly

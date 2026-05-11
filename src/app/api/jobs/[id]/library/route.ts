@@ -16,6 +16,7 @@ import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
+import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -174,7 +175,7 @@ export async function POST(
       // unique constraint sees `library:src-1` in the where but `null` in the
       // create row, so the upsert never finds a match.
       const linkedinUrl = source.linkedinUrl ?? `library:${source.id}`;
-      await prisma.candidate.upsert({
+      const upserted = await prisma.candidate.upsert({
         where: { jobId_linkedinUrl: { jobId: id, linkedinUrl } },
         create: {
           jobId: id,
@@ -199,6 +200,9 @@ export async function POST(
         },
       });
       added++;
+      // Background phone enrichment — gated by Firmable's 90d cache so
+      // re-importing the same person to a new job doesn't re-bill.
+      enrichCandidateInBackground(upserted.id);
       if (!breakdown) unscoredIds.push(source.id);
     } catch {
       failed.push(source.id);

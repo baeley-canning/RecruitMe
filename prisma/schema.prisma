@@ -108,6 +108,9 @@ model Candidate {
   location     String?
   linkedinUrl  String?
   jobAdderUrl  String?  // JobAdder candidate profile URL — set manually until API integration
+  phone        String?  // Primary contact phone — set by Firmable enrichment (preferred mobile; falls back to first available). UI display field.
+  firmableData String?  // JSON: full Firmable People response (other phones, emails, deliverability flags). Source-of-truth for "what else did the lookup return".
+  firmableEnrichedAt DateTime? // Last successful Firmable lookup; gates the 90-day re-enrichment check.
   profileText     String?  // Raw pasted/captured profile text
   profileTextHash String?  // Written after every score; cleared when profile is updated. Used by the UI stale indicator — if matchScore is set but this is null, the profile was refreshed since last score.
   matchScore          Int?

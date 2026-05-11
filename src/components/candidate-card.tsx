@@ -84,6 +84,7 @@ interface Candidate {
   location: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  phone?: string | null;
   profileText: string | null;
   profileCapturedAt?: string | null;
   matchScore: number | null;
@@ -704,6 +705,20 @@ function ProfileDrawer({
               <div className="mt-1.5">
                 <LocationFitPill location={candidate.location} score={locationFitScore} />
               </div>
+            )}
+            {/* Phone (from Firmable enrichment). tel: link so recruiter can
+                click-to-call from mobile / desktop softphones. */}
+            {candidate.phone && (
+              <a
+                href={`tel:${candidate.phone.replace(/[^+\d]/g, "")}`}
+                className="inline-flex items-center gap-1 mt-1.5 text-xs text-slate-600 hover:text-blue-600 transition-colors"
+                title="Click to call"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.95.68l1.49 4.48a1 1 0 01-.5 1.21l-1.6.8a11 11 0 005.52 5.52l.8-1.6a1 1 0 011.21-.5l4.48 1.49a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
+                </svg>
+                {candidate.phone}
+              </a>
             )}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <Badge className={candidate.source === "extension" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}>
