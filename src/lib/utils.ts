@@ -21,6 +21,9 @@ type ScoreCacheKeyInput = {
   parsedRole: unknown;
   salary: { min: number; max: number } | null;
   jobLocation?: string | null;
+  /** Optional secondary location for dual-site roles. Included in the cache
+   * key so adding/changing the second location invalidates stale scores. */
+  jobLocation2?: string | null;
   isRemote?: boolean | null;
   // Scoring weights — when the recruiter / job overrides org defaults the
   // resulting score changes, so the key has to include them or stale cached
@@ -48,6 +51,10 @@ export function buildScoreCacheKey(input: ScoreCacheKeyInput): string {
     parsedRole: input.parsedRole,
     salary: input.salary,
     jobLocation: input.jobLocation ?? null,
+    // jobLocation2 stays out of the key when both undefined AND null so the
+    // cache stays valid for jobs that never used a secondary location. When
+    // set, it participates in the hash and changing it invalidates the cache.
+    ...(input.jobLocation2 != null ? { jobLocation2: input.jobLocation2 } : {}),
     isRemote: input.isRemote ?? false,
     weights: input.weights ?? null,
   });

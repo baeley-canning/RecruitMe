@@ -5,6 +5,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getJobTargetLocation } from "@/lib/job-target-location";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
@@ -67,14 +68,14 @@ export async function POST(req: Request) {
       const breakdown = applyLocationFitOverride(
         await scoreCandidateStructured(profileText, parsedRole, salary, weights, auth.orgId),
         location ?? null,
-        parsedRole.location ?? job.location ?? "",
+        getJobTargetLocation(job, parsedRole),
         parsedRole.location_rules,
         job.isRemote,
         weights,
       );
       scoreData = {
         ...deriveUpdateData(breakdown),
-        profileTextHash: buildScoreCacheKey({ profileText, parsedRole, salary, jobLocation: job.location, isRemote: job.isRemote, weights }),
+        profileTextHash: buildScoreCacheKey({ profileText, parsedRole, salary, jobLocation: job.location, jobLocation2: job.location2, isRemote: job.isRemote, weights }),
       };
     } catch {
       // Scoring failed — import without a score, recruiter can re-score manually

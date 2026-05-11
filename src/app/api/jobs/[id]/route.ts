@@ -51,6 +51,8 @@ const PatchJobSchema = z.object({
   title:      z.string().min(1).max(200).trim().optional(),
   company:    z.string().max(200).trim().optional(),
   location:   z.string().max(200).trim().optional(),
+  // Empty string clears the secondary location (recruiter removing the second city).
+  location2:  z.string().max(200).trim().optional().nullable(),
   status:     z.enum(["active", "closed", "on-hold"]).optional(),
   rawJd:      z.string().min(1).max(50_000).optional(),
   parsedRole: z.string().max(100_000).optional(),
@@ -85,6 +87,9 @@ export async function PATCH(
       ...(body.title      !== undefined && { title: body.title }),
       ...(body.company    !== undefined && { company: body.company }),
       ...(body.location   !== undefined && { location: body.location }),
+      // Use null to clear; empty string also clears (consistent with the
+      // create endpoint's `|| null` pattern).
+      ...(body.location2  !== undefined && { location2: body.location2 || null }),
       ...(body.status     !== undefined && { status: body.status }),
       ...(body.rawJd      !== undefined && { rawJd: body.rawJd }),
       ...(body.parsedRole !== undefined && { parsedRole: body.parsedRole }),

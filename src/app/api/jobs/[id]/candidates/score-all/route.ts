@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { scoreCandidateStructured, predictAcceptance, withRetry } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
@@ -112,6 +113,7 @@ export async function POST(
               parsedRole,
               salary,
               jobLocation: job.location,
+              jobLocation2: job.location2,
               isRemote: job.isRemote,
               weights,
             });
@@ -125,7 +127,7 @@ export async function POST(
               const breakdown = applyLocationFitOverride(
                 rawBreakdown.value,
                 candidate.location,
-                parsedRole.location,
+                getJobTargetLocation(job, parsedRole),
                 parsedRole.location_rules,
                 job.isRemote,
                 weights,

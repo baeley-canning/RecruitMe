@@ -4,6 +4,7 @@ import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { withRetry } from "@/lib/ai/chat";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -50,7 +51,7 @@ export async function POST(
     const breakdown = applyLocationFitOverride(
       rawBreakdown.value,
       candidate.location,
-      parsedRole.location,
+      getJobTargetLocation(job, parsedRole),
       parsedRole.location_rules,
       job.isRemote,
       weights,
@@ -89,6 +90,7 @@ export async function POST(
           parsedRole,
           salary,
           jobLocation: job.location,
+          jobLocation2: job.location2,
           isRemote: job.isRemote,
           weights,
         }),

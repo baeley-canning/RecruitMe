@@ -15,6 +15,7 @@ import { prisma } from "@/lib/db";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getJobTargetLocation } from "@/lib/job-target-location";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { shouldRejectAsOverseas } from "@/lib/location";
@@ -82,8 +83,11 @@ export async function POST(
     );
   }
 
-  const location = parsedRole.location ?? "";
-  const locationSource = location || parsedRole.location_rules || "";
+  // Recruiter-set job locations win over parsedRole.location (AI-extracted)
+  // and feed through the multi-target branch of assessLocationFit when a
+  // second location is set.
+  const jobTargetLocation = getJobTargetLocation(job, parsedRole) ?? "";
+  const locationSource = jobTargetLocation || parsedRole.location_rules || "";
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
@@ -94,7 +98,7 @@ export async function POST(
   // pre-loop city/keyword/radius expansion that used to filter the pool.
   const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
-  const targetLocation = customCenterCity?.name ?? (location || canonicalJobCity || locationSource);
+  const targetLocation = customCenterCity?.name ?? (jobTargetLocation || canonicalJobCity || locationSource);
 
   // 1. Collect the LinkedIn URLs already in this job so we skip duplicates.
   const existingUrls = new Set(
@@ -249,6 +253,7 @@ export async function POST(
         parsedRole,
         salary,
         jobLocation: job.location,
+        jobLocation2: job.location2,
         isRemote: job.isRemote,
         weights,
       });

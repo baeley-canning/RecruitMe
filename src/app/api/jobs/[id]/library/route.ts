@@ -15,6 +15,7 @@ import { prisma } from "@/lib/db";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -159,7 +160,7 @@ export async function POST(
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const raw = await scoreCandidateStructured(source.profileText, parsedRole, salary, weights, auth.orgId);
-        breakdown = applyLocationFitOverride(raw, source.location, parsedRole.location, parsedRole.location_rules, job.isRemote, weights);
+        breakdown = applyLocationFitOverride(raw, source.location, getJobTargetLocation(job, parsedRole), parsedRole.location_rules, job.isRemote, weights);
         break;
       } catch {
         if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
@@ -190,7 +191,7 @@ export async function POST(
           // without a score so the candidate is visible and can be re-scored.
           ...(breakdown ? deriveUpdateData(breakdown) : {}),
           ...(breakdown ? {
-            profileTextHash: buildScoreCacheKey({ profileText: source.profileText, parsedRole, salary, jobLocation: job.location, isRemote: job.isRemote, weights }),
+            profileTextHash: buildScoreCacheKey({ profileText: source.profileText, parsedRole, salary, jobLocation: job.location, jobLocation2: job.location2, isRemote: job.isRemote, weights }),
           } : {}),
         },
         update: {

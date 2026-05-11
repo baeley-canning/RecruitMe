@@ -7,6 +7,7 @@ import { scoreCandidateStructured, predictAcceptance, cleanCvText, extractCandid
 import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getJobTargetLocation } from "@/lib/job-target-location";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -34,6 +35,7 @@ async function requireAccess(candidateId: string, auth: NonNullable<Awaited<Retu
           salaryMax: true,
           isRemote: true,
           location: true,
+          location2: true,
           scoringWeights: true,
         },
       },
@@ -292,7 +294,7 @@ export async function POST(
             const breakdown = applyLocationFitOverride(
               rawBreakdown.value,
               candidate.location,
-              parsedRole.location ?? candidate.job.location ?? "",
+              getJobTargetLocation(candidate.job, parsedRole),
               parsedRole.location_rules,
               candidate.job.isRemote,
               weights,
@@ -303,6 +305,7 @@ export async function POST(
               parsedRole,
               salary,
               jobLocation: candidate.job.location,
+              jobLocation2: candidate.job.location2,
               isRemote: candidate.job.isRemote,
               weights,
             });

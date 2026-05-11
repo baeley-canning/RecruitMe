@@ -82,6 +82,7 @@ interface Job {
   title: string;
   company: string | null;
   location: string | null;
+  location2: string | null;
   rawJd: string;
   parsedRole: string | null;
   salaryMin: number | null;
@@ -223,6 +224,10 @@ export default function JobDetailPage({
   const [editingSalary, setEditingSalary] = useState(false);
   const [savingSalary, setSavingSalary] = useState(false);
   const [salaryError, setSalaryError] = useState("");
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [locationDraft, setLocationDraft] = useState("");
+  const [location2Draft, setLocation2Draft] = useState("");
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [editingJd, setEditingJd] = useState(false);
   const [jdDraft, setJdDraft] = useState("");
@@ -384,6 +389,29 @@ export default function JobDetailPage({
       setEditingSalary(false);
     }
     setSavingSalary(false);
+  };
+
+  const handleSaveLocation = async () => {
+    if (!job) return;
+    setSavingLocation(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // Empty string clears location2 (recruiter removed the second city).
+        body: JSON.stringify({
+          location:  locationDraft.trim(),
+          location2: location2Draft.trim() || null,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json() as Job;
+        setJob((prev) => prev ? { ...prev, location: updated.location, location2: updated.location2 } : prev);
+        setEditingLocation(false);
+      }
+    } finally {
+      setSavingLocation(false);
+    }
   };
 
   const handleSaveJd = async () => {
@@ -1227,10 +1255,55 @@ ${toHtml(job.rawJd)}
                   {job.company}
                 </span>
               )}
-              {job.location && (
+              {editingLocation ? (
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+                  <input
+                    type="text"
+                    value={locationDraft}
+                    onChange={(e) => setLocationDraft(e.target.value)}
+                    placeholder="Primary location"
+                    className="px-2 py-0.5 text-xs border border-slate-300 rounded w-32 focus:outline-none focus:border-blue-400"
+                    autoFocus
+                  />
+                  <span className="text-slate-400">/</span>
+                  <input
+                    type="text"
+                    value={location2Draft}
+                    onChange={(e) => setLocation2Draft(e.target.value)}
+                    placeholder="Second location (optional)"
+                    className="px-2 py-0.5 text-xs border border-slate-300 rounded w-36 focus:outline-none focus:border-blue-400"
+                  />
+                  <button
+                    onClick={handleSaveLocation}
+                    disabled={savingLocation}
+                    className="text-xs text-blue-600 hover:text-blue-700 disabled:text-slate-400"
+                  >
+                    {savingLocation ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => setEditingLocation(false)}
+                    className="text-xs text-slate-400 hover:text-slate-600"
+                  >
+                    Cancel
+                  </button>
+                </span>
+              ) : (
                 <span className="flex items-center gap-1">
                   <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-                  {job.location}
+                  {job.location || <span className="italic text-slate-400">No location</span>}
+                  {job.location2 && <span> / {job.location2}</span>}
+                  <button
+                    onClick={() => {
+                      setLocationDraft(job.location ?? "");
+                      setLocation2Draft(job.location2 ?? "");
+                      setEditingLocation(true);
+                    }}
+                    className="ml-1 text-[10px] text-blue-600 hover:text-blue-700"
+                    title="Edit locations"
+                  >
+                    edit
+                  </button>
                 </span>
               )}
             </div>

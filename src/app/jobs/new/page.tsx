@@ -36,6 +36,7 @@ export default function NewJobPage() {
   const [title, setTitle] = useState("");
   const [company, setCompany] = useState("");
   const [location, setLocation] = useState("");
+  const [location2, setLocation2] = useState("");
   const [isRemote, setIsRemote] = useState(false);
   const [salaryEnabled, setSalaryEnabled] = useState(false);
   const [salaryMin, setSalaryMin] = useState(80000);
@@ -145,6 +146,7 @@ export default function NewJobPage() {
           title: title.trim(),
           company: company.trim(),
           location: location.trim(),
+          location2: location2.trim() || undefined,
           isRemote,
           rawJd: jdText.trim(),
           salaryMin: salaryEnabled ? salaryMin : null,
@@ -224,6 +226,33 @@ export default function NewJobPage() {
               className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
+        </div>
+
+        {/* Optional second location — for hybrid / dual-site roles where
+            candidates in either city should score 100. Hidden unless the
+            recruiter expands it so the form stays compact for the common
+            single-city case. */}
+        <div>
+          <details className="text-xs">
+            <summary className="cursor-pointer text-slate-500 hover:text-slate-700 select-none">
+              {location2.trim()
+                ? <>+ second location: <span className="text-slate-700 font-medium">{location2.trim()}</span></>
+                : <>+ add a second location <span className="text-slate-400">(optional — for dual-site roles)</span></>
+              }
+            </summary>
+            <div className="mt-2">
+              <input
+                type="text"
+                value={location2}
+                onChange={(e) => setLocation2(e.target.value)}
+                placeholder="e.g. Christchurch, NZ"
+                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Candidates based in either location will score the same for location fit.
+              </p>
+            </div>
+          </details>
         </div>
 
         <div className={cn(

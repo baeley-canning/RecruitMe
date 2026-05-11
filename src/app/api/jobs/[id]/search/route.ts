@@ -400,13 +400,13 @@ export async function POST(
   }
 
   const location = parsedRole.location ?? "";
-  const locationSource = [job.location, location, parsedRole.location_rules].filter(Boolean).join(" ");
+  const locationSource = [job.location, job.location2, location, parsedRole.location_rules].filter(Boolean).join(" ");
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
   const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
-  const knownTargets = extractKnownLocationTargets(job.location, location, parsedRole.location_rules);
+  const knownTargets = extractKnownLocationTargets(job.location, job.location2, location, parsedRole.location_rules);
   const canonicalJobCity = knownTargets[0] ?? getCityCoords(locationSource)?.name ?? "";
   const parsedSearchLocation = canonicalJobCity || locationSource;
   // For remote NZ roles, if no city is resolved, default to "New Zealand" so queries
@@ -414,7 +414,7 @@ export async function POST(
   // which produces a worldwide search and floods results with offshore candidates.
   const effectiveParsedLocation = parsedSearchLocation || (job.isRemote ? "New Zealand" : "");
   const searchLocation = locationOverride?.trim() || effectiveParsedLocation;
-  const targetLocation = locationOverride?.trim() || buildTargetLocationLabel(job.location, location, parsedRole.location_rules) || location || canonicalJobCity || locationSource;
+  const targetLocation = locationOverride?.trim() || buildTargetLocationLabel(job.location, job.location2, location, parsedRole.location_rules) || location || canonicalJobCity || locationSource;
 
   // Build query pool with reserved slots for rare hard-skill terms. For niche
   // roles, terms like Sybase/C++ matter more than burning every slot on titles.
@@ -616,7 +616,7 @@ async function persistPoolSearchResults(args: {
 async function runSearchBackground(args: {
   sessionId: string;
   jobId: string;
-  job: { orgId: string | null; parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null };
+  job: { orgId: string | null; parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null; location2: string | null };
   parsedRole: ParsedRole;
   salary: { min: number; max: number } | null;
   weights: ScoringWeights;
@@ -1325,6 +1325,7 @@ async function runSearchBackground(args: {
                 parsedRole,
                 salary,
                 jobLocation: job.location,
+                jobLocation2: job.location2,
                 isRemote: job.isRemote,
                 weights,
               });

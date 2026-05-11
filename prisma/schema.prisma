@@ -13,6 +13,7 @@ model Job {
   title       String
   company     String?
   location    String?
+  location2   String?  // Optional secondary location for hybrid / dual-site roles (e.g. Wellington + Christchurch). Used by location-fit scoring so a candidate in either metro scores 100.
   rawJd       String
   parsedRole  String?  // JSON string: parsed AI output
   salaryMin   Int?     // NZD yearly minimum (optional)

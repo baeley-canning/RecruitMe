@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { Prisma } from "@prisma/client";
 import { applyLocationFitOverride, deriveUpdateData } from "./score-utils";
+import { getJobTargetLocation } from "./job-target-location";
 import {
   extractCandidateInfo,
   predictAcceptance,
@@ -387,6 +388,7 @@ async function buildIdentityData(args: {
         parsedRole,
         salary,
         jobLocation: job.location,
+        jobLocation2: job.location2,
         isRemote: job.isRemote,
         weights,
       })
@@ -499,7 +501,7 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
     const breakdown = applyLocationFitOverride(
       rawBreakdown,
       location,
-      parsedRole.location,
+      getJobTargetLocation(job, parsedRole),
       parsedRole.location_rules,
       job.isRemote,
       weights,
@@ -522,7 +524,7 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
       } else if (
         // Keep the city-distance reject for the very out-of-area NZ cases
         // (e.g. Whangarei for a Wellington office role) only when explicit.
-        isConfirmedOutOfAreaForLocalRole(location, parsedRole.location || job.location, parsedRole.location_rules, job.isRemote)
+        isConfirmedOutOfAreaForLocalRole(location, getJobTargetLocation(job, parsedRole), parsedRole.location_rules, job.isRemote)
       ) {
         update.status = "rejected";
       }

@@ -22,6 +22,7 @@ import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { scoreCandidateStructured } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { getJobTargetLocation } from "@/lib/job-target-location";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import type { ParsedRole } from "@/lib/ai";
@@ -50,7 +51,7 @@ export async function PATCH(
     include: {
       job: {
         select: {
-          id: true, title: true, company: true, location: true,
+          id: true, title: true, company: true, location: true, location2: true,
           isRemote: true, salaryMin: true, salaryMax: true,
           parsedRole: true, scoringWeights: true, orgId: true,
         },
@@ -118,7 +119,7 @@ export async function PATCH(
       const breakdown = applyLocationFitOverride(
         rawBreakdown,
         candidate.location,
-        parsedRole.location ?? candidate.job.location ?? "",
+        getJobTargetLocation(candidate.job, parsedRole),
         parsedRole.location_rules,
         candidate.job.isRemote,
         weights,
@@ -129,6 +130,7 @@ export async function PATCH(
         parsedRole,
         salary,
         jobLocation: candidate.job.location,
+        jobLocation2: candidate.job.location2,
         isRemote: candidate.job.isRemote,
         weights,
       });
