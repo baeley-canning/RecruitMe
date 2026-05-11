@@ -107,6 +107,48 @@ describe("computeMustHavePct", () => {
     expect(computeMustHavePct(coverage, "minimal")).toBe(19);
   });
 
+  // Soft-skill must-haves (importance < 0.8) are kept in the coverage list
+  // for recruiter visibility but EXCLUDED from must_have_pct so they can't
+  // rescue a weak technical profile. This is the "Co-Op .NET Dev had 14
+  // must-haves with 5 behavioural → must_have_pct inflated ~15pts" bug.
+  it("excludes soft-skill must-haves from the pct formula but keeps them in coverage", () => {
+    const coverage: MustHaveStatus[] = [
+      // 2 technical, both confirmed
+      { requirement: "C++ development experience",   status: "confirmed", evidence: "Found" },
+      { requirement: "Azure Kubernetes (AKS)",       status: "confirmed", evidence: "Found" },
+      // 3 behavioural — would otherwise drag pct down on "missing" or inflate on "likely"
+      { requirement: "Strong communication skills",  status: "missing", evidence: "Not mentioned" },
+      { requirement: "Ability to collaborate across teams", status: "missing", evidence: "Not mentioned" },
+      { requirement: "Self-driven with deadline focus",     status: "missing", evidence: "Not mentioned" },
+    ];
+    // Without filter: (100×1.5 + 100×1.3 + 0×0.7 + 0×0.7 + 0×0.7) / (1.5+1.3+0.7+0.7+0.7)
+    //               = 280 / 4.9 ≈ 57 — soft skills tank the score on missing.
+    // With filter: (100×1.5 + 100×1.3) / (1.5+1.3) = 280/2.8 = 100 — true technical fit.
+    expect(computeMustHavePct(coverage)).toBe(100);
+  });
+
+  it("excludes soft-skills even when they're 'likely' (the inflation case)", () => {
+    // All three soft items below match the getMustHaveImportance 0.7 regex
+    // (collaborate / communication / team). Without the filter, three
+    // 'likely' soft entries @ snippet.likely=55 × 0.7 = 38.5 each pull the
+    // pct toward 47. With the filter, only C++ scores and missing@snippet=20.
+    const coverage: MustHaveStatus[] = [
+      { requirement: "C++ development experience",       status: "missing", evidence: "Not in snippet" },
+      { requirement: "Strong communication skills",       status: "likely",  evidence: "Senior title" },
+      { requirement: "Team player who can collaborate",   status: "likely",  evidence: "Manager role" },
+      { requirement: "Excellent team communication",      status: "likely",  evidence: "Implied" },
+    ];
+    expect(computeMustHavePct(coverage, "snippet")).toBe(20);
+  });
+
+  it("returns neutral 50 when ALL must-haves are soft-skill (no real signal to score on)", () => {
+    const coverage: MustHaveStatus[] = [
+      { requirement: "Strong communication skills",  status: "missing", evidence: "Not mentioned" },
+      { requirement: "Team player",                  status: "likely", evidence: "Implied" },
+    ];
+    expect(computeMustHavePct(coverage)).toBe(50);
+  });
+
   it("averages mixed statuses correctly (confirmed=100, missing=0 → 50)", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "A", status: "confirmed", evidence: "Found" },

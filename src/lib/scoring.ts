@@ -502,6 +502,23 @@ export function analyseProfileCaptureCompleteness(args: {
   };
 }
 
+// Threshold below which a must-have is considered "soft skill" / behavioural
+// and excluded from the must-have pct formula. Items returning < 0.8 from
+// getMustHaveImportance are typically pure soft traits ("communication",
+// "team player", "deadline-driven"). They're kept in the coverage array for
+// recruiter visibility but don't gate the score, because:
+//   1) They can't be reliably verified from a LinkedIn profile.
+//   2) Claude marks them "likely" on almost any senior-ish candidate, which
+//      pulled must_have_pct ~15pts higher than the technical-only formula.
+//   3) On JDs with many soft skills (Co-Op .NET Dev had 14 must-haves with 5
+//      behavioural), the soft items effectively rescued candidates with weak
+//      technical coverage.
+export const SOFT_SKILL_IMPORTANCE_THRESHOLD = 0.8;
+
+export function isSoftSkillRequirement(requirement: string): boolean {
+  return getMustHaveImportance(requirement) < SOFT_SKILL_IMPORTANCE_THRESHOLD;
+}
+
 export function computeMustHavePct(
   coverage: MustHaveStatus[],
   dataQuality: DataQuality = "full_profile"
@@ -509,11 +526,21 @@ export function computeMustHavePct(
   // No must-haves defined on the role — treat as neutral 50, not 100.
   // Returning 100 here was inflating all scores when parsedRole had no requirements.
   if (coverage.length === 0) return 50;
+
+  // Filter to scoring-eligible must-haves only. Soft-skill items stay in the
+  // breakdown.must_have_coverage array (the recruiter still sees them on
+  // the candidate card) but don't contribute to must_have_pct.
+  const scoringCoverage = coverage.filter((c) => !isSoftSkillRequirement(c.requirement));
+
+  // All must-haves were soft-skill (rare). Score must_have_pct as neutral 50
+  // so other dimensions decide. Without this guard we'd divide by zero.
+  if (scoringCoverage.length === 0) return 50;
+
   const pointTable = MUST_HAVE_POINTS_BY_QUALITY[dataQuality];
 
   let totalPoints = 0;
   let totalWeight = 0;
-  for (const c of coverage) {
+  for (const c of scoringCoverage) {
     const importance = getMustHaveImportance(c.requirement);
     totalPoints += pointTable[c.status] * importance;
     totalWeight += importance;
