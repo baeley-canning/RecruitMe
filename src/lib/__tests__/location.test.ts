@@ -106,6 +106,51 @@ describe("assessLocationFit", () => {
     expect(fit?.score).toBe(100);
     expect(fit?.evidence).toContain("Acceptable role locations");
   });
+
+  // Satellite/parent-metro recognition. Without parentMetro tagging, a
+  // Rolleston-based candidate scored 35 ("NZ but not local") for a
+  // Christchurch role and a Paraparaumu candidate scored 80 by raw 45km
+  // distance. Both should now be treated as 100 same-metro matches.
+  describe("same-metro recognition", () => {
+    it("treats Rolleston, Canterbury as a Christchurch match", () => {
+      const fit = assessLocationFit("Rolleston, Canterbury", "Christchurch");
+      expect(fit?.score).toBe(100);
+      expect(fit?.evidence).toMatch(/Christchurch metro/);
+    });
+
+    it("treats Paraparaumu as a Wellington match (45km, beyond distance-100 bucket)", () => {
+      // Use a candidate string with NO "Wellington" substring so we exercise
+      // the parentMetro branch rather than the literal-substring shortcut.
+      const fit = assessLocationFit("Paraparaumu, New Zealand", "Wellington");
+      expect(fit?.score).toBe(100);
+      expect(fit?.evidence).toMatch(/Wellington metro/);
+    });
+
+    it("treats Kaiapoi as a Christchurch match", () => {
+      const fit = assessLocationFit("Kaiapoi, New Zealand", "Christchurch");
+      expect(fit?.score).toBe(100);
+    });
+
+    it("treats North Shore as an Auckland match", () => {
+      const fit = assessLocationFit("North Shore, Auckland", "Auckland");
+      expect(fit?.score).toBe(100);
+    });
+
+    it("treats Pukekohe as an Auckland match (49km out — beyond distance fallback)", () => {
+      const fit = assessLocationFit("Pukekohe, Auckland", "Auckland");
+      expect(fit?.score).toBe(100);
+    });
+
+    it("does NOT promote a Christchurch candidate for a Wellington role", () => {
+      const fit = assessLocationFit("Christchurch, New Zealand", "Wellington");
+      expect(fit?.score).toBeLessThan(45);
+    });
+
+    it("does NOT promote one satellite to a different metro's parent", () => {
+      const fit = assessLocationFit("Rolleston, Canterbury", "Wellington");
+      expect(fit?.score).toBeLessThan(45);
+    });
+  });
 });
 
 describe("isConfirmedOutOfAreaForLocalRole", () => {

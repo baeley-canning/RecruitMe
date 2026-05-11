@@ -1,4 +1,4 @@
-import { distanceKm, getCityCoords, NZ_CITIES } from "./nz-cities";
+import { distanceKm, findCity, getCityCoords, getMetroName, NZ_CITIES } from "./nz-cities";
 
 const NZ_MARKERS = ["new zealand", "aotearoa"];
 const OVERSEAS_MARKERS = [
@@ -726,6 +726,23 @@ export function assessLocationFit(
     return {
       score: 100,
       evidence: `Based in ${candidateRaw}, matching the required ${effectiveTarget} location.`,
+    };
+  }
+
+  // Same-metro match: candidate sits in a satellite of the target's metro
+  // (or both are satellites of the same metro). Rolleston → Christchurch,
+  // Paraparaumu → Wellington, North Shore → Auckland all score 100 here
+  // rather than degrading via raw distance (Paraparaumu is ~45km from
+  // Wellington but functionally Wellington commuter belt). Tagged via
+  // NZCity.parentMetro in nz-cities.ts.
+  const candidateMetro = getMetroName(candidateRaw);
+  const targetMetro = getMetroName(effectiveTarget);
+  if (candidateMetro && targetMetro && candidateMetro === targetMetro) {
+    const candidateCity = findCity(candidateRaw);
+    const localName = candidateCity?.name ?? candidateRaw;
+    return {
+      score: 100,
+      evidence: `Based in ${localName}, part of the ${candidateMetro} metro.`,
     };
   }
 

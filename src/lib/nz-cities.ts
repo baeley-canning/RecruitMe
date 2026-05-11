@@ -3,6 +3,15 @@ export interface NZCity {
   keywords: string[]; // all names / aliases for this city
   lat: number;
   lng: number;
+  /**
+   * Parent metro this town belongs to for scoring purposes. When a candidate
+   * sits in a satellite (e.g. Rolleston) and the job target is the parent
+   * (Christchurch) — or vice versa, or both are different satellites of the
+   * same parent — assessLocationFit treats them as a 100-score same-metro
+   * match. Leave undefined for standalone cities (Wellington, Auckland,
+   * Christchurch themselves don't have a parent).
+   */
+  parentMetro?: string;
 }
 
 // Coordinates for major NZ cities and towns
@@ -15,11 +24,11 @@ export const NZ_CITIES: NZCity[] = [
 
   // --- Auckland metro ---
   { name: "Auckland",      keywords: ["auckland", "tāmaki makaurau", "tamaki makaurau", "tāmaki", "tamaki"], lat: -36.8509, lng: 174.7645 },
-  { name: "North Shore",   keywords: ["north shore", "takapuna", "devonport"],                     lat: -36.7908, lng: 174.7560 },
-  { name: "Waitākere",     keywords: ["waitakere", "waitākere", "henderson", "west auckland"],     lat: -36.8882, lng: 174.6455 },
-  { name: "Manukau",       keywords: ["manukau", "south auckland", "otara"],                       lat: -36.9931, lng: 174.8792 },
-  { name: "Papakura",      keywords: ["papakura"],                                                 lat: -37.0645, lng: 174.9443 },
-  { name: "Pukekohe",      keywords: ["pukekohe"],                                                 lat: -37.2021, lng: 174.9014 },
+  { name: "North Shore",   keywords: ["north shore", "takapuna", "devonport"],                     lat: -36.7908, lng: 174.7560, parentMetro: "Auckland" },
+  { name: "Waitākere",     keywords: ["waitakere", "waitākere", "henderson", "west auckland"],     lat: -36.8882, lng: 174.6455, parentMetro: "Auckland" },
+  { name: "Manukau",       keywords: ["manukau", "south auckland", "otara"],                       lat: -36.9931, lng: 174.8792, parentMetro: "Auckland" },
+  { name: "Papakura",      keywords: ["papakura"],                                                 lat: -37.0645, lng: 174.9443, parentMetro: "Auckland" },
+  { name: "Pukekohe",      keywords: ["pukekohe"],                                                 lat: -37.2021, lng: 174.9014, parentMetro: "Auckland" },
 
   // --- Waikato ---
   { name: "Hamilton",      keywords: ["hamilton", "kirikiriroa"],                                  lat: -37.7870, lng: 175.2793 },
@@ -59,12 +68,12 @@ export const NZ_CITIES: NZCity[] = [
 
   // --- Wellington region ---
   { name: "Wellington",    keywords: ["wellington", "pōneke", "poneke", "te whanganui-a-tara", "te whanganui a tara"], lat: -41.2866, lng: 174.7756 },
-  { name: "Lower Hutt",    keywords: ["lower hutt", "hutt", "te awa kairangi", "hutt city"],       lat: -41.2127, lng: 174.9081 },
-  { name: "Upper Hutt",    keywords: ["upper hutt", "te awa kairangi ki uta"],                     lat: -41.1243, lng: 175.0536 },
-  { name: "Porirua",       keywords: ["porirua", "pōrirua"],                                       lat: -41.1340, lng: 174.8400 },
-  { name: "Petone",        keywords: ["petone", "pētone"],                                         lat: -41.2274, lng: 174.8730 },
-  { name: "Paraparaumu",   keywords: ["paraparaumu", "kapiti", "kāpiti", "kapiti coast"],          lat: -40.9140, lng: 175.0080 },
-  { name: "Waikanae",      keywords: ["waikanae"],                                                 lat: -40.8760, lng: 175.0670 },
+  { name: "Lower Hutt",    keywords: ["lower hutt", "hutt", "te awa kairangi", "hutt city"],       lat: -41.2127, lng: 174.9081, parentMetro: "Wellington" },
+  { name: "Upper Hutt",    keywords: ["upper hutt", "te awa kairangi ki uta"],                     lat: -41.1243, lng: 175.0536, parentMetro: "Wellington" },
+  { name: "Porirua",       keywords: ["porirua", "pōrirua"],                                       lat: -41.1340, lng: 174.8400, parentMetro: "Wellington" },
+  { name: "Petone",        keywords: ["petone", "pētone"],                                         lat: -41.2274, lng: 174.8730, parentMetro: "Wellington" },
+  { name: "Paraparaumu",   keywords: ["paraparaumu", "kapiti", "kāpiti", "kapiti coast"],          lat: -40.9140, lng: 175.0080, parentMetro: "Wellington" },
+  { name: "Waikanae",      keywords: ["waikanae"],                                                 lat: -40.8760, lng: 175.0670, parentMetro: "Wellington" },
   { name: "Masterton",     keywords: ["masterton", "whakaoriori"],                                 lat: -40.9530, lng: 175.6570 },
 
   // --- Marlborough / Nelson ---
@@ -79,7 +88,10 @@ export const NZ_CITIES: NZCity[] = [
 
   // --- Canterbury ---
   { name: "Christchurch",  keywords: ["christchurch", "ōtautahi", "otautahi", "chch"],             lat: -43.5321, lng: 172.6362 },
-  { name: "Rangiora",      keywords: ["rangiora"],                                                  lat: -43.3039, lng: 172.5944 },
+  { name: "Rangiora",      keywords: ["rangiora"],                                                  lat: -43.3039, lng: 172.5944, parentMetro: "Christchurch" },
+  { name: "Kaiapoi",       keywords: ["kaiapoi"],                                                  lat: -43.3795, lng: 172.6499, parentMetro: "Christchurch" },
+  { name: "Rolleston",     keywords: ["rolleston"],                                                lat: -43.5907, lng: 172.3823, parentMetro: "Christchurch" },
+  { name: "Lincoln",       keywords: ["lincoln", "selwyn"],                                        lat: -43.6432, lng: 172.4860, parentMetro: "Christchurch" },
   { name: "Kaikōura",      keywords: ["kaikoura", "kaikōura"],                                     lat: -42.4002, lng: 173.6817 },
   { name: "Ashburton",     keywords: ["ashburton", "hakatere"],                                    lat: -43.9014, lng: 171.7282 },
   { name: "Timaru",        keywords: ["timaru", "te tihi-o-maru"],                                 lat: -44.3960, lng: 171.2549 },
@@ -119,6 +131,31 @@ export function getCityCoords(locationStr: string): { lat: number; lng: number; 
     }
   }
   return null;
+}
+
+/**
+ * Return the full NZCity record (including parentMetro) for a location string,
+ * or null if no city in the table matches. Same matching rule as
+ * getCityCoords — first city whose keyword appears as a substring wins.
+ * Used by assessLocationFit to detect same-metro candidate/target pairs.
+ */
+export function findCity(locationStr: string): NZCity | null {
+  const lower = locationStr.toLowerCase();
+  for (const city of NZ_CITIES) {
+    if (city.keywords.some((kw) => lower.includes(kw))) return city;
+  }
+  return null;
+}
+
+/**
+ * Return the metro name a location belongs to. For a satellite (e.g. Rolleston)
+ * this is the parentMetro; for a primary city (e.g. Christchurch) it's the
+ * city's own name. Used to detect same-metro matches.
+ */
+export function getMetroName(locationStr: string): string | null {
+  const city = findCity(locationStr);
+  if (!city) return null;
+  return city.parentMetro ?? city.name;
 }
 
 /** Get the closest known NZ city to an arbitrary point. */

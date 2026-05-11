@@ -39,7 +39,6 @@ interface RecruiterExample {
   outcomeLabel: string; // "Hired", "Shortlisted", "Rejected" etc.
   reasonsFor: string[];
   reasonsAgainst: string[];
-  summary: string;
   roleTitle: string;
 }
 
@@ -162,26 +161,35 @@ export async function getRecruitingContext(
                      c.status === "shortlisted" ? "Shortlisted" : "Advanced",
       reasonsFor:    (bd?.reasons_for ?? []).slice(0, 2),
       reasonsAgainst:(bd?.reasons_against ?? []).slice(0, 2),
-      summary:       bd?.recruiter_summary ?? "",
       roleTitle:     c.job?.title ?? "Similar role",
     };
   });
 
   const lines: string[] = [
     "Past hiring decisions for similar roles in this organisation:",
-    "(Use these to calibrate your score — they reflect what this org actually values.)",
+    "(Use these for calibration only — to learn what this org values, NOT as text to copy.",
+    "Do NOT quote, paraphrase, or echo prior candidate assessments in your own recruiter_summary,",
+    "reasons_for, or reasons_against. Each candidate's narrative must stand alone and reference",
+    "only the candidate currently being scored. Never name a prior candidate by initials.)",
     "",
   ];
 
   for (const ex of formatted) {
     const sign = ex.outcome === "positive" ? "✓" : "✗";
     // All user-controlled fields are XML-escaped: a candidate name, headline,
-    // recruiter_summary, or reasons_for/against value containing prompt-injection
-    // payload (e.g. </candidate_profile> tags) would otherwise break out of the
-    // XML wrapper around the candidate-being-scored further down the prompt.
+    // reasons_for/against value containing prompt-injection payload (e.g.
+    // </candidate_profile> tags) would otherwise break out of the XML wrapper
+    // around the candidate-being-scored further down the prompt.
+    //
+    // We intentionally do NOT include the prior candidate's free-form
+    // recruiter_summary here. Past investigation: when summaries were included,
+    // Claude pattern-completed new candidates' narratives using sentences it
+    // had just read (e.g. "the same blocker that caused L.R. to be rejected
+    // for this role" appearing verbatim on 9 of 14 ADR candidates). Structured
+    // bullets (Strengths/Gaps) preserve calibration signal without giving the
+    // model continuous prose to copy back.
     lines.push(`${sign} ${ex.outcomeLabel.toUpperCase()} — ${escapeXmlForPrompt(ex.name)} (${escapeXmlForPrompt(ex.roleTitle)})`);
     lines.push(`  Headline: ${escapeXmlForPrompt(ex.headline)}`);
-    if (ex.summary) lines.push(`  Assessment: ${escapeXmlForPrompt(ex.summary)}`);
     if (ex.reasonsFor.length)     lines.push(`  Strengths: ${ex.reasonsFor.map(escapeXmlForPrompt).join("; ")}`);
     if (ex.reasonsAgainst.length) lines.push(`  Gaps: ${ex.reasonsAgainst.map(escapeXmlForPrompt).join("; ")}`);
     lines.push("");
