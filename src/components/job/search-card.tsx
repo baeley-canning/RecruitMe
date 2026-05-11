@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getSearchResultDisplay, type SearchResultSummary } from "@/lib/search-result-display";
+import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 import type { ParsedRole } from "@/lib/ai";
 
 interface SearchCardProps {
@@ -78,17 +79,23 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   }: {
     limit?: number;
     refreshOnlyWhenAdded: boolean;
-  }): Promise<{ count: number; ok: boolean }> => {
+  }): Promise<{ count: number; ok: boolean; aborted?: boolean }> => {
     setSearchingPool(true);
     setPoolError("");
     setPoolResult(null);
+    // 50s client-side abort: the server's TIME_BUDGET_MS is 45s, so this
+    // leaves a 5s buffer for HTTP round-trip. If the pool still hasn't
+    // answered by then we bail rather than blocking the LinkedIn fallback.
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 50_000);
     try {
       const res = await fetch(`/api/jobs/${jobId}/candidates/talent-pool`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ maxResults: limit }),
+        signal: controller.signal,
       });
-      const data = await res.json() as { count?: number; error?: string; message?: string };
+      const data = await res.json().catch(() => ({})) as { count?: number; error?: string; message?: string };
       if (!res.ok || data.error) {
         setPoolError(data.error ?? "Talent pool search failed");
         return { count: 0, ok: false };
@@ -98,10 +105,18 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       setPoolResult({ count, message: data.message });
       if (count > 0 || !refreshOnlyWhenAdded) onComplete();
       return { count, ok: true };
-    } catch {
+    } catch (err) {
+      // AbortError: budget exceeded — treat as "skipped, not failed" so the
+      // main search flow proceeds straight to LinkedIn instead of bailing
+      // with a generic error banner.
+      if ((err as { name?: string })?.name === "AbortError") {
+        setPoolResult({ count: 0, message: "Library search took too long — continuing with LinkedIn search." });
+        return { count: 0, ok: true, aborted: true };
+      }
       setPoolError("Talent pool search failed. Check your connection.");
       return { count: 0, ok: false };
     } finally {
+      clearTimeout(abortTimer);
       setSearchingPool(false);
     }
   };
@@ -112,12 +127,32 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     setSearchResult(null);
     setSearchTimedOut(false);
 
-    // Pool first: full profiles we already own should be used before spending
-    // fresh search/fetch effort. The search API only reuses pool profiles whose
-    // URL appears in new LinkedIn results; this route is the independent pass.
-    const pool = await runTalentPoolSearch({ limit: maxResults, refreshOnlyWhenAdded: true });
+    // Pool-first only when the role has distinctive technical anchors
+    // (SCADA, C++, Sybase, ISMS, etc). For non-specialist roles like a
+    // Project Manager, the talent-pool match logic has no anchor to gate
+    // on, so it ships every Wellington dev to Claude for batch scoring —
+    // which is slow AND surfaces the wrong-role-type candidates that
+    // dominated the PM job's results. Skipping pool for these roles sends
+    // the recruiter straight to LinkedIn, which is the right primary
+    // sourcing channel for a generic role. The recruiter can still hit
+    // "Pool only" explicitly when they want to browse the library.
+    const distinctiveAnchors = extractRoleAwareDistinctiveAnchors({
+      title: parsedRole.title,
+      requirements: [
+        ...(parsedRole.must_haves ?? []),
+        ...(parsedRole.knockout_criteria ?? []),
+      ],
+    });
+    const shouldRunPool = distinctiveAnchors.length > 0;
+
+    let pool: { count: number; ok: boolean; aborted?: boolean } = { count: 0, ok: true };
+    if (shouldRunPool) {
+      pool = await runTalentPoolSearch({ limit: maxResults, refreshOnlyWhenAdded: true });
+    } else {
+      setPoolResult({ count: 0, message: "Library skipped — no distinctive anchors for this role, going straight to LinkedIn." });
+    }
     const remainingResults = Math.max(0, maxResults - pool.count);
-    if (pool.ok && remainingResults === 0) {
+    if (pool.ok && remainingResults === 0 && pool.count > 0) {
       setSearchResult({
         status: "complete",
         count: pool.count,

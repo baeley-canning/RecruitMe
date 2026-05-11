@@ -170,12 +170,13 @@ export async function POST(
   let skippedScore = 0;
   let skippedOverseas = 0;
 
-  // Hard time budget. With batching this is rarely hit, but kept as a safety
-  // net: if Anthropic hangs on a batch for >90s the route returns what's been
-  // scored so far rather than letting Railway's proxy timeout close the
-  // connection mid-flight.
+  // Hard time budget. 45s — chosen to be well under the frontend's 50s pool
+  // abort so the recruiter always gets a response in time for LinkedIn search
+  // to kick off as a fallback. Without this, a slow Anthropic batch could
+  // hold the entire Find Candidates flow open for minutes, blocking the
+  // LinkedIn search the recruiter actually needs for non-specialist roles.
   const startedAt = Date.now();
-  const TIME_BUDGET_MS = 90_000;
+  const TIME_BUDGET_MS = 45_000;
   let stoppedEarly = false;
 
   // For specialist roles (SAFe Scrum Master, C++/Sybase developer, etc.) the pool

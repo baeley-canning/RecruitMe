@@ -528,21 +528,37 @@ export default function JobDetailPage({
     if (!job) return;
     setParsing(true);
     setParseError("");
+    setParseChanges([]);
     try {
       const res = await fetch(`/api/jobs/${id}/parse`, { method: "POST" });
-      const data = await res.json() as { parsedRole?: ParsedRole; changes?: string[]; error?: string };
+      // .catch(() => ({})) so an empty 500 body doesn't crash res.json() —
+      // we want the recruiter to see SOMETHING after a re-analyse, never
+      // a silent spinner-stop with no banner.
+      const data = await res.json().catch(() => ({})) as {
+        parsedRole?: ParsedRole;
+        changes?: string[];
+        error?: string;
+        warning?: string;
+      };
       if (!res.ok || data.error) {
-        setParseError(data.error ?? "Parsing failed");
+        setParseError(data.error ?? `Parsing failed (HTTP ${res.status})`);
+      } else if (data.warning) {
+        // The route emits `warning` when the AI parse fell back to the
+        // regex-minimal path (Claude couldn't extract requirements but the
+        // JD itself was probably fine). Surface it — without this the
+        // recruiter just sees the spinner stop with no feedback.
+        setParseChanges([data.warning]);
+        await fetchJob();
+      } else if (data.changes?.length) {
+        setParseChanges(data.changes);
+        await fetchJob();
       } else {
-        if (data.changes?.length) {
-          setParseChanges(data.changes);
-        } else {
-          setParseChanges(["Re-analysed — requirements are the same as before"]);
-        }
+        setParseChanges(["Re-analysed — requirements are the same as before"]);
         await fetchJob();
       }
-    } catch {
-      setParseError("Parsing failed — check that your Claude API key is set in Settings and try again.");
+    } catch (err) {
+      console.error("[parse] handleParse threw:", err);
+      setParseError(`Parsing failed — ${err instanceof Error ? err.message : "check your connection and try again"}.`);
     } finally {
       setParsing(false);
     }
