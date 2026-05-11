@@ -125,9 +125,16 @@ const MUST_HAVE_POINTS_BY_QUALITY: Record<DataQuality, Record<MustHaveCoverageSt
     equivalent:         85,
     likely:             55,
     likely_historical:  25,
-    missing:             5,
+    // "missing" on a snippet usually means the model couldn't see body text —
+    // not that the candidate lacks the skill. Treat as soft-negative, not 0.
+    missing:            20,
     negative:            0,
-    unknown:            30,
+    // "unknown" on a snippet means "could not assess from visible signals" —
+    // it's a data-quality gap, not a candidate gap, so contribute neutrally
+    // (50) and let other dimensions decide. Without this change, 3 unknown
+    // must-haves on a snippet headline-only capture pulled the pct down to
+    // ~30 and tanked otherwise-strong candidates (the Microsoft + C++ case).
+    unknown:            50,
   },
   minimal: {
     confirmed:         100,
@@ -136,7 +143,7 @@ const MUST_HAVE_POINTS_BY_QUALITY: Record<DataQuality, Record<MustHaveCoverageSt
     likely_historical:  20,
     missing:             0,
     negative:            0,
-    unknown:            10,
+    unknown:            40,
   },
 };
 

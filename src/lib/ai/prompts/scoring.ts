@@ -50,16 +50,20 @@ Set overall_score to your direct holistic verdict of how well this candidate fit
 - 0–19: no match — wrong domain, wrong level, or critical must-haves all absent
 CRITICAL: if you have written reasons_against that describe fundamental blockers (core skill absent, wrong domain entirely, clearly wrong seniority), your overall_score MUST be below 40. Do not let a good location or one confirmed credential push a fundamentally mismatched candidate above 50. The score should reflect the hiring decision, not a balanced average.
 
-PARTIAL CAPTURE RULE — read carefully, this is the most important rule:
-LinkedIn captures are often partial — recruiters sometimes get only the headline + About + current role, not the historical work. Absence of evidence on a partial capture is NOT evidence of absence — the relevant facts may exist on LinkedIn but the scrape missed them. You will be scoring at SOURCING stage, where the recruiter is ranking candidates to decide who to progress to CV / phone interview. They need a real number to rank by, not a "we don't know" verdict.
-When the capture is partial (no Experience section, fewer than 2 dated roles, must-haves not visible in text):
-- DO produce an overall_score from what IS visible (location, headline, current title, current employer). Score 30-50 is appropriate when only headline + location + current role are captured. Don't push above 55 on partial data.
-- DO mark unverifiable must-haves as "unknown" — never "missing" or "negative". "Missing" implies you checked and it's not there; "unknown" reflects "couldn't see in current capture".
-- Leave "reasons_against": [] EMPTY. Do NOT invent rejection reasons from absent data ("no mention of X" on a partial capture is a scrape artefact, not a candidate flaw). The recruiter will see a "partial profile" badge alongside the score and decide whether to progress.
+PARTIAL CAPTURE / SNIPPET RULE — read carefully:
+LinkedIn captures are often partial. The recruiter may have only the headline + About + current role + employer — not the historical work. **Absence of evidence on a partial capture is NOT evidence of mismatch.** The relevant facts may exist on LinkedIn but the scrape missed them. You are scoring at SOURCING stage; the recruiter needs a directional fit signal they can rank by.
+
+Score the FIT, not the data quality. The system tracks data_quality separately so the UI can flag low-confidence rows — your job is to give the truest fit estimate from the signals that ARE visible.
+
+When the capture is partial (no Experience section, fewer than 2 dated roles, must-haves not visible in body text):
+- DO score what visible signals support. A headline of "Senior C++ Developer at Microsoft" is strong positive evidence for a C++ must-have even with no body text — mark that must-have "likely" (or "confirmed" if the title makes it unambiguous) and let it lift the score accordingly. The same applies to employer (a Big Tech name plus a senior title implies strong engineering chops), title (clear seniority signal), and location.
+- DO NOT cap the score because the profile is short. There is no upper bound for partial captures. If three out of five must-haves are strongly implied by a clear senior title at a credible employer, the candidate can score 70+ even with no body text.
+- DO mark unverifiable must-haves as "unknown" — never "missing" or "negative". "Missing" implies you checked and confirmed absence; "unknown" reflects "couldn't see in this capture" and is excluded from must-have coverage penalties (see SCORING_MUST_HAVE_RULES).
+- Leave "reasons_against": [] EMPTY when the gaps are purely capture artefacts (no Experience section captured). Only populate reasons_against with concerns visible in the captured text itself (e.g. the headline shows wrong seniority, the title clearly indicates a different domain).
 - "reasons_for" may include factual signals visible in the captured text (current title, employer, location).
-- Keep "recruiter_summary" honest: e.g. "[CAPTURE_PARTIAL] Lead Engineer at Xero (Wellington) — visible LinkedIn data only; full work history not captured. Treat as directional ranking signal."
+- Keep "recruiter_summary" honest: e.g. "[CAPTURE_PARTIAL] Lead Engineer at Xero (Wellington) — score based on visible signals; full work history not captured. Treat as directional ranking signal."
 - ALWAYS prefix the recruiter_summary with the literal token "[CAPTURE_PARTIAL] " when scoring on a partial capture (do not use this token otherwise). This is a deterministic marker the server uses to flag partial captures in the UI; the visible prose follows the token.
-The recruiter's question at sourcing stage is "who do I progress to the next funnel stage?", not "who do I hire?". Give them a directional score they can rank by.`;
+The recruiter's question at sourcing stage is "who do I progress to the next funnel stage?". Give them the truest directional score the visible signals support.`;
 
 export const SCORING_CATEGORY_RULES = `Category score rules:
 - skill_fit: 80+ = most must-have skills confirmed; 60-79 = several confirmed; 40-59 = adjacent; 0-39 = mismatch
@@ -96,7 +100,7 @@ export const SCORING_REASONS_RULES = `reasons_for: 2–4 specific, evidenced pos
 reasons_against: 2–4 specific concerns grounded in the profile. If a skill is marked "likely_historical" (appears in old roles, current work is a different primary stack), you MUST note the recency gap here — name the year last used and current primary stack (e.g. "C++ last used 2017; now exclusively Python for 7 years — recency is the key risk for this role"). This is not claiming absence; it is explaining the coverage status. Do not speculate beyond what the profile shows.
 missing_evidence: 2–4 specific facts that are NOT in the profile and would materially change the score (e.g. "Years in role not stated", "No mention of team leadership despite Senior title").`;
 
-export const SCORING_SNIPPET_RULE = `Short snippet rule: if the profile is a short snippet (under ~500 chars), treat unmentioned skills as genuinely unknown — do NOT assume they are present. Mark them "missing" or "unknown" accordingly. A snippet that does not mention WordPress does not confirm WordPress. Score only what is explicitly evidenced. Location and title alone should not carry a weak profile into 60%+ territory.`;
+export const SCORING_SNIPPET_RULE = `Short snippet rule: if the profile is a short snippet (under ~500 chars), unmentioned skills are "unknown" — never "missing". A snippet that doesn't mention WordPress doesn't confirm OR rule out WordPress; treat it as unverified, not as a gap. However: visible signals (headline, current title, employer, location) ARE evidence and may be used to mark must-haves "likely" or "confirmed" when they unambiguously imply the skill. Example: a headline of "Staff C++ Engineer at Microsoft" is enough to mark the C++ must-have "confirmed". Score the fit visible signals support — do NOT cap the score because the profile is short.`;
 
 export const SCORING_DEGREE_RULES = `Degree/qualification rules: when a must-have specifies a degree or qualification, assess BOTH level and field relevance.
 - "confirmed" = candidate explicitly states a degree in the required field or a directly equivalent field (e.g. CS degree for software role, Accounting degree for accountant role, Nursing degree for nursing role).

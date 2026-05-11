@@ -21,6 +21,7 @@ const dbMocks = vi.hoisted(() => ({
 
 const aiMocks = vi.hoisted(() => ({
   scoreCandidateStructured: vi.fn(),
+  scoreCandidatesBatch: vi.fn(),
 }));
 
 const sessionMocks = vi.hoisted(() => ({
@@ -118,7 +119,9 @@ describe("talent-pool ingestion route", () => {
       createdAt: new Date(),
       ...create,
     }));
-    aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
+    aiMocks.scoreCandidatesBatch.mockImplementation(async (inputs: Array<{ candidateId: string }>) =>
+      inputs.map((i) => ({ candidateId: i.candidateId, breakdown: makeBreakdown() })),
+    );
   });
 
   it("imports scored talent-pool profiles into the current job", async () => {
@@ -133,12 +136,12 @@ describe("talent-pool ingestion route", () => {
 
     expect(res.status).toBe(200);
     expect(body.count).toBe(1);
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
-      expect.any(String),
+    expect(aiMocks.scoreCandidatesBatch).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ candidateId: expect.any(String), profileText: expect.any(String) })]),
       expect.any(Object),
       null,
       scoringConfigMocks.customWeights,
-      "org-1"
+      "org-1",
     );
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("talent_pool");
@@ -201,7 +204,7 @@ describe("talent-pool ingestion route — full-profile Claude bypass on speciali
     }));
     // Claude returns 65 — well above the snippet cap (25). If snippet-mode
     // scoring leaked in, the result would be 25 (or below the 30 cutoff).
-    aiMocks.scoreCandidateStructured.mockImplementation(() => buildScoreBreakdown({
+    const fullProfileBreakdown = buildScoreBreakdown({
       categories: {
         skill_fit: { score: 80, weight: CATEGORY_WEIGHTS_V2.skill_fit, evidence: "SCADA stack." },
         location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Christchurch." },
@@ -222,7 +225,10 @@ describe("talent-pool ingestion route — full-profile Claude bypass on speciali
       recruiter_summary: "Strong specialist match.",
       profileCharCount: 4000,
       claudeOverallScore: 65,
-    }));
+    });
+    aiMocks.scoreCandidatesBatch.mockImplementation(async (inputs: Array<{ candidateId: string }>) =>
+      inputs.map((i) => ({ candidateId: i.candidateId, breakdown: fullProfileBreakdown })),
+    );
   });
 
   it("scores a pool candidate via Claude full-profile path (NOT snippet cap) on a specialist role", async () => {
@@ -237,8 +243,8 @@ describe("talent-pool ingestion route — full-profile Claude bypass on speciali
 
     expect(res.status).toBe(200);
     expect(body.count).toBe(1);
-    // Proof point #1: Claude full-profile scoring was called.
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledTimes(1);
+    // Proof point #1: Claude full-profile scoring was called via batch.
+    expect(aiMocks.scoreCandidatesBatch).toHaveBeenCalledTimes(1);
     // Proof point #2: the saved score is Claude's verdict (65), not the
     // snippet cap (25). If buildProvisionalSearchScore leaked in, the
     // overall would be 25 (or filtered below the 30 cutoff).

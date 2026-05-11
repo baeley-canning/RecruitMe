@@ -12,7 +12,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured } from "@/lib/ai";
+import { scoreCandidatesBatch } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
@@ -169,12 +169,10 @@ export async function POST(
   let skippedScore = 0;
   let skippedOverseas = 0;
 
-  // Hard time budget. Without this the whole library can stall the request
-  // for many minutes (each AI call has a 90s timeout but the loop has none),
-  // and Railway's proxy then kills the connection — the browser fetch sits
-  // pending forever. 90s is generous enough for ~15-20 candidates to score
-  // sequentially; the rest are reported back as `unscoredRemaining` so the
-  // recruiter can re-run the search to keep going through the pool.
+  // Hard time budget. With batching this is rarely hit, but kept as a safety
+  // net: if Anthropic hangs on a batch for >90s the route returns what's been
+  // scored so far rather than letting Railway's proxy timeout close the
+  // connection mid-flight.
   const startedAt = Date.now();
   const TIME_BUDGET_MS = 90_000;
   let stoppedEarly = false;
@@ -187,22 +185,16 @@ export async function POST(
   const roleTerms = distinctiveTerms(parsedRole);
   const isSpecialistRole = roleTerms.length > 0;
 
-  for (let i = 0; i < candidates.length && saved.length < maxResults; i++) {
-    if (Date.now() - startedAt > TIME_BUDGET_MS) {
-      stoppedEarly = true;
-      console.warn(`[talent-pool] time budget exceeded — stopping at ${i}/${candidates.length}, saved ${saved.length}`);
-      break;
-    }
-    const row = candidates[i];
-    const loc = row.location ?? "";
-
-    // Country gate: combines explicit location with profile-text inference.
-    // Two-signal rule means a returnee Kiwi whose old roles mention overseas
-    // cities won't be falsely rejected — only candidates with corroborating
-    // signals (e.g. Present-role at AU company AND Sydney location string)
-    // get a hard reject. Single signals route to UNKNOWN → reviewable.
+  // ── Pre-filter: drop overseas + non-specialist-signal candidates before scoring.
+  // Anything past this point is sent to Claude. We cap at maxResults * 2 so a
+  // big library doesn't blow the token budget — the over-pull covers the case
+  // where some candidates fail the post-score minScore filter.
+  type PoolRow = typeof candidates[number];
+  const toScore: PoolRow[] = [];
+  for (const row of candidates) {
+    if (toScore.length >= maxResults * 2) break;
     const overseasCheck = shouldRejectAsOverseas({
-      explicitLocation: loc,
+      explicitLocation: row.location ?? "",
       headline: row.headline,
       profileText: row.profileText,
       isRemote: job.isRemote,
@@ -211,44 +203,70 @@ export async function POST(
       skippedOverseas++;
       continue;
     }
-
-    // Pre-score text signal filter for specialist roles.
-    // If NONE of the role's distinctive terms appear in the full profile, skip
-    // scoring entirely — saves Claude API spend and keeps irrelevant candidates
-    // out of the list without paying for a full score to confirm they don't fit.
     if (isSpecialistRole) {
       const haystack = (row.profileText ?? "").toLowerCase();
       const hasSignal = roleTerms.some((term) => haystack.includes(term));
       if (!hasSignal) { skippedScore++; continue; }
     }
+    if (!row.profileText) continue;
+    toScore.push(row);
+  }
+
+  // ── Batch score everything that survived pre-filter.
+  // scoreCandidatesBatch chunks into groups of 5 and dispatches in parallel,
+  // so this typically returns in ~10-30s for up to 40 candidates instead of
+  // the 5-15 MINUTES sequential scoring used to take.
+  const batchResults = toScore.length > 0
+    ? await Promise.race([
+        scoreCandidatesBatch(
+          toScore.map((r) => ({ candidateId: r.id, profileText: r.profileText! })),
+          parsedRole,
+          salary,
+          weights,
+          auth.orgId,
+        ),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("batch score timeout")), TIME_BUDGET_MS)),
+      ]).catch((err) => {
+        console.warn("[talent-pool] batch scoring failed or timed out:", err);
+        stoppedEarly = true;
+        return [];
+      })
+    : [];
+
+  scored = batchResults.length;
+
+  // ── Save loop: each batch result → upsert candidate row (or skip on minScore).
+  const breakdownById = new Map(batchResults.map((r) => [r.candidateId, r.breakdown]));
+
+  for (const row of toScore) {
+    if (saved.length >= maxResults) break;
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      stoppedEarly = true;
+      console.warn(`[talent-pool] time budget exceeded during save loop`);
+      break;
+    }
 
     const profileText = row.profileText!;
-    scored++;
-    console.log(`[talent-pool] scoring candidate ${row.id} — ${profileText.length}ch`);
+    const rawBreakdown = breakdownById.get(row.id);
+    if (!rawBreakdown) {
+      // Batch failed or timed out before this candidate scored. Skip; the
+      // recruiter can re-run to retry.
+      if (minScore > 0) skippedScore++;
+      continue;
+    }
 
-    const scoreData: Record<string, unknown> = {};
-    let matchScore: number | null = null;
-
-    try {
-      // Per-candidate cap: if one profile stalls Claude (or hits the SDK's
-      // own 90s timeout), don't let it consume the whole route's budget —
-      // skip this candidate and move on so the others still get a chance.
-      const PER_CANDIDATE_MS = 25_000;
-      const rawBreakdown = await Promise.race([
-        scoreCandidateStructured(profileText, parsedRole, salary, weights, auth.orgId),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("score timeout")), PER_CANDIDATE_MS)),
-      ]);
-      const breakdown = applyLocationFitOverride(
-        rawBreakdown,
-        row.location,
-        targetLocation,
-        parsedRole.location_rules,
-        job.isRemote,
-        weights,
-      );
-      matchScore = breakdown.overall;
-      Object.assign(scoreData, deriveUpdateData(breakdown));
-      scoreData.profileTextHash = buildScoreCacheKey({
+    const breakdown = applyLocationFitOverride(
+      rawBreakdown,
+      row.location,
+      targetLocation,
+      parsedRole.location_rules,
+      job.isRemote,
+      weights,
+    );
+    const matchScore = breakdown.overall;
+    const scoreData: Record<string, unknown> = {
+      ...deriveUpdateData(breakdown),
+      profileTextHash: buildScoreCacheKey({
         profileText,
         parsedRole,
         salary,
@@ -256,15 +274,8 @@ export async function POST(
         jobLocation2: job.location2,
         isRemote: job.isRemote,
         weights,
-      });
-    } catch (err) {
-      console.error(`[talent-pool] score failed for candidate ${row.id}:`, err);
-      if (minScore > 0) { skippedScore++; continue; }
-    }
-
-    // City-distance reject removed (moved to a soft score only). The country
-    // gate at the top of the loop already handles overseas; an Auckland
-    // candidate on a Wellington role is now ranked low rather than dropped.
+      }),
+    };
 
     // Score floor for specialist roles — same threshold as the search route uses
     // for full profiles. Pool candidates have full text so the score is reliable;
@@ -273,7 +284,7 @@ export async function POST(
     const effectiveMinScore = isSpecialistRole
       ? Math.max(minScore, SCORE_CUTOFF_FULL_PROFILE)
       : minScore;
-    if (matchScore !== null && matchScore < effectiveMinScore) {
+    if (matchScore < effectiveMinScore) {
       skippedScore++;
       continue;
     }

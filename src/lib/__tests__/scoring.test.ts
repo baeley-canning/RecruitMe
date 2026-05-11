@@ -86,21 +86,25 @@ describe("computeMustHavePct", () => {
     expect(computeMustHavePct(coverage)).toBe(0);
   });
 
-  it("treats unknown must-haves as provisional for snippets", () => {
+  it("treats unknown must-haves as neutral for snippets — absence of evidence is not evidence of mismatch", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "Leadership", status: "unknown", evidence: "Insufficient data" },
     ];
-    // snippet.unknown = 30 (neutral credit — absence of evidence ≠ evidence of absence)
-    expect(computeMustHavePct(coverage, "snippet")).toBe(30);
+    // snippet.unknown = 50 (truly neutral — the snippet didn't carry enough
+    // body text to confirm, but that's a data-quality issue, not a candidate
+    // gap. Pulling the must-have pct down here would penalise candidates for
+    // a thin scrape, which is exactly what we're fixing.)
+    expect(computeMustHavePct(coverage, "snippet")).toBe(50);
   });
 
-  it("treats missing must-haves as provisional for minimal snippets", () => {
+  it("gives missing must-haves on minimal snippets low credit, unknown gets neutral-ish", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "WordPress", status: "missing", evidence: "Not mentioned in snippet" },
       { requirement: "UX", status: "unknown", evidence: "Insufficient data" },
     ];
-    // WordPress (1.5×, missing=0) + UX (1.3×, unknown=10): (0+13)/2.8 = 4.64 → 5
-    expect(computeMustHavePct(coverage, "minimal")).toBe(5);
+    // minimal.missing = 0, minimal.unknown = 40. Weights: WordPress 1.5×, UX 1.3×.
+    // (0 × 1.5 + 40 × 1.3) / (1.5 + 1.3) = 52 / 2.8 ≈ 18.57 → 19
+    expect(computeMustHavePct(coverage, "minimal")).toBe(19);
   });
 
   it("averages mixed statuses correctly (confirmed=100, missing=0 → 50)", () => {
