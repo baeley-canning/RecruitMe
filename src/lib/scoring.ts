@@ -749,7 +749,7 @@ export function buildScoreBreakdown(params: {
   // capture push past the moderate-match threshold. The breakdown still
   // carries profile_capture_warning so the UI shows a "partial profile"
   // confidence badge alongside the score.
-  const overall = params.claudeOverallScore != null
+  const preConfidenceOverall = params.claudeOverallScore != null
     ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
     : formulaOverall;
 
@@ -758,6 +758,19 @@ export function buildScoreBreakdown(params: {
     params.nice_to_have_coverage
   );
   const confidence = computeConfidence(params.profileCharCount, params.must_have_coverage);
+
+  // Confidence-aware ceiling: when we genuinely don't know much about the
+  // candidate (confidence < 30 — typically minimal data + no confirmed
+  // must-haves + several unknowns), cap the displayed score at 40 so a
+  // recruiter scanning the list doesn't see "60% match" next to a
+  // "low confidence — insufficient data" badge. The data-quality cap
+  // already caps snippet/minimal data; this adds a coverage-aware second
+  // axis so high-formula / no-evidence cases get capped too.
+  // Higher confidence thresholds are intentionally NOT enforced — a
+  // moderate-confidence candidate may have a legitimately good score.
+  const overall = confidence.score < 30
+    ? Math.min(preConfidenceOverall, 40)
+    : preConfidenceOverall;
   if (params.profileCaptureWarning) {
     confidence.score = Math.min(confidence.score, 35);
     confidence.level = "low";

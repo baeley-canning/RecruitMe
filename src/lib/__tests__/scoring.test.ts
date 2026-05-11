@@ -513,6 +513,73 @@ describe("buildScoreBreakdown", () => {
     expect(bd.missing_evidence).toHaveLength(4);
   });
 
+  // Confidence cap: when we genuinely don't know the candidate (minimal
+  // profile data + several unknown / missing must-haves) the score must
+  // not sit above 40, regardless of what the formula or Claude says. This
+  // prevents the "60% match" + "low confidence" mixed signal from showing
+  // up next to each other in the UI.
+  it("caps overall at 40 when confidence < 30 (truly low-data candidate)", () => {
+    // Minimal profile (180 chars) + 4 critical unknowns drives confidence
+    // base 15 + (4/4 unknown → -30) = -15, clamped to 0 by computeConfidence.
+    const bd = buildScoreBreakdown({
+      categories: {
+        skill_fit:        { score: 60, weight: 0.22, evidence: "Some signals visible" },
+        location_fit:     { score: 100, weight: 0.08, evidence: "Wellington-based" },
+        seniority_fit:    { score: 70, weight: 0.10, evidence: "Senior title" },
+        title_fit:        { score: 70, weight: 0.08, evidence: "Adjacent title" },
+        domain_fit:       { score: 60, weight: 0.10, evidence: "Plausible domain" },
+        nice_to_have_fit: { score: 50, weight: 0.06, evidence: "Some bonus" },
+      },
+      // All technical (no soft-skill exclusion), all unknown — formula
+      // would land in the 40-50s without the cap. Confidence cap kicks in.
+      must_have_coverage: [
+        { requirement: "C++ development experience",   status: "unknown", evidence: "Not visible" },
+        { requirement: "Sybase database experience",   status: "unknown", evidence: "Not visible" },
+        { requirement: "Azure Kubernetes (AKS)",       status: "unknown", evidence: "Not visible" },
+        { requirement: "Microservices architecture",   status: "unknown", evidence: "Not visible" },
+      ],
+      nice_to_have_coverage: [],
+      reasons_for: ["Wellington-based"],
+      reasons_against: [],
+      missing_evidence: [],
+      recruiter_summary: "Minimal capture — visible signals only.",
+      profileCharCount: 180,        // minimal data quality
+      claudeOverallScore: 55,        // Claude scored 55 from the headline + employer
+    });
+
+    expect(bd.confidence.score).toBeLessThan(30);
+    expect(bd.overall).toBeLessThanOrEqual(40);
+  });
+
+  it("does NOT cap overall at 40 when confidence is healthy", () => {
+    // Full profile with confirmed must-haves → high confidence → no cap.
+    const bd = buildScoreBreakdown({
+      categories: {
+        skill_fit:        { score: 80, weight: 0.22, evidence: "Strong stack overlap" },
+        location_fit:     { score: 100, weight: 0.08, evidence: "Wellington-based" },
+        seniority_fit:    { score: 80, weight: 0.10, evidence: "Senior fit" },
+        title_fit:        { score: 75, weight: 0.08, evidence: "Direct title match" },
+        domain_fit:       { score: 70, weight: 0.10, evidence: "Same sector" },
+        nice_to_have_fit: { score: 70, weight: 0.06, evidence: "Most present" },
+      },
+      must_have_coverage: [
+        { requirement: "C++ development experience",   status: "confirmed", evidence: "10 years C++" },
+        { requirement: "Sybase database experience",   status: "confirmed", evidence: "Sybase ASE at ACC" },
+        { requirement: "Azure Kubernetes (AKS)",       status: "confirmed", evidence: "AKS at FINEOS" },
+      ],
+      nice_to_have_coverage: [],
+      reasons_for: [],
+      reasons_against: [],
+      missing_evidence: [],
+      recruiter_summary: "Strong technical match.",
+      profileCharCount: 6500,
+      claudeOverallScore: 75,
+    });
+
+    expect(bd.confidence.score).toBeGreaterThanOrEqual(50);
+    expect(bd.overall).toBeGreaterThan(40);
+  });
+
   it("returns must_have_pct of 100 when no must-haves given", () => {
     const bd = buildScoreBreakdown({
       categories:            baseCategories,
