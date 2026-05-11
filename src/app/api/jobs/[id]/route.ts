@@ -23,7 +23,7 @@ export async function GET(
         orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }],
         select: {
           id: true, jobId: true, orgId: true, name: true, headline: true,
-          location: true, linkedinUrl: true, source: true, status: true,
+          location: true, linkedinUrl: true, source: true, status: true, phone: true,
           matchScore: true, scoreBreakdown: true, matchReason: true,
           fetchPriorityScore: true, fetchPriorityReason: true,
           acceptanceScore: true, acceptanceReason: true,
@@ -44,7 +44,59 @@ export async function GET(
       },
     },
   });
-  return NextResponse.json(full);
+
+  if (!full) return NextResponse.json(full);
+
+  // ── Cross-job presence: for each candidate, find OTHER active jobs (in
+  // any org the caller can read) that have a candidate with the same
+  // LinkedIn URL. Lets the recruiter see "Also on Senior .NET Developer +
+  // 2 others" on the card and avoid double-messaging the same person
+  // across simultaneous searches. One additional query; indexed on
+  // Candidate.linkedinUrl + Job.status.
+  const candidatesWithUrls = full.candidates.filter(
+    (c) => c.linkedinUrl && !c.linkedinUrl.startsWith("library:"),
+  );
+  const urls = [...new Set(candidatesWithUrls.map((c) => c.linkedinUrl!))];
+  let otherJobsByUrl = new Map<string, Array<{ jobId: string; title: string; company: string | null; matchScore: number | null }>>();
+  if (urls.length > 0) {
+    const crossJobRows = await prisma.candidate.findMany({
+      where: {
+        linkedinUrl: { in: urls },
+        // Exclude the current job AND library rows
+        NOT: { OR: [{ jobId: id }, { jobId: null }] },
+        job: {
+          // Active jobs only — closed/on-hold roles aren't actionable for outreach
+          status: "active",
+          orgId: full.orgId, // same org only — don't leak across orgs
+        },
+      },
+      select: {
+        linkedinUrl: true, matchScore: true,
+        job: { select: { id: true, title: true, company: true } },
+      },
+    });
+    otherJobsByUrl = crossJobRows.reduce((map, row) => {
+      if (!row.linkedinUrl || !row.job) return map;
+      const list = map.get(row.linkedinUrl) ?? [];
+      list.push({
+        jobId: row.job.id,
+        title: row.job.title,
+        company: row.job.company,
+        matchScore: row.matchScore,
+      });
+      map.set(row.linkedinUrl, list);
+      return map;
+    }, new Map<string, Array<{ jobId: string; title: string; company: string | null; matchScore: number | null }>>());
+  }
+
+  // Annotate each candidate with its cross-job presence. Empty array when
+  // not on any other active job.
+  const enrichedCandidates = full.candidates.map((c) => ({
+    ...c,
+    otherActiveJobs: c.linkedinUrl ? otherJobsByUrl.get(c.linkedinUrl) ?? [] : [],
+  }));
+
+  return NextResponse.json({ ...full, candidates: enrichedCandidates });
 }
 
 const PatchJobSchema = z.object({

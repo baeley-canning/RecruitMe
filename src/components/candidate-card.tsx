@@ -85,6 +85,10 @@ interface Candidate {
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
   phone?: string | null;
+  /** Other active jobs (same org) where this candidate's LinkedIn URL also
+   *  appears. Used to surface "Also on N other jobs" so the recruiter
+   *  doesn't double-message. Provided by the GET /api/jobs/:id endpoint. */
+  otherActiveJobs?: Array<{ jobId: string; title: string; company: string | null; matchScore: number | null }>;
   profileText: string | null;
   profileCapturedAt?: string | null;
   matchScore: number | null;
@@ -727,6 +731,18 @@ function ProfileDrawer({
               {capturedAt && (
                 <span className="text-[11px] text-slate-400" suppressHydrationWarning>
                   Captured {capturedAt.toLocaleString()}
+                </span>
+              )}
+              {/* Cross-job presence — same LinkedIn URL on N other active
+                  jobs in this org. Subtle amber pill so it's noticeable
+                  during scan but doesn't dominate the card. Hover tooltip
+                  lists the jobs so the recruiter can avoid double-outreach. */}
+              {candidate.otherActiveJobs && candidate.otherActiveJobs.length > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200"
+                  title={`Also on:\n${candidate.otherActiveJobs.map((j) => ` • ${j.title}${j.company ? ` @ ${j.company}` : ""}${j.matchScore != null ? ` — ${j.matchScore}%` : ""}`).join("\n")}`}
+                >
+                  Also on {candidate.otherActiveJobs.length} other job{candidate.otherActiveJobs.length === 1 ? "" : "s"}
                 </span>
               )}
             </div>
