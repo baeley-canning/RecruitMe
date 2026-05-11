@@ -14,6 +14,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { scoreCandidatesBatch } from "@/lib/ai";
 import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
+import { candidateTitleFitsRole } from "@/lib/title-family";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
@@ -209,6 +210,14 @@ export async function POST(
       const haystack = (row.profileText ?? "").toLowerCase();
       const hasSignal = roleTerms.some((term) => haystack.includes(term));
       if (!hasSignal) { skippedScore++; continue; }
+    } else {
+      // No distinctive anchors → fall back to title-family fit so a PM role
+      // doesn't pull C++ Devs / Account Execs / Designers from the pool.
+      // Ambiguous candidate titles still pass (we don't reject on unknown).
+      if (!candidateTitleFitsRole(parsedRole.title, row.headline)) {
+        skippedScore++;
+        continue;
+      }
     }
     if (!row.profileText) continue;
     toScore.push(row);

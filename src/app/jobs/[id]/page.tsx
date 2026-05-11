@@ -214,6 +214,16 @@ export default function JobDetailPage({
   const RENDER_BATCH_SIZE = 50;
   const [renderCap, setRenderCap] = useState<number>(RENDER_BATCH_SIZE);
   const [searchQuery, setSearchQuery] = useState("");
+  // Minimum match-score filter — recruiter's "call list today" lever. Default
+  // 0 = show everything. Set above 0 and the candidate list collapses to
+  // only candidates at or above that score, so the recruiter can isolate
+  // (say) the top-quartile in two clicks. Unscored candidates are always
+  // shown when minScoreFilter is 0 and hidden when it's >0.
+  const [minScoreFilter, setMinScoreFilter] = useState<number>(0);
+  // Snippet-only candidates are partial-profile data. Some recruiters want
+  // to focus on candidates with full profiles; others want the wider net.
+  // Default off (show both).
+  const [hideSnippetOnly, setHideSnippetOnly] = useState(false);
   const [rescoringAll, setRescoringAll] = useState(false);
   const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number; failedIds?: string[]; partial?: boolean } | null>(null);
   const [rescoreProgress, setRescoreProgress] = useState<{ scored: number; total: number } | null>(null);
@@ -1194,6 +1204,24 @@ ${toHtml(job.rawJd)}
           (candidate.notes ?? "").toLowerCase().includes(normalizedSearchQuery)
         );
       })
+      .filter((candidate) => {
+        // Min-score filter. When 0, pass everything. Above 0, require a
+        // numeric matchScore at or above the threshold. UNSCORED candidates
+        // (null) are KEPT visible — adversarial-review caught that hiding
+        // them creates a false "empty list" impression when the recruiter
+        // has unscored candidates in the pipeline. They sort to the bottom
+        // by the existing tiebreakers (profile completeness, etc.) and
+        // their "needs scoring" affordance is visible on the card.
+        if (minScoreFilter <= 0) return true;
+        if (candidate.matchScore == null) return true;
+        return candidate.matchScore >= minScoreFilter;
+      })
+      .filter((candidate) => {
+        // Snippet/partial-profile filter — recruiters who only want to call
+        // candidates with verified full profiles can toggle this.
+        if (!hideSnippetOnly) return true;
+        return Boolean(candidate.profileText && candidate.profileText.length >= 2000);
+      })
       .sort((a, b) => {
         // 1. Active before terminal — moves hired/rejected to the bottom of the
         //    "all" view rather than mixing them with new/shortlisted candidates.
@@ -1224,7 +1252,7 @@ ${toHtml(job.rawJd)}
         const bComplete = (b.profileText ? 1 : 0) + (b.headline ? 1 : 0) + (b.location ? 1 : 0);
         return bComplete - aComplete;
       });
-  }, [filter, jobCandidates, normalizedSearchQuery]);
+  }, [filter, jobCandidates, normalizedSearchQuery, minScoreFilter, hideSnippetOnly]);
 
   // Prune selectedIds when candidates leave the filtered view (filter change,
   // search filter, candidate removed). Otherwise bulk-delete or bulk-move
@@ -1995,23 +2023,69 @@ ${toHtml(job.rawJd)}
 
         {/* Keyword search */}
         {job.candidates.length > 0 && (
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, role, location, or notes…"
-              className="w-full pl-8 pr-8 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 placeholder:text-slate-400"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+          <div className="mb-4 space-y-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by name, role, location, or notes…"
+                className="w-full pl-8 pr-8 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 placeholder:text-slate-400"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Quality filters — score floor + full-profile-only.
+                Designed for the "who do I call today?" workflow: set the score
+                floor to 60+, optionally hide snippet-only profiles, and the
+                list collapses to the candidates worth picking up the phone for.
+                Active filters get a "Clear filters" affordance so the recruiter
+                can't get stuck on a too-strict filter and assume the list is
+                empty. */}
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <label className="flex items-center gap-2 text-slate-600 select-none">
+                <span className="font-medium">Min match</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={90}
+                  step={5}
+                  value={minScoreFilter}
+                  onChange={(e) => setMinScoreFilter(Number(e.target.value))}
+                  className="w-32 accent-blue-600"
+                />
+                <span className={cn("tabular-nums w-9 text-right", minScoreFilter > 0 ? "text-blue-700 font-semibold" : "text-slate-400")}>
+                  {minScoreFilter > 0 ? `${minScoreFilter}%` : "off"}
+                </span>
+              </label>
+
+              <label className="flex items-center gap-1.5 text-slate-600 select-none cursor-pointer ml-2">
+                <input
+                  type="checkbox"
+                  checked={hideSnippetOnly}
+                  onChange={(e) => setHideSnippetOnly(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-blue-600"
+                />
+                Full profiles only
+              </label>
+
+              {(minScoreFilter > 0 || hideSnippetOnly) && (
+                <button
+                  onClick={() => { setMinScoreFilter(0); setHideSnippetOnly(false); }}
+                  className="ml-auto text-blue-600 hover:text-blue-700 underline underline-offset-2"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
           </div>
         )}
 

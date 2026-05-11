@@ -85,6 +85,7 @@ const SearchSchema = z.object({
 const CLEARANCE_WORK_RIGHTS_RE = /security clearance|secret vetting|confidential vetting|nzsis|nz clearance|clearance eligib|work rights|right to work|nz citizen|nz resident|\bvisa\b|work in new zealand/i;
 
 import { looksReal, looksLikePersonName, cleanQuery, dedupeQueries } from "@/lib/search-query-helpers";
+import { candidateTitleFitsRole } from "@/lib/title-family";
 
 function normaliseText(value: string): string {
   return normalizeSignalText(value);
@@ -126,7 +127,18 @@ function looksUnderqualifiedForRole(result: SearchResult, parsedRole: ParsedRole
 
 function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole, profileText?: string | null, candidateLocation?: string | null) {
   const terms = extractDistinctiveRequirementTerms(parsedRole);
-  if (terms.length === 0) return true;
+  if (terms.length === 0) {
+    // No distinctive technical anchors — the original behaviour was to let
+    // everyone through, which surfaced sales/marketing/wrong-family
+    // candidates on non-technical roles (the C++-on-Project-Manager bug).
+    // Instead, fall back to a title-family check: only reject when the
+    // candidate's title is clearly the WRONG family. Ambiguous candidate
+    // titles (e.g. bare "Consultant" / "Specialist" / "Solutions Lead")
+    // return null from extractTitleFamily and pass through — we don't reject
+    // on ambiguity, only on clearly-incompatible titles. Equally, if we
+    // can't classify the ROLE title (rare), we let everyone through.
+    return candidateTitleFitsRole(parsedRole.title, result.headline);
+  }
 
   const text = candidateSearchText(result, profileText, candidateLocation);
   const anchorTerms = extractAnchorRequirementTerms(parsedRole);
