@@ -5,6 +5,7 @@ import {
   searchLinkedInProfiles,
   searchBingLinkedInProfiles,
   searchPDLProfiles,
+  inferEmploymentType,
   type SearchResult,
 } from "@/lib/search";
 import { scoreCandidateStructured } from "@/lib/ai";
@@ -297,7 +298,7 @@ function limitQueriesForAttempt(queries: string[], page: number, attempt: number
 }
 
 async function executeSearchTaskQueue(
-  tasks: Array<{ provider: SearchProvider; query: string; location: string; offset: number; resolvedKey?: string }>,
+  tasks: Array<{ provider: SearchProvider; query: string; location: string; offset: number; resolvedKey?: string; searchOptions?: { excludeContractTitles?: boolean } }>,
   options: { concurrency: number; delayMs: number },
 ): Promise<SearchTaskOutcome[]> {
   const outcomes: SearchTaskOutcome[] = [];
@@ -305,7 +306,7 @@ async function executeSearchTaskQueue(
   for (let i = 0; i < tasks.length; i += options.concurrency) {
     const batch = tasks.slice(i, i + options.concurrency);
     const batchOutcomes = await Promise.all(
-      batch.map((task) => executeSearchTask(task.provider, task.query, task.location, task.offset, task.resolvedKey))
+      batch.map((task) => executeSearchTask(task.provider, task.query, task.location, task.offset, task.resolvedKey, task.searchOptions))
     );
     outcomes.push(...batchOutcomes);
 
@@ -346,11 +347,12 @@ async function executeSearchTask(
   location: string,
   offset: number,
   resolvedKey?: string,
+  options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchTaskOutcome> {
   try {
     const items = provider === "serpapi"
-      ? await searchLinkedInProfiles(query, location, offset, resolvedKey)
-      : await searchBingLinkedInProfiles(query, location, offset, resolvedKey);
+      ? await searchLinkedInProfiles(query, location, offset, resolvedKey, options)
+      : await searchBingLinkedInProfiles(query, location, offset, resolvedKey, options);
     return { provider, query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -429,6 +431,16 @@ export async function POST(
   const searchLocation = locationOverride?.trim() || effectiveParsedLocation;
   const targetLocation = locationOverride?.trim() || buildTargetLocationLabel(job.location, job.location2, location, parsedRole.location_rules) || location || canonicalJobCity || locationSource;
 
+  // Detect employment type from rawJd + parsed experience/responsibilities.
+  // When the JD is explicitly permanent we exclude contractor / freelance
+  // titles from search results (Google -intitle: clauses). Ambiguous JDs
+  // (neither permanent nor contract phrasing) default to NOT excluding —
+  // recall over precision when intent isn't clear.
+  const employmentType = inferEmploymentType(
+    [job.rawJd, parsedRole.experience, ...(parsedRole.responsibilities ?? [])].filter(Boolean).join(" "),
+  );
+  const excludeContractTitles = employmentType === "permanent";
+
   // Build query pool with reserved slots for rare hard-skill terms. For niche
   // roles, terms like Sybase/C++ matter more than burning every slot on titles.
   // queriesOverride wins when present so saved-search re-runs use exactly the
@@ -489,6 +501,7 @@ export async function POST(
     orgId: auth.orgId,
     savedSearchId,
     relaxClearance: relaxClearance ?? false,
+    excludeContractTitles,
   }).catch((err) => {
     reportError(err, { route: "search:background", jobId: id, orgId: auth.orgId });
     prisma.searchSession.update({
@@ -649,10 +662,14 @@ async function runSearchBackground(args: {
   orgId: string | null;
   savedSearchId?: string;
   relaxClearance: boolean;
+  /** Append Google -intitle: clauses to exclude contractor / freelance
+   *  titles. Set true only when the JD is explicitly permanent. */
+  excludeContractTitles: boolean;
 }) {
   const { sessionId, jobId, job, parsedRole, salary, weights, maxResults, targetRaw,
     searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasBing, hasPDL,
-    serpApiKey, bingKey, pdlKey, isOwner, orgId, savedSearchId, relaxClearance } = args;
+    serpApiKey, bingKey, pdlKey, isOwner, orgId, savedSearchId, relaxClearance,
+    excludeContractTitles } = args;
 
   // When relaxClearance=true, remove clearance/work-rights requirements from scoring
   // for this search run. Candidates aren't penalised for not listing clearance on
@@ -823,6 +840,7 @@ async function runSearchBackground(args: {
               location: taskLocation,
               offset,
               resolvedKey: key,
+              searchOptions: { excludeContractTitles },
             }));
           };
 

@@ -64,6 +64,10 @@ vi.mock("@/lib/search", () => ({
   searchLinkedInProfiles: vi.fn(),
   searchBingLinkedInProfiles: vi.fn(),
   searchPDLProfiles: vi.fn(),
+  // Mock matches the real signature: classifies JD text into permanent /
+  // contract / unknown. Default to "unknown" in tests — they don't care
+  // about this signal unless they explicitly opt in.
+  inferEmploymentType: vi.fn(() => "unknown"),
 }));
 vi.mock("@/lib/search-collection", () => searchCollectionMocks);
 vi.mock("@/lib/talent-pool", () => talentPoolMocks);

@@ -59,11 +59,46 @@ function buildLocationSearchTerm(location: string): string {
   return cleaned;
 }
 
-function buildLinkedInSearchQuery(query: string, location: string): string {
+// Phrases that flag a role as permanent / full-time. We exclude contract /
+// freelance / consultant titles from search results only when the role is
+// explicitly permanent. Ambiguous JDs (neither permanent nor contract
+// language) default to NOT excluding — better to surface a contractor the
+// recruiter can manually dismiss than silently lose a candidate.
+const PERMANENT_ROLE_RE =
+  /\b(?:permanent|perm\s+role|perm\s+position|full[- ]time\s+permanent|ongoing\s+role|continuing\s+role)\b/i;
+// Hints the role is genuinely contract / fixed-term — we keep contractor
+// titles in results when these appear.
+const CONTRACT_ROLE_RE =
+  /\b(?:contract\s+role|fixed[- ]term|fixed\s+term|interim|temporary|short[- ]term\s+contract|6[- ]month|9[- ]month|12[- ]month|18[- ]month|day[- ]rate|daily\s+rate|contractor)\b/i;
+
+/** Classify a job description's employment type. Returns "permanent" only
+ *  when the JD explicitly says so; "contract" when contract phrasing is
+ *  present; "unknown" otherwise. Exported for testing + reuse. */
+export function inferEmploymentType(jdOrRoleText: string | null | undefined): "permanent" | "contract" | "unknown" {
+  const text = jdOrRoleText?.trim() ?? "";
+  if (!text) return "unknown";
+  // Contract phrasing wins when both are present — contract roles often say
+  // "permanent staff would also be considered" but the role is still contract.
+  if (CONTRACT_ROLE_RE.test(text)) return "contract";
+  if (PERMANENT_ROLE_RE.test(text)) return "permanent";
+  return "unknown";
+}
+
+function buildLinkedInSearchQuery(query: string, location: string, options: { excludeContractTitles?: boolean } = {}): string {
   const locationTerm = buildLocationSearchTerm(location);
+  // Google-specific negative-intitle clauses. SerpAPI passes them straight
+  // through to Google; Bing tolerates `-` exclusion (operator differs but
+  // the syntax is graceful — Bing treats `-intitle:` as a stop-token and
+  // weights but doesn't strict-exclude, which is the lesser harm).
+  // Excluded titles: "contract", "freelancer", "consultant" (self-employed
+  // pattern), "available for hire". Senior recruiter playbook: when the
+  // JD is explicitly permanent, these are noise.
+  const exclusion = options.excludeContractTitles
+    ? ` -intitle:"contract" -intitle:"freelancer" -intitle:"freelance" -intitle:"available for hire"`
+    : "";
   return locationTerm
-    ? `site:linkedin.com/in ${query} ${locationTerm}`
-    : `site:linkedin.com/in ${query}`;
+    ? `site:linkedin.com/in ${query} ${locationTerm}${exclusion}`
+    : `site:linkedin.com/in ${query}${exclusion}`;
 }
 
 function looksLikeLocationFragment(fragment: string): boolean {
@@ -179,11 +214,12 @@ export async function searchLinkedInProfiles(
   location: string,
   start = 0,
   resolvedKey?: string,
+  options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchResult[]> {
   const apiKey = resolvedKey || process.env.SERPAPI_API_KEY;
   if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured");
 
-  const searchQuery = buildLinkedInSearchQuery(query, location);
+  const searchQuery = buildLinkedInSearchQuery(query, location, options);
 
   const params = new URLSearchParams({
     engine: "google",
@@ -211,11 +247,12 @@ export async function searchBingLinkedInProfiles(
   location: string,
   offset = 0,
   resolvedKey?: string,
+  options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchResult[]> {
   const apiKey = resolvedKey || process.env.BING_API_KEY;
   if (!apiKey) throw new Error("BING_API_KEY is not configured");
 
-  const searchQuery = buildLinkedInSearchQuery(query, location);
+  const searchQuery = buildLinkedInSearchQuery(query, location, options);
 
   const params = new URLSearchParams({
     q: searchQuery,
