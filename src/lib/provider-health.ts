@@ -64,12 +64,36 @@ export function recordProviderSuccess(name: ProviderName): void {
   entry.consecutiveFailures = 0;
 }
 
+/**
+ * Failure messages that mean "this won't recover by retrying — the
+ * provider is fundamentally broken right now": expired credits,
+ * exhausted quotas, invalid auth, banned. Recording one of these flips
+ * the badge straight to red instead of waiting for 3 consecutive
+ * failures, because retrying with the same broken state will fail
+ * exactly the same way.
+ *
+ * Tested patterns (case-insensitive):
+ *   - "credit", "quota", "insufficient", "balance"   credit-related 429s
+ *   - "401", "403", "unauthorized", "forbidden"      auth failures
+ *   - "invalid api key", "invalid_api_key"           specific keyless errors
+ */
+const FATAL_FAILURE_REGEX =
+  /credit|quota|insufficient|balance|\b401\b|\b403\b|unauthor|forbidden|invalid[ _]api[ _]key/i;
+
 export function recordProviderFailure(name: ProviderName, reason: string): void {
   const entry = providerHealth[name];
   entry.lastFailureAt = new Date().toISOString();
   // Trim reason — these end up in tooltips, no point in 4kB stack traces.
   entry.lastFailureReason = reason.slice(0, 200);
-  entry.consecutiveFailures += 1;
+
+  // Bump the running counter. If the failure is fatal (won't self-recover),
+  // skip ahead to 3 so the state derivation classifies the provider as
+  // "down" immediately — the recruiter shouldn't wait for two more wasted
+  // calls to confirm what we already know.
+  const isFatal = FATAL_FAILURE_REGEX.test(reason);
+  entry.consecutiveFailures = isFatal
+    ? Math.max(entry.consecutiveFailures + 1, 3)
+    : entry.consecutiveFailures + 1;
 }
 
 export interface ProviderHealthSnapshot {

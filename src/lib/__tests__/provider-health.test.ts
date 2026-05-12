@@ -86,4 +86,50 @@ describe("providerHealth — state derivation", () => {
     const snap = snapshotProviderHealth().find((p) => p.name === "serpapi")!;
     expect(snap.lastFailureReason!.length).toBeLessThanOrEqual(200);
   });
+
+  // ── Fatal-failure fast-path ─────────────────────────────────────────────
+  // Credit exhaustion / auth failures don't recover on retry, so the badge
+  // shouldn't wait for 3 in a row to confirm. One fatal-pattern failure
+  // should flip the state straight to "down".
+
+  it("credit-exhausted failure flips Claude to down on first hit", () => {
+    recordProviderFailure("claude", "Credit balance is too low to complete this request");
+    expect(snapshotProviderHealth().find((p) => p.name === "claude")!.state).toBe("down");
+  });
+
+  it("'quota exceeded' phrasing also counts as fatal", () => {
+    recordProviderFailure("serpapi", "quota exceeded for this account");
+    expect(snapshotProviderHealth().find((p) => p.name === "serpapi")!.state).toBe("down");
+  });
+
+  it("401/403 auth failures flip immediately to down", () => {
+    recordProviderFailure("firmable", "401 Unauthorized");
+    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("down");
+    recordProviderFailure("github", "403 forbidden — bad credentials");
+    expect(snapshotProviderHealth().find((p) => p.name === "github")!.state).toBe("down");
+  });
+
+  it("'invalid API key' phrasing flips immediately to down", () => {
+    recordProviderFailure("claude", "Invalid API key — please check your credentials");
+    expect(snapshotProviderHealth().find((p) => p.name === "claude")!.state).toBe("down");
+  });
+
+  it("transient failures (rate limit / 5xx) still take 3 to be down", () => {
+    recordProviderFailure("pdl", "rate limit exceeded, retry later");
+    // "rate limit" alone doesn't match the fatal regex (no credit/auth keyword)
+    // — wait, "exceeded" doesn't match either since we tightened earlier.
+    // Actually "limit exceeded" contains "exceeded" which isn't in our regex.
+    // So this is just a regular failure → degraded after 1, not down.
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("degraded");
+    recordProviderFailure("pdl", "500 Internal Server Error");
+    recordProviderFailure("pdl", "504 Gateway Timeout");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
+  });
+
+  it("a single success after a fatal failure clears it back to healthy", () => {
+    recordProviderFailure("claude", "Credit balance too low");
+    expect(snapshotProviderHealth().find((p) => p.name === "claude")!.state).toBe("down");
+    recordProviderSuccess("claude");
+    expect(snapshotProviderHealth().find((p) => p.name === "claude")!.state).toBe("healthy");
+  });
 });
