@@ -1315,36 +1315,37 @@ async function runSearchBackground(args: {
     // junior mismatches, and broad-search results with no specialist stack signal.
     // NZ candidates with any location (including generic "New Zealand") pass through —
     // applyLocationFitOverride handles fine-grained location scoring after fetch.
-    const toScore: PrioritisedSearchWorkItem[] = workItems
-      .map((workItem) => {
-        const r = workItem.result;
-        const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
-        const poolEntry = poolMap.get(normUrl);
-        const profileText = poolEntry?.profileText ?? r.fullText ?? null;
-        // When the structured location field is empty but the snippet/full
-        // profile clearly mentions an NZ city (e.g. an Auckland-based
-        // candidate whose LinkedIn metadata didn't populate `location`),
-        // attribute the city from the text. Prevents Wellington searches
-        // from leaking obviously-Auckland candidates through the gate.
-        const candidateLocation = inferCandidateLocation(
-          poolEntry?.location ?? r.location ?? null,
-          profileText,
-          r.snippet,
-        );
-        const priority = computeFetchPriority({
-          result: r,
-          parsedRole,
-          candidateLocation,
-          profileText,
-          isFromTalentPool: Boolean(poolEntry),
-          isRemote: job.isRemote,
-        });
-        return {
-          ...workItem,
-          fetchPriorityScore: priority.score,
-          fetchPriorityReason: serialiseFetchPriority(priority.reason),
-        };
-      })
+    const workItemsWithPriority = workItems.map((workItem) => {
+      const r = workItem.result;
+      const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+      const poolEntry = poolMap.get(normUrl);
+      const profileText = poolEntry?.profileText ?? r.fullText ?? null;
+      // When the structured location field is empty but the snippet/full
+      // profile clearly mentions an NZ city (e.g. an Auckland-based
+      // candidate whose LinkedIn metadata didn't populate `location`),
+      // attribute the city from the text. Prevents Wellington searches
+      // from leaking obviously-Auckland candidates through the gate.
+      const candidateLocation = inferCandidateLocation(
+        poolEntry?.location ?? r.location ?? null,
+        profileText,
+        r.snippet,
+      );
+      const priority = computeFetchPriority({
+        result: r,
+        parsedRole,
+        candidateLocation,
+        profileText,
+        isFromTalentPool: Boolean(poolEntry),
+        isRemote: job.isRemote,
+      });
+      return {
+        ...workItem,
+        fetchPriorityScore: priority.score,
+        fetchPriorityReason: serialiseFetchPriority(priority.reason),
+      };
+    });
+
+    const toScore: PrioritisedSearchWorkItem[] = workItemsWithPriority
       .filter(({ result: r, fetchPriorityScore }) => {
         if (!looksLikePersonName(r.name)) { skippedNameCheck++; return false; }
         const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
@@ -1377,7 +1378,50 @@ async function runSearchBackground(args: {
       .sort((a, b) => b.fetchPriorityScore - a.fetchPriorityScore)
       .slice(0, Math.min(Math.max(remainingSlots * 3, remainingSlots + 15), 100));
 
-    console.log(`[search] ${toScore.length} candidates to score (LinkedIn slots remaining: ${remainingSlots})`);
+    // ── Rescue pass for niche-stack searches ────────────────────────────
+    // Trigger condition: 0 candidates passed the gate AND 100+ were rejected
+    // by the source-signal check specifically. This catches the
+    // "SilverStripe in Wellington" pattern: real candidates exist but their
+    // LinkedIn snippet (usually just a headline) doesn't visibly contain
+    // the niche anchor terms, so the strict gate filters them all out.
+    //
+    // The rescue pass re-runs the same filter without the
+    // hasSpecialistSourceSignal check — keeping country, seniority, and
+    // name filters — and caps the output to 20 so Claude scoring stays
+    // bounded. Claude is smart enough to reject genuinely wrong-stack
+    // candidates by score; the gate is too blunt for snippet-only data.
+    let rescuedFromGate = 0;
+    if (toScore.length === 0 && skippedSourceGate >= 100) {
+      const rescued = workItemsWithPriority
+        .filter(({ result: r, fetchPriorityScore }) => {
+          if (!looksLikePersonName(r.name)) return false;
+          const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+          const poolEntry = poolMap.get(normUrl);
+          const loc = poolMap.get(normUrl)?.location ?? poolEntry?.location ?? r.location ?? "";
+          if (loc && isExplicitlyOverseasLocation(loc)) return false;
+          if (looksUnderqualifiedForRole(r, parsedRole)) return false;
+          // INTENTIONALLY NOT checking hasSpecialistSourceSignal here —
+          // that's the whole point of the rescue. We do raise the
+          // fetch-priority threshold a touch (38 → 40) to skim the top
+          // of the rejected pool rather than admit every weak match.
+          if (!poolEntry && !r.fullText && fetchPriorityScore < 40) return false;
+          return true;
+        })
+        .sort((a, b) => b.fetchPriorityScore - a.fetchPriorityScore)
+        .slice(0, 20);
+      toScore.push(...rescued);
+      rescuedFromGate = rescued.length;
+      if (rescuedFromGate > 0) {
+        console.log(`[search] rescue pass: source gate filtered ${skippedSourceGate} but 0 passed strict — admitting top ${rescuedFromGate} by fetch-priority for Claude scoring`);
+        // Surface this in the session so the recruiter sees the rescue happened.
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: { message: `Source gate filtered ${skippedSourceGate} candidates with no visible PHP/Laravel/SilverStripe signal — rescue pass admitted top ${rescuedFromGate} by fetch-priority for Claude to evaluate.` },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+      }
+    }
+
+    console.log(`[search] ${toScore.length} candidates to score (LinkedIn slots remaining: ${remainingSlots})${rescuedFromGate > 0 ? ` [${rescuedFromGate} via gate-rescue]` : ""}`);
 
     // Full profiles get Claude scoring; snippets get fast provisional scoring.
     // Batch size 3 to avoid concurrent Claude bursts when talent-pool/PDL full
