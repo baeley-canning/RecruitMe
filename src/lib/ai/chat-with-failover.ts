@@ -158,7 +158,12 @@ export async function chatWithFailover(
     }
 
     recordOllamaFailover(reason);
-    // ollama provider-health is recorded inside ollamaGenerate itself.
+    // Explicit success log — without this, the only log visible after a
+    // Claude failure was "Claude failed" + "attempting Ollama", and the
+    // recruiter couldn't tell whether Ollama actually saved the call or
+    // silently failed. The "✓ RECOVERED" marker is grep-friendly and
+    // makes it obvious in Railway logs that the failover worked.
+    console.log(`[chat-failover] ✓ RECOVERED via Ollama — reason=${reason} durationMs=${ollamaResult.durationMs} chars=${ollamaResult.text.length}`);
     return {
       text: ollamaResult.text,
       source: "ollama",
