@@ -13,30 +13,44 @@
  * see config.ts.
  */
 
+import { setDefaultAutoSelectFamilyAttemptTimeout } from "node:net";
+
 import { readLocalModelConfig } from "./config";
 import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 
+// Fix Node 20 fetch / undici Happy Eyeballs regression — on Railway's
+// dual-stack private network (rolled out 16 Oct 2025), the default IPv4
+// attempt timeout is so high that the IPv6 connection to a sibling
+// service can stall for 30s+ before falling back, which manifests as
+// the Ollama call timing out without ever connecting. 100ms is the
+// canonical Railway-recommended value from their ENOTFOUND
+// troubleshooting docs (https://docs.railway.com/databases/troubleshooting/enotfound-redis-railway-internal).
+// Idempotent — repeated imports re-set the same global.
+try { setDefaultAutoSelectFamilyAttemptTimeout(100); } catch { /* older Node — ignore */ }
+
 /**
- * Build the ordered list of Ollama base URLs to try. We auto-detect because
- * Railway env-var stomping kept leaving OLLAMA_BASE_URL stale / wrong, and a
- * single hardcoded URL meant ZERO Ollama calls when the env was off by even
- * one character. Caches the first working URL after a successful call so
- * subsequent calls hit it directly (no wasted probe per call).
+ * Build the ordered list of Ollama base URLs to try. We auto-detect
+ * because the env var has been a footgun this whole incident (stale /
+ * wrong / empty across deploys). Cache the first URL that responds for
+ * the rest of the process lifetime so subsequent calls skip the probe
+ * loop.
+ *
+ * Note: only `<service>.railway.internal` is a real Railway DNS pattern.
+ * `http://ollama:11434` (compose-style short DNS) does NOT resolve on
+ * Railway — it's only useful for local docker-compose dev.
  */
 let _resolvedBaseUrl: string | null = null;
 
 function candidateBaseUrls(): string[] {
   const envUrl = process.env.OLLAMA_BASE_URL?.trim();
-  // Strip trailing slash to avoid `${base}//api/generate`.
   const normalise = (u: string) => u.replace(/\/+$/, "");
   return [
     ...(envUrl ? [normalise(envUrl)] : []),
-    "http://ollama.railway.internal:11434", // Railway internal DNS pattern
-    "http://ollama:11434",                  // Docker/compose short DNS
-    "http://127.0.0.1:11434",               // local dev
-    "http://localhost:11434",               // local dev (IPv4)
-    "http://[::1]:11434",                   // IPv6 localhost
-  ].filter((u, i, arr) => arr.indexOf(u) === i); // dedupe
+    "http://ollama.railway.internal:11434", // Railway private DNS
+    "http://127.0.0.1:11434",               // local dev (IPv4)
+    "http://localhost:11434",
+    "http://[::1]:11434",                   // local dev (IPv6 loopback)
+  ].filter((u, i, arr) => arr.indexOf(u) === i);
 }
 
 interface OllamaGenerateOptions {
