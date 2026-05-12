@@ -65,6 +65,16 @@ export function classifyClaudeError(err: unknown): { dead: boolean; reason?: Cla
     return { dead: true, reason: "auth_invalid" };
   }
 
+  // Anthropic returns 400 invalid_request_error with "Your credit balance
+  // is too low" when the org is out of credits. This was the production
+  // bug that kept the recruiter staring at raw 400s while Llama sat right
+  // there waiting to take over — the 400 status wasn't recognised as
+  // "Claude dead" so failover never fired. Match the credit / quota /
+  // billing body markers and classify as credits_exhausted.
+  if (status === 400 && /credit balance|credits|quota|insufficient|billing/.test(message)) {
+    return { dead: true, reason: "credits_exhausted" };
+  }
+
   // 429 → dead. The Anthropic SDK already did its automatic retries by the
   // time we see this, and any caller-level withRetry has also exhausted.
   // Leaving the user stranded on "Rate limit exceeded" was strictly worse

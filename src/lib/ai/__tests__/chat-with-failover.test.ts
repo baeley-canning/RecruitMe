@@ -19,6 +19,21 @@ describe("classifyClaudeError — distinguishes DEAD vs transient", () => {
     expect(b).toEqual({ dead: true, reason: "auth_invalid" });
   });
 
+  it("flags 400 with credit-balance body as dead (credits_exhausted) — the actual prod symptom Anthropic returns", () => {
+    // Real prod payload: `400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. ..."}}`
+    expect(classifyClaudeError({ status: 400, message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits." }))
+      .toEqual({ dead: true, reason: "credits_exhausted" });
+    expect(classifyClaudeError({ status: 400, message: "insufficient credits" }))
+      .toEqual({ dead: true, reason: "credits_exhausted" });
+    expect(classifyClaudeError({ status: 400, message: "billing issue" }))
+      .toEqual({ dead: true, reason: "credits_exhausted" });
+  });
+
+  it("does NOT flag a generic 400 bad-request as dead (we don't want every validation error to burn an Ollama call)", () => {
+    expect(classifyClaudeError({ status: 400, message: "max_tokens must be a positive integer" }).dead).toBe(false);
+    expect(classifyClaudeError({ status: 400, message: "Invalid value for 'temperature'" }).dead).toBe(false);
+  });
+
   it("flags 429 with credit-related body as dead (credits_exhausted)", () => {
     expect(classifyClaudeError({ status: 429, message: "Credit balance is too low to complete this request" }))
       .toEqual({ dead: true, reason: "credits_exhausted" });
