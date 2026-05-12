@@ -57,10 +57,17 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
 };
 
 /**
- * Map (state, providerName) → Tailwind colour classes. The Llama badge gets
- * the dedicated purple `llama` token when active to make it visually
- * distinct from the other green providers — recruiters need to spot at a
- * glance when scoring is being handled by the fallback model.
+ * Map (state, providerName) → Tailwind colour classes.
+ *
+ * "untested" reads as green-light: the provider IS configured, we just
+ * haven't seen a real call yet (Railway restarts reset the in-memory
+ * tracker, so right after a deploy every configured provider sits in
+ * this state). Surfacing this as amber was confusing — amber should
+ * mean "something is actively failing", not "we haven't proven it yet".
+ *
+ * The Llama badge gets the dedicated purple `llama` token when active so
+ * recruiters can spot at a glance when scoring is being handled by the
+ * fallback model rather than Claude.
  */
 function colourClasses(state: ProviderState, name: ProviderName): string {
   if (name === "ollama" && state === "healthy") {
@@ -68,9 +75,9 @@ function colourClasses(state: ProviderState, name: ProviderName): string {
   }
   switch (state) {
     case "healthy":      return "bg-success-subtle text-success";
+    case "untested":     return "bg-success-subtle text-success";  // optimistic — configured = ready
     case "degraded":     return "bg-warning-subtle text-warning";
     case "down":         return "bg-danger-subtle text-danger";
-    case "untested":     return "bg-warning-subtle text-warning";
     case "unconfigured": return "bg-surface-hover text-text-tertiary";
   }
 }
