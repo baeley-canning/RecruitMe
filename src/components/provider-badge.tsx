@@ -22,8 +22,6 @@ export type ProviderName =
   | "claude"
   | "ollama"
   | "serpapi"
-  | "searxng"
-  | "openserp"
   | "pdl"
   | "firmable"
   | "github";
@@ -49,8 +47,6 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
   claude:   "Claude",
   ollama:   "Llama",   // user-facing name — they think of it as Llama, not Ollama
   serpapi:  "SerpAPI",
-  searxng:  "SearXNG",
-  openserp: "OpenSERP",
   pdl:      "PDL",
   firmable: "Firmable",
   github:   "GitHub",
@@ -148,12 +144,11 @@ export function ProviderBadgeRow({
   providers: ProviderHealth[];
   showUnconfigured?: boolean;
 }) {
-  // Order: AI providers first (Claude/Llama), then search providers
-  // (SerpAPI/SearXNG/OpenSERP — the trio that fans out together), then
-  // enrichment + GitHub. This keeps related providers visually grouped.
+  // Order: AI providers first (Claude/Llama), then SerpAPI search, then
+  // enrichment + GitHub. Keeps related providers visually grouped.
   const order: ProviderName[] = [
     "claude", "ollama",
-    "serpapi", "searxng", "openserp",
+    "serpapi",
     "pdl", "firmable", "github",
   ];
   const sorted = [...providers].sort(

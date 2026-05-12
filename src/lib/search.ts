@@ -11,10 +11,10 @@ export interface SearchResult {
   snippet: string;
   fullText?: string; // full profile text for sources that return it (PDL)
   matchedQuery?: string;
-  // "searxng" / "openserp" are the free-first providers (lib/search-providers).
-  // "serpapi" / "pdl" remain unchanged. Manual / extension / talent_pool /
-  // github values come from the Candidate.source field on save sites.
-  source: "serpapi" | "pdl" | "searxng" | "openserp";
+  // "serpapi" / "pdl" cover the search providers that produce a
+  // SearchResult. Manual / extension / talent_pool / github values come
+  // from the Candidate.source field at save time.
+  source: "serpapi" | "pdl";
 }
 
 // ─── Name / org filtering ────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ function looksLikePersonName(name: string): boolean {
 /** Parse LinkedIn profiles out of a generic list of search result items */
 export function parseLinkedInResults(
   items: Array<{ title?: string; url?: string; link?: string; snippet?: string }>,
-  source: "serpapi" | "searxng" | "openserp"
+  source: "serpapi"
 ): SearchResult[] {
   const results: SearchResult[] = [];
   for (const item of items) {

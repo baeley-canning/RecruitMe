@@ -1,7 +1,6 @@
 /**
  * Local-model (Ollama) config reader. Centralises process.env reads so
- * tests can mutate env and re-read. Mirrors the search-providers/config
- * pattern.
+ * tests can mutate env and re-read.
  *
  * Two distinct enable flags:
  *   - ENABLE_LOCAL_MODEL_FAILOVER         → low-risk fallbacks

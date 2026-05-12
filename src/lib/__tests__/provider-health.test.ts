@@ -17,11 +17,6 @@ describe("providerHealth — state derivation", () => {
     process.env.FIRMABLE_API_KEY = "test";
     process.env.GITHUB_TOKEN = "test";
     process.env.ENABLE_LOCAL_MODEL_FAILOVER = "true";
-    process.env.SEARXNG_BASE_URL = "http://searxng.test";
-    process.env.OPENSERP_BASE_URL = "http://openserp.test";
-    // Free providers also require SEARCH_PROVIDERS to opt them in. Setting
-    // both names so the configured-check passes for the untested-state test.
-    process.env.SEARCH_PROVIDERS = "searxng,openserp";
   });
   afterEach(() => { process.env = { ...snapshot }; });
 

@@ -16,14 +16,10 @@
  * endpoint that drives the UI reads both.
  */
 
-import { readSearchProvidersConfig } from "./search-providers/config";
-
 export type ProviderName =
   | "claude"
   | "ollama"
   | "serpapi"
-  | "searxng"   // free, self-hosted meta-search (Google/Bing/DDG via one API)
-  | "openserp"  // free, self-hosted headless-browser SERP scraper
   | "pdl"
   | "firmable"
   | "github";
@@ -52,8 +48,6 @@ export const providerHealth: Record<ProviderName, ProviderHealthEntry> = {
   claude:   initialEntry(),
   ollama:   initialEntry(),
   serpapi:  initialEntry(),
-  searxng:  initialEntry(),
-  openserp: initialEntry(),
   pdl:      initialEntry(),
   firmable: initialEntry(),
   github:   initialEntry(),
@@ -158,20 +152,6 @@ export function isProviderConfigured(name: ProviderName): boolean {
     case "ollama":   return process.env.ENABLE_LOCAL_MODEL_FAILOVER?.toLowerCase() === "true"
                          || process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING?.toLowerCase() === "true";
     case "serpapi":  return Boolean(process.env.SERPAPI_API_KEY?.trim());
-    // Free providers are "configured" only when the search route ACTUALLY
-    // recognises them in SEARCH_PROVIDERS — defer to the route's own
-    // parser instead of doing a substring check. This catches:
-    //   - SEARCH_PROVIDERS using a space instead of comma → route parses to []
-    //     while substring check still passes ("searxng openserp".includes
-    //     "searxng") → badge falsely shows configured
-    //   - Typos like "searcxng" or "opensrp" that wouldn't pass
-    //     parseProviderList's ALL_PROVIDERS filter
-    // The base URL must also be present — without it the route can't call
-    // the provider even if the name parses.
-    case "searxng":  return Boolean(process.env.SEARXNG_BASE_URL?.trim())
-                         && readSearchProvidersConfig().enabled.includes("searxng");
-    case "openserp": return Boolean(process.env.OPENSERP_BASE_URL?.trim())
-                         && readSearchProvidersConfig().enabled.includes("openserp");
     case "pdl":      return Boolean(process.env.PDL_API_KEY?.trim());
     case "firmable": return Boolean(process.env.FIRMABLE_API_KEY?.trim());
     case "github":   return Boolean(process.env.GITHUB_TOKEN?.trim());

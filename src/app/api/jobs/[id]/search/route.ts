@@ -7,11 +7,6 @@ import {
   inferEmploymentType,
   type SearchResult,
 } from "@/lib/search";
-import { runProviderSearch } from "@/lib/search-providers/manager";
-import { mergeProviderHits } from "@/lib/search-providers/merge";
-import { rankMergedResults } from "@/lib/search-providers/ranking";
-import { mergedResultsToSearchResults } from "@/lib/search-providers/adapter";
-import { readSearchProvidersConfig } from "@/lib/search-providers/config";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
@@ -302,7 +297,7 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
   ].filter(Boolean) as string[]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
 }
 
-type SearchProvider = "serpapi" | "free-providers";
+type SearchProvider = "serpapi";
 
 interface SearchTaskOutcome extends SearchPageTaskResult<SearchResult> {
   provider: SearchProvider;
@@ -365,58 +360,6 @@ function isAuthFailure(message: string): boolean {
   return lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("forbidden");
 }
 
-/**
- * Run the free-first search-provider stack (SearXNG + OpenSERP) for a
- * single query. Returns a SearchTaskOutcome shaped exactly like the
- * SerpAPI outcome so it slots into the existing primaryOutcomes merge
- * without any downstream change. Never throws — per-provider failures
- * map to empty items and a retryable=false outcome (the manager
- * already retried internally where it could).
- *
- * This path runs ONLY when SEARCH_PROVIDERS env is set and at least one
- * provider's base URL is configured. Otherwise returns an empty outcome
- * and the route falls back to SerpAPI-only behaviour.
- */
-async function executeFreeProvidersTask(
-  query: string,
-  location: string,
-  options: { excludeContractTitles?: boolean } = {},
-): Promise<SearchTaskOutcome> {
-  try {
-    const { byProvider, outcomes } = await runProviderSearch({
-      query,
-      location,
-      excludeContractTitles: options.excludeContractTitles,
-    });
-    // If every provider returned empty AND at least one errored, surface
-    // the first error so the route's logs make it clear free providers
-    // aren't contributing. Doesn't mark retryable — the manager already
-    // handled per-provider timeouts and would just hit them again.
-    const allEmpty = Object.values(byProvider).every((hits) => !hits || hits.length === 0);
-    const firstError = outcomes.find((o) => o.error)?.error;
-    if (allEmpty) {
-      return {
-        provider: "free-providers",
-        query,
-        items: [],
-        error: firstError,
-        retryable: false,
-      };
-    }
-    const merged = mergeProviderHits(byProvider);
-    const ranked = rankMergedResults(merged);
-    const items = mergedResultsToSearchResults(ranked).map((item) => ({ ...item, matchedQuery: query }));
-    return { provider: "free-providers", query, items, retryable: false };
-  } catch (error) {
-    // Defensive — runProviderSearch is designed not to throw, but if a
-    // future change breaks that contract we don't want it to crash the
-    // entire search.
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[search] free-providers task failed for query="${query}":`, message);
-    return { provider: "free-providers", query, items: [], error: message, retryable: false };
-  }
-}
-
 async function executeSearchTask(
   provider: SearchProvider,
   query: string,
@@ -425,9 +368,6 @@ async function executeSearchTask(
   resolvedKey?: string,
   options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchTaskOutcome> {
-  if (provider === "free-providers") {
-    return executeFreeProvidersTask(query, location, options);
-  }
   try {
     const items = await searchLinkedInProfiles(query, location, offset, resolvedKey, options);
     return { provider, query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
@@ -891,13 +831,6 @@ async function runSearchBackground(args: {
       } catch { /* ignore */ }
     }
 
-    // Track free-provider errors across the entire search so that when
-    // we end up at the "no candidates found" path with free providers
-    // configured but failing, the recruiter sees WHY (e.g. SearXNG
-    // returned 502, OpenSERP timed out). Without this the audit found
-    // the error info dies in console.log and the user sees only "0 found".
-    const freeProviderErrors = new Set<string>();
-
     // ── Phase 1b: SerpAPI — paginate until we have enough raw results ──
     // Each round fires all queries for one page in parallel.
     // Retryable failures (rate limits / transient timeouts) back off and retry
@@ -944,58 +877,13 @@ async function runSearchBackground(args: {
             ? secondaryCities.flatMap((city) => buildTasks("serpapi", city, queriesForAttempt.slice(0, 2)))
             : [];
 
-          // Free-first providers (SearXNG + OpenSERP). Runs ONLY when
-          // SEARCH_PROVIDERS env is set and at least one base URL is
-          // configured — otherwise resolveEnabledProviders() returns []
-          // and runProviderSearch produces zero hits. The task is added to
-          // primaryOutcomes alongside SerpAPI so it feeds the SAME
-          // downstream pipeline (dedupe, country gate, scoring) with no
-          // behaviour change for users who haven't configured providers.
-          const freeProvidersConfig = readSearchProvidersConfig();
-          const hasFreeProviders = freeProvidersConfig.enabled.length > 0 &&
-            (freeProvidersConfig.searxngBaseUrl !== null || freeProvidersConfig.openserpBaseUrl !== null);
-          // Pagination guard: SearXNG and OpenSERP don't take an `offset`
-          // param, so calling them on every page returns the same first-page
-          // results each time. The route's keyFn=linkedinUrl dedupes the
-          // duplicates downstream, but the wasted HTTP calls hammer
-          // self-hosted instances. Fire free-providers ONLY on page 0.
-          // Pagination beyond page 0 still goes through SerpAPI, which does
-          // honour offset.
-          const freeProviderTasks = hasFreeProviders && page === 0
-            ? queriesForAttempt.map((q) => ({
-                provider: "free-providers" as SearchProvider,
-                query: q,
-                location: searchLocation,
-                offset,
-                resolvedKey: undefined,
-                searchOptions: { excludeContractTitles },
-              }))
-            : [];
+          if (serpTasks.length === 0 && secondarySerpTasks.length === 0) return null;
 
-          if (serpTasks.length === 0 && secondarySerpTasks.length === 0 && freeProviderTasks.length === 0) return null;
-
-          const [serpOutcomes, secondarySerpOutcomes, freeProviderOutcomes] = await Promise.all([
+          const [serpOutcomes, secondarySerpOutcomes] = await Promise.all([
             executeSearchTaskQueue(serpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
             executeSearchTaskQueue(secondarySerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
-            // Free providers handle their own per-provider parallelism +
-            // timeout inside runProviderSearch, so no concurrency wrapper.
-            executeSearchTaskQueue(freeProviderTasks, { concurrency: 4, delayMs: 0 }),
           ]);
-          if (freeProviderOutcomes.length > 0) {
-            const totalFreeHits = freeProviderOutcomes.reduce((sum, o) => sum + o.items.length, 0);
-            const failedFree = freeProviderOutcomes.filter((o) => o.error).length;
-            console.log(
-              `[search] free-providers page=${page} attempt=${attempt} — ${totalFreeHits} hits across ${freeProviderOutcomes.length} queries, ${failedFree} errored`,
-            );
-            // Capture per-provider errors so the final session message can
-            // surface them when the search ends with 0 candidates. Without
-            // this, a misconfigured SearXNG / unreachable OpenSERP just
-            // shows "0 found" with no diagnostic.
-            for (const o of freeProviderOutcomes) {
-              if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
-            }
-          }
-          const primaryOutcomes = [...serpOutcomes, ...secondarySerpOutcomes, ...freeProviderOutcomes];
+          const primaryOutcomes = [...serpOutcomes, ...secondarySerpOutcomes];
           const anchorTerms = extractAnchorRequirementTerms(parsedRole);
           const shouldRunSpecialistNzSweep =
             page === 0 &&
@@ -1013,25 +901,13 @@ async function runSearchBackground(args: {
             ]),
           ]).slice(0, 4);
 
-          // Specialist NZ sweep: run SerpAPI AND free providers in parallel
-          // so anchor-term queries (PHP/SilverStripe, COBOL, Sybase, …) get
-          // the union of both indexes. The free providers don't paginate,
-          // but that's fine — this sweep only runs on page 0 / attempt 0.
+          // Specialist NZ sweep: anchor-term queries via SerpAPI only.
           const specialistNzOutcomes = shouldRunSpecialistNzSweep
-            ? (await Promise.all([
-                executeSearchTaskQueue(
-                  hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
-                  { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
-                ),
-                executeSearchTaskQueue(
-                  hasFreeProviders ? buildTasks("free-providers", "New Zealand", nzSweepQueries) : [],
-                  { concurrency: 4, delayMs: 0 },
-                ),
-              ])).flat()
+            ? await executeSearchTaskQueue(
+                hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
+                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+              )
             : [];
-          for (const o of specialistNzOutcomes) {
-            if (o.provider === "free-providers" && o.error) freeProviderErrors.add(o.error.slice(0, 100));
-          }
           const primaryItems = [...primaryOutcomes, ...specialistNzOutcomes].flatMap((outcome) => outcome.items);
           const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
           const normalizedSearch = normalizeLocationText(searchLocation);
@@ -1053,21 +929,10 @@ async function runSearchBackground(args: {
               data: { message: `No results in ${searchLocation} — trying Auckland` },
             }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
             const akQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
-            // Free providers fire alongside SerpAPI for the Auckland sweep.
-            const [akSerpOutcomes, akFreeOutcomes] = await Promise.all([
-              executeSearchTaskQueue(
-                hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
-                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
-              ),
-              executeSearchTaskQueue(
-                hasFreeProviders ? buildTasks("free-providers", "Auckland", akQueries) : [],
-                { concurrency: 4, delayMs: 0 },
-              ),
-            ]);
-            aucklandOutcomes = [...akSerpOutcomes, ...akFreeOutcomes];
-            for (const o of akFreeOutcomes) {
-              if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
-            }
+            aucklandOutcomes = await executeSearchTaskQueue(
+              hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
+              { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+            );
           }
           const aucklandItems = aucklandOutcomes.flatMap((o) => o.items);
 
@@ -1086,17 +951,11 @@ async function runSearchBackground(args: {
           }
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
-          // Broad-NZ fallback: SerpAPI + free providers in parallel.
           const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
-          const fallbackFreeTasks = hasFreeProviders ? buildTasks("free-providers", "New Zealand", fallbackQueries) : [];
-          const [fbSerpOutcomes, fbFreeOutcomes] = await Promise.all([
-            executeSearchTaskQueue(fallbackSerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
-            executeSearchTaskQueue(fallbackFreeTasks, { concurrency: 4, delayMs: 0 }),
-          ]);
-          for (const o of fbFreeOutcomes) {
-            if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
-          }
-          const fallbackOutcomes = [...fbSerpOutcomes, ...fbFreeOutcomes];
+          const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
+            concurrency: SERPAPI_CONCURRENCY,
+            delayMs: SERPAPI_DELAY_MS,
+          });
           return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes, ...fallbackOutcomes];
         },
         sleep,
@@ -1120,86 +979,15 @@ async function runSearchBackground(args: {
 
     if (allRaw.length === 0) {
       if (sawRetryableSearchFailure) {
-        // Before bailing out, try one more pass via free providers only
-        // (SearXNG + OpenSERP). They aren't rate-limited the same way as
-        // SerpAPI's per-API-key quotas — they're self-hosted scrapers, so
-        // a SerpAPI death doesn't mean the search has to fail. This is
-        // exactly the scenario where the user's "use SearXNG/OpenSERP
-        // when SerpAPI is dead" expectation should kick in.
-        const freeProvidersConfig = readSearchProvidersConfig();
-        const hasFreeProviders = freeProvidersConfig.enabled.length > 0 &&
-          (freeProvidersConfig.searxngBaseUrl !== null || freeProvidersConfig.openserpBaseUrl !== null);
-
-        if (hasFreeProviders) {
-          void prisma.searchSession.update({
-            where: { id: sessionId },
-            data: { message: "SerpAPI rate-limited — falling back to free providers (SearXNG/OpenSERP)..." },
-          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
-
-          const freeOnlyTasks = searchQueries.slice(0, MAX_QUERY_VARIANTS).map((q) => ({
-            provider: "free-providers" as SearchProvider,
-            query: q,
-            location: searchLocation,
-            offset: 0,
-            resolvedKey: undefined,
-            searchOptions: { excludeContractTitles },
-          }));
-          const freeOnlyOutcomes = await executeSearchTaskQueue(freeOnlyTasks, { concurrency: 4, delayMs: 0 });
-          const freeOnlyResults = freeOnlyOutcomes.flatMap((o) => o.items);
-
-          // Capture per-provider error reasons so the failure message can tell
-          // the recruiter WHY free providers returned nothing — JSON format
-          // disabled, all engines captcha-walled, network unreachable, etc.
-          // Without this, the UI shows a generic "free providers returned 0"
-          // and the recruiter has no path to a fix.
-          const rescueErrors = new Set<string>();
-          for (const o of freeOnlyOutcomes) {
-            if (o.error) rescueErrors.add(o.error.slice(0, 120));
-          }
-          // Also log per-outcome to Railway so we can correlate session →
-          // provider responses without rebuilding the query offline.
-          console.log(
-            `[search] free-providers rescue: queries=${freeOnlyOutcomes.length} hits=${freeOnlyResults.length} ` +
-            `errors=${[...rescueErrors].join(" | ") || "(none)"}`,
-          );
-
-          for (const r of freeOnlyResults) {
-            if (!seenUrls.has(r.linkedinUrl)) {
-              seenUrls.add(r.linkedinUrl);
-              allRaw.push(r);
-            }
-          }
-
-          if (allRaw.length > 0) {
-            console.log(`[search] free-providers rescue: ${allRaw.length} candidates after SerpAPI rate-limit`);
-            // Fall through to the normal scoring path with what we got.
-          } else {
-            // Free providers also returned nothing — bail with the actual
-            // reasons surfaced so the recruiter can act.
-            const errSummary = rescueErrors.size > 0
-              ? ` Free-provider errors: ${[...rescueErrors].slice(0, 2).join("; ")}.`
-              : " Free providers returned empty arrays (no error — but no LinkedIn matches for these queries either).";
-            await prisma.searchSession.update({
-              where: { id: sessionId },
-              data: {
-                status: "rate_limited",
-                message: "Rate-limited before any results were returned. Free providers also returned 0.",
-                evaluation: `FAIL — SerpAPI rate-limited AND free providers (SearXNG/OpenSERP) returned no matches.${errSummary} Check the free-provider service health, then wait a few minutes and try again.`,
-              },
-            }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
-            return;
-          }
-        } else {
-          await prisma.searchSession.update({
-            where: { id: sessionId },
-            data: {
-              status: "rate_limited",
-              message: "Rate-limited before any results were returned.",
-              evaluation: "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate. Configure SEARCH_PROVIDERS=searxng,openserp + SEARXNG_BASE_URL + OPENSERP_BASE_URL to enable free-provider fallback for next time.",
-            },
-          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
-          return;
-        }
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "rate_limited",
+            message: "Rate-limited before any results were returned.",
+            evaluation: "FAIL — SerpAPI rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.",
+          },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+        return;
       }
 
       // ── Scarce-skill fallback: if anchors include rare tech (Sybase, COBOL, …)
@@ -1220,23 +1008,11 @@ async function runSearchBackground(args: {
             offset: 0,
             resolvedKey: serpApiKey,
           }));
-        // Scarce-skill fallback fires SerpAPI AND free providers in parallel
-        // so adjacent-skill substitutes (Sybase → SQL Server, COBOL → Java,
-        // …) get the union of both indexes. The hasFreeProviders flag is
-        // recomputed here because this branch lives outside the page closure.
-        const scarceFreeCfg = readSearchProvidersConfig();
-        const scarceHasFreeProviders = scarceFreeCfg.enabled.length > 0 &&
-          (scarceFreeCfg.searxngBaseUrl !== null || scarceFreeCfg.openserpBaseUrl !== null);
         const fallbackSerpTasks = hasSerpApi ? mkFallbackTasks("serpapi") : [];
-        const fallbackFreeTasks = scarceHasFreeProviders ? mkFallbackTasks("free-providers") : [];
-        const [scarceSerpOutcomes, scarceFreeOutcomes] = await Promise.all([
-          executeSearchTaskQueue(fallbackSerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
-          executeSearchTaskQueue(fallbackFreeTasks, { concurrency: 4, delayMs: 0 }),
-        ]);
-        for (const o of scarceFreeOutcomes) {
-          if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
-        }
-        const fallbackOutcomes = [...scarceSerpOutcomes, ...scarceFreeOutcomes];
+        const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
+          concurrency: SERPAPI_CONCURRENCY,
+          delayMs: SERPAPI_DELAY_MS,
+        });
 
         // Surface auth failures immediately — invalid keys look like "no results" otherwise
         const authFailed = fallbackOutcomes.some((o) => o.error && isAuthFailure(o.error));
@@ -1258,11 +1034,8 @@ async function runSearchBackground(args: {
           if (!seenUrls.has(r.linkedinUrl)) {
             seenUrls.add(r.linkedinUrl);
             // Store the NORMALISED URL so the two downstream lookups
-            // (source-gate bypass at line 1483, score-floor bypass at
-            // line 1656) actually find these entries. Both lookup sites
-            // already normalise; storing raw URLs here was a silent miss
-            // when free-provider results arrived with regional
-            // subdomains or tracking params.
+            // (source-gate bypass and score-floor bypass) actually
+            // match — both lookup sites already normalise.
             scarceSkillFallbackUrls.add(normaliseLinkedInUrl(r.linkedinUrl));
             allRaw.push(r);
           }
@@ -1814,18 +1587,12 @@ async function runSearchBackground(args: {
     });
 
     if (sorted.length === 0) {
-      // Build the message with diagnostic context. Include free-provider
-      // errors if any were captured — recruiters need to see WHY 0
-      // candidates returned, not just "try re-analysing".
-      const freeProviderHint = freeProviderErrors.size > 0
-        ? ` Free providers (SearXNG/OpenSERP) also errored: ${[...freeProviderErrors].slice(0, 2).join("; ")}.`
-        : "";
       const filterHint = totalFiltered > 0
         ? ` Of ${totalExamined} examined, ${totalFiltered} were filtered (source-gated: ${skippedSourceGate}, overseas: ${skippedOverseas}, seniority: ${skippedSeniorityGate}, name-check: ${skippedNameCheck}).`
         : "";
       const reason = sawRetryableSearchFailure
-        ? `Search was rate-limited before returning results.${freeProviderHint} Run search again — already-imported candidates won't be duplicated.`
-        : `No matching candidates found.${filterHint}${freeProviderHint} Try re-analysing the job description or broadening the location.`;
+        ? `Search was rate-limited before returning results. Run search again — already-imported candidates won't be duplicated.`
+        : `No matching candidates found.${filterHint} Try re-analysing the job description or broadening the location.`;
       await prisma.searchSession.update({
         where: { id: sessionId },
         data: { status: sawRetryableSearchFailure ? "rate_limited" : "complete", message: reason },
