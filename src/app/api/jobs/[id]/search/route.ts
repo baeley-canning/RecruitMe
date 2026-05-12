@@ -1147,6 +1147,22 @@ async function runSearchBackground(args: {
           const freeOnlyOutcomes = await executeSearchTaskQueue(freeOnlyTasks, { concurrency: 4, delayMs: 0 });
           const freeOnlyResults = freeOnlyOutcomes.flatMap((o) => o.items);
 
+          // Capture per-provider error reasons so the failure message can tell
+          // the recruiter WHY free providers returned nothing — JSON format
+          // disabled, all engines captcha-walled, network unreachable, etc.
+          // Without this, the UI shows a generic "free providers returned 0"
+          // and the recruiter has no path to a fix.
+          const rescueErrors = new Set<string>();
+          for (const o of freeOnlyOutcomes) {
+            if (o.error) rescueErrors.add(o.error.slice(0, 120));
+          }
+          // Also log per-outcome to Railway so we can correlate session →
+          // provider responses without rebuilding the query offline.
+          console.log(
+            `[search] free-providers rescue: queries=${freeOnlyOutcomes.length} hits=${freeOnlyResults.length} ` +
+            `errors=${[...rescueErrors].join(" | ") || "(none)"}`,
+          );
+
           for (const r of freeOnlyResults) {
             if (!seenUrls.has(r.linkedinUrl)) {
               seenUrls.add(r.linkedinUrl);
@@ -1158,13 +1174,17 @@ async function runSearchBackground(args: {
             console.log(`[search] free-providers rescue: ${allRaw.length} candidates after SerpAPI rate-limit`);
             // Fall through to the normal scoring path with what we got.
           } else {
-            // Free providers also returned nothing — now we bail.
+            // Free providers also returned nothing — bail with the actual
+            // reasons surfaced so the recruiter can act.
+            const errSummary = rescueErrors.size > 0
+              ? ` Free-provider errors: ${[...rescueErrors].slice(0, 2).join("; ")}.`
+              : " Free providers returned empty arrays (no error — but no LinkedIn matches for these queries either).";
             await prisma.searchSession.update({
               where: { id: sessionId },
               data: {
                 status: "rate_limited",
                 message: "Rate-limited before any results were returned. Free providers also returned 0.",
-                evaluation: "FAIL — SerpAPI rate-limited AND free providers (SearXNG/OpenSERP) returned no matches. Check the free-provider service health, then wait a few minutes and try again.",
+                evaluation: `FAIL — SerpAPI rate-limited AND free providers (SearXNG/OpenSERP) returned no matches.${errSummary} Check the free-provider service health, then wait a few minutes and try again.`,
               },
             }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
             return;
