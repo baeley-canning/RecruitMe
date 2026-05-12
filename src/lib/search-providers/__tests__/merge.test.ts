@@ -56,4 +56,63 @@ describe("mergeProviderHits", () => {
   it("skips hits with no URL", () => {
     expect(mergeProviderHits({ searxng: [hit({ url: "" })] })).toEqual([]);
   });
+
+  it("collapses LinkedIn slug aliases — `/in/jane-smith` and `/in/jane-smith-1a2b3c4d` are the same person", () => {
+    const result = mergeProviderHits({
+      searxng:  [hit({ provider: "searxng",  url: "https://www.linkedin.com/in/jane-smith",          rank: 4 })],
+      openserp: [hit({ provider: "openserp", url: "https://www.linkedin.com/in/jane-smith-1a2b3c4d", rank: 1 })],
+    });
+    expect(result).toHaveLength(1);
+    // Cleaner slug wins as primary when provider counts tie (both saw it once).
+    expect(result[0].canonicalUrl).toBe("https://www.linkedin.com/in/jane-smith");
+    expect(result[0].providers.searxng?.rank).toBe(4);
+    expect(result[0].providers.openserp?.rank).toBe(1);
+  });
+
+  it("keeps the entry with MORE provider confirmations as primary in an alias collapse", () => {
+    const result = mergeProviderHits({
+      searxng:  [
+        hit({ provider: "searxng",  url: "https://www.linkedin.com/in/jane-smith-1a2b3c4d", rank: 2 }),
+      ],
+      openserp: [
+        hit({ provider: "openserp", url: "https://www.linkedin.com/in/jane-smith",          rank: 5 }),
+        hit({ provider: "openserp", url: "https://www.linkedin.com/in/jane-smith-1a2b3c4d", rank: 8 }),
+      ],
+    });
+    // After first-pass merge: `jane-smith` has 1 provider, `jane-smith-1a2b3c4d` has 2.
+    // Alias collapse picks the 2-provider entry as primary.
+    expect(result).toHaveLength(1);
+    expect(result[0].canonicalUrl).toBe("https://www.linkedin.com/in/jane-smith-1a2b3c4d");
+    // Best (lowest) rank from each provider is preserved.
+    expect(result[0].providers.searxng?.rank).toBe(2);
+    expect(result[0].providers.openserp?.rank).toBe(5);
+  });
+
+  it("does NOT collapse short slug aliases (length < 6) to avoid false positives", () => {
+    // `ab` and `cd` are too short to safely match — keep as separate.
+    const result = mergeProviderHits({
+      searxng:  [hit({ url: "https://www.linkedin.com/in/ab" })],
+      openserp: [hit({ url: "https://www.linkedin.com/in/cd" })],
+    });
+    expect(result).toHaveLength(2);
+  });
+
+  it("does NOT collapse non-LinkedIn URLs via slug-alias dedupe", () => {
+    // GitHub profile pages share characters but should NEVER be alias-merged.
+    const result = mergeProviderHits({
+      searxng:  [hit({ url: "https://github.com/janesmith" })],
+      openserp: [hit({ url: "https://github.com/janesmith-fork-of-some-repo" })],
+    });
+    expect(result).toHaveLength(2);
+  });
+
+  it("merges title/snippet across alias-collapsed entries — keeps the longer one", () => {
+    const result = mergeProviderHits({
+      searxng:  [hit({ url: "https://www.linkedin.com/in/jane-smith",          title: "Jane",                              snippet: "" })],
+      openserp: [hit({ url: "https://www.linkedin.com/in/jane-smith-1a2b3c4d", title: "Jane Smith — Senior Eng at Xero", snippet: "Wellington, NZ" })],
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe("Jane Smith — Senior Eng at Xero");
+    expect(result[0].snippet).toBe("Wellington, NZ");
+  });
 });
