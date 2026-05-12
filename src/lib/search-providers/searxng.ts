@@ -91,7 +91,37 @@ export class SearxngProvider implements SearchProvider {
       recordProviderFailure("searxng", `non-OK ${res.status}`);
       return [];
     }
-    const body = await res.json().catch(() => null);
+    // Detect JSON-not-enabled: when settings.yml doesn't list `json` under
+    // `search.formats`, SearXNG happily returns 200 with HTML. res.json()
+    // throws — which we used to swallow as "empty results", masking a broken
+    // deployment behind a green badge. Treat any parse failure as a provider
+    // failure so the health badge reflects reality.
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      recordProviderFailure(
+        "searxng",
+        "non-JSON response — enable `formats: [json]` in settings.yml",
+      );
+      return [];
+    }
+    if (!body || typeof body !== "object" || !Array.isArray((body as { results?: unknown }).results)) {
+      recordProviderFailure("searxng", "response had no `results` array");
+      return [];
+    }
+    // SearXNG reports per-engine errors (Captcha, rate limit) in
+    // `unresponsive_engines`. When results is empty AND every engine errored,
+    // that's a deployment problem, not a genuine zero-match.
+    const root = body as { results: unknown[]; unresponsive_engines?: unknown };
+    if (root.results.length === 0 && Array.isArray(root.unresponsive_engines) && root.unresponsive_engines.length > 0) {
+      const summary = root.unresponsive_engines
+        .slice(0, 3)
+        .map((e) => (Array.isArray(e) ? e.join(":") : String(e)))
+        .join(", ");
+      recordProviderFailure("searxng", `all engines unresponsive: ${summary}`);
+      return [];
+    }
     recordProviderSuccess("searxng");
     return parseSearxngResponse(body);
   }

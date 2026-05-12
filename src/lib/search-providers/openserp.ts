@@ -100,7 +100,19 @@ export class OpenserpProvider implements SearchProvider {
       recordProviderFailure("openserp", `non-OK ${res.status}`);
       return [];
     }
-    const body = await res.json().catch(() => null);
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      recordProviderFailure("openserp", "non-JSON response");
+      return [];
+    }
+    const isArr = Array.isArray(body);
+    const wrappedArr = !isArr && body && typeof body === "object" && Array.isArray((body as { results?: unknown }).results);
+    if (!isArr && !wrappedArr) {
+      recordProviderFailure("openserp", "response was neither an array nor { results: [] }");
+      return [];
+    }
     recordProviderSuccess("openserp");
     return parseOpenserpResponse(body);
   }

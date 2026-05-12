@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { SearxngProvider, _internal } from "../searxng";
+import * as health from "../../provider-health";
 
 describe("searxng — query URL builder", () => {
   it("builds a site:linkedin.com/in query with the user query and location", () => {
@@ -82,10 +83,48 @@ describe("SearxngProvider — search() with mocked fetch", () => {
     expect(await provider.search({ query: "x" })).toEqual([]);
   });
 
-  it("returns empty array when the response body is unparseable JSON", async () => {
+  it("records a provider failure (not silent success) when the body is HTML", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("<html>not json</html>", { status: 200 }));
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
     const provider = new SearxngProvider("http://localhost:8080");
     expect(await provider.search({ query: "x" })).toEqual([]);
+    expect(failSpy).toHaveBeenCalledWith("searxng", expect.stringContaining("non-JSON"));
+    expect(okSpy).not.toHaveBeenCalled();
+  });
+
+  it("records a provider failure when the JSON body has no results field", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ query: "x" }), { status: 200 }));
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
+    const provider = new SearxngProvider("http://localhost:8080");
+    expect(await provider.search({ query: "x" })).toEqual([]);
+    expect(failSpy).toHaveBeenCalledWith("searxng", expect.stringContaining("results"));
+    expect(okSpy).not.toHaveBeenCalled();
+  });
+
+  it("records a provider failure when all engines are unresponsive AND results is empty", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ results: [], unresponsive_engines: [["google", "Captcha"], ["bing", "timeout"]] }), { status: 200 }),
+    );
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
+    const provider = new SearxngProvider("http://localhost:8080");
+    expect(await provider.search({ query: "x" })).toEqual([]);
+    expect(failSpy).toHaveBeenCalledWith("searxng", expect.stringContaining("unresponsive"));
+    expect(okSpy).not.toHaveBeenCalled();
+  });
+
+  it("treats genuinely empty results as success (no unresponsive engines)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ results: [], unresponsive_engines: [] }), { status: 200 }),
+    );
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
+    const provider = new SearxngProvider("http://localhost:8080");
+    expect(await provider.search({ query: "x" })).toEqual([]);
+    expect(okSpy).toHaveBeenCalledWith("searxng");
+    expect(failSpy).not.toHaveBeenCalled();
   });
 });
 

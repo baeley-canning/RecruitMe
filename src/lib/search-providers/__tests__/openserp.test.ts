@@ -1,5 +1,6 @@
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { OpenserpProvider, _internal } from "../openserp";
+import * as health from "../../provider-health";
 
 describe("openserp — query URL builder", () => {
   it("builds a /google/search query with text + lang", () => {
@@ -85,5 +86,32 @@ describe("OpenserpProvider — search() with mocked fetch", () => {
     // rejection should propagate as a throw, and that's what we test.
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
     await expect(new OpenserpProvider("http://localhost:7000").search({ query: "x" })).rejects.toThrow("ECONNREFUSED");
+  });
+
+  it("records a provider failure (not silent success) when the body is HTML", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("<html>nope</html>", { status: 200 }));
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
+    expect(await new OpenserpProvider("http://localhost:7000").search({ query: "x" })).toEqual([]);
+    expect(failSpy).toHaveBeenCalledWith("openserp", expect.stringContaining("non-JSON"));
+    expect(okSpy).not.toHaveBeenCalled();
+  });
+
+  it("records a provider failure when the JSON body is neither array nor { results }", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ unexpected: true }), { status: 200 }));
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
+    expect(await new OpenserpProvider("http://localhost:7000").search({ query: "x" })).toEqual([]);
+    expect(failSpy).toHaveBeenCalledWith("openserp", expect.stringContaining("array"));
+    expect(okSpy).not.toHaveBeenCalled();
+  });
+
+  it("treats a genuinely empty array as success", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
+    expect(await new OpenserpProvider("http://localhost:7000").search({ query: "x" })).toEqual([]);
+    expect(okSpy).toHaveBeenCalledWith("openserp");
+    expect(failSpy).not.toHaveBeenCalled();
   });
 });
