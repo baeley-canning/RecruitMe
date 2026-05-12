@@ -47,8 +47,14 @@ ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
 # (--mount=type=cache) because Railway requires their cache IDs to be
 # prefixed with `s/<service-id>-`, which would tie this Dockerfile to one
 # specific Railway service. Plain layer caching is portable.
+#
+# `--include=dev` is REQUIRED even though we run with NODE_ENV=production:
+# next.config.ts is a TypeScript file, and Next.js needs the `typescript`
+# package (a devDependency) at BUILD time to transpile it. Without this
+# flag, NODE_ENV=production tells npm to skip devDependencies and the
+# build crashes with `Cannot find module 'typescript'`.
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --include=dev --no-audit --no-fund
 
 # 2) Source.
 COPY . .
