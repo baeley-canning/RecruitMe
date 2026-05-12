@@ -13,6 +13,7 @@
  */
 
 import type { ProviderSearchHit, SearchProvider, SearchProviderOptions } from "./types";
+import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 import { readSearchProvidersConfig } from "./config";
 
 interface OpenserpRawResult {
@@ -84,13 +85,23 @@ export class OpenserpProvider implements SearchProvider {
 
   async search(opts: SearchProviderOptions): Promise<ProviderSearchHit[]> {
     const url = buildOpenserpUrl(this.baseUrl, opts);
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
-    });
-    if (!res.ok) return [];
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
+      });
+    } catch (err) {
+      recordProviderFailure("openserp", err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+    if (!res.ok) {
+      recordProviderFailure("openserp", `non-OK ${res.status}`);
+      return [];
+    }
     const body = await res.json().catch(() => null);
+    recordProviderSuccess("openserp");
     return parseOpenserpResponse(body);
   }
 }

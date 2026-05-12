@@ -20,6 +20,8 @@ export type ProviderName =
   | "claude"
   | "ollama"
   | "serpapi"
+  | "searxng"   // free, self-hosted meta-search (Google/Bing/DDG via one API)
+  | "openserp"  // free, self-hosted headless-browser SERP scraper
   | "pdl"
   | "firmable"
   | "github";
@@ -48,6 +50,8 @@ export const providerHealth: Record<ProviderName, ProviderHealthEntry> = {
   claude:   initialEntry(),
   ollama:   initialEntry(),
   serpapi:  initialEntry(),
+  searxng:  initialEntry(),
+  openserp: initialEntry(),
   pdl:      initialEntry(),
   firmable: initialEntry(),
   github:   initialEntry(),
@@ -89,6 +93,13 @@ export function isProviderConfigured(name: ProviderName): boolean {
     case "ollama":   return process.env.ENABLE_LOCAL_MODEL_FAILOVER?.toLowerCase() === "true"
                          || process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING?.toLowerCase() === "true";
     case "serpapi":  return Boolean(process.env.SERPAPI_API_KEY?.trim());
+    // Free providers are "configured" when their base URL is set AND the
+    // SEARCH_PROVIDERS env opts them in. Same gate the search route uses,
+    // so what we badge matches what actually fires.
+    case "searxng":  return Boolean(process.env.SEARXNG_BASE_URL?.trim())
+                         && (process.env.SEARCH_PROVIDERS?.toLowerCase().includes("searxng") ?? false);
+    case "openserp": return Boolean(process.env.OPENSERP_BASE_URL?.trim())
+                         && (process.env.SEARCH_PROVIDERS?.toLowerCase().includes("openserp") ?? false);
     case "pdl":      return Boolean(process.env.PDL_API_KEY?.trim());
     case "firmable": return Boolean(process.env.FIRMABLE_API_KEY?.trim());
     case "github":   return Boolean(process.env.GITHUB_TOKEN?.trim());

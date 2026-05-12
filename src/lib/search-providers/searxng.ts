@@ -13,6 +13,7 @@
  */
 
 import type { ProviderSearchHit, SearchProvider, SearchProviderOptions } from "./types";
+import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 import { readSearchProvidersConfig } from "./config";
 
 interface SearxngRawResult {
@@ -75,13 +76,23 @@ export class SearxngProvider implements SearchProvider {
 
   async search(opts: SearchProviderOptions): Promise<ProviderSearchHit[]> {
     const url = buildSearxngUrl(this.baseUrl, opts);
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
-    });
-    if (!res.ok) return [];
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
+      });
+    } catch (err) {
+      recordProviderFailure("searxng", err instanceof Error ? err.message : String(err));
+      throw err;  // manager catches throws
+    }
+    if (!res.ok) {
+      recordProviderFailure("searxng", `non-OK ${res.status}`);
+      return [];
+    }
     const body = await res.json().catch(() => null);
+    recordProviderSuccess("searxng");
     return parseSearxngResponse(body);
   }
 }
