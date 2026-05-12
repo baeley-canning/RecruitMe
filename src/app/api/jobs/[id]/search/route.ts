@@ -1237,7 +1237,13 @@ async function runSearchBackground(args: {
         for (const r of fallbackResults) {
           if (!seenUrls.has(r.linkedinUrl)) {
             seenUrls.add(r.linkedinUrl);
-            scarceSkillFallbackUrls.add(r.linkedinUrl);
+            // Store the NORMALISED URL so the two downstream lookups
+            // (source-gate bypass at line 1483, score-floor bypass at
+            // line 1656) actually find these entries. Both lookup sites
+            // already normalise; storing raw URLs here was a silent miss
+            // when free-provider results arrived with regional
+            // subdomains or tracking params.
+            scarceSkillFallbackUrls.add(normaliseLinkedInUrl(r.linkedinUrl));
             allRaw.push(r);
           }
         }
