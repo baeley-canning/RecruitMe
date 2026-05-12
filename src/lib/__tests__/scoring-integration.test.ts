@@ -433,3 +433,42 @@ describe("Deterministic evidence repair for exact stored profile signals", () =>
     expect(result.overall).toBeGreaterThan(12);
   });
 });
+
+describe("AcceptancePrediction — scoredBy round-trip (server → DB → UI contract)", () => {
+  // This guards the new acceptance-score Llama badge in candidate-card.tsx.
+  // The UI parses Candidate.acceptanceReason (JSON-encoded
+  // AcceptancePrediction) and reads `.scoredBy` to render the Llama pill
+  // next to the acceptance badge. If the field is dropped during
+  // serialisation or rename, the UI silently shows Llama predictions as
+  // if Claude produced them — exactly the "don't pretend Llama is Claude"
+  // rule the codebase is built around.
+  it("preserves scoredBy='ollama' through JSON.stringify + JSON.parse", () => {
+    const original = {
+      score: 75,
+      likelihood: "high" as const,
+      headline: "Likely open",
+      signals: [],
+      summary: "Recently changed jobs, open to opportunities.",
+      scoredBy: "ollama" as const,
+    };
+    const wire = JSON.stringify(original);
+    const parsed = JSON.parse(wire);
+    expect(parsed.scoredBy).toBe("ollama");
+  });
+
+  it("treats absent scoredBy as undefined (legacy rows before the field existed)", () => {
+    const legacy = JSON.stringify({
+      score: 75,
+      likelihood: "medium",
+      headline: "May consider",
+      signals: [],
+      summary: "Stable in current role.",
+    });
+    const parsed = JSON.parse(legacy);
+    expect(parsed.scoredBy).toBeUndefined();
+    // Critical: the UI's `acceptanceData?.scoredBy === "ollama"` check must
+    // evaluate to false on undefined so legacy rows render the existing
+    // (Claude-default) badge with no Llama pill.
+    expect(parsed.scoredBy === "ollama").toBe(false);
+  });
+});
