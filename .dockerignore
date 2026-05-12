@@ -1,0 +1,53 @@
+# Keep the build context lean and prevent secret/host artefacts from
+# entering the image. Everything listed here is excluded from `COPY .`.
+
+# Dependencies — reinstalled cleanly in the image
+node_modules
+.npm
+
+# Build output — regenerated in the image
+.next
+out
+build
+dist
+
+# Local env files — secrets must NOT enter the image
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+
+# OS / editor cruft
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+
+# Test / coverage / logs
+coverage
+.nyc_output
+*.log
+npm-debug.log*
+
+# Git
+.git
+.gitignore
+.github
+
+# Docker
+.dockerignore
+Dockerfile
+
+# Misc that has no business in a server runtime
+electron
+electron-builder.yml
+docs
+*.md
+playwright-report
+test-results
+.nixpacks

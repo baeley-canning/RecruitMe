@@ -1,6 +1,12 @@
 [build]
-builder = "nixpacks"
-buildCommand = "DATABASE_URL=postgresql://user:password@localhost:5432/recruitme npm run build"
+# Custom Dockerfile (see ./Dockerfile) — replaces Railway's default
+# Nixpacks builder. Reason: the auto-generated Nixpacks Dockerfile bakes
+# every service env var as a build-time ARG, leaking secrets into image
+# layers. Our Dockerfile only accepts public NEXT_PUBLIC_* args at build
+# time; runtime secrets are injected by Railway into the container's
+# environment at start-up (process.env reads them normally).
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "npm run start:prod"
