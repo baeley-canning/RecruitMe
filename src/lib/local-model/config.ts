@@ -32,7 +32,15 @@ export interface LocalModelConfig {
 }
 
 const DEFAULT_BASE_URL = "http://localhost:11434";
-const DEFAULT_MODEL = "qwen2.5:7b";
+// Default model — kept small (2GB) so Railway's default Ollama volume
+// can actually pull it. qwen2.5:7b was a footgun: 4.7GB, and the
+// Ollama service kept reporting `total blobs: 0` because the pull
+// never completed on a small Railway disk. llama3.2:3b downloads in
+// under a minute, has solid instruction-following + JSON-mode support
+// for structured scoring output. Override via OLLAMA_MODEL on Railway
+// if you have a bigger volume and want better quality (e.g. qwen2.5:7b,
+// mistral:7b).
+const DEFAULT_MODEL = "llama3.2:3b";
 // 120s default to safely cover Ollama cold-starts on small Railway
 // containers (model load + first inference can take 60-90s after the
 // daemon has unloaded the model post-idle). Was 60s and was still hitting
