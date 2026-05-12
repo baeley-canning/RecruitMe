@@ -57,15 +57,27 @@ describe("providerHealth — state derivation", () => {
     expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
   });
 
-  it("success after failures resets consecutive counter and recovers state", () => {
-    recordProviderFailure("github", "403 forbidden");
-    recordProviderFailure("github", "403 forbidden");
-    recordProviderFailure("github", "403 forbidden");
+  it("success after sustained failures decrements toward recovery (no instant flip)", () => {
+    // Use a non-fatal failure pattern so the trigger is 3 consecutive,
+    // not the fatal fast-path.
+    recordProviderFailure("github", "500 server error");
+    recordProviderFailure("github", "500 server error");
+    recordProviderFailure("github", "500 server error");
     expect(snapshotProviderHealth().find((p) => p.name === "github")!.state).toBe("down");
+
+    // First success: degrades but stays sub-healthy (still 2 failures on record)
+    recordProviderSuccess("github");
+    expect(snapshotProviderHealth().find((p) => p.name === "github")!.consecutiveFailures).toBe(2);
+
+    // Second success: still 1 failure
+    recordProviderSuccess("github");
+    expect(snapshotProviderHealth().find((p) => p.name === "github")!.consecutiveFailures).toBe(1);
+
+    // Third success: cleared, badge reads healthy
     recordProviderSuccess("github");
     const gh = snapshotProviderHealth().find((p) => p.name === "github");
-    expect(gh!.state).toBe("healthy");
     expect(gh!.consecutiveFailures).toBe(0);
+    expect(gh!.state).toBe("healthy");
     expect(gh!.lastFailureReason).toBeNull();
   });
 
@@ -126,10 +138,49 @@ describe("providerHealth — state derivation", () => {
     expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
   });
 
-  it("a single success after a fatal failure clears it back to healthy", () => {
-    recordProviderFailure("claude", "Credit balance too low");
+  it("a fatal failure requires 3 successes to fully recover (no grace-period flap)", () => {
+    recordProviderFailure("claude", "Credit balance is too low to complete this request");
     expect(snapshotProviderHealth().find((p) => p.name === "claude")!.state).toBe("down");
+
+    // First lucky success during Anthropic grace period — still 2 on record
     recordProviderSuccess("claude");
+    expect(snapshotProviderHealth().find((p) => p.name === "claude")!.consecutiveFailures).toBe(2);
+    expect(snapshotProviderHealth().find((p) => p.name === "claude")!.state).toBe("degraded");
+
+    // Two more sustained successes clear it
+    recordProviderSuccess("claude");
+    recordProviderSuccess("claude");
+    expect(snapshotProviderHealth().find((p) => p.name === "claude")!.consecutiveFailures).toBe(0);
     expect(snapshotProviderHealth().find((p) => p.name === "claude")!.state).toBe("healthy");
+  });
+
+  // ── Regex tightening: false-positive guard ────────────────────────────
+  // The previous bare-word regex would flip these to "down" incorrectly.
+  // Tightened patterns require the fatal word to appear in context.
+
+  it("does NOT flag 'load balancer timeout' as fatal (bare 'balance' false positive)", () => {
+    recordProviderFailure("serpapi", "load balancer timeout after 30s");
+    // One non-fatal failure → degraded, not down
+    expect(snapshotProviderHealth().find((p) => p.name === "serpapi")!.state).toBe("degraded");
+  });
+
+  it("does NOT flag '401-byte response from upstream' as fatal (bare '401' false positive)", () => {
+    recordProviderFailure("github", "received 401-byte response from upstream");
+    expect(snapshotProviderHealth().find((p) => p.name === "github")!.state).toBe("degraded");
+  });
+
+  it("DOES flag 'HTTP 401 Unauthorized' as fatal", () => {
+    recordProviderFailure("firmable", "HTTP 401 Unauthorized");
+    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("down");
+  });
+
+  it("DOES flag 'account suspended' as fatal", () => {
+    recordProviderFailure("serpapi", "account suspended due to billing issue");
+    expect(snapshotProviderHealth().find((p) => p.name === "serpapi")!.state).toBe("down");
+  });
+
+  it("DOES flag 'subscription expired' as fatal", () => {
+    recordProviderFailure("firmable", "Your subscription expired on 2026-01-01");
+    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("down");
   });
 });

@@ -59,11 +59,16 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
 /**
  * Map (state, providerName) → Tailwind colour classes.
  *
- * "untested" reads as green-light: the provider IS configured, we just
- * haven't seen a real call yet (Railway restarts reset the in-memory
- * tracker, so right after a deploy every configured provider sits in
- * this state). Surfacing this as amber was confusing — amber should
- * mean "something is actively failing", not "we haven't proven it yet".
+ * Five visually distinct states:
+ *   healthy      green   recent successful call (proven working)
+ *   untested     muted   configured, never called this process lifetime
+ *                        (visually distinct from healthy so a post-restart
+ *                        badge row doesn't claim everything is verified
+ *                        when nothing has been called yet — violating the
+ *                        "no gaslighting" UX principle)
+ *   degraded     amber   recent failures, but not yet 3 in a row
+ *   down         red     fatal failure OR 3+ consecutive failures
+ *   unconfigured hidden  env var not set (default-hidden)
  *
  * The Llama badge gets the dedicated purple `llama` token when active so
  * recruiters can spot at a glance when scoring is being handled by the
@@ -75,7 +80,7 @@ function colourClasses(state: ProviderState, name: ProviderName): string {
   }
   switch (state) {
     case "healthy":      return "bg-success-subtle text-success";
-    case "untested":     return "bg-success-subtle text-success";  // optimistic — configured = ready
+    case "untested":     return "bg-surface-hover text-text-secondary";  // distinct neutral — configured but unverified
     case "degraded":     return "bg-warning-subtle text-warning";
     case "down":         return "bg-danger-subtle text-danger";
     case "unconfigured": return "bg-surface-hover text-text-tertiary";
@@ -115,6 +120,12 @@ export function ProviderBadge({ health, showUnconfigured = false }: ProviderBadg
   return (
     <span
       title={tooltip}
+      // aria-label carries the full state + reason so colour-blind /
+      // screen-reader users get the same signal as the visual colour.
+      // role="status" tells AT this is a live state indicator, not just
+      // a decorative label.
+      role="status"
+      aria-label={`${label}: ${health.state}. ${tooltip}`}
       className={cn(
         "text-xs px-1.5 py-0.5 rounded-sm font-medium",
         colourClasses(health.state, health.name),

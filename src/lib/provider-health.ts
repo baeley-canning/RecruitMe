@@ -61,24 +61,63 @@ export function recordProviderSuccess(name: ProviderName): void {
   const entry = providerHealth[name];
   entry.lastSuccessAt = new Date().toISOString();
   entry.lastFailureReason = null;
-  entry.consecutiveFailures = 0;
+  // Decrement rather than reset. This makes recovery from FATAL failures
+  // require multiple successes (3+) before the badge reads healthy again,
+  // avoiding the Anthropic grace-period flap: when credits run out, one
+  // request occasionally slips through, but the next dozen will fail. If
+  // we reset to 0 on the first lucky success the badge oscillates green/red.
+  // Transient single-failure recovery still works (1 → 0 → healthy).
+  entry.consecutiveFailures = Math.max(0, entry.consecutiveFailures - 1);
 }
 
 /**
  * Failure messages that mean "this won't recover by retrying — the
- * provider is fundamentally broken right now": expired credits,
- * exhausted quotas, invalid auth, banned. Recording one of these flips
+ * provider is fundamentally broken right now": expired credits, exhausted
+ * quotas, invalid auth, suspended account. Recording one of these flips
  * the badge straight to red instead of waiting for 3 consecutive
  * failures, because retrying with the same broken state will fail
  * exactly the same way.
  *
- * Tested patterns (case-insensitive):
- *   - "credit", "quota", "insufficient", "balance"   credit-related 429s
- *   - "401", "403", "unauthorized", "forbidden"      auth failures
- *   - "invalid api key", "invalid_api_key"           specific keyless errors
+ * Each alternation is anchored to AVOID known false positives:
+ *   ❌ "load balancer timeout"  bare "balance" used to match
+ *   ❌ "credit card declined"   bare "credit" used to match
+ *   ❌ "401-byte response"      bare "401" used to match
+ *
+ * Genuine patterns covered (case-insensitive):
+ *   credit balance|insufficient credit|credit (?:exhausted|limit reached)
+ *   quota (?:exceeded|exhausted|limit)|insufficient quota
+ *   HTTP 401|HTTP 403|status[:= ]+40[13]|\bHTTP/1\.[01]\s+40[13]\b
+ *   unauthorized|forbidden|unauthenticated
+ *   invalid api[ _]?key|api[ _]?key (?:expired|revoked|invalid|disabled)
+ *   account (?:suspended|disabled|deactivated|terminated)
+ *   subscription (?:expired|cancelled)|payment (?:required|failed)
  */
-const FATAL_FAILURE_REGEX =
-  /credit|quota|insufficient|balance|\b401\b|\b403\b|unauthor|forbidden|invalid[ _]api[ _]key/i;
+const FATAL_FAILURE_REGEX = new RegExp(
+  [
+    // Credit / quota — only when explicitly paired with a fatal word
+    "credit\\s*balance",                  // "credit balance is too low"
+    "insufficient\\s*credit",             // "insufficient credit"
+    "credit\\s*(?:exhausted|limit\\s*reached)",
+    "quota\\s*(?:exceeded|exhausted|limit)",
+    "insufficient\\s*quota",
+    "balance\\s*(?:too\\s*low|exhausted)",
+    // HTTP auth / forbidden — must be HTTP-flavoured, not bare "401"
+    "HTTP\\s*40[13]\\b",
+    "status[:= ]\\s*40[13]\\b",
+    "\\b(?:401|403)\\s*(?:unauthorized|forbidden|unauthenticated)",
+    "unauthorized",
+    "forbidden",
+    "unauthenticated",
+    // Key-level fatal
+    "invalid\\s*api[\\s_]*key",
+    "api[\\s_]*key\\s*(?:expired|revoked|invalid|disabled|missing)",
+    // Account-level fatal
+    "account\\s*(?:suspended|disabled|deactivated|terminated|banned)",
+    "subscription\\s*(?:expired|cancelled|canceled)",
+    "payment\\s*(?:required|failed|declined)",
+  ].join("|"),
+  "i",
+);
 
 export function recordProviderFailure(name: ProviderName, reason: string): void {
   const entry = providerHealth[name];

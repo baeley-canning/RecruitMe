@@ -1413,10 +1413,14 @@ async function runSearchBackground(args: {
       rescuedFromGate = rescued.length;
       if (rescuedFromGate > 0) {
         console.log(`[search] rescue pass: source gate filtered ${skippedSourceGate} but 0 passed strict — admitting top ${rescuedFromGate} by fetch-priority for Claude scoring`);
-        // Surface this in the session so the recruiter sees the rescue happened.
+        // Pull the actual anchor terms for this role so the message names
+        // THIS job's signals, not a hardcoded "PHP/Laravel/SilverStripe"
+        // that would be wrong on every non-web-dev search.
+        const anchors = extractDistinctiveRequirementTerms(parsedRole).slice(0, 3);
+        const anchorPhrase = anchors.length > 0 ? anchors.join("/") : "the required stack";
         await prisma.searchSession.update({
           where: { id: sessionId },
-          data: { message: `Source gate filtered ${skippedSourceGate} candidates with no visible PHP/Laravel/SilverStripe signal — rescue pass admitted top ${rescuedFromGate} by fetch-priority for Claude to evaluate.` },
+          data: { message: `Source gate filtered ${skippedSourceGate} candidates with no visible ${anchorPhrase} signal — rescue pass admitted top ${rescuedFromGate} by fetch-priority for Claude to evaluate.` },
         }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
       }
     }
