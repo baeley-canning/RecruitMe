@@ -16,6 +16,8 @@
  * endpoint that drives the UI reads both.
  */
 
+import { readSearchProvidersConfig } from "./search-providers/config";
+
 export type ProviderName =
   | "claude"
   | "ollama"
@@ -156,13 +158,20 @@ export function isProviderConfigured(name: ProviderName): boolean {
     case "ollama":   return process.env.ENABLE_LOCAL_MODEL_FAILOVER?.toLowerCase() === "true"
                          || process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING?.toLowerCase() === "true";
     case "serpapi":  return Boolean(process.env.SERPAPI_API_KEY?.trim());
-    // Free providers are "configured" when their base URL is set AND the
-    // SEARCH_PROVIDERS env opts them in. Same gate the search route uses,
-    // so what we badge matches what actually fires.
+    // Free providers are "configured" only when the search route ACTUALLY
+    // recognises them in SEARCH_PROVIDERS — defer to the route's own
+    // parser instead of doing a substring check. This catches:
+    //   - SEARCH_PROVIDERS using a space instead of comma → route parses to []
+    //     while substring check still passes ("searxng openserp".includes
+    //     "searxng") → badge falsely shows configured
+    //   - Typos like "searcxng" or "opensrp" that wouldn't pass
+    //     parseProviderList's ALL_PROVIDERS filter
+    // The base URL must also be present — without it the route can't call
+    // the provider even if the name parses.
     case "searxng":  return Boolean(process.env.SEARXNG_BASE_URL?.trim())
-                         && (process.env.SEARCH_PROVIDERS?.toLowerCase().includes("searxng") ?? false);
+                         && readSearchProvidersConfig().enabled.includes("searxng");
     case "openserp": return Boolean(process.env.OPENSERP_BASE_URL?.trim())
-                         && (process.env.SEARCH_PROVIDERS?.toLowerCase().includes("openserp") ?? false);
+                         && readSearchProvidersConfig().enabled.includes("openserp");
     case "pdl":      return Boolean(process.env.PDL_API_KEY?.trim());
     case "firmable": return Boolean(process.env.FIRMABLE_API_KEY?.trim());
     case "github":   return Boolean(process.env.GITHUB_TOKEN?.trim());

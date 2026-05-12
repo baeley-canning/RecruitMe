@@ -1067,15 +1067,66 @@ async function runSearchBackground(args: {
 
     if (allRaw.length === 0) {
       if (sawRetryableSearchFailure) {
-        await prisma.searchSession.update({
-          where: { id: sessionId },
-          data: {
-            status: "rate_limited",
-            message: "Rate-limited before any results were returned.",
-            evaluation: "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.",
-          },
-        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
-        return;
+        // Before bailing out, try one more pass via free providers only
+        // (SearXNG + OpenSERP). They aren't rate-limited the same way as
+        // SerpAPI's per-API-key quotas — they're self-hosted scrapers, so
+        // a SerpAPI death doesn't mean the search has to fail. This is
+        // exactly the scenario where the user's "use SearXNG/OpenSERP
+        // when SerpAPI is dead" expectation should kick in.
+        const freeProvidersConfig = readSearchProvidersConfig();
+        const hasFreeProviders = freeProvidersConfig.enabled.length > 0 &&
+          (freeProvidersConfig.searxngBaseUrl !== null || freeProvidersConfig.openserpBaseUrl !== null);
+
+        if (hasFreeProviders) {
+          void prisma.searchSession.update({
+            where: { id: sessionId },
+            data: { message: "SerpAPI rate-limited — falling back to free providers (SearXNG/OpenSERP)..." },
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+
+          const freeOnlyTasks = searchQueries.slice(0, MAX_QUERY_VARIANTS).map((q) => ({
+            provider: "free-providers" as SearchProvider,
+            query: q,
+            location: searchLocation,
+            offset: 0,
+            resolvedKey: undefined,
+            searchOptions: { excludeContractTitles },
+          }));
+          const freeOnlyOutcomes = await executeSearchTaskQueue(freeOnlyTasks, { concurrency: 4, delayMs: 0 });
+          const freeOnlyResults = freeOnlyOutcomes.flatMap((o) => o.items);
+
+          for (const r of freeOnlyResults) {
+            if (!seenUrls.has(r.linkedinUrl)) {
+              seenUrls.add(r.linkedinUrl);
+              allRaw.push(r);
+            }
+          }
+
+          if (allRaw.length > 0) {
+            console.log(`[search] free-providers rescue: ${allRaw.length} candidates after SerpAPI rate-limit`);
+            // Fall through to the normal scoring path with what we got.
+          } else {
+            // Free providers also returned nothing — now we bail.
+            await prisma.searchSession.update({
+              where: { id: sessionId },
+              data: {
+                status: "rate_limited",
+                message: "Rate-limited before any results were returned. Free providers also returned 0.",
+                evaluation: "FAIL — SerpAPI rate-limited AND free providers (SearXNG/OpenSERP) returned no matches. Check the free-provider service health, then wait a few minutes and try again.",
+              },
+            }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+            return;
+          }
+        } else {
+          await prisma.searchSession.update({
+            where: { id: sessionId },
+            data: {
+              status: "rate_limited",
+              message: "Rate-limited before any results were returned.",
+              evaluation: "FAIL — Search APIs rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate. Configure SEARCH_PROVIDERS=searxng,openserp + SEARXNG_BASE_URL + OPENSERP_BASE_URL to enable free-provider fallback for next time.",
+            },
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+          return;
+        }
       }
 
       // ── Scarce-skill fallback: if anchors include rare tech (Sybase, COBOL, …)
