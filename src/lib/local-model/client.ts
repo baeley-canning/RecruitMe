@@ -112,7 +112,22 @@ export async function ollamaGenerate(
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
-        lastError = `non-OK ${res.status} at ${baseUrl}`;
+        // Read the body to detect "model not found" — Ollama returns 404
+        // with `{"error":"model '<name>' not found, try pulling it first"}`
+        // when the requested model hasn't been downloaded into the service.
+        // Distinguish this from a network 404 so the log makes the fix
+        // obvious instead of looking like "ollama is broken".
+        const errorBody = await res.text().catch(() => "");
+        const modelMissing = res.status === 404 &&
+          /not found|pulling/i.test(errorBody);
+        if (modelMissing) {
+          lastError = `model '${model}' not pulled into Ollama service — run: ollama pull ${model}`;
+          console.warn(`[ollama] ${lastError} (response: ${errorBody.slice(0, 200)})`);
+          // No point trying other URLs — same Ollama, same missing model.
+          recordProviderFailure("ollama", lastError);
+          return null;
+        }
+        lastError = `non-OK ${res.status} at ${baseUrl}${errorBody ? ` — ${errorBody.slice(0, 200)}` : ""}`;
         console.warn(`[ollama] ${lastError}`);
         continue; // try next URL
       }
