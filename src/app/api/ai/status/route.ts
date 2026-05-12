@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuth, unauthorized } from "@/lib/session";
 import { snapshotFailoverHealth } from "@/lib/ai-failover-health";
-import { isLocalFailoverEnabled } from "@/lib/local-model/config";
+import { isAiFailoverConfigured } from "@/lib/ai/chat-with-failover";
 import { snapshotProviderHealth } from "@/lib/provider-health";
 
 export async function GET() {
@@ -11,31 +11,32 @@ export async function GET() {
 
   const provider = process.env.AI_PROVIDER ?? "claude";
   const failover = snapshotFailoverHealth();
-  // Aggregated health for every external provider (Claude, Ollama, SerpAPI,
+  // Aggregated health for every external provider (Claude, OpenAI, SerpAPI,
   // PDL, Firmable, GitHub). Drives the live green/amber/red badges on the
   // search card. Each entry's `state` is the derived UX colour — UI doesn't
   // need to re-implement the rules.
   const providers = snapshotProviderHealth();
 
-  // Special-case: Claude state from provider-health is just last call's
-  // success/failure, but the failover module ALSO knows when Claude is
-  // currently considered dead (after a verified failover). Merge so the
-  // Claude badge flips red the moment the failover machinery says so,
-  // even if a stale "success" timestamp is still on file.
-  const claudeEntry = providers.find((p) => p.name === "claude");
-  if (claudeEntry && failover.isClaudeDead) {
-    claudeEntry.state = "down";
-    claudeEntry.lastFailureReason = failover.failoverReason ?? claudeEntry.lastFailureReason;
+  // Special-case: when the failover machinery has marked the primary as
+  // dead, flip its badge to down regardless of stale success timestamps.
+  if (failover.isPrimaryDead) {
+    const primaryName = provider === "openai" ? "openai" : "claude";
+    const entry = providers.find((p) => p.name === primaryName);
+    if (entry) {
+      entry.state = "down";
+      entry.lastFailureReason = failover.failoverReason ?? entry.lastFailureReason;
+    }
   }
 
-  // Surface failover state regardless of provider so the banner can render a
-  // "running on local model" indicator the moment a Claude call fails over.
+  // Surface failover state so the banner can render a "running on
+  // fallback" indicator the moment the primary fails over.
   const failoverPayload = {
-    enabled: isLocalFailoverEnabled(),
-    isClaudeDead: failover.isClaudeDead,
+    enabled: isAiFailoverConfigured(),
+    isPrimaryDead: failover.isPrimaryDead,
     lastFailoverAt: failover.lastFailoverAt,
-    lastClaudeSuccessAt: failover.lastClaudeSuccessAt,
+    lastPrimarySuccessAt: failover.lastPrimarySuccessAt,
     failoverReason: failover.failoverReason,
+    failoverSource: failover.failoverSource,
     failoverCount: failover.failoverCount,
   };
 

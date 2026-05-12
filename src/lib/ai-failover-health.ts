@@ -1,45 +1,53 @@
 /**
- * In-memory health state for the Claude → Ollama failover. When
- * chatWithFailover successfully reaches Claude we reset isClaudeDead; when
- * it falls over to Ollama we set isClaudeDead, record the reason, and bump
- * the failover counter. The /api/ai/status endpoint reads this so the
- * AiStatusBanner can surface a "running on local model" indicator.
+ * In-memory health state for the Claude ↔ OpenAI symmetric failover.
+ * When `chatWithFailover` succeeds against the primary, isPrimaryDead
+ * is cleared; when it falls over to the secondary, isPrimaryDead is
+ * set with a free-form reason. The /api/ai/status endpoint reads this
+ * so the AiStatusBanner can show a "running on fallback" indicator.
  *
- * Module-level state lives for the lifetime of the Node process. In dev,
- * Next.js HMR can recreate this module on hot reload, which means the state
- * resets between code edits — that is OK because the next Claude call will
- * re-populate it. In production (single Railway process) the state is
- * stable until restart.
+ * Module-level state lives for the lifetime of the Node process. In
+ * dev, Next.js HMR can recreate this module on hot reload — fine; the
+ * next provider call repopulates it. In production (single Railway
+ * process) the state is stable until restart.
  *
- * Single source of truth — do not duplicate this state anywhere else.
+ * "Primary" here is whichever provider `probeProviders().primary`
+ * resolves to (Claude by default; OpenAI when AI_PROVIDER=openai or
+ * only OPENAI_API_KEY is set).
  */
-import type { ClaudeDeadReason } from "./ai/chat-with-failover";
+
+import type { ChatSource } from "./ai/chat-with-failover";
 
 export interface AiFailoverState {
-  isClaudeDead: boolean;
+  isPrimaryDead: boolean;
   lastFailoverAt: string | null;
-  lastClaudeSuccessAt: string | null;
-  failoverReason: ClaudeDeadReason | null;
+  lastPrimarySuccessAt: string | null;
+  /** Free-form label from summariseError — telemetry only. */
+  failoverReason: string | null;
+  /** Which provider is currently being used to recover. */
+  failoverSource: ChatSource | null;
   failoverCount: number;
 }
 
 export const aiFailoverHealth: AiFailoverState = {
-  isClaudeDead: false,
+  isPrimaryDead: false,
   lastFailoverAt: null,
-  lastClaudeSuccessAt: null,
+  lastPrimarySuccessAt: null,
   failoverReason: null,
+  failoverSource: null,
   failoverCount: 0,
 };
 
-export function recordClaudeSuccess(): void {
-  aiFailoverHealth.isClaudeDead = false;
+export function recordPrimarySuccess(): void {
+  aiFailoverHealth.isPrimaryDead = false;
   aiFailoverHealth.failoverReason = null;
-  aiFailoverHealth.lastClaudeSuccessAt = new Date().toISOString();
+  aiFailoverHealth.failoverSource = null;
+  aiFailoverHealth.lastPrimarySuccessAt = new Date().toISOString();
 }
 
-export function recordOllamaFailover(reason: ClaudeDeadReason): void {
-  aiFailoverHealth.isClaudeDead = true;
+export function recordFailover(source: ChatSource, reason: string): void {
+  aiFailoverHealth.isPrimaryDead = true;
   aiFailoverHealth.failoverReason = reason;
+  aiFailoverHealth.failoverSource = source;
   aiFailoverHealth.lastFailoverAt = new Date().toISOString();
   aiFailoverHealth.failoverCount += 1;
 }
@@ -50,9 +58,10 @@ export function snapshotFailoverHealth(): AiFailoverState {
 
 // Test-only: reset state between test cases.
 export function __resetFailoverHealthForTests(): void {
-  aiFailoverHealth.isClaudeDead = false;
+  aiFailoverHealth.isPrimaryDead = false;
   aiFailoverHealth.lastFailoverAt = null;
-  aiFailoverHealth.lastClaudeSuccessAt = null;
+  aiFailoverHealth.lastPrimarySuccessAt = null;
   aiFailoverHealth.failoverReason = null;
+  aiFailoverHealth.failoverSource = null;
   aiFailoverHealth.failoverCount = 0;
 }

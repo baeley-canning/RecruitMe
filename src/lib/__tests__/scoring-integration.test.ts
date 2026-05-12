@@ -106,7 +106,19 @@ const baseParsedRole = {
   anchor_terms: ["React"],
 };
 
-beforeEach(() => { mockChat.mockReset(); });
+// Ensure failover sees at least one provider configured. Without
+// ANTHROPIC_API_KEY set, probeProviders() returns no primary and
+// chatWithFailover throws before reaching the mocked chat().
+const envSnapshot = { ...process.env };
+beforeEach(() => {
+  mockChat.mockReset();
+  process.env.ANTHROPIC_API_KEY = "test";
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AI_PROVIDER;
+});
+// Restore env after the suite to avoid leaking into other tests.
+import { afterAll } from "vitest";
+afterAll(() => { process.env = { ...envSnapshot }; });
 
 // ─── 1. Strong local senior match ─────────────────────────────────────────────
 

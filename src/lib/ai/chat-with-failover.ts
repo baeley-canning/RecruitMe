@@ -1,188 +1,157 @@
 /**
- * Failover wrapper around chat(). When Claude is truly DEAD (auth invalid,
- * credits exhausted, persistent 5xx, unreachable network — exhausted after
- * withRetry has already done its job), route the same request through
- * local Ollama instead. Never silent: returns a `source` field so callers
- * can mark the result appropriately (e.g. scoredBy: "ollama" on a
- * ScoreBreakdown, UI badge on the candidate card).
+ * Symmetric Claude ↔ OpenAI failover.
  *
- * Behaviour matrix:
- *   ENABLE_LOCAL_MODEL_FAILOVER=false (default) → Claude error bubbles up,
- *     existing fallback logic (stub breakdowns / 500 responses) applies.
- *   ENABLE_LOCAL_MODEL_FAILOVER=true              → on a Claude-dead error,
- *     try Ollama. If Ollama also fails, original Claude error re-throws so
- *     the caller's stub-breakdown path activates as today.
+ * When BOTH ANTHROPIC_API_KEY and OPENAI_API_KEY are configured: the
+ * primary (Claude by default; OpenAI if AI_PROVIDER=openai) is tried
+ * first; on ANY error, the other provider is attempted. When only ONE
+ * key is configured: that provider is used alone with no failover.
  *
- * Crucially: this wrapper distinguishes DEAD from TRANSIENT. A 429 with
- * "rate limit exceeded" body is transient (withRetry handles it). A 429
- * with "credit balance exhausted" body is dead (no point retrying — same
- * request will fail tomorrow too).
+ * No status-code classifier gates the failover — the prior Llama-era
+ * design tried to be clever about "is this error actually Claude-dead?"
+ * and every shape Anthropic emitted (400 credit-balance, 401 auth,
+ * SDK timeout, etc.) eventually slipped past it. Burning one extra
+ * provider call on a validation bug is strictly cheaper than another
+ * incident.
+ *
+ * On Llama-era code being removed: there is no more provisional /
+ * penalised tier. Claude and OpenAI are both first-class; neither
+ * carries a score penalty. The provenance pill still renders so the
+ * recruiter can see which model produced any given score.
  */
 
-import { chat, type ChatOptions } from "./chat";
-import { ollamaGenerate } from "../local-model/client";
-import { readLocalModelConfig } from "../local-model/config";
-import { recordClaudeSuccess, recordOllamaFailover } from "../ai-failover-health";
+import { chat, type ChatOptions, type ChatProvider } from "./chat";
 import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
+import { recordFailover, recordPrimarySuccess } from "../ai-failover-health";
 
-export type ChatSource = "claude" | "ollama";
+export type ChatSource = "claude" | "openai";
+
+export interface ProviderAvailability {
+  hasClaude: boolean;
+  hasOpenAI: boolean;
+  /** Provider chosen as primary when both are available. */
+  primary:   ChatSource | null;
+  /** Provider used for failover (the other one, when both are available). */
+  fallback?: ChatSource;
+}
 
 export interface ChatFailoverResult {
   text: string;
   source: ChatSource;
-  /** When source === "ollama", which Claude-dead condition triggered it. */
-  failoverReason?: ClaudeDeadReason;
-  /** Ollama-side latency for ops logs (undefined for Claude). */
-  ollamaDurationMs?: number;
+  /** Free-form label describing why the primary failed (telemetry only). */
+  failoverReason?: string;
+  /** Wall-clock for the call that actually returned text. */
+  durationMs: number;
 }
 
-export type ClaudeDeadReason =
-  | "auth_invalid"          // 401 / 403 — key bad or missing
-  | "credits_exhausted"     // 429 with credit-balance-related body
-  | "rate_limited"          // generic 429 — SDK retries already exhausted
-  | "service_unavailable"   // persistent 502/503/504 after retries
-  | "network_unreachable";  // ECONNREFUSED / ENOTFOUND / etc after retries
-
 /**
- * Pure inspector — returns whether the given error indicates Claude is
- * dead (not transiently flaky). Exported for testability.
+ * Read process env once and decide which providers are configured.
+ * Pure function — no side effects, no caching (env can change between
+ * deploys; we want a fresh read per call).
  */
-export function classifyClaudeError(err: unknown): { dead: boolean; reason?: ClaudeDeadReason } {
-  const status = (err as { status?: number })?.status;
-  // Extract message from Error instances, plain objects with a message field,
-  // or fall back to string-cast. Lowercased for case-insensitive matching.
-  const rawMessage =
-    err instanceof Error ? err.message
-    : typeof (err as { message?: unknown })?.message === "string" ? (err as { message: string }).message
-    : err == null ? "" : String(err);
-  const message = rawMessage.toLowerCase();
+export function probeProviders(): ProviderAvailability {
+  const hasClaude  = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+  const hasOpenAI  = Boolean(process.env.OPENAI_API_KEY?.trim());
 
-  if (status === 401 || status === 403) {
-    return { dead: true, reason: "auth_invalid" };
-  }
+  // AI_PROVIDER explicit override wins. Otherwise Claude is the
+  // default primary (per user spec).
+  const explicit = (process.env.AI_PROVIDER ?? "").toLowerCase().trim();
+  let primary: ChatSource | null = null;
+  if (explicit === "openai" && hasOpenAI) primary = "openai";
+  else if (explicit === "claude" && hasClaude) primary = "claude";
+  else if (hasClaude) primary = "claude";
+  else if (hasOpenAI) primary = "openai";
 
-  // Anthropic returns 400 invalid_request_error with "Your credit balance
-  // is too low" when the org is out of credits. This was the production
-  // bug that kept the recruiter staring at raw 400s while Llama sat right
-  // there waiting to take over — the 400 status wasn't recognised as
-  // "Claude dead" so failover never fired. Match the credit / quota /
-  // billing body markers and classify as credits_exhausted.
-  if (status === 400 && /credit balance|credits|quota|insufficient|billing/.test(message)) {
-    return { dead: true, reason: "credits_exhausted" };
-  }
+  const fallback: ChatSource | undefined =
+    primary === "claude" && hasOpenAI  ? "openai" :
+    primary === "openai" && hasClaude  ? "claude" :
+    undefined;
 
-  // 429 → dead. The Anthropic SDK already did its automatic retries by the
-  // time we see this, and any caller-level withRetry has also exhausted.
-  // Leaving the user stranded on "Rate limit exceeded" was strictly worse
-  // than burning one Ollama call. Credit-specific bodies still get the
-  // more specific `credits_exhausted` reason for ops logs.
-  if (status === 429) {
-    const reason: ClaudeDeadReason = /credit|quota|insufficient|balance/.test(message)
-      ? "credits_exhausted"
-      : "rate_limited";
-    return { dead: true, reason };
-  }
-
-  if (status === 502 || status === 503 || status === 504) {
-    return { dead: true, reason: "service_unavailable" };
-  }
-
-  // Network-level errors with no HTTP status. withRetry already retries
-  // these — if we still got an error after retries exhausted, treat as
-  // dead and fall over to Ollama. Includes the Anthropic SDK's
-  // APIConnectionError ("Connection error.") and APIConnectionTimeoutError
-  // ("Request timed out.") which surface with no status code and were
-  // previously slipping through the classifier as not-dead.
-  if (!status && /econnrefused|enotfound|etimedout|getaddrinfo|network|abort|request timed out|connection error|connect timeout/.test(message)) {
-    return { dead: true, reason: "network_unreachable" };
-  }
-
-  return { dead: false };
+  return { hasClaude, hasOpenAI, primary, fallback };
 }
 
 /**
- * Drop-in replacement for chat() that adds a failover branch. Returns a
- * structured result instead of bare text so callers can record `source`.
+ * Convenience boolean for "is failover actually wired up?" — true iff
+ * BOTH providers are configured. Used by callers who want to short-
+ * circuit before constructing prompts when only one provider exists
+ * (no useful failover to gain).
+ */
+export function isAiFailoverConfigured(): boolean {
+  const { hasClaude, hasOpenAI } = probeProviders();
+  return hasClaude && hasOpenAI;
+}
+
+/** Brief error label for the [chat-failover] log line. Telemetry only. */
+function summariseError(err: unknown): string {
+  const status = (err as { status?: number })?.status;
+  const msg = err instanceof Error ? err.message : String(err);
+  const head = msg.length > 80 ? `${msg.slice(0, 80)}…` : msg;
+  return status ? `${status} ${head}` : head;
+}
+
+/**
+ * Drop-in replacement for `chat()`. Tries the primary provider; on any
+ * error, falls over to the other provider if available; returns the
+ * source + duration so callers can tag persisted breakdowns.
  *
- * Behaviour:
- *   - Always tries Claude first via chat(prompt, ...).
- *   - On ANY Claude error, attempts Ollama. The previous status-code
- *     classifier (only fail over on 401/403/429/5xx/network) repeatedly
- *     missed real production failures (e.g. Anthropic's 400 invalid_request_
- *     error for depleted credits) and left users staring at raw Claude
- *     errors despite a healthy local model sitting right there. The
- *     classifier still runs for telemetry / log labels — but it no longer
- *     gates whether failover is attempted. Cost of being "too eager":
- *     one Ollama call on a Claude validation bug. Cost of being too
- *     cautious: production breakage every time Anthropic introduces a
- *     new error shape. Eager is strictly better.
- *   - On Ollama success, returns { text, source: "ollama", failoverReason }.
- *   - On Ollama failure (returns null), re-throws the original Claude
- *     error so the caller's existing stub / error path applies.
+ * When only one provider is configured: behaves identically to `chat()`
+ * — single call, throws on failure, no failover attempted.
  */
 export async function chatWithFailover(
   prompt: string,
   temperature: number,
   maxTokens: number,
-  options: ChatOptions = {},
+  options: ChatOptions & { preferProvider?: ChatSource } = {},
 ): Promise<ChatFailoverResult> {
+  const { primary, fallback } = probeProviders();
+  if (!primary) {
+    throw new Error("No AI provider configured: set ANTHROPIC_API_KEY or OPENAI_API_KEY");
+  }
+
+  const preferred: ChatSource = options.preferProvider ?? primary;
+  const secondary: ChatSource | undefined =
+    preferred === primary
+      ? fallback
+      : primary; // if caller forced the fallback as primary, the configured primary becomes the fallback
+
+  // Strip the option that's local to this wrapper before passing through.
+  const chatOpts: ChatOptions = { ...options };
+  delete (chatOpts as { preferProvider?: ChatSource }).preferProvider;
+
+  const started = Date.now();
   try {
-    const text = await chat(prompt, temperature, maxTokens, options);
-    recordClaudeSuccess();
-    recordProviderSuccess("claude");
-    return { text, source: "claude" };
-  } catch (err) {
-    recordProviderFailure("claude", err instanceof Error ? err.message : String(err));
-
-    // Classifier runs for the log label, NOT to gate the failover.
-    // "Unknown" errors fall through with a generic reason so we always
-    // attempt Ollama.
-    const { reason: classified } = classifyClaudeError(err);
-    const reason: ClaudeDeadReason = classified ?? "service_unavailable";
-
-    console.warn(`[chat-failover] Claude failed (${reason}) — attempting Ollama fallback`);
-
-    const cfg = readLocalModelConfig();
-    const ollamaResult = await ollamaGenerate(prompt, {
-      model: cfg.model,
-      timeoutMs: cfg.timeoutMs,
-      temperature,
-      system: options.system,
-    });
-
-    if (!ollamaResult) {
-      // Both providers down — re-throw Claude error so the caller's existing
-      // stub / error-handling path takes over.
-      console.warn(`[chat-failover] Ollama also unavailable — re-throwing Claude error`);
-      throw err;
+    const text = await chat(prompt, temperature, maxTokens, { ...chatOpts, provider: preferred as ChatProvider });
+    recordProviderSuccess(preferred);
+    recordPrimarySuccess();
+    return { text, source: preferred, durationMs: Date.now() - started };
+  } catch (primaryErr) {
+    recordProviderFailure(preferred, primaryErr instanceof Error ? primaryErr.message : String(primaryErr));
+    const reason = summariseError(primaryErr);
+    if (!secondary) {
+      console.warn(`[chat-failover] ${preferred} failed (${reason}) — no secondary configured`);
+      throw primaryErr;
     }
 
-    recordOllamaFailover(reason);
-    // Explicit success log — without this, the only log visible after a
-    // Claude failure was "Claude failed" + "attempting Ollama", and the
-    // recruiter couldn't tell whether Ollama actually saved the call or
-    // silently failed. The "✓ RECOVERED" marker is grep-friendly and
-    // makes it obvious in Railway logs that the failover worked.
-    console.log(`[chat-failover] ✓ RECOVERED via Ollama — reason=${reason} durationMs=${ollamaResult.durationMs} chars=${ollamaResult.text.length}`);
-    return {
-      text: ollamaResult.text,
-      source: "ollama",
-      failoverReason: reason,
-      ollamaDurationMs: ollamaResult.durationMs,
-    };
+    console.warn(`[chat-failover] ${preferred} failed (${reason}) — attempting ${secondary} fallback`);
+    const fallbackStarted = Date.now();
+    try {
+      const text = await chat(prompt, temperature, maxTokens, { ...chatOpts, provider: secondary as ChatProvider });
+      recordProviderSuccess(secondary);
+      recordFailover(secondary, reason);
+      const durationMs = Date.now() - fallbackStarted;
+      console.log(`[chat-failover] ✓ RECOVERED via ${secondary} — durationMs=${durationMs} chars=${text.length}`);
+      return { text, source: secondary, failoverReason: reason, durationMs };
+    } catch (secondaryErr) {
+      recordProviderFailure(secondary, secondaryErr instanceof Error ? secondaryErr.message : String(secondaryErr));
+      console.warn(`[chat-failover] ${secondary} also failed — re-throwing original ${preferred} error`);
+      throw primaryErr;
+    }
   }
 }
 
 /**
- * Drop-in replacement for `chat()` for callers that DON'T care about
- * the provenance (Claude vs Llama). Returns just the text. Always
- * routes through `chatWithFailover` — Llama failover is unconditional
- * (see file header). Use this for outreach generation, reference Q&A,
- * profile-section generation, shortlist summaries — anywhere the
- * output is one-shot text whose source the recruiter doesn't need to
- * see explicitly. For SCORING calls where Llama-attributed scores
- * need the visible badge + penalty, call `chatWithFailover` directly
- * and inspect `.source`.
+ * Thin wrapper for callers that don't need provenance — outreach,
+ * references, profile sections, shortlist summaries, etc. Returns just
+ * the text; failover runs identically under the hood.
  */
 export async function chatWithMaybeFailover(
   prompt: string,

@@ -6,13 +6,19 @@
  * might pull, plus the JobAdder-merged version. Shows expected behaviour.
  */
 
-import { describe, it, vi } from "vitest";
+import { beforeAll, describe, it, vi } from "vitest";
 
 const { mockChat } = vi.hoisted(() => ({ mockChat: vi.fn() }));
 vi.mock("../src/lib/ai/chat", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/ai/chat")>();
   return { ...actual, chat: mockChat };
 });
+
+// chatWithFailover requires at least one provider key. Set ANTHROPIC_API_KEY
+// here so the failover wrapper can resolve a primary and forward to the
+// mocked chat(). Without this, probeProviders() returns no primary and
+// chatWithFailover throws before hitting the mock.
+beforeAll(() => { process.env.ANTHROPIC_API_KEY = "test"; });
 
 import { scoreCandidateStructured } from "../src/lib/ai/scoring";
 import { runDeterministicMatch } from "../src/lib/scoring";

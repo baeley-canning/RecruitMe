@@ -1,10 +1,8 @@
-import { chat, parseJson, SONNET, resolveModelForDataQuality, withRetry } from "./chat";
+import { parseJson, SONNET, resolveModelForDataQuality, withRetry } from "./chat";
 import { chatWithFailover, type ChatSource } from "./chat-with-failover";
-import { isLocalFinalScoringFailoverEnabled } from "../local-model/config";
 import { analyseProfileCaptureCompleteness, classifyDataQuality, runDeterministicMatch, buildStubBreakdown } from "../scoring";
 import { getRecruitingContext } from "../recruiter-memory";
 import {
-  applyLlamaScorePenalty,
   buildScoreBreakdown,
   CATEGORY_WEIGHTS_V2,
   getMustHaveImportance,
@@ -61,14 +59,13 @@ export interface AcceptancePrediction {
   signals: AcceptanceSignal[];
   summary: string;
   /**
-   * Which model produced this prediction. Mirrors the same field on
-   * ScoreBreakdown so the UI can mark Llama-derived acceptance scores
-   * the same way as Llama-derived match scores. Without this, a Llama
-   * acceptance likelihood looks identical to a Claude one in the UI,
-   * violating the "don't silently pretend Llama is Claude-quality" rule.
-   * Absent on legacy rows; "claude" by default for fresh predictions.
+   * Which model produced this prediction. Mirrors ScoreBreakdown.scoredBy
+   * so the UI can render a provenance pill telling the recruiter which
+   * provider scored each candidate. Both providers are first-class — no
+   * penalty is applied — but visibility matters for ops + audit.
+   * Absent on legacy rows.
    */
-  scoredBy?: "claude" | "ollama";
+  scoredBy?: "claude" | "openai";
 }
 
 // ─── Private helpers ───────────────────────────────────────────────────────────
@@ -217,22 +214,14 @@ ${escapeXmlForPrompt(profileSlice)}
 </candidate_profile>
 
 ${ACCEPTANCE_ASSESSMENT_RULES}`;
-  // Acceptance prediction is gated behind ENABLE_LOCAL_MODEL_FINAL_SCORING
-  // because the likelihood feeds into recruiter shortlists. Without the
-  // flag, this is pure Claude — Llama is dead code.
-  // Track source so the returned prediction is tagged scoredBy="ollama"
-  // when Llama produced it — without this tag the UI shows the Llama
-  // likelihood as if Claude wrote it, which violates the "don't pretend
-  // Llama is Claude-quality" rule.
-  let source: "claude" | "ollama" = "claude";
-  let text: string;
-  if (isLocalFinalScoringFailoverEnabled()) {
-    const result = await chatWithFailover(acceptancePrompt, 0.1, 2048, { model: SONNET });
-    text = result.text;
-    source = result.source;
-  } else {
-    text = await chat(acceptancePrompt, 0.1, 2048, { model: SONNET });
-  }
+  // Routes through the Claude ↔ OpenAI failover wrapper. When both keys
+  // are configured, the primary is tried first and the secondary takes
+  // over on any error. When only one is set, that's the only attempt.
+  // The returned scoredBy reflects which provider actually produced the
+  // result so the UI provenance pill can render correctly.
+  const failoverResult = await chatWithFailover(acceptancePrompt, 0.1, 2048, { model: SONNET });
+  const text = failoverResult.text;
+  const source: ChatSource = failoverResult.source;
 
   const parsed = parseJson<Partial<AcceptancePrediction>>(text);
   const clamp  = (v: unknown) => typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : 50;
@@ -624,18 +613,16 @@ ${escapeXmlForPrompt(profileSlice)}
     // hits. The static rules are identical across every scoring call.
     cacheSystem: true,
   };
-  // Track which model actually produced this score. ENABLE_LOCAL_MODEL_FINAL_SCORING
-  // gates the failover branch — without it, this is plain Claude (current behaviour).
-  // Wrapped in a holder so TS doesn't narrow the literal type across the await
-  // boundary inside withRetry's async callback.
+  // Track which model actually produced this score. The failover wrapper
+  // handles primary-vs-secondary internally; we just unpack `source` so
+  // the persisted breakdown carries scoredBy. Wrapped in a holder so TS
+  // doesn't narrow the literal type across the await boundary inside
+  // withRetry's async callback.
   const sourceRef: { value: ChatSource } = { value: "claude" };
   const text = await withRetry(async () => {
-    if (isLocalFinalScoringFailoverEnabled()) {
-      const result = await chatWithFailover(userPrompt, 0.1, 4096, chatOpts);
-      sourceRef.value = result.source;
-      return result.text;
-    }
-    return chat(userPrompt, 0.1, 4096, chatOpts);
+    const result = await chatWithFailover(userPrompt, 0.1, 4096, chatOpts);
+    sourceRef.value = result.source;
+    return result.text;
   });
   const source = sourceRef.value;
 
@@ -665,9 +652,10 @@ ${escapeXmlForPrompt(profileSlice)}
       },
       weights,
     });
-    // If the unparseable text came from Llama, mark + penalise — recruiters
-    // need to see this was not a Claude verdict even when we couldn't parse it.
-    return source === "ollama" ? applyLlamaScorePenalty({ ...stub, scoredBy: "ollama" }) : stub;
+    // Tag the unparseable stub with the actual source so the recruiter
+    // can see which provider returned the bad output. No penalty —
+    // Claude and OpenAI are both first-class providers.
+    return { ...stub, scoredBy: source };
   }
 
   const finalized = finalizeBreakdownFromRawAI(raw, {
@@ -677,9 +665,7 @@ ${escapeXmlForPrompt(profileSlice)}
     weights,
     parsedRoleLocation: parsedRole.location ?? null,
   });
-  return source === "ollama"
-    ? applyLlamaScorePenalty({ ...finalized, scoredBy: "ollama" })
-    : { ...finalized, scoredBy: "claude" };
+  return { ...finalized, scoredBy: source };
 }
 
 // ─── Batch scoring ────────────────────────────────────────────────────────────
@@ -906,20 +892,16 @@ ${candidatesBlock}
       };
       const batchSourceRef: { value: ChatSource } = { value: "claude" };
       const text = await withRetry(async () => {
-        if (isLocalFinalScoringFailoverEnabled()) {
-          const result = await chatWithFailover(userPrompt, 0.1, maxTokens, batchChatOpts);
-          batchSourceRef.value = result.source;
-          return result.text;
-        }
-        return chat(userPrompt, 0.1, maxTokens, batchChatOpts);
+        const result = await chatWithFailover(userPrompt, 0.1, maxTokens, batchChatOpts);
+        batchSourceRef.value = result.source;
+        return result.text;
       });
 
-      // Same scoredBy/penalty tag for every candidate in the batch — they all
-      // came from the same provider on the same call.
+      // Same scoredBy tag for every candidate in the batch — they all
+      // came from the same provider on the same call. No penalty —
+      // Claude and OpenAI are both first-class providers.
       const tag = (b: ScoreBreakdown): ScoreBreakdown =>
-        batchSourceRef.value === ("ollama" as ChatSource)
-          ? applyLlamaScorePenalty({ ...b, scoredBy: "ollama" })
-          : { ...b, scoredBy: "claude" };
+        ({ ...b, scoredBy: batchSourceRef.value });
 
       let rawArr: RawScoringAI[];
       try {

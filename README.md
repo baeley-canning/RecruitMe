@@ -72,13 +72,11 @@ Copy `.env.example` to `.env.local`. All variables below are required unless mar
 
 | Variable | Required | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes (if using Claude) | Anthropic API key. Claude is the recommended provider. |
+| `ANTHROPIC_API_KEY` | Yes (if using Claude) | Anthropic API key. Claude is the default primary provider. |
 | `ANTHROPIC_MODEL` | No | Model ID. Default: `claude-haiku-4-5-20251001`. Use `claude-sonnet-4-6` for higher quality scoring. |
-| `AI_PROVIDER` | No | `claude` (default) \| `openai` \| `ollama`. |
-| `OPENAI_API_KEY` | If `AI_PROVIDER=openai` | OpenAI API key. |
+| `OPENAI_API_KEY` | Optional | When set alongside `ANTHROPIC_API_KEY`, OpenAI is the automatic failover when Claude fails (or vice versa if `AI_PROVIDER=openai`). When set alone, OpenAI is the sole provider. |
 | `OPENAI_MODEL` | No | Default: `gpt-4o-mini`. |
-| `OLLAMA_BASE_URL` | If `AI_PROVIDER=ollama` | e.g. `http://127.0.0.1:11434`. Local Ollama instance. |
-| `OLLAMA_MODEL` | No | Default: `llama3.2:3b`. |
+| `AI_PROVIDER` | No | `claude` (default) \| `openai`. Picks which provider is tried first when both are configured. |
 
 ### Search APIs (at least one required to use LinkedIn search)
 
@@ -150,7 +148,7 @@ src/
 │   ├── candidate-card.tsx      # Candidate accordion with score breakdown
 │   └── ...
 ├── lib/
-│   ├── ai.ts                   # Claude/OpenAI/Ollama abstraction
+│   ├── ai.ts                   # Claude/OpenAI abstraction
 │   ├── linkedin-capture.ts     # Extension session queue + profile save
 │   ├── scoring.ts              # Score breakdown types and builders
 │   ├── usage.ts                # Rate limiting + usage event logging

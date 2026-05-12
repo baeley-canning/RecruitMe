@@ -3,9 +3,9 @@ import OpenAI from "openai";
 import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
-// Abstracts over Claude, OpenAI, and Ollama so all AI functions stay clean.
+// Abstracts over Claude and OpenAI so all AI functions stay clean.
 
-export type ChatProvider = "claude" | "openai" | "ollama";
+export type ChatProvider = "claude" | "openai";
 
 export interface ChatOptions {
   provider?: ChatProvider;
@@ -123,19 +123,10 @@ export async function chat(
     return response.choices[0]?.message?.content ?? "";
   }
 
-  // ── Ollama (default) ──
-  const base = await findOllamaBase();
-  const client = new OpenAI({ baseURL: `${base}/v1`, apiKey: "ollama" });
-  const model  = process.env.OLLAMA_MODEL ?? "llama3.2:3b";
-
-  const response = await client.chat.completions.create({
-    model,
-    messages: [{ role: "user", content: prompt }],
-    temperature,
-    max_tokens: maxTokens,
-  });
-
-  return response.choices[0]?.message?.content ?? "";
+  // Unreachable — ChatProvider is now narrowed to "claude" | "openai" and
+  // both branches return above. Kept as an exhaustive-check throw so a
+  // future provider added to the union surfaces here at compile time.
+  throw new Error(`Unsupported AI provider: ${provider as string}`);
 }
 
 // ─── Retry helper ─────────────────────────────────────────────────────────────
@@ -169,38 +160,6 @@ export async function withRetry<T>(
     }
   }
   throw lastErr;
-}
-
-// ─── Ollama auto-detect ────────────────────────────────────────────────────────
-
-const OLLAMA_URL_CANDIDATES = [
-  process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
-  "http://127.0.0.1:11434",
-  "http://localhost:11434",
-  "http://10.255.255.254:11434",
-];
-
-let _ollamaBaseCache: string | null = null;
-
-async function findOllamaBase(): Promise<string> {
-  if (_ollamaBaseCache) return _ollamaBaseCache;
-
-  const urls = [...new Set(OLLAMA_URL_CANDIDATES)];
-  const checks = urls.map(async (base) => {
-    const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(1500) });
-    if (!res.ok) throw new Error("not ok");
-    return base;
-  });
-
-  try {
-    _ollamaBaseCache = await Promise.any(checks);
-    return _ollamaBaseCache;
-  } catch {
-    throw new Error(
-      `Cannot connect to Ollama.\nTried: ${urls.join(", ")}\n\n` +
-      `Run: ollama serve   or set AI_PROVIDER=claude in .env.local`
-    );
-  }
 }
 
 // ─── Shared JSON parser ────────────────────────────────────────────────────────

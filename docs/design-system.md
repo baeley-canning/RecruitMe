@@ -45,7 +45,7 @@ Always 1px. Never 2px+. Borders are background-tone separators, not heavy lines.
 | `success` (`#30d158`) | Confirmed, healthy, ready.                             |
 | `warning` (`#ff9f0a`) | Attention needed, rate limit, soft warning.            |
 | `danger` (`#ff453a`)  | Errors, destructive actions, failed.                   |
-| `llama` (`#bf5af2`)   | **Reserved for Llama-failover indicators only.** Banner + "Scored by Llama" pill. |
+| `llama` (`#bf5af2`)   | Generic accent purple — used by cover-letter chips, remote-role indicators, "contacted" status, and a few other unrelated UI surfaces. Despite the name, no longer tied to any AI failover (see commit ripping out the Ollama integration). |
 
 For all accents, use `*-subtle` variants for soft chip / pill backgrounds:
 `bg-accent-subtle text-accent` is the standard "blue badge" pattern.
@@ -165,16 +165,23 @@ it's a defining characteristic of the Pro App aesthetic.
 <span className="data-mono text-text-secondary">14 / 20</span>
 ```
 
-## The Llama failover
+## Model provenance pill
 
-Llama-related indicators (banner, "Scored by Llama" pill on candidate cards)
-use the `llama` accent (`#bf5af2`). This is **the only place** the purple
-accent appears. Do not use it for anything else.
+The candidate-card provenance pill shows which AI provider produced a
+match score or acceptance likelihood — Claude or OpenAI's GPT. Claude
+uses the standard `accent` tone; OpenAI uses `success`. No score
+penalty is applied either way; the pill exists for transparency, not
+to demote one provider's output.
 
 ```tsx
-// "Scored by Llama" pill
-<span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-llama-subtle text-llama">
-  Llama
+// "Claude" pill (default tone)
+<span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-accent-subtle text-accent">
+  Claude
+</span>
+
+// "GPT" pill (when Claude fails over to OpenAI)
+<span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-success-subtle text-success">
+  GPT
 </span>
 ```
 

@@ -1,6 +1,5 @@
-import { chat, withRetry, parseJson, SONNET } from "./chat";
+import { withRetry, parseJson, SONNET } from "./chat";
 import { chatWithFailover, chatWithMaybeFailover } from "./chat-with-failover";
-import { isLocalFailoverEnabled } from "../local-model/config";
 import {
   sanitizeCandidateProfileDraft,
   type EvidenceCandidateProfileDraft,
@@ -341,10 +340,8 @@ ${escapeXmlForPrompt(rawText.slice(0, 12000))}
 </cv_text>
 
 Return ONLY the cleaned CV text. No commentary, no preamble.`;
-  const text = isLocalFailoverEnabled()
-    ? (await chatWithFailover(prompt, 0, 2048)).text
-    : await chat(prompt, 0, 2048);
-  // If Claude returns something extremely short it probably failed — fall back to raw
+  const { text } = await chatWithFailover(prompt, 0, 2048);
+  // If the provider returns something extremely short it probably failed — fall back to raw
   return text.trim().length > 100 ? text.trim() : rawText;
 }
 

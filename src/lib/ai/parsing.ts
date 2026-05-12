@@ -1,6 +1,5 @@
-import { chat, getJobParsingProvider, parseJson, SONNET } from "./chat";
+import { getJobParsingProvider, parseJson, SONNET } from "./chat";
 import { chatWithFailover } from "./chat-with-failover";
-import { isLocalFailoverEnabled } from "../local-model/config";
 import { enrichRoleWithSecurityClearance } from "../security-clearance";
 import {
   PARSING_SYSTEM_CONTEXT,
@@ -151,14 +150,10 @@ ${scarceBlock}`;
   const callOnce = async (extraNudge: string = "") => {
     const fullPrompt = `${promptBody}${extraNudge ? `\n\n${extraNudge}` : ""}`;
     const opts = { provider: getJobParsingProvider(), model: SONNET };
-    // JD parsing is a LOW-RISK failover target: a Llama-parsed JD only
-    // affects this one role's downstream scoring (and the next Claude run
-    // will overwrite it), so we accept reduced quality during outages.
-    if (isLocalFailoverEnabled()) {
-      const { text } = await chatWithFailover(fullPrompt, 0.1, 8192, opts);
-      return text;
-    }
-    return chat(fullPrompt, 0.1, 8192, opts);
+    // Routes through the Claude ↔ OpenAI failover wrapper. When both
+    // providers are configured, the secondary catches Claude outages.
+    const { text } = await chatWithFailover(fullPrompt, 0.1, 8192, opts);
+    return text;
   };
 
   // Try once, retry once with a stricter "output ONLY valid JSON" nudge if

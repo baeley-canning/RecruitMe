@@ -18,7 +18,7 @@
 
 export type ProviderName =
   | "claude"
-  | "ollama"
+  | "openai"
   | "serpapi"
   | "pdl"
   | "firmable"
@@ -46,7 +46,7 @@ const initialEntry = (): ProviderHealthEntry => ({
 
 export const providerHealth: Record<ProviderName, ProviderHealthEntry> = {
   claude:   initialEntry(),
-  ollama:   initialEntry(),
+  openai:   initialEntry(),
   serpapi:  initialEntry(),
   pdl:      initialEntry(),
   firmable: initialEntry(),
@@ -149,8 +149,7 @@ export interface ProviderHealthSnapshot {
 export function isProviderConfigured(name: ProviderName): boolean {
   switch (name) {
     case "claude":   return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
-    case "ollama":   return process.env.ENABLE_LOCAL_MODEL_FAILOVER?.toLowerCase() === "true"
-                         || process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING?.toLowerCase() === "true";
+    case "openai":   return Boolean(process.env.OPENAI_API_KEY?.trim());
     case "serpapi":  return Boolean(process.env.SERPAPI_API_KEY?.trim());
     case "pdl":      return Boolean(process.env.PDL_API_KEY?.trim());
     case "firmable": return Boolean(process.env.FIRMABLE_API_KEY?.trim());

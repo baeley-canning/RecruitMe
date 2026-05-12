@@ -77,9 +77,9 @@ interface AcceptanceData {
   signals: AcceptanceSignal[];
   summary: string;
   /** Mirrors AcceptancePrediction.scoredBy on the server. Drives the
-   *  Llama badge next to the acceptance score so a Llama-sourced
-   *  likelihood is never displayed as if Claude produced it. */
-  scoredBy?: "claude" | "ollama";
+   *  provenance pill next to the acceptance score so the recruiter can
+   *  see whether Claude or OpenAI produced the likelihood. */
+  scoredBy?: "claude" | "openai";
 }
 
 interface Candidate {
@@ -216,14 +216,14 @@ function ProvenancePill({
   source,
   context,
 }: {
-  source: "claude" | "ollama" | undefined | null;
+  source: "claude" | "openai" | undefined | null;
   context: "match" | "acceptance";
 }) {
   const props = provenancePillProps(source, context);
   if (!props) return null;
   const toneClass =
-    props.tone === "llama"
-      ? "bg-llama-subtle text-llama"
+    props.tone === "openai"
+      ? "bg-success-subtle text-success"
       : "bg-accent-subtle text-accent";
   return (
     <span

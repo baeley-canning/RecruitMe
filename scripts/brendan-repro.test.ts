@@ -5,13 +5,17 @@
  * Run: npx vitest run scripts/brendan-repro.test.ts --reporter=basic
  */
 
-import { describe, it, vi } from "vitest";
+import { beforeAll, describe, it, vi } from "vitest";
 
 const { mockChat } = vi.hoisted(() => ({ mockChat: vi.fn() }));
 vi.mock("../src/lib/ai/chat", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/ai/chat")>();
   return { ...actual, chat: mockChat };
 });
+
+// chatWithFailover requires at least one provider key — set so the
+// wrapper can resolve a primary and forward to the mocked chat().
+beforeAll(() => { process.env.ANTHROPIC_API_KEY = "test"; });
 
 import { scoreCandidateStructured } from "../src/lib/ai/scoring";
 import { deriveUpdateData } from "../src/lib/score-utils";

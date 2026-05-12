@@ -12,11 +12,11 @@ describe("providerHealth — state derivation", () => {
     __resetProviderHealthForTests();
     // Configure every provider so we exercise the non-"unconfigured" branches.
     process.env.ANTHROPIC_API_KEY = "test";
+    process.env.OPENAI_API_KEY = "test";
     process.env.SERPAPI_API_KEY = "test";
     process.env.PDL_API_KEY = "test";
     process.env.FIRMABLE_API_KEY = "test";
     process.env.GITHUB_TOKEN = "test";
-    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "true";
   });
   afterEach(() => { process.env = { ...snapshot }; });
 

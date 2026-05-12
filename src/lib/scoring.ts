@@ -88,35 +88,11 @@ export interface ScoreBreakdown {
   recruiter_summary: string;
   /**
    * Which model produced this breakdown. Absent on legacy rows; "claude"
-   * for the default pipeline; "ollama" when Claude was unreachable and the
-   * Llama failover ran (only if ENABLE_LOCAL_MODEL_FINAL_SCORING is set).
-   * Llama-scored breakdowns receive a fixed point penalty in `overall` so
-   * they cannot silently outrank Claude-scored candidates — see
-   * applyLlamaScorePenalty / LLAMA_SCORE_PENALTY_POINTS.
+   * for the default pipeline; "openai" when Claude failed and the OpenAI
+   * failover ran. Both providers are first-class — no penalty is applied
+   * either way — the field exists so the UI can render a provenance pill.
    */
-  scoredBy?: "claude" | "ollama";
-}
-
-/**
- * Llama scoring is materially less reliable than Claude scoring. We apply a
- * fixed point penalty so a Llama-scored 78 cannot outrank a Claude-scored
- * 70 by chance. Configurable via LLAMA_SCORE_PENALTY_POINTS (default 10).
- *
- * The penalty is applied AT WRITE TIME to ScoreBreakdown.overall — once a
- * breakdown is persisted with scoredBy = "ollama" the overall already
- * reflects the penalty, so downstream sorting / shortlists don't need to
- * know about this concept. Re-running the candidate against Claude later
- * will write a fresh breakdown without the penalty.
- */
-export function getLlamaScorePenaltyPoints(): number {
-  const raw = Number(process.env.LLAMA_SCORE_PENALTY_POINTS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 10;
-}
-
-export function applyLlamaScorePenalty(breakdown: ScoreBreakdown): ScoreBreakdown {
-  if (breakdown.scoredBy !== "ollama") return breakdown;
-  const penalty = getLlamaScorePenaltyPoints();
-  return { ...breakdown, overall: Math.max(0, breakdown.overall - penalty) };
+  scoredBy?: "claude" | "openai";
 }
 
 // ─── Category weights — v3 (must sum to 1.0) ───────────────────────────────────
