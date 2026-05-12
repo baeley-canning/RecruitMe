@@ -17,7 +17,7 @@ describe("readLocalModelConfig", () => {
   it("returns safe defaults when no env vars are set", () => {
     const cfg = readLocalModelConfig();
     expect(cfg.baseUrl).toBe("http://localhost:11434");
-    expect(cfg.model).toBe("llama3.1:8b");
+    expect(cfg.model).toBe("qwen2.5:7b");
     expect(cfg.timeoutMs).toBe(30_000);
     expect(cfg.failoverEnabled).toBe(false);
     expect(cfg.finalScoringFailoverEnabled).toBe(false);

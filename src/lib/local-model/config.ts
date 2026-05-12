@@ -25,7 +25,7 @@ export interface LocalModelConfig {
 }
 
 const DEFAULT_BASE_URL = "http://localhost:11434";
-const DEFAULT_MODEL = "llama3.1:8b";
+const DEFAULT_MODEL = "qwen2.5:7b";
 const DEFAULT_TIMEOUT_MS = 30_000; // local inference is slow on commodity hardware
 
 function asBool(raw: string | undefined): boolean {
