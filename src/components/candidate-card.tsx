@@ -32,6 +32,7 @@ import {
   locationFitBadge,
   displayableLinkedinUrl,
 } from "./candidate/helpers";
+import { provenancePillProps } from "./provenance-pill-props";
 import { ScoreBadge } from "./score-badge";
 import { ScoreRadar } from "./score-radar";
 import type { RadarDimensions } from "./score-radar";
@@ -211,17 +212,28 @@ function LocationFitPill({
   );
 }
 
-function LlamaPill({ context }: { context: "match" | "acceptance" }) {
+function ProvenancePill({
+  source,
+  context,
+}: {
+  source: "claude" | "ollama" | undefined | null;
+  context: "match" | "acceptance";
+}) {
+  const props = provenancePillProps(source, context);
+  if (!props) return null;
+  const toneClass =
+    props.tone === "llama"
+      ? "bg-llama-subtle text-llama"
+      : "bg-accent-subtle text-accent";
   return (
     <span
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-llama-subtle text-llama"
-      title={
-        context === "match"
-          ? "This candidate was scored by the local Llama model because Claude was unavailable. The score has been penalised to reflect lower confidence. Re-score when Claude is back."
-          : "Acceptance likelihood was predicted by the local Llama model because Claude was unavailable. Treat as provisional and re-run prediction when Claude is back."
-      }
+      className={cn(
+        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium",
+        toneClass,
+      )}
+      title={props.title}
     >
-      Llama
+      {props.label}
     </span>
   );
 }
@@ -794,15 +806,15 @@ function ProfileDrawer({
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <ScoreBadge score={candidate.matchScore} size="sm" />
-              {breakdown?.scoredBy === "ollama" && <LlamaPill context="match" />}
+              <ProvenancePill source={breakdown?.scoredBy} context="match" />
               {!hasFetchedProfile && (
                 <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
               )}
               {candidate.acceptanceScore != null && (
                 <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
               )}
-              {candidate.acceptanceScore != null && acceptanceData?.scoredBy === "ollama" && (
-                <LlamaPill context="acceptance" />
+              {candidate.acceptanceScore != null && (
+                <ProvenancePill source={acceptanceData?.scoredBy} context="acceptance" />
               )}
               <ScoreCorrectionButton
                 jobId={jobId}
@@ -1183,10 +1195,9 @@ export const CandidateCard = memo(function CandidateCard({
                 {!hasFetchedProfile && (
                   <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
                 )}
-                {/* "Scored by Llama" pill — surfaced inline next to the score so
-                    the recruiter sees at scan time that this was a failover
-                    run with a penalised, lower-confidence score. */}
-                {breakdown?.scoredBy === "ollama" && <LlamaPill context="match" />}
+                {/* Model provenance pill — Claude or Llama, depending on
+                    which model produced the persisted scoreBreakdown. */}
+                <ProvenancePill source={breakdown?.scoredBy} context="match" />
                 {/* Score badge with radar tooltip on hover */}
                 <div
                   ref={scoreBadgeRef}
@@ -1267,10 +1278,10 @@ export const CandidateCard = memo(function CandidateCard({
                   );
                 })()}
               </div>
-              {/* Acceptance likelihood badge */}
+              {/* Acceptance likelihood badge + provenance */}
               <AcceptanceBadge score={candidate.acceptanceScore} data={acceptanceData} />
-              {candidate.acceptanceScore != null && acceptanceData?.scoredBy === "ollama" && (
-                <LlamaPill context="acceptance" />
+              {candidate.acceptanceScore != null && (
+                <ProvenancePill source={acceptanceData?.scoredBy} context="acceptance" />
               )}
             </div>
           </div>
