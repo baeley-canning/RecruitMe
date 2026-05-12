@@ -58,7 +58,11 @@ describe("classifyClaudeError — distinguishes DEAD vs transient", () => {
 describe("chatWithFailover — behaviour matrix", () => {
   const snapshot = { ...process.env };
   beforeEach(() => {
+    // Each test sets the flag explicitly to make the intent obvious.
+    // Default-on (since 2026-05) means an undefined env var → failover IS
+    // enabled; opt-out requires setting it to "false".
     delete process.env.ENABLE_LOCAL_MODEL_FAILOVER;
+    delete process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING;
     vi.clearAllMocks();
     __resetFailoverHealthForTests();
   });
@@ -71,7 +75,11 @@ describe("chatWithFailover — behaviour matrix", () => {
     expect(ollamaGenerate).not.toHaveBeenCalled();
   });
 
-  it("rethrows Claude error when ENABLE_LOCAL_MODEL_FAILOVER is unset (default)", async () => {
+  it("rethrows Claude error when both failover flags are explicitly OPTED OUT", async () => {
+    // Explicit opt-out — both flags set to "false". This matches a
+    // recruiter who has deliberately disabled the local-model fallback.
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "false";
+    process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING = "false";
     vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Credit balance too low"), { status: 429 }));
     await expect(chatWithFailover("hi", 0.1, 100)).rejects.toThrow(/credit balance/i);
     expect(ollamaGenerate).not.toHaveBeenCalled();
@@ -114,7 +122,9 @@ describe("chatWithFailover — behaviour matrix", () => {
     await expect(chatWithFailover("hi", 0.1, 100)).rejects.toBe(claudeErr);
   });
 
-  it("does NOT fall over on auth errors when flag is unset", async () => {
+  it("does NOT fall over on auth errors when both flags are explicitly OPTED OUT", async () => {
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "false";
+    process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING = "false";
     vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Invalid API key"), { status: 401 }));
     await expect(chatWithFailover("hi", 0.1, 100)).rejects.toThrow(/invalid api key/i);
     expect(ollamaGenerate).not.toHaveBeenCalled();

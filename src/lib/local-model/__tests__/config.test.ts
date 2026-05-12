@@ -14,13 +14,17 @@ describe("readLocalModelConfig", () => {
     process.env = { ...snapshot };
   });
 
-  it("returns safe defaults when no env vars are set", () => {
+  it("returns defaults-ON failover flags when no env vars are set", () => {
     const cfg = readLocalModelConfig();
     expect(cfg.baseUrl).toBe("http://localhost:11434");
     expect(cfg.model).toBe("qwen2.5:7b");
     expect(cfg.timeoutMs).toBe(30_000);
-    expect(cfg.failoverEnabled).toBe(false);
-    expect(cfg.finalScoringFailoverEnabled).toBe(false);
+    // Default ON: a Claude outage automatically falls over to Llama
+    // without requiring env-var configuration first. Llama-derived
+    // results are marked with scoredBy="ollama", the 10pt penalty, and
+    // the UI provenance pill — so this is never silent.
+    expect(cfg.failoverEnabled).toBe(true);
+    expect(cfg.finalScoringFailoverEnabled).toBe(true);
   });
 
   it("reads overrides from env", () => {
@@ -33,7 +37,7 @@ describe("readLocalModelConfig", () => {
     expect(cfg.timeoutMs).toBe(60_000);
   });
 
-  it("accepts truthy values for the failover flag (case-insensitive)", () => {
+  it("treats explicit truthy values as enabled (case-insensitive)", () => {
     process.env.ENABLE_LOCAL_MODEL_FAILOVER = "true";
     expect(readLocalModelConfig().failoverEnabled).toBe(true);
     process.env.ENABLE_LOCAL_MODEL_FAILOVER = "TRUE";
@@ -44,16 +48,25 @@ describe("readLocalModelConfig", () => {
     expect(readLocalModelConfig().failoverEnabled).toBe(true);
   });
 
-  it("treats anything else as false (safe default)", () => {
+  it("treats explicit false-ish values as opt-out", () => {
     process.env.ENABLE_LOCAL_MODEL_FAILOVER = "false";
     expect(readLocalModelConfig().failoverEnabled).toBe(false);
-    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "maybe";
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "0";
     expect(readLocalModelConfig().failoverEnabled).toBe(false);
-    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "";
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "no";
+    expect(readLocalModelConfig().failoverEnabled).toBe(false);
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "off";
     expect(readLocalModelConfig().failoverEnabled).toBe(false);
   });
 
-  it("final-scoring failover is independently controlled", () => {
+  it("treats unrecognised non-false values as default-on (anything other than the opt-out list)", () => {
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "maybe";
+    expect(readLocalModelConfig().failoverEnabled).toBe(true);
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "";
+    expect(readLocalModelConfig().failoverEnabled).toBe(true);
+  });
+
+  it("final-scoring failover is independently controlled (can be turned off while keeping low-risk failover on)", () => {
     process.env.ENABLE_LOCAL_MODEL_FAILOVER = "true";
     process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING = "false";
     expect(isLocalFailoverEnabled()).toBe(true);
