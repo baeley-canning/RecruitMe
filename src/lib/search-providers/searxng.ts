@@ -59,6 +59,29 @@ function parseSearxngResponse(body: unknown): ProviderSearchHit[] {
     .filter((h): h is ProviderSearchHit => h !== null);
 }
 
+/**
+ * Fallback parser for when SearXNG's `formats: [json]` isn't enabled in
+ * settings.yml and the server returns the HTML search-results page. SearXNG
+ * themes vary, so we sidestep theme-specific markup and just regex out
+ * `<a href="…linkedin.com/in/…">…</a>` anchors. Snippets aren't available
+ * via this path; downstream code tolerates an empty string.
+ */
+function parseSearxngHtml(html: string): ProviderSearchHit[] {
+  const linkPattern = /<a\b[^>]*\bhref="(https?:\/\/[a-z]{2,5}\.linkedin\.com\/in\/[^"#?]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const hits: ProviderSearchHit[] = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  let rank = 0;
+  while ((match = linkPattern.exec(html)) !== null) {
+    const url = match[1].trim();
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const title = match[2].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+    hits.push({ title, url, snippet: "", provider: "searxng", rank: rank++, raw: { fromHtml: true } });
+  }
+  return hits;
+}
+
 export class SearxngProvider implements SearchProvider {
   readonly name = "searxng" as const;
 
@@ -91,18 +114,23 @@ export class SearxngProvider implements SearchProvider {
       recordProviderFailure("searxng", `non-OK ${res.status}`);
       return [];
     }
-    // Detect JSON-not-enabled: when settings.yml doesn't list `json` under
-    // `search.formats`, SearXNG happily returns 200 with HTML. res.json()
-    // throws — which we used to swallow as "empty results", masking a broken
-    // deployment behind a green badge. Treat any parse failure as a provider
-    // failure so the health badge reflects reality.
+    // Read once as text so we can fall back to HTML parsing when JSON
+    // format isn't enabled in settings.yml. The HTML parser is a pragmatic
+    // safety net — if the user's SearXNG instance is misconfigured we'd
+    // rather extract LinkedIn URLs from the rendered HTML than return [].
+    const rawText = await res.text();
     let body: unknown;
     try {
-      body = await res.json();
+      body = JSON.parse(rawText);
     } catch {
+      const htmlHits = parseSearxngHtml(rawText);
+      if (htmlHits.length > 0) {
+        recordProviderSuccess("searxng");
+        return htmlHits;
+      }
       recordProviderFailure(
         "searxng",
-        "non-JSON response — enable `formats: [json]` in settings.yml",
+        "non-JSON response and HTML had no LinkedIn links — enable `formats: [json]` in settings.yml or check the limiter/botdetection settings",
       );
       return [];
     }
@@ -128,4 +156,4 @@ export class SearxngProvider implements SearchProvider {
 }
 
 // Exported for unit tests — the route should construct via fromEnv().
-export const _internal = { buildSearxngUrl, parseSearxngResponse };
+export const _internal = { buildSearxngUrl, parseSearxngResponse, parseSearxngHtml };

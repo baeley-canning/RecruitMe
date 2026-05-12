@@ -43,6 +43,7 @@ export interface ChatFailoverResult {
 export type ClaudeDeadReason =
   | "auth_invalid"          // 401 / 403 — key bad or missing
   | "credits_exhausted"     // 429 with credit-balance-related body
+  | "rate_limited"          // generic 429 — SDK retries already exhausted
   | "service_unavailable"   // persistent 502/503/504 after retries
   | "network_unreachable";  // ECONNREFUSED / ENOTFOUND / etc after retries
 
@@ -64,13 +65,16 @@ export function classifyClaudeError(err: unknown): { dead: boolean; reason?: Cla
     return { dead: true, reason: "auth_invalid" };
   }
 
-  // 429 only counts as dead when the body indicates a credit / quota
-  // problem. Generic "rate limit" is transient — withRetry handles those
-  // and we shouldn't burn through Ollama every time we get a brief 429.
-  // NOTE: avoid matching the bare word "exceeded" — that appears in plain
-  // "Rate limit exceeded" too. Match credit/quota-specific markers only.
-  if (status === 429 && /credit|quota|insufficient|balance/.test(message)) {
-    return { dead: true, reason: "credits_exhausted" };
+  // 429 → dead. The Anthropic SDK already did its automatic retries by the
+  // time we see this, and any caller-level withRetry has also exhausted.
+  // Leaving the user stranded on "Rate limit exceeded" was strictly worse
+  // than burning one Ollama call. Credit-specific bodies still get the
+  // more specific `credits_exhausted` reason for ops logs.
+  if (status === 429) {
+    const reason: ClaudeDeadReason = /credit|quota|insufficient|balance/.test(message)
+      ? "credits_exhausted"
+      : "rate_limited";
+    return { dead: true, reason };
   }
 
   if (status === 502 || status === 503 || status === 504) {

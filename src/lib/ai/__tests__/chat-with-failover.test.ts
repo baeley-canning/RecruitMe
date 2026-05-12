@@ -28,9 +28,11 @@ describe("classifyClaudeError — distinguishes DEAD vs transient", () => {
       .toEqual({ dead: true, reason: "credits_exhausted" });
   });
 
-  it("does NOT flag a plain 429 'rate limit' as dead — that's transient (withRetry handles it)", () => {
-    expect(classifyClaudeError({ status: 429, message: "Rate limit exceeded" }).dead).toBe(false);
-    expect(classifyClaudeError({ status: 429, message: "Too many requests, retry later" }).dead).toBe(false);
+  it("flags plain 429 'rate limit' as dead (rate_limited) — SDK retries already exhausted by the time we see it", () => {
+    expect(classifyClaudeError({ status: 429, message: "Rate limit exceeded" }))
+      .toEqual({ dead: true, reason: "rate_limited" });
+    expect(classifyClaudeError({ status: 429, message: "Too many requests, retry later" }))
+      .toEqual({ dead: true, reason: "rate_limited" });
   });
 
   it("flags persistent 5xx as dead (service_unavailable)", () => {
@@ -75,11 +77,19 @@ describe("chatWithFailover — behaviour matrix", () => {
     expect(ollamaGenerate).not.toHaveBeenCalled();
   });
 
-  it("rethrows TRANSIENT Claude errors even with failover enabled (no Ollama call)", async () => {
+  it("falls over to Ollama on a plain 429 rate-limit when failover is enabled (rate_limited reason)", async () => {
     process.env.ENABLE_LOCAL_MODEL_FAILOVER = "true";
-    // 429 without credit-related body = transient — should NOT trigger failover.
     vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Rate limit exceeded"), { status: 429 }));
-    await expect(chatWithFailover("hi", 0.1, 100)).rejects.toThrow(/rate limit/i);
+    vi.mocked(ollamaGenerate).mockResolvedValue({ text: "Llama answered.", durationMs: 200 });
+    const result = await chatWithFailover("hi", 0.1, 100);
+    expect(result.source).toBe("ollama");
+    expect(result.failoverReason).toBe("rate_limited");
+  });
+
+  it("still rethrows TRULY transient errors (non-429 4xx) even with failover enabled", async () => {
+    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "true";
+    vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Bad request"), { status: 400 }));
+    await expect(chatWithFailover("hi", 0.1, 100)).rejects.toThrow(/bad request/i);
     expect(ollamaGenerate).not.toHaveBeenCalled();
   });
 

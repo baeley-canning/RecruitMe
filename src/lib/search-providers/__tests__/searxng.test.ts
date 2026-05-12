@@ -83,14 +83,39 @@ describe("SearxngProvider — search() with mocked fetch", () => {
     expect(await provider.search({ query: "x" })).toEqual([]);
   });
 
-  it("records a provider failure (not silent success) when the body is HTML", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("<html>not json</html>", { status: 200 }));
+  it("records a provider failure when the body is HTML AND no LinkedIn links present", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("<html>not json, no links</html>", { status: 200 }));
     const failSpy = vi.spyOn(health, "recordProviderFailure");
     const okSpy   = vi.spyOn(health, "recordProviderSuccess");
     const provider = new SearxngProvider("http://localhost:8080");
     expect(await provider.search({ query: "x" })).toEqual([]);
-    expect(failSpy).toHaveBeenCalledWith("searxng", expect.stringContaining("non-JSON"));
+    expect(failSpy).toHaveBeenCalledWith("searxng", expect.stringContaining("HTML had no LinkedIn"));
     expect(okSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to HTML parsing when the response is HTML but contains LinkedIn anchors (covers SearXNG instances without formats:[json] enabled)", async () => {
+    const html = `
+      <html><body>
+        <article class="result">
+          <a href="https://www.linkedin.com/in/jane-smith" class="url_header">Jane Smith</a>
+          <h3><a href="https://www.linkedin.com/in/jane-smith">Jane Smith - Senior Engineer</a></h3>
+          <p class="content">Wellington, NZ</p>
+        </article>
+        <article class="result">
+          <a href="https://nz.linkedin.com/in/john-doe">John Doe — Lead Developer</a>
+        </article>
+      </body></html>
+    `;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(html, { status: 200 }));
+    const failSpy = vi.spyOn(health, "recordProviderFailure");
+    const okSpy   = vi.spyOn(health, "recordProviderSuccess");
+    const hits = await new SearxngProvider("http://localhost:8080").search({ query: "x" });
+    expect(hits.length).toBe(2);
+    expect(hits[0].url).toBe("https://www.linkedin.com/in/jane-smith");
+    expect(hits[1].url).toBe("https://nz.linkedin.com/in/john-doe");
+    expect(hits[1].title).toContain("Lead Developer");
+    expect(okSpy).toHaveBeenCalledWith("searxng");
+    expect(failSpy).not.toHaveBeenCalled();
   });
 
   it("records a provider failure when the JSON body has no results field", async () => {
