@@ -16,6 +16,29 @@
 import { readLocalModelConfig } from "./config";
 import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 
+/**
+ * Build the ordered list of Ollama base URLs to try. We auto-detect because
+ * Railway env-var stomping kept leaving OLLAMA_BASE_URL stale / wrong, and a
+ * single hardcoded URL meant ZERO Ollama calls when the env was off by even
+ * one character. Caches the first working URL after a successful call so
+ * subsequent calls hit it directly (no wasted probe per call).
+ */
+let _resolvedBaseUrl: string | null = null;
+
+function candidateBaseUrls(): string[] {
+  const envUrl = process.env.OLLAMA_BASE_URL?.trim();
+  // Strip trailing slash to avoid `${base}//api/generate`.
+  const normalise = (u: string) => u.replace(/\/+$/, "");
+  return [
+    ...(envUrl ? [normalise(envUrl)] : []),
+    "http://ollama.railway.internal:11434", // Railway internal DNS pattern
+    "http://ollama:11434",                  // Docker/compose short DNS
+    "http://127.0.0.1:11434",               // local dev
+    "http://localhost:11434",               // local dev (IPv4)
+    "http://[::1]:11434",                   // IPv6 localhost
+  ].filter((u, i, arr) => arr.indexOf(u) === i); // dedupe
+}
+
 interface OllamaGenerateOptions {
   /** Override the configured model for one call. */
   model?: string;
@@ -51,42 +74,58 @@ export async function ollamaGenerate(
   const timeoutMs = options.timeoutMs ?? cfg.timeoutMs;
   const started = Date.now();
 
-  try {
-    const res = await fetch(`${cfg.baseUrl}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        prompt,
-        stream: false,
-        ...(options.system ? { system: options.system } : {}),
-        ...(options.json ? { format: "json" } : {}),
-        options: {
-          temperature: options.temperature ?? 0.1,
-        },
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) {
-      console.warn(`[ollama] non-OK ${res.status}`);
-      recordProviderFailure("ollama", `non-OK ${res.status}`);
-      return null;
+  // Try the cached working URL first; if not cached, walk the candidate
+  // list. Once we find one that responds, cache it for the rest of the
+  // process lifetime. A null result from EVERY URL means Ollama is truly
+  // unreachable; we return null and the caller falls through.
+  const urlsToTry = _resolvedBaseUrl ? [_resolvedBaseUrl] : candidateBaseUrls();
+  console.log(`[ollama] generate START — model=${model} timeout=${timeoutMs}ms candidates=[${urlsToTry.join(", ")}]`);
+
+  let lastError: string | null = null;
+  for (const baseUrl of urlsToTry) {
+    try {
+      const res = await fetch(`${baseUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          prompt,
+          stream: false,
+          ...(options.system ? { system: options.system } : {}),
+          ...(options.json ? { format: "json" } : {}),
+          options: { temperature: options.temperature ?? 0.1 },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) {
+        lastError = `non-OK ${res.status} at ${baseUrl}`;
+        console.warn(`[ollama] ${lastError}`);
+        continue; // try next URL
+      }
+      const body = await res.json().catch(() => null) as { response?: unknown } | null;
+      const text = typeof body?.response === "string" ? body.response : "";
+      if (!text) {
+        lastError = `empty response at ${baseUrl}`;
+        console.warn(`[ollama] ${lastError}`);
+        continue;
+      }
+      // SUCCESS — cache the working URL so subsequent calls skip the probe loop.
+      _resolvedBaseUrl = baseUrl;
+      const durationMs = Date.now() - started;
+      console.log(`[ollama] generate OK — url=${baseUrl} model=${model} durationMs=${durationMs} chars=${text.length}`);
+      recordProviderSuccess("ollama");
+      return { text, durationMs };
+    } catch (err) {
+      lastError = `${err instanceof Error ? err.message : String(err)} at ${baseUrl}`;
+      console.warn(`[ollama] generate failed: ${lastError}`);
+      continue;
     }
-    const body = await res.json().catch(() => null) as { response?: unknown } | null;
-    const text = typeof body?.response === "string" ? body.response : "";
-    if (!text) {
-      console.warn("[ollama] empty / non-string response field");
-      recordProviderFailure("ollama", "empty response");
-      return null;
-    }
-    recordProviderSuccess("ollama");
-    return { text, durationMs: Date.now() - started };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[ollama] generate failed: ${msg}`);
-    recordProviderFailure("ollama", msg);
-    return null;
   }
+
+  // Every URL failed.
+  console.warn(`[ollama] ALL ${urlsToTry.length} candidate URLs failed. Last error: ${lastError}`);
+  recordProviderFailure("ollama", lastError ?? "unknown");
+  return null;
 }
 
 /**
