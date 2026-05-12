@@ -12,8 +12,8 @@
  * break route.ts's primaryOutcomes merge.
  */
 
-import { describe, expect, it } from "vitest";
-import { runProviderSearch } from "../manager";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveEnabledProviders, runProviderSearch } from "../manager";
 import { mergeProviderHits } from "../merge";
 import { rankMergedResults } from "../ranking";
 import { mergedResultsToSearchResults } from "../adapter";
@@ -87,5 +87,45 @@ describe("free-providers end-to-end integration shape", () => {
     // Downstream pipeline must still produce a valid (empty) SearchResult[].
     const items = mergedResultsToSearchResults(rankMergedResults(mergeProviderHits(byProvider)));
     expect(items).toEqual([]);
+  });
+});
+
+describe("behaviour parity: SEARCH_PROVIDERS unset → no free providers run, route falls back to SerpAPI-only", () => {
+  const envSnapshot = { ...process.env };
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.SEARCH_PROVIDERS;
+    delete process.env.SEARXNG_BASE_URL;
+    delete process.env.OPENSERP_BASE_URL;
+  });
+  afterEach(() => { process.env = { ...envSnapshot }; });
+
+  it("resolveEnabledProviders() returns an empty array when SEARCH_PROVIDERS is unset", () => {
+    expect(resolveEnabledProviders()).toEqual([]);
+  });
+
+  it("runProviderSearch() returns empty byProvider + empty outcomes AND does not call fetch when SEARCH_PROVIDERS is unset", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const result = await runProviderSearch({ query: "Senior Engineer", location: "Wellington" });
+    expect(result.byProvider).toEqual({});
+    expect(result.outcomes).toEqual([]);
+    // The critical invariant: NO network call. If this fails, the route is
+    // hitting free-provider endpoints even when the recruiter hasn't
+    // opted into them, which is the byte-identical-baseline contract.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("resolveEnabledProviders() returns ONLY searxng when only SEARXNG_BASE_URL is set", () => {
+    process.env.SEARCH_PROVIDERS  = "searxng,openserp";
+    process.env.SEARXNG_BASE_URL  = "http://localhost:8080";
+    // OPENSERP_BASE_URL deliberately unset.
+    const resolved = resolveEnabledProviders();
+    expect(resolved.map((p) => p.name)).toEqual(["searxng"]);
+  });
+
+  it("resolveEnabledProviders() returns an empty array when SEARCH_PROVIDERS lists providers but no base URLs are set", () => {
+    process.env.SEARCH_PROVIDERS = "searxng,openserp";
+    // Both base URLs unset.
+    expect(resolveEnabledProviders()).toEqual([]);
   });
 });
