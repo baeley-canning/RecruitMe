@@ -13,10 +13,10 @@ export function CopyButton({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 2000);
         });
       }}
-      className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 transition-colors"
+      className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors"
       title="Copy to clipboard"
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+      {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
       {copied ? "Copied" : "Copy"}
     </button>
   );

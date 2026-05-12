@@ -76,16 +76,16 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
   });
 
   return (
-    <div className="fixed bottom-6 right-6 z-[1100] w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed bottom-4 right-4 z-[1100] w-80 bg-surface-overlay border border-separator rounded-md shadow-overlay overflow-hidden">
       {/* Extension install hint — shown when sessions stall waiting for the extension */}
       {showExtensionHint && (
-        <div className="flex items-start gap-2 px-4 py-2.5 bg-amber-50 border-b border-amber-100">
-          <Puzzle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 px-3 py-2 bg-warning-subtle border-b border-warning/30">
+          <Puzzle className="w-3.5 h-3.5 text-warning flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] text-amber-800 font-medium">Browser extension required</p>
-            <p className="text-[11px] text-amber-700 mt-0.5">
+            <p className="text-xs text-warning-hover font-medium">Browser extension required</p>
+            <p className="text-xs text-warning-hover/80 mt-0.5">
               Install the RecruitMe LinkedIn Capture extension to fetch profiles.{" "}
-              <a href="/linkedin-setup" className="underline font-medium hover:text-amber-900">
+              <a href="/linkedin-setup" className="underline font-medium hover:text-warning">
                 Install instructions
               </a>
             </p>
@@ -94,36 +94,44 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
       )}
       {/* Header */}
       <div className={cn(
-        "flex items-center gap-2 px-4 py-3 border-b border-slate-100",
-        allDone ? "bg-emerald-50" : "bg-slate-50"
+        "flex items-center gap-2 px-3 py-2 border-b border-separator",
+        allDone ? "bg-success-subtle" : "bg-surface-raised",
       )}>
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-slate-700">
-            {allDone ? "All fetches complete" : `Fetching profiles`}
+          <p className={cn(
+            "text-md font-semibold",
+            allDone ? "text-success" : "text-text-primary",
+          )}>
+            {allDone ? "All fetches complete" : "Fetching profiles"}
           </p>
           {!allDone && (
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              {counts.done}/{total} done
-              {counts.active > 0 && ` · ${counts.active} active`}
+            <p className="text-xs text-text-tertiary mt-0.5">
+              <span className="data-mono">{counts.done}/{total}</span> done
+              {counts.active > 0 && (
+                <>
+                  <span className="mx-1">·</span>
+                  <span className="data-mono">{counts.active}</span> active
+                </>
+              )}
             </p>
           )}
         </div>
         {/* Progress bar */}
         {!allDone && (
-          <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden flex-shrink-0">
-            <div className="h-full bg-blue-500 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+          <div className="w-16 h-1 bg-separator rounded-full overflow-hidden flex-shrink-0">
+            <div className="h-full bg-accent rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
           </div>
         )}
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="text-slate-400 hover:text-slate-600 flex-shrink-0"
+          className="h-6 w-6 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
           aria-label={expanded ? "Collapse" : "Expand"}
         >
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
         </button>
         <button
           onClick={onDismiss}
-          className="text-slate-400 hover:text-slate-600 flex-shrink-0"
+          className="h-6 w-6 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors flex-shrink-0"
           aria-label="Dismiss completed"
           title="Dismiss — in-progress fetches keep running"
         >
@@ -133,7 +141,7 @@ export function FetchQueuePanel({ statuses, candidateNames, onDismiss, onCancel 
 
       {/* List */}
       {expanded && (
-        <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
+        <div className="max-h-64 overflow-y-auto divide-y divide-separator">
           {sorted.map(([candidateId, status]) => (
             <FetchRow key={candidateId} candidateId={candidateId} status={status} name={candidateNames[candidateId] ?? "Unknown"} onCancel={onCancel} />
           ))}
@@ -150,31 +158,33 @@ function FetchRow({ candidateId, status, name, onCancel }: { candidateId: string
   const isActive = status.state === "fetching" || status.state === "waiting";
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
+    <div className="flex items-center gap-2.5 px-3 py-2">
       <div className="flex-shrink-0">
-        {status.state === "fetching" && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
-        {status.state === "waiting"  && <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />}
-        {status.state === "done"     && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-        {status.state === "error"    && <AlertCircle  className="w-4 h-4 text-red-400" />}
+        {/* Tier colours per spec: pending=warning, processing=accent, complete=success, error=danger */}
+        {status.state === "fetching" && <Loader2 className="w-3.5 h-3.5 text-accent  animate-spin" />}
+        {status.state === "waiting"  && <Loader2 className="w-3.5 h-3.5 text-warning animate-spin" />}
+        {status.state === "done"     && <CheckCircle2 className="w-3.5 h-3.5 text-success" />}
+        {status.state === "error"    && <AlertCircle  className="w-3.5 h-3.5 text-danger" />}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-slate-800 truncate">{name}</p>
+        <p className="text-xs font-medium text-text-primary truncate">{name}</p>
         <p className={cn(
-          "text-[11px] truncate",
-          status.state === "error" ? "text-red-500" :
-          status.state === "done"  ? "text-emerald-600" : "text-slate-500"
+          "text-xs truncate",
+          status.state === "error" ? "text-danger" :
+          status.state === "done"  ? "text-success" : "text-text-secondary"
         )}>
           {status.message}
         </p>
       </div>
       {isActive && elapsed && (
-        <span className="text-[10px] text-slate-400 flex-shrink-0 tabular-nums">{elapsed}</span>
+        <span className="data-mono text-2xs text-text-tertiary flex-shrink-0">{elapsed}</span>
       )}
       {status.state !== "done" && (
         <button
           onClick={() => onCancel(candidateId)}
-          className="flex-shrink-0 text-slate-300 hover:text-red-500 transition-colors ml-1"
+          className="flex-shrink-0 h-6 w-6 rounded flex items-center justify-center text-text-tertiary hover:text-danger hover:bg-surface-hover transition-colors"
           title="Remove from queue"
+          aria-label={`Remove ${name} from queue`}
         >
           <X className="w-3 h-3" />
         </button>

@@ -57,8 +57,8 @@ export function UploadCvButton({
         className={cn(
           "inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium cursor-pointer transition-colors flex-shrink-0",
           uploading
-            ? "bg-amber-100 text-amber-500 cursor-not-allowed"
-            : "bg-amber-600 hover:bg-amber-700 text-white",
+            ? "bg-warning-subtle text-warning cursor-not-allowed opacity-60"
+            : "bg-warning hover:bg-warning-hover text-text-inverse",
         )}
         title="Upload candidate's CV — RecruitMe will merge it with the LinkedIn capture and re-score against this role."
       >
@@ -81,7 +81,7 @@ export function UploadCvButton({
         />
       </label>
       {error && (
-        <span className="text-[11px] text-red-600">{error}</span>
+        <span className="text-xs text-danger">{error}</span>
       )}
     </div>
   );

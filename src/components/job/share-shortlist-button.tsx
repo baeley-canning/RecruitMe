@@ -78,9 +78,9 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
     <div className="relative" ref={popoverRef}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
+        className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-overlay text-text-primary border border-separator text-md font-medium transition-colors"
       >
-        <Share2 className="w-4 h-4" />
+        <Share2 className="w-3.5 h-3.5" />
         Share
       </button>
 
@@ -89,22 +89,22 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
           role="dialog"
           aria-modal="false"
           aria-labelledby="share-shortlist-title"
-          className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-10"
+          className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-surface-overlay border border-separator rounded-md shadow-popover p-4 z-10"
         >
           <div className="flex items-center justify-between mb-3">
-            <p id="share-shortlist-title" className="text-sm font-semibold text-slate-800">Share read-only shortlist</p>
-            <button onClick={() => setOpen(false)} aria-label="Close share menu" className="text-slate-400 hover:text-slate-600">
-              <X className="w-4 h-4" />
+            <p id="share-shortlist-title" className="text-md font-semibold text-text-primary">Share read-only shortlist</p>
+            <button onClick={() => setOpen(false)} aria-label="Close share menu" className="text-text-tertiary hover:text-text-primary transition-colors">
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
 
           {shortlistCount === 0 && (
-            <div className="mb-3 flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <div className="mb-3 flex items-start gap-2 text-xs text-warning bg-warning-subtle border-l-2 border-warning rounded-sm px-3 py-2">
               <span className="mt-0.5">⚠</span>
               <span>No candidates have been shortlisted yet. The link will show a &ldquo;being evaluated&rdquo; message to clients until you shortlist candidates.</span>
             </div>
           )}
-          <p className="text-[11px] text-slate-500 mb-3">
+          <p className="text-xs text-text-secondary mb-3">
             Anyone with this link can see the shortlisted candidates and their scoring summary. No login required. Notes and contact details are not shared.
           </p>
 
@@ -114,12 +114,12 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
                 <input
                   readOnly
                   value={url}
-                  className="flex-1 text-xs font-mono border border-slate-200 rounded-md px-2 py-1.5 bg-slate-50 text-slate-700 truncate"
+                  className="flex-1 h-7 px-2 rounded bg-surface-sunken border border-separator text-xs font-mono text-text-primary truncate focus:outline-none focus:border-accent"
                   onFocus={(e) => e.currentTarget.select()}
                 />
                 <button
                   onClick={copy}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  className="inline-flex items-center gap-1 h-7 px-2 bg-accent hover:bg-accent-hover text-white text-xs rounded font-medium transition-colors"
                   title="Copy link"
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -130,14 +130,14 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
                 <button
                   onClick={generate}
                   disabled={loading}
-                  className="text-[11px] text-slate-400 hover:text-slate-600 underline underline-offset-2"
+                  className="text-xs text-text-tertiary hover:text-text-secondary underline underline-offset-2"
                 >
                   Rotate link
                 </button>
                 <button
                   onClick={revoke}
                   disabled={loading}
-                  className="inline-flex items-center gap-1 text-[11px] text-red-500 hover:text-red-700"
+                  className="inline-flex items-center gap-1 text-xs text-danger hover:text-danger-hover"
                 >
                   <Trash2 className="w-3 h-3" />
                   Revoke
@@ -148,14 +148,14 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
             <button
               onClick={generate}
               disabled={loading}
-              className="w-full inline-flex items-center justify-center gap-2 text-sm px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-slate-300"
+              className="w-full inline-flex items-center justify-center gap-2 h-8 px-3 bg-accent hover:bg-accent-hover text-white text-md rounded font-medium disabled:opacity-50 transition-colors"
             >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+              {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
               Generate share link
             </button>
           )}
 
-          {error && <p className="text-[11px] text-red-600 mt-2">{error}</p>}
+          {error && <p className="text-xs text-danger mt-2">{error}</p>}
         </div>
       )}
     </div>

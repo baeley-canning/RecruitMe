@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { CheckCircle2, AlertCircle, X } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ToastVariant = "success" | "error" | "info";
@@ -43,19 +43,26 @@ export function Toaster() {
         <div
           key={t.id}
           role="status"
+          // Shared surface: floating overlay tone, hairline border, popover
+          // shadow. The variant only swaps the left accent stripe + icon
+          // colour — the body chrome stays consistent across success/error/
+          // info, which is the Logic Pro restraint we want.
           className={cn(
-            "min-w-[260px] max-w-md flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium border",
-            t.variant === "success" && "bg-emerald-50 text-emerald-800 border-emerald-200",
-            t.variant === "error"   && "bg-red-50 text-red-800 border-red-200",
-            t.variant === "info"    && "bg-slate-50 text-slate-800 border-slate-200",
+            "min-w-[260px] max-w-sm flex items-center gap-2 p-3 rounded-md text-md font-medium",
+            "bg-surface-overlay text-text-primary border border-separator shadow-popover",
+            "border-l-2",
+            t.variant === "success" && "border-l-success",
+            t.variant === "error"   && "border-l-danger",
+            t.variant === "info"    && "border-l-accent",
           )}
         >
-          {t.variant === "success" && <CheckCircle2 className="w-4 h-4 flex-shrink-0" />}
-          {t.variant === "error"   && <AlertCircle  className="w-4 h-4 flex-shrink-0" />}
+          {t.variant === "success" && <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-success" />}
+          {t.variant === "error"   && <AlertCircle  className="w-4 h-4 flex-shrink-0 text-danger" />}
+          {t.variant === "info"    && <Info         className="w-4 h-4 flex-shrink-0 text-accent" />}
           <span className="flex-1">{t.message}</span>
           <button
             onClick={() => dismiss(t.id)}
-            className="text-slate-400 hover:text-slate-600 flex-shrink-0"
+            className="text-text-tertiary hover:text-text-primary flex-shrink-0 transition-colors"
             aria-label="Dismiss"
           >
             <X className="w-3.5 h-3.5" />

@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, FileText, X, Loader2, DollarSign, Wifi, Sparkles, Copy, Check, ChevronRight, Download, Eye, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Card, CardBody } from "@/components/ui/card";
 
 const SALARY_OPTIONS = [
   40000, 50000, 60000, 70000, 80000, 90000, 100000, 110000, 120000,
@@ -14,6 +16,9 @@ const SALARY_OPTIONS = [
 const LISTING_SEED_KEY = "recruitme:new-job-from-listing";
 const DRAFT_AUTOSAVE_KEY = "recruitme:listing-builder-draft";
 const AUTOSAVE_DEBOUNCE_MS = 800;
+
+// Shared input/select recipe for the page.
+const INPUT = "w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all";
 
 function fmtSalary(n: number) {
   return n >= 1000 ? `$${(n / 1000).toFixed(0)}k` : `$${n}`;
@@ -31,7 +36,7 @@ function renderMarkdownBody(text: string): React.ReactNode {
   const flushList = () => {
     if (listBuf.length === 0) return;
     out.push(
-      <ul key={`ul-${out.length}`} className="list-disc pl-5 mb-3 space-y-1 text-sm text-slate-800">
+      <ul key={`ul-${out.length}`} className="list-disc pl-5 mb-3 space-y-1 text-base text-text-secondary">
         {listBuf.map((item, i) => (
           <li key={i} dangerouslySetInnerHTML={{ __html: inlineMarkdown(item) }} />
         ))}
@@ -48,7 +53,7 @@ function renderMarkdownBody(text: string): React.ReactNode {
       const content = line.replace(/^#{1,3}\s*/, "");
       const Tag = (`h${Math.min(level + 1, 6)}`) as keyof React.JSX.IntrinsicElements;
       out.push(
-        <Tag key={`h-${out.length}`} className="text-base font-semibold text-slate-900 mt-4 mb-2"
+        <Tag key={`h-${out.length}`} className="text-md font-semibold text-text-primary mt-4 mb-2"
           dangerouslySetInnerHTML={{ __html: inlineMarkdown(content) }} />
       );
     } else if (/^[-*]\s/.test(line)) {
@@ -59,7 +64,7 @@ function renderMarkdownBody(text: string): React.ReactNode {
     } else {
       flushList();
       out.push(
-        <p key={`p-${out.length}`} className="text-sm text-slate-800 leading-relaxed mb-3"
+        <p key={`p-${out.length}`} className="text-base text-text-secondary leading-relaxed mb-3"
           dangerouslySetInnerHTML={{ __html: inlineMarkdown(line) }} />
       );
     }
@@ -305,366 +310,373 @@ ${toHtml(listingBody)}
   };
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
-      <div className="mb-7">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Listing Builder</h1>
-            <p className="text-slate-500 text-sm mt-1">
-              Draft the external job advertisement first. When it looks right, send it into the new job search flow.
-            </p>
-          </div>
-          {(title || brief || listingHeadline || listingBody) && (
-            <button
-              type="button"
-              onClick={clearDraft}
-              className="text-xs text-slate-400 hover:text-red-600 underline underline-offset-2 mt-1 flex-shrink-0"
-              title="Clear the saved draft and start fresh"
-            >
-              Start over
-            </button>
-          )}
-        </div>
+    <div>
+      {/* Toolbar */}
+      <div className="toolbar">
+        <Sparkles className="w-3.5 h-3.5 text-text-secondary" />
+        <h1 className="text-md font-semibold text-text-primary">Listing Builder</h1>
+        <span className="text-xs text-text-tertiary">Draft the external job ad before running the search</span>
+        {(title || brief || listingHeadline || listingBody) && (
+          <button
+            type="button"
+            onClick={clearDraft}
+            className="ml-auto text-xs text-text-tertiary hover:text-danger transition-colors"
+            title="Clear the saved draft and start fresh"
+          >
+            Start over
+          </button>
+        )}
+      </div>
+
+      <div className="p-4 max-w-3xl mx-auto space-y-4">
         {draftRestored && (
-          <div className="mt-3 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg flex items-center justify-between gap-3">
-            <p className="text-xs text-blue-800">
+          <div className="px-3 py-2 bg-accent-subtle border border-separator rounded flex items-center justify-between gap-3">
+            <p className="text-xs text-accent">
               <span className="font-medium">Draft restored.</span> We auto-save your work as you type — close the tab and come back any time.
             </p>
             <button
               type="button"
               onClick={() => setDraftRestored(false)}
-              className="text-blue-400 hover:text-blue-600 flex-shrink-0"
+              className="text-accent hover:text-accent-hover flex-shrink-0"
               aria-label="Dismiss"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
-      </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-5 space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Job Title <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Senior Software Engineer"
-            className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">Company</label>
-            <input
-              type="text"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              placeholder="e.g. Acme Corp"
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">Location</label>
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="e.g. Wellington, NZ"
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-
-        <div className={cn(
-          "rounded-lg border transition-colors",
-          isRemote ? "border-violet-200 bg-violet-50" : "border-slate-200 bg-slate-50"
-        )}>
-          <button
-            type="button"
-            onClick={() => setIsRemote((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-3"
-          >
-            <div className="flex items-center gap-2.5">
-              <Wifi className={cn("w-4 h-4", isRemote ? "text-violet-600" : "text-slate-400")} />
-              <div className="text-left">
-                <p className={cn("text-sm font-medium", isRemote ? "text-violet-800" : "text-slate-600")}>
-                  Remote Role
-                </p>
-                <p className="text-xs text-slate-400">
-                  {isRemote ? "Tell the ad it is remote/flexible." : "Enable if candidates can work remotely."}
-                </p>
-              </div>
-            </div>
-            <div className={cn(
-              "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
-              isRemote ? "bg-violet-500" : "bg-slate-300"
-            )}>
-              <div className={cn(
-                "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform",
-                isRemote ? "translate-x-5" : "translate-x-0.5"
-              )} />
-            </div>
-          </button>
-        </div>
-
-        <div className={cn(
-          "rounded-lg border transition-colors",
-          salaryEnabled ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50"
-        )}>
-          <button
-            type="button"
-            onClick={() => setSalaryEnabled((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-3"
-          >
-            <div className="flex items-center gap-2.5">
-              <DollarSign className={cn("w-4 h-4", salaryEnabled ? "text-blue-600" : "text-slate-400")} />
-              <div className="text-left">
-                <p className={cn("text-sm font-medium", salaryEnabled ? "text-blue-800" : "text-slate-600")}>
-                  Salary Range
-                </p>
-                <p className="text-xs text-slate-400">
-                  {salaryEnabled ? `${fmtSalary(salaryMin)} - ${fmtSalary(salaryMax)} NZD / year` : "Optional - include if you want it in the listing"}
-                </p>
-              </div>
-            </div>
-            <div className={cn(
-              "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
-              salaryEnabled ? "bg-blue-500" : "bg-slate-300"
-            )}>
-              <div className={cn(
-                "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform",
-                salaryEnabled ? "translate-x-5" : "translate-x-0.5"
-              )} />
-            </div>
-          </button>
-
-          {salaryEnabled && (
-            <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-blue-700 mb-1.5">Minimum</label>
-                <select
-                  value={salaryMin}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setSalaryMin(v);
-                    if (v > salaryMax) setSalaryMax(v);
-                  }}
-                  className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {SALARY_OPTIONS.map((n) => (
-                    <option key={n} value={n}>{fmtSalary(n)}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-blue-700 mb-1.5">Maximum</label>
-                <select
-                  value={salaryMax}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setSalaryMax(v);
-                    if (v < salaryMin) setSalaryMin(v);
-                  }}
-                  className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {SALARY_OPTIONS.filter((n) => n >= salaryMin).map((n) => (
-                    <option key={n} value={n}>{fmtSalary(n)}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-5">
-        <div className="mb-3">
-          <label className="block text-sm font-medium text-slate-700">
-            Rough Hiring Brief <span className="text-red-500">*</span>
-          </label>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Paste recruiter notes, a client email, or any rough brief. This page is for drafting the ad, not running the search yet.
-          </p>
-        </div>
-
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={cn(
-            "border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors mb-4",
-            dragging
-              ? "border-blue-400 bg-blue-50"
-              : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-          )}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.txt"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
-            }}
-          />
-          {uploading ? (
-            <div className="flex flex-col items-center gap-2">
-              <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-              <p className="text-sm text-slate-500">Extracting text...</p>
-            </div>
-          ) : fileName ? (
-            <div className="flex items-center justify-center gap-2">
-              <FileText className="w-5 h-5 text-blue-500" />
-              <span className="text-sm font-medium text-slate-700">{fileName}</span>
-              <button
-                onClick={(e) => { e.stopPropagation(); setFileName(""); setBrief(""); }}
-                className="text-slate-400 hover:text-red-500 ml-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2">
-              <Upload className="w-8 h-8 text-slate-400" />
-              <p className="text-sm text-slate-500">
-                Drop a PDF or TXT, or <span className="text-blue-600 font-medium">click to browse</span>
-              </p>
-              <p className="text-xs text-slate-400">PDF, TXT up to 10MB</p>
-            </div>
-          )}
-        </div>
-
-        <div className="relative mb-1">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-slate-200" />
-          </div>
-          <div className="relative flex justify-center">
-            <span className="px-3 bg-white text-xs text-slate-400">or paste below</span>
-          </div>
-        </div>
-
-        <textarea
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-          placeholder="Paste the rough requirements, recruiter notes, or client brief here..."
-          className="w-full mt-3 px-3.5 py-3 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          rows={10}
-        />
-      </div>
-
-      {error && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={handleDraft}
-          disabled={!title.trim() || brief.trim().length < 40 || drafting}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-          Draft Listing
-        </button>
-      </div>
-
-      {(listingHeadline || listingBody) && (
-        <div className="mt-6 bg-white rounded-xl border border-slate-200 p-6 space-y-4">
-          <div className="flex items-center justify-between gap-3">
+        <Card>
+          <CardBody className="space-y-3">
             <div>
-              <h2 className="font-semibold text-slate-900">Draft Listing</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Review it, copy it, or send it into the new job search flow.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(`${listingHeadline}\n\n${listingBody}`).then(() => {
-                    setListingCopied(true);
-                    setTimeout(() => setListingCopied(false), 2000);
-                  });
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                {listingCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                {listingCopied ? "Copied!" : "Copy All"}
-              </button>
-              <button
-                type="button"
-                onClick={handleExportPDF}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Export PDF
-              </button>
-              <button
-                type="button"
-                onClick={handleDraft}
-                className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-              >
-                Regenerate
-              </button>
-            </div>
-          </div>
-
-          <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
-            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">Headline</p>
-            <input
-              type="text"
-              value={listingHeadline}
-              onChange={(e) => setListingHeadline(e.target.value)}
-              className="w-full bg-transparent font-bold text-slate-900 text-lg leading-snug focus:outline-none focus:ring-2 focus:ring-blue-300 rounded px-1 -mx-1"
-            />
-          </div>
-
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Body</p>
-              <button
-                type="button"
-                onClick={() => setBodyEditing((v) => !v)}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-slate-700"
-                title={bodyEditing ? "Switch to rendered preview" : "Edit the body before exporting"}
-              >
-                {bodyEditing
-                  ? <><Eye className="w-3 h-3" /> Preview</>
-                  : <><Pencil className="w-3 h-3" /> Edit</>}
-              </button>
-            </div>
-            {bodyEditing ? (
-              <textarea
-                value={listingBody}
-                onChange={(e) => setListingBody(e.target.value)}
-                rows={Math.max(8, Math.min(28, listingBody.split("\n").length + 2))}
-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500"
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Job Title <span className="text-danger">*</span>
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. Senior Software Engineer"
+                className={INPUT}
               />
-            ) : (
-              <div className="prose-sm max-w-none">
-                {renderMarkdownBody(listingBody)}
-              </div>
-            )}
-          </div>
+            </div>
 
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={handleUseInNewJob}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Company</label>
+                <input
+                  type="text"
+                  value={company}
+                  onChange={(e) => setCompany(e.target.value)}
+                  placeholder="e.g. Acme Corp"
+                  className={INPUT}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Location</label>
+                <input
+                  type="text"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="e.g. Wellington, NZ"
+                  className={INPUT}
+                />
+              </div>
+            </div>
+
+            <div className={cn(
+              "rounded-md border bg-surface-sunken transition-colors",
+              isRemote ? "border-llama/40" : "border-separator"
+            )}>
+              <button
+                type="button"
+                onClick={() => setIsRemote((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2.5"
+              >
+                <div className="flex items-center gap-2">
+                  <Wifi className={cn("w-3.5 h-3.5", isRemote ? "text-llama" : "text-text-tertiary")} />
+                  <div className="text-left">
+                    <p className={cn("text-base font-medium", isRemote ? "text-text-primary" : "text-text-secondary")}>
+                      Remote Role
+                    </p>
+                    <p className="text-xs text-text-tertiary">
+                      {isRemote ? "Tell the ad it is remote/flexible." : "Enable if candidates can work remotely."}
+                    </p>
+                  </div>
+                </div>
+                <div className={cn(
+                  "relative w-9 h-5 rounded-full transition-colors flex-shrink-0",
+                  isRemote ? "bg-llama" : "bg-surface-hover"
+                )}>
+                  <div className={cn(
+                    "absolute top-0.5 w-4 h-4 bg-text-primary rounded-full transition-transform",
+                    isRemote ? "translate-x-4" : "translate-x-0.5"
+                  )} />
+                </div>
+              </button>
+            </div>
+
+            <div className={cn(
+              "rounded-md border bg-surface-sunken transition-colors",
+              salaryEnabled ? "border-accent/40" : "border-separator"
+            )}>
+              <button
+                type="button"
+                onClick={() => setSalaryEnabled((v) => !v)}
+                className="w-full flex items-center justify-between px-3 py-2.5"
+              >
+                <div className="flex items-center gap-2">
+                  <DollarSign className={cn("w-3.5 h-3.5", salaryEnabled ? "text-accent" : "text-text-tertiary")} />
+                  <div className="text-left">
+                    <p className={cn("text-base font-medium", salaryEnabled ? "text-text-primary" : "text-text-secondary")}>
+                      Salary Range
+                    </p>
+                    <p className="text-xs text-text-tertiary">
+                      {salaryEnabled
+                        ? `${fmtSalary(salaryMin)} - ${fmtSalary(salaryMax)} NZD / year`
+                        : "Optional - include if you want it in the listing"}
+                    </p>
+                  </div>
+                </div>
+                <div className={cn(
+                  "relative w-9 h-5 rounded-full transition-colors flex-shrink-0",
+                  salaryEnabled ? "bg-accent" : "bg-surface-hover"
+                )}>
+                  <div className={cn(
+                    "absolute top-0.5 w-4 h-4 bg-text-primary rounded-full transition-transform",
+                    salaryEnabled ? "translate-x-4" : "translate-x-0.5"
+                  )} />
+                </div>
+              </button>
+
+              {salaryEnabled && (
+                <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Minimum</label>
+                    <select
+                      value={salaryMin}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setSalaryMin(v);
+                        if (v > salaryMax) setSalaryMax(v);
+                      }}
+                      className={INPUT}
+                    >
+                      {SALARY_OPTIONS.map((n) => (
+                        <option key={n} value={n}>{fmtSalary(n)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Maximum</label>
+                    <select
+                      value={salaryMax}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setSalaryMax(v);
+                        if (v < salaryMin) setSalaryMin(v);
+                      }}
+                      className={INPUT}
+                    >
+                      {SALARY_OPTIONS.filter((n) => n >= salaryMin).map((n) => (
+                        <option key={n} value={n}>{fmtSalary(n)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardBody>
+            <div className="mb-2">
+              <label className="block text-md font-medium text-text-primary">
+                Rough Hiring Brief <span className="text-danger">*</span>
+              </label>
+              <p className="text-xs text-text-tertiary mt-0.5">
+                Paste recruiter notes, a client email, or any rough brief. This page is for drafting the ad, not running the search yet.
+              </p>
+            </div>
+
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={cn(
+                "border-2 border-dashed rounded-md p-4 text-center cursor-pointer transition-colors mb-3",
+                dragging
+                  ? "border-accent bg-accent-subtle"
+                  : "border-separator-strong hover:border-accent hover:bg-surface-hover"
+              )}
             >
-              Use in New Job Search
-              <ChevronRight className="w-4 h-4" />
-            </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.txt"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFile(file);
+                }}
+              />
+              {uploading ? (
+                <div className="flex flex-col items-center gap-1.5">
+                  <Loader2 className="w-6 h-6 text-accent animate-spin" />
+                  <p className="text-base text-text-secondary">Extracting text...</p>
+                </div>
+              ) : fileName ? (
+                <div className="flex items-center justify-center gap-2">
+                  <FileText className="w-4 h-4 text-accent" />
+                  <span className="text-base font-medium text-text-primary">{fileName}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setFileName(""); setBrief(""); }}
+                    className="text-text-tertiary hover:text-danger ml-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1.5">
+                  <Upload className="w-6 h-6 text-text-tertiary" />
+                  <p className="text-base text-text-secondary">
+                    Drop a PDF or TXT, or <span className="text-accent font-medium">click to browse</span>
+                  </p>
+                  <p className="text-xs text-text-tertiary">PDF, TXT up to 10MB</p>
+                </div>
+              )}
+            </div>
+
+            <div className="relative mb-2">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-separator" />
+              </div>
+              <div className="relative flex justify-center">
+                <span className="px-3 bg-surface-raised text-xs text-text-tertiary">or paste below</span>
+              </div>
+            </div>
+
+            <textarea
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              placeholder="Paste the rough requirements, recruiter notes, or client brief here..."
+              className="w-full mt-2 px-2.5 py-2 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all resize-none"
+              rows={10}
+            />
+          </CardBody>
+        </Card>
+
+        {error && (
+          <div className="px-3 py-2 bg-danger-subtle border border-separator rounded text-xs text-danger">
+            {error}
           </div>
+        )}
+
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            onClick={handleDraft}
+            disabled={!title.trim() || brief.trim().length < 40 || drafting}
+            loading={drafting}
+            variant="primary"
+            size="lg"
+          >
+            {!drafting && <Sparkles className="w-4 h-4" />}
+            Draft Listing
+          </Button>
         </div>
-      )}
+
+        {(listingHeadline || listingBody) && (
+          <Card>
+            <CardBody className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-md font-semibold text-text-primary">Draft Listing</h2>
+                  <p className="text-xs text-text-tertiary mt-0.5">
+                    Review it, copy it, or send it into the new job search flow.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${listingHeadline}\n\n${listingBody}`).then(() => {
+                        setListingCopied(true);
+                        setTimeout(() => setListingCopied(false), 2000);
+                      });
+                    }}
+                    className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-overlay text-text-primary text-md font-medium border border-separator transition-colors"
+                  >
+                    {listingCopied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+                    {listingCopied ? "Copied!" : "Copy All"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportPDF}
+                    className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-overlay text-text-primary text-md font-medium border border-separator transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Export PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDraft}
+                    className="text-xs text-accent hover:text-accent-hover font-medium"
+                  >
+                    Regenerate
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 bg-accent-subtle border border-separator rounded-md">
+                <p className="text-2xs font-semibold text-accent uppercase tracking-wider mb-1">Headline</p>
+                <input
+                  type="text"
+                  value={listingHeadline}
+                  onChange={(e) => setListingHeadline(e.target.value)}
+                  className="w-full bg-transparent font-semibold text-text-primary text-lg leading-snug focus:outline-none rounded px-1 -mx-1"
+                />
+              </div>
+
+              <div className="p-3 bg-surface-sunken border border-separator rounded-md">
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wider">Body</p>
+                  <button
+                    type="button"
+                    onClick={() => setBodyEditing((v) => !v)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-text-primary"
+                    title={bodyEditing ? "Switch to rendered preview" : "Edit the body before exporting"}
+                  >
+                    {bodyEditing
+                      ? <><Eye className="w-3 h-3" /> Preview</>
+                      : <><Pencil className="w-3 h-3" /> Edit</>}
+                  </button>
+                </div>
+                {bodyEditing ? (
+                  <textarea
+                    value={listingBody}
+                    onChange={(e) => setListingBody(e.target.value)}
+                    rows={Math.max(8, Math.min(28, listingBody.split("\n").length + 2))}
+                    className="w-full bg-surface-base border border-separator rounded px-2.5 py-2 text-base font-mono text-text-primary leading-relaxed focus:outline-none focus:border-accent focus:shadow-focus"
+                  />
+                ) : (
+                  <div className="prose-sm max-w-none">
+                    {renderMarkdownBody(listingBody)}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="button" onClick={handleUseInNewJob} variant="primary" size="lg">
+                  Use in New Job Search
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

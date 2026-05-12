@@ -54,26 +54,26 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface-base flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 bg-blue-500 rounded-xl flex items-center justify-center">
-            <Users className="w-5 h-5 text-white" />
+        {/* Brand */}
+        <div className="flex items-center justify-center gap-2.5 mb-6">
+          <div className="w-8 h-8 bg-accent rounded-md flex items-center justify-center">
+            <Users className="w-4 h-4 text-white" />
           </div>
           <div>
-            <div className="text-white font-bold text-lg leading-tight">RecruitMe</div>
-            <div className="text-slate-400 text-xs">Talent Manager</div>
+            <div className="text-text-primary font-semibold text-md leading-tight">RecruitMe</div>
+            <div className="text-text-tertiary text-xs">Talent Manager</div>
           </div>
         </div>
 
         {/* Card */}
-        <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl">
-          <h1 className="text-white font-semibold text-base mb-5">Sign in to your account</h1>
+        <div className="bg-surface-raised border border-separator rounded-xl p-6 w-full max-w-sm shadow-overlay">
+          <h1 className="text-text-primary font-semibold text-md mb-4">Sign in to your account</h1>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
             <div>
-              <label htmlFor="login-username" className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="login-username" className="block text-xs font-medium text-text-secondary mb-1">
                 Username
               </label>
               <input
@@ -85,12 +85,12 @@ export default function LoginPage() {
                 autoFocus
                 placeholder="Enter your username"
                 aria-describedby={error ? "login-error" : undefined}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                className="w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
               />
             </div>
 
             <div>
-              <label htmlFor="login-password" className="block text-xs font-medium text-slate-400 mb-1.5">
+              <label htmlFor="login-password" className="block text-xs font-medium text-text-secondary mb-1">
                 Password
               </label>
               <input
@@ -101,12 +101,16 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 placeholder="Enter your password"
                 aria-describedby={error ? "login-error" : undefined}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                className="w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
               />
             </div>
 
             {error && (
-              <p id="login-error" role="alert" className="text-xs text-red-400 bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2">
+              <p
+                id="login-error"
+                role="alert"
+                className="text-xs text-danger bg-danger-subtle border border-separator rounded px-2.5 py-1.5"
+              >
                 {error}
               </p>
             )}
@@ -114,9 +118,9 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !username.trim() || !password}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm rounded-lg transition-colors"
+              className="w-full inline-flex items-center justify-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-md transition-colors"
             >
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>

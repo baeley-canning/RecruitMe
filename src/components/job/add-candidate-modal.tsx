@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Loader2, AlertCircle, X, CheckCircle2, Paperclip, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
 import type { ParsedRole } from "@/lib/ai";
 
 interface AddCandidateModalProps {
@@ -56,80 +57,83 @@ export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: Ad
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <div>
-            <h3 className="font-semibold text-slate-900">Add Candidate</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Paste a LinkedIn URL, upload a CV, or paste profile text directly.</p>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+    <Modal
+      open={true}
+      onClose={onClose}
+      labelledBy="add-candidate-title"
+      className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto"
+    >
+      <div className="flex items-center justify-between px-5 py-3 border-b border-separator">
+        <div>
+          <h3 id="add-candidate-title" className="text-md font-semibold text-text-primary">Add Candidate</h3>
+          <p className="text-xs text-text-secondary mt-0.5">Paste a LinkedIn URL, upload a CV, or paste profile text directly.</p>
         </div>
-        <div className="px-6 py-5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">LinkedIn URL</label>
-            <input type="url" value={form.linkedinUrl} onChange={(e) => setForm((f) => ({ ...f, linkedinUrl: e.target.value }))}
-              placeholder="https://linkedin.com/in/username" autoFocus
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        <button onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors" aria-label="Close">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="px-5 py-4 space-y-4">
+        <div>
+          <label className="block text-md font-medium text-text-primary mb-1.5">LinkedIn URL</label>
+          <input type="url" value={form.linkedinUrl} onChange={(e) => setForm((f) => ({ ...f, linkedinUrl: e.target.value }))}
+            placeholder="https://linkedin.com/in/username" autoFocus
+            className="w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+          />
+        </div>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-separator" /></div>
+          <div className="relative flex justify-center"><span className="bg-surface-overlay px-3 text-xs text-text-tertiary">or add profile text</span></div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Upload CV (PDF, DOCX, TXT)</label>
+          <label className={`flex items-center gap-3 px-3 py-2.5 border border-dashed rounded cursor-pointer transition-colors ${
+            pdfUploading ? "border-accent bg-accent-subtle" : pdfFileName ? "border-success bg-success-subtle" : "border-separator-strong hover:border-accent hover:bg-accent-subtle"
+          }`}>
+            <input type="file" accept=".pdf,.docx,.doc,.txt" className="sr-only" disabled={pdfUploading || adding}
+              onChange={(e) => { const file = e.target.files?.[0]; if (file) handlePdfUpload(file); e.target.value = ""; }} />
+            {pdfUploading ? (
+              <><Loader2 className="w-3.5 h-3.5 text-accent animate-spin flex-shrink-0" /><span className="text-base text-accent">Extracting and cleaning with AI…</span></>
+            ) : pdfFileName ? (
+              <><CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0" />
+                <span className="text-base text-success truncate flex-1">{pdfFileName}</span>
+                <button type="button" onClick={(e) => { e.preventDefault(); setPdfFileName(""); setForm((f) => ({ ...f, profileText: "" })); }} className="text-text-tertiary hover:text-text-primary flex-shrink-0">
+                  <X className="w-3.5 h-3.5" />
+                </button></>
+            ) : (
+              <><Paperclip className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+                <span className="text-base text-text-secondary">Click to upload <span className="font-medium text-text-primary">PDF, DOCX or TXT</span></span></>
+            )}
+          </label>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Or paste text</label>
+          <textarea value={form.profileText}
+            onChange={(e) => { setForm((f) => ({ ...f, profileText: e.target.value })); if (pdfFileName) setPdfFileName(""); }}
+            placeholder="Paste CV or LinkedIn profile text — AI will extract details and score them."
+            className="w-full px-2.5 py-2 rounded bg-surface-sunken border border-separator text-base text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none" rows={5}
+          />
+        </div>
+
+        {!parsedRole && (
+          <div className="flex items-start gap-2 px-3 py-2 bg-warning-subtle border-l-2 border-warning rounded-sm">
+            <AlertCircle className="w-3.5 h-3.5 text-warning flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-warning">Analyse the job description first for automatic scoring to work.</p>
           </div>
+        )}
 
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
-            <div className="relative flex justify-center"><span className="bg-white px-3 text-xs text-slate-400">or add profile text</span></div>
-          </div>
+        {error && <p className="text-base text-danger">{error}</p>}
 
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1.5">Upload CV (PDF, DOCX, TXT)</label>
-            <label className={`flex items-center gap-3 px-4 py-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-              pdfUploading ? "border-blue-300 bg-blue-50" : pdfFileName ? "border-emerald-300 bg-emerald-50" : "border-slate-200 hover:border-blue-300 hover:bg-blue-50"
-            }`}>
-              <input type="file" accept=".pdf,.docx,.doc,.txt" className="sr-only" disabled={pdfUploading || adding}
-                onChange={(e) => { const file = e.target.files?.[0]; if (file) handlePdfUpload(file); e.target.value = ""; }} />
-              {pdfUploading ? (
-                <><Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" /><span className="text-sm text-blue-600">Extracting and cleaning with AI…</span></>
-              ) : pdfFileName ? (
-                <><CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                  <span className="text-sm text-emerald-700 truncate flex-1">{pdfFileName}</span>
-                  <button type="button" onClick={(e) => { e.preventDefault(); setPdfFileName(""); setForm((f) => ({ ...f, profileText: "" })); }} className="text-slate-400 hover:text-slate-600 flex-shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button></>
-              ) : (
-                <><Paperclip className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <span className="text-sm text-slate-500">Click to upload <span className="font-medium text-slate-700">PDF, DOCX or TXT</span></span></>
-              )}
-            </label>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1.5">Or paste text</label>
-            <textarea value={form.profileText}
-              onChange={(e) => { setForm((f) => ({ ...f, profileText: e.target.value })); if (pdfFileName) setPdfFileName(""); }}
-              placeholder="Paste CV or LinkedIn profile text — AI will extract details and score them."
-              className="w-full px-3.5 py-3 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" rows={5}
-            />
-          </div>
-
-          {!parsedRole && (
-            <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-700">Analyse the job description first for automatic scoring to work.</p>
-            </div>
-          )}
-
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <div className="flex gap-3 pt-1">
-            <Button variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
-            <Button onClick={handleAdd} loading={adding} disabled={adding || pdfUploading} className="flex-1">
-              <Sparkles className="w-4 h-4" />
-              {adding ? "Scoring…" : "Add & Score"}
-            </Button>
-          </div>
+        <div className="flex gap-3 pt-1">
+          <Button variant="secondary" onClick={onClose} className="flex-1" size="lg">Cancel</Button>
+          <Button onClick={handleAdd} loading={adding} disabled={adding || pdfUploading} className="flex-1" size="lg">
+            <Sparkles className="w-3.5 h-3.5" />
+            {adding ? "Scoring…" : "Add & Score"}
+          </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

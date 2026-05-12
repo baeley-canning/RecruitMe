@@ -75,16 +75,16 @@ export function SearchFunnelCard({ jobId, refreshKey }: { jobId: string; refresh
     data.surfaced > 20 && data.filteredAtSource / Math.max(data.surfaced, 1) > 0.6;
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <div className="mb-6 rounded-md border border-separator bg-surface-raised px-4 py-3">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <TrendingDown className="w-4 h-4 text-slate-400" />
-          <p className="text-sm font-medium text-slate-700">Discovery funnel</p>
+          <TrendingDown className="w-3.5 h-3.5 text-text-tertiary" />
+          <p className="text-md font-semibold text-text-primary">Discovery funnel</p>
         </div>
         {data.shortlisted > 0 && (
-          <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
+          <span className="inline-flex items-center gap-1 text-xs text-success bg-success-subtle rounded-sm px-1.5 py-0.5 font-medium">
             <Star className="w-3 h-3" />
-            {data.shortlisted} shortlisted
+            <span className="data-mono">{data.shortlisted}</span> shortlisted
           </span>
         )}
       </div>
@@ -94,42 +94,42 @@ export function SearchFunnelCard({ jobId, refreshKey }: { jobId: string; refresh
           <div
             key={s.label}
             className={cn(
-              "rounded-lg border px-3 py-2 text-center",
+              "rounded border px-3 py-2 text-center",
               i === stages.length - 1
-                ? "border-emerald-200 bg-emerald-50/50"
-                : "border-slate-200 bg-slate-50/40"
+                ? "border-separator-strong bg-success-subtle"
+                : "border-separator bg-surface-sunken"
             )}
           >
-            <p className="text-[10px] uppercase tracking-wide text-slate-400">{s.label}</p>
+            <p className="text-2xs uppercase tracking-wide text-text-tertiary">{s.label}</p>
             <p className={cn(
-              "text-lg font-semibold leading-tight mt-0.5",
-              i === stages.length - 1 ? "text-emerald-700" : "text-slate-700"
+              "text-lg font-semibold leading-tight mt-0.5 data-mono",
+              i === stages.length - 1 ? "text-success" : "text-text-primary"
             )}>
               {s.value}
             </p>
             {s.hint && (
-              <p className="text-[10px] text-slate-400 mt-0.5">{s.hint}</p>
+              <p className="text-2xs text-text-tertiary mt-0.5">{s.hint}</p>
             )}
           </div>
         ))}
       </div>
 
       {noisyQueries && (
-        <p className="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
-          {data.filteredAtSource} of {data.surfaced} surfaced profiles were filtered out before import — your search queries may be too broad. Try Re-analyse.
+        <p className="mt-3 text-xs text-warning bg-warning-subtle border-l-2 border-warning rounded-sm px-2 py-1.5">
+          <span className="data-mono">{data.filteredAtSource}</span> of <span className="data-mono">{data.surfaced}</span> surfaced profiles were filtered out before import — your search queries may be too broad. Try Re-analyse.
         </p>
       )}
 
       {/* When searches ran but zero candidates passed scoring — very different from "no searches yet" */}
       {data.searchRuns > 0 && data.imported > 0 && data.scored > 0 && data.shortlisted === 0 && !noisyQueries && (
-        <p className="mt-3 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-2 py-1.5">
-          No candidates shortlisted yet — {data.scored} scored, avg {data.avgScore !== null ? `${data.avgScore}%` : "n/a"}. Shortlist the best fits or try Re-analyse to refine requirements.
+        <p className="mt-3 text-xs text-text-secondary bg-surface-sunken border border-separator rounded-sm px-2 py-1.5">
+          No candidates shortlisted yet — <span className="data-mono">{data.scored}</span> scored, avg <span className="data-mono">{data.avgScore !== null ? `${data.avgScore}%` : "n/a"}</span>. Shortlist the best fits or try Re-analyse to refine requirements.
         </p>
       )}
 
       {data.rejectedByRecruiter > 0 && (
-        <p className="mt-2 text-[11px] text-slate-400">
-          {data.rejectedByRecruiter} candidate{data.rejectedByRecruiter !== 1 ? "s" : ""} marked rejected after review.
+        <p className="mt-2 text-xs text-text-tertiary">
+          <span className="data-mono">{data.rejectedByRecruiter}</span> candidate{data.rejectedByRecruiter !== 1 ? "s" : ""} marked rejected after review.
         </p>
       )}
     </div>

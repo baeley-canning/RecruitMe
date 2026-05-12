@@ -14,10 +14,10 @@ interface ContactEvent {
 }
 
 const TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; colour: string }> = {
-  message: { label: "Messaged",  icon: <MessageSquare className="w-3 h-3" />, colour: "text-blue-600 bg-blue-50 border-blue-200" },
-  call:    { label: "Called",    icon: <Phone className="w-3 h-3" />,          colour: "text-emerald-600 bg-emerald-50 border-emerald-200" },
-  email:   { label: "Emailed",   icon: <Mail className="w-3 h-3" />,           colour: "text-violet-600 bg-violet-50 border-violet-200" },
-  other:   { label: "Contacted", icon: <MoreHorizontal className="w-3 h-3" />, colour: "text-slate-600 bg-slate-50 border-slate-200" },
+  message: { label: "Messaged",  icon: <MessageSquare className="w-3 h-3" />, colour: "text-accent bg-accent-subtle border-separator" },
+  call:    { label: "Called",    icon: <Phone className="w-3 h-3" />,          colour: "text-success bg-success-subtle border-separator" },
+  email:   { label: "Emailed",   icon: <Mail className="w-3 h-3" />,           colour: "text-warning bg-warning-subtle border-separator" },
+  other:   { label: "Contacted", icon: <MoreHorizontal className="w-3 h-3" />, colour: "text-text-secondary bg-surface-hover border-separator" },
 };
 
 export function ContactLog({ candidateId }: { candidateId: string }) {
@@ -60,24 +60,24 @@ export function ContactLog({ candidateId }: { candidateId: string }) {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-wrap">
           {latest ? (
-            <span className={cn("inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-medium", TYPE_CONFIG[latest.type]?.colour)}>
+            <span className={cn("inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-sm border font-medium", TYPE_CONFIG[latest.type]?.colour)}>
               {TYPE_CONFIG[latest.type]?.icon}
               {TYPE_CONFIG[latest.type]?.label} by {latest.userName}
-              <span className="text-[10px] opacity-70 ml-0.5" suppressHydrationWarning>
+              <span className="text-2xs opacity-70 ml-0.5" suppressHydrationWarning>
                 · {new Date(latest.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
               </span>
             </span>
           ) : (
-            <span className="text-[11px] text-slate-400">No contact logged yet</span>
+            <span className="text-xs text-text-tertiary">No contact logged yet</span>
           )}
           {events.length > 1 && (
-            <span className="text-[10px] text-slate-400">+{events.length - 1} more</span>
+            <span className="text-2xs text-text-tertiary">+{events.length - 1} more</span>
           )}
-          {flash && <span className="text-[10px] text-emerald-600 flex items-center gap-1"><Check className="w-3 h-3" />Logged</span>}
+          {flash && <span className="text-2xs text-success flex items-center gap-1"><Check className="w-3 h-3" />Logged</span>}
         </div>
         <button
           onClick={() => setOpen((o) => !o)}
-          className="text-[10px] text-blue-600 hover:text-blue-700 underline underline-offset-2 whitespace-nowrap flex items-center gap-0.5"
+          className="text-2xs text-accent hover:text-accent-hover underline underline-offset-2 whitespace-nowrap flex items-center gap-0.5"
         >
           <Plus className="w-3 h-3" />Log contact
         </button>
@@ -85,15 +85,15 @@ export function ContactLog({ candidateId }: { candidateId: string }) {
 
       {/* Log form */}
       {open && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 space-y-2">
+        <div className="rounded-md border border-separator bg-surface-overlay p-3 space-y-2">
           <div className="flex gap-1.5">
             {(["message","call","email","other"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setType(t)}
                 className={cn(
-                  "flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md border transition-colors",
-                  type === t ? TYPE_CONFIG[t].colour : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+                  "flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-sm border transition-colors",
+                  type === t ? TYPE_CONFIG[t].colour : "bg-surface-raised text-text-secondary border-separator hover:bg-surface-hover"
                 )}
               >
                 {TYPE_CONFIG[t].icon}{TYPE_CONFIG[t].label}
@@ -106,17 +106,17 @@ export function ContactLog({ candidateId }: { candidateId: string }) {
             placeholder="Optional note — e.g. left voicemail, call back Friday"
             rows={2}
             maxLength={500}
-            className="w-full text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full text-xs border border-separator rounded px-2 py-1.5 bg-surface-sunken text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
           />
           <div className="flex gap-2">
             <button
               onClick={handleLog}
               disabled={saving}
-              className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
+              className="px-3 py-1 text-xs font-medium bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 inline-flex items-center gap-1 transition-colors"
             >
               {saving && <Loader2 className="w-3 h-3 animate-spin" />}Save
             </button>
-            <button onClick={() => setOpen(false)} className="px-3 py-1 text-xs text-slate-500 border border-slate-200 rounded-md hover:bg-slate-50">Cancel</button>
+            <button onClick={() => setOpen(false)} className="px-3 py-1 text-xs text-text-secondary border border-separator rounded hover:bg-surface-hover transition-colors">Cancel</button>
           </div>
         </div>
       )}
@@ -127,13 +127,13 @@ export function ContactLog({ candidateId }: { candidateId: string }) {
           {events.slice(1).map((e) => {
             const cfg = TYPE_CONFIG[e.type] ?? TYPE_CONFIG.other;
             return (
-              <div key={e.id} className="flex items-start gap-2 text-[11px] text-slate-500">
-                <span className={cn("mt-0.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-[10px] font-medium", cfg.colour)}>
+              <div key={e.id} className="flex items-start gap-2 text-xs text-text-secondary">
+                <span className={cn("mt-0.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm border text-2xs font-medium", cfg.colour)}>
                   {cfg.icon}{cfg.label}
                 </span>
                 <span>{e.userName}</span>
-                {e.note && <span className="text-slate-400">— {e.note}</span>}
-                <span className="ml-auto text-slate-300 whitespace-nowrap" suppressHydrationWarning>
+                {e.note && <span className="text-text-tertiary">— {e.note}</span>}
+                <span className="ml-auto text-text-tertiary whitespace-nowrap" suppressHydrationWarning>
                   {new Date(e.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                 </span>
               </div>

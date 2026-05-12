@@ -60,50 +60,50 @@ export function CaptureMetadataPanel({ raw }: { raw: string | null | undefined }
   const allFailed = successful === 0;
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white">
+    <div className="rounded-md border border-separator bg-surface-raised">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50"
+        className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-surface-hover transition-colors"
       >
-        <span className="flex items-center gap-2 text-xs font-medium text-slate-700">
-          <Activity className={cn("w-3.5 h-3.5", allFailed ? "text-red-500" : successful === total ? "text-emerald-500" : "text-amber-500")} />
+        <span className="flex items-center gap-2 text-xs font-medium text-text-primary">
+          <Activity className={cn("w-3.5 h-3.5", allFailed ? "text-danger" : successful === total ? "text-success" : "text-warning")} />
           Capture proof
-          <span className="text-[10px] text-slate-400 font-normal">
+          <span className="text-2xs text-text-tertiary font-normal data-mono">
             {successful}/{total} deep pages used
             {meta.finalProfileChars && meta.mainProfileChars
               ? ` · ${meta.mainProfileChars}→${meta.finalProfileChars} chars`
               : ""}
           </span>
         </span>
-        {open ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+        {open ? <ChevronUp className="w-3.5 h-3.5 text-text-tertiary" /> : <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />}
       </button>
       {open && (
-        <div className="border-t border-slate-100 px-3 py-2 space-y-2">
+        <div className="border-t border-separator px-3 py-2 space-y-2">
           {meta.sections.map((s) => {
             const label = SECTION_LABELS[s.key] ?? s.key;
             const { tone, explanation } = describeSection(s);
             const Icon = tone === "ok" ? CheckCircle2 : tone === "warn" ? AlertCircle : XCircle;
-            const colour = tone === "ok" ? "text-emerald-500" : tone === "warn" ? "text-amber-500" : "text-red-500";
+            const colour = tone === "ok" ? "text-success" : tone === "warn" ? "text-warning" : "text-danger";
             return (
               <div key={s.key} className="flex items-start gap-2">
                 <Icon className={cn("w-3.5 h-3.5 mt-0.5 flex-shrink-0", colour)} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-medium text-slate-700">{label}</span>
+                    <span className="text-xs font-medium text-text-primary">{label}</span>
                     {s.status > 0 && (
-                      <span className="text-[10px] font-mono text-slate-400">HTTP {s.status}</span>
+                      <span className="text-2xs font-mono text-text-tertiary">HTTP {s.status}</span>
                     )}
                     {s.charsAdded > 0 && (
-                      <span className="text-[10px] text-slate-500">+{s.charsAdded.toLocaleString()} chars</span>
+                      <span className="text-2xs text-text-secondary data-mono">+{s.charsAdded.toLocaleString()} chars</span>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 leading-snug">{explanation}</p>
+                  <p className="text-xs text-text-secondary leading-snug">{explanation}</p>
                 </div>
               </div>
             );
           })}
           {meta.capturedAt && (
-            <p className="text-[10px] text-slate-400 pt-1 border-t border-slate-100" suppressHydrationWarning>
+            <p className="text-2xs text-text-tertiary pt-1 border-t border-separator" suppressHydrationWarning>
               Captured {new Date(meta.capturedAt).toLocaleString()}
             </p>
           )}

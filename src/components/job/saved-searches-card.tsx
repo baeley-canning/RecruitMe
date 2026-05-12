@@ -155,9 +155,9 @@ export function SavedSearchesCard({
   if (!loaded) return null;
   if (searches.length === 0 && !showAdd) {
     return (
-      <div className="mb-6 rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm text-slate-500">
-          <Bookmark className="w-4 h-4 text-slate-400" />
+      <div className="mb-6 rounded-md border border-separator bg-surface-raised px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-base text-text-secondary">
+          <Bookmark className="w-3.5 h-3.5 text-text-tertiary" />
           <span>No saved searches. Save the current search to re-run it later.</span>
         </div>
         <Button onClick={() => setShowAdd(true)} size="sm" variant="outline" disabled={jobStatus === "closed"}>
@@ -169,12 +169,12 @@ export function SavedSearchesCard({
   }
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-200 bg-white">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+    <div className="mb-6 rounded-md border border-separator bg-surface-raised">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-separator">
         <div className="flex items-center gap-2">
-          <Bookmark className="w-4 h-4 text-slate-400" />
-          <p className="text-sm font-medium text-slate-700">Saved searches</p>
-          <span className="text-xs text-slate-400">({searches.length})</span>
+          <Bookmark className="w-3.5 h-3.5 text-text-tertiary" />
+          <p className="text-md font-semibold text-text-primary">Saved searches</p>
+          <span className="text-xs text-text-tertiary data-mono">({searches.length})</span>
         </div>
         {!showAdd && (
           <Button onClick={() => setShowAdd(true)} size="sm" variant="outline" disabled={jobStatus === "closed"}>
@@ -185,20 +185,20 @@ export function SavedSearchesCard({
       </div>
 
       {showAdd && (
-        <div className="px-4 py-3 border-b border-slate-100 space-y-2 bg-slate-50/50">
+        <div className="px-4 py-3 border-b border-separator space-y-2 bg-surface-sunken">
           <input
             type="text"
             placeholder="Name (e.g. React leads in Auckland)"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full text-sm border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
           />
           <textarea
             placeholder="Queries (one per line) — e.g.&#10;senior react developer auckland&#10;react typescript lead nz"
             value={queriesText}
             onChange={(e) => setQueriesText(e.target.value)}
             rows={4}
-            className="w-full text-xs font-mono border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full text-xs font-mono px-2.5 py-1.5 rounded bg-surface-sunken border border-separator text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
           />
           <div className="flex items-center gap-2">
             <input
@@ -206,17 +206,17 @@ export function SavedSearchesCard({
               placeholder="Location"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
-              className="flex-1 text-sm border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
             />
             <select
               value={target}
               onChange={(e) => setTarget(Number(e.target.value))}
-              className="text-sm border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary focus:outline-none focus:border-accent focus:shadow-focus tabular-nums"
             >
               {[10, 20, 30, 50, 75, 100].map((n) => <option key={n} value={n}>{n} max</option>)}
             </select>
           </div>
-          {error && <p className="text-xs text-red-600">{error}</p>}
+          {error && <p className="text-xs text-danger">{error}</p>}
           <div className="flex items-center gap-2 pt-1">
             <Button onClick={handleSave} loading={saving} disabled={saving} size="sm">Save</Button>
             <Button onClick={() => setShowAdd(false)} size="sm" variant="outline">Cancel</Button>
@@ -231,15 +231,15 @@ export function SavedSearchesCard({
           ? new Date(s.lastRunAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
           : null;
         return (
-          <div key={s.id} className="px-4 py-3 border-b border-slate-100 last:border-0">
+          <div key={s.id} className="px-4 py-3 border-b border-separator last:border-0">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-700 truncate">{s.name}</p>
-                <div className="flex items-center gap-3 mt-0.5 text-[11px] text-slate-400 flex-wrap">
+                <p className="text-md font-medium text-text-primary truncate">{s.name}</p>
+                <div className="flex items-center gap-3 mt-0.5 text-xs text-text-tertiary flex-wrap">
                   <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{s.location}</span>
-                  <span>up to {s.target}</span>
+                  <span>up to <span className="data-mono">{s.target}</span></span>
                   {lastRun && (
-                    <span className="flex items-center gap-1" suppressHydrationWarning>
+                    <span className="flex items-center gap-1 tabular-nums" suppressHydrationWarning>
                       <Clock className="w-3 h-3" />
                       ran {lastRun}
                       {s.lastResultCount !== null ? ` · ${s.lastResultCount} found` : ""}
@@ -248,7 +248,7 @@ export function SavedSearchesCard({
                 </div>
                 {queries.length > 0 && (
                   <p className={cn(
-                    "text-[11px] text-slate-500 mt-1 font-mono truncate",
+                    "text-xs text-text-secondary mt-1 font-mono truncate",
                   )} title={queries.join(" · ")}>
                     {queries.slice(0, 2).join(" · ")}{queries.length > 2 ? ` +${queries.length - 2}` : ""}
                   </p>
@@ -266,7 +266,7 @@ export function SavedSearchesCard({
                 </Button>
                 <button
                   onClick={() => handleDelete(s)}
-                  className="text-slate-400 hover:text-red-500 p-1.5"
+                  className="text-text-tertiary hover:text-danger p-1.5"
                   title="Delete saved search"
                   aria-label="Delete saved search"
                 >

@@ -67,17 +67,17 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function scoreColor(score: number | null | undefined): string {
-  if (score == null) return "text-slate-400";
-  if (score >= 75) return "text-emerald-600";
-  if (score >= 50) return "text-amber-600";
-  return "text-red-500";
+  if (score == null) return "text-text-tertiary";
+  if (score >= 75) return "text-success";
+  if (score >= 50) return "text-warning";
+  return "text-text-secondary";
 }
 
 export function scoreBg(score: number | null | undefined): string {
-  if (score == null) return "bg-slate-100 text-slate-500";
-  if (score >= 75) return "bg-emerald-50 text-emerald-700 border border-emerald-200";
-  if (score >= 50) return "bg-amber-50 text-amber-700 border border-amber-200";
-  return "bg-red-50 text-red-700 border border-red-200";
+  if (score == null) return "bg-surface-hover text-text-tertiary";
+  if (score >= 75) return "bg-success-subtle text-success";
+  if (score >= 50) return "bg-warning-subtle text-warning";
+  return "bg-surface-hover text-text-secondary";
 }
 
 export function statusLabel(status: string): string {
@@ -97,17 +97,17 @@ export function statusLabel(status: string): string {
 
 export function statusBadge(status: string): string {
   const map: Record<string, string> = {
-    new:          "bg-slate-100 text-slate-600",
-    reviewing:    "bg-blue-50 text-blue-700 border border-blue-200",
-    shortlisted:  "bg-amber-50 text-amber-700 border border-amber-200",
-    contacted:    "bg-violet-50 text-violet-700 border border-violet-200",
-    interviewing: "bg-indigo-50 text-indigo-700 border border-indigo-200",
-    offer_sent:   "bg-emerald-50 text-emerald-700 border border-emerald-200",
-    hired:        "bg-green-100 text-green-800 border border-green-300",
-    declined:     "bg-orange-50 text-orange-700 border border-orange-200",
-    rejected:     "bg-red-50 text-red-600 border border-red-200",
+    new:          "bg-surface-hover text-text-secondary",
+    reviewing:    "bg-surface-hover text-text-secondary",
+    shortlisted:  "bg-accent-subtle text-accent",
+    contacted:    "bg-warning-subtle text-warning",
+    interviewing: "bg-warning-subtle text-warning",
+    offer_sent:   "bg-warning-subtle text-warning",
+    hired:        "bg-success-subtle text-success",
+    declined:     "bg-surface-hover text-text-tertiary",
+    rejected:     "bg-surface-hover text-text-tertiary",
   };
-  return map[status] ?? "bg-slate-100 text-slate-600";
+  return map[status] ?? "bg-surface-hover text-text-secondary";
 }
 
 // Ordered pipeline stages for display

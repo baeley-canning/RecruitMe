@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getAuth } from "@/lib/session";
 import { getOrgScoringWeights, DEFAULT_SCORING_WEIGHTS } from "@/lib/scoring-config";
 import { ScoringWeightsEditor } from "@/components/scoring-weights-editor";
+import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { SlidersHorizontal, ArrowLeft, Brain, ChevronRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -14,74 +15,96 @@ export default async function SettingsPage() {
   const weights = await getOrgScoringWeights(auth.orgId);
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <Link href="/jobs" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-700 transition-colors mb-6">
-        <ArrowLeft className="w-4 h-4" />
-        Back
-      </Link>
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="w-9 h-9 bg-indigo-50 rounded-lg flex items-center justify-center">
-            <SlidersHorizontal className="w-5 h-5 text-indigo-600" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900">Scoring Settings</h1>
-        </div>
-        <p className="text-slate-500 text-sm ml-12">
+    <div>
+      {/* Toolbar */}
+      <div className="toolbar">
+        <Link
+          href="/jobs"
+          className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          Back
+        </Link>
+        <div className="w-px h-4 bg-separator mx-1" />
+        <SlidersHorizontal className="w-3.5 h-3.5 text-text-secondary" />
+        <h1 className="text-md font-semibold text-text-primary">Scoring Settings</h1>
+      </div>
+
+      <div className="p-4 max-w-5xl mx-auto space-y-4">
+        <p className="text-base text-text-secondary">
           Control how the seven scoring dimensions are weighted when calculating a candidate&apos;s overall match score.
         </p>
-      </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <ScoringWeightsEditor
-          initialWeights={weights}
-          defaultWeights={DEFAULT_SCORING_WEIGHTS}
-        />
-      </div>
+        <Card>
+          <CardBody>
+            <ScoringWeightsEditor
+              initialWeights={weights}
+              defaultWeights={DEFAULT_SCORING_WEIGHTS}
+            />
+          </CardBody>
+        </Card>
 
-      <Link
-        href="/settings/memory"
-        className="mt-6 flex items-center justify-between gap-4 px-5 py-4 bg-white rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50/30 transition-colors group"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 bg-violet-50 rounded-lg flex items-center justify-center flex-shrink-0">
-            <Brain className="w-5 h-5 text-violet-600" />
+        <Link
+          href="/settings/memory"
+          className="flex items-center justify-between gap-4 px-4 py-3 bg-surface-raised rounded-md border border-separator hover:bg-surface-hover transition-colors group"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-7 h-7 bg-llama-subtle rounded flex items-center justify-center flex-shrink-0">
+              <Brain className="w-3.5 h-3.5 text-llama" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-md font-medium text-text-primary">Recruiter memory</p>
+              <p className="text-xs text-text-tertiary mt-0.5">
+                View and remove past score corrections influencing future scoring
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900">Recruiter memory</p>
-            <p className="text-xs text-slate-500 mt-0.5">View and remove past score corrections influencing future scoring</p>
-          </div>
-        </div>
-        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-violet-500 flex-shrink-0" />
-      </Link>
+          <ChevronRight className="w-3.5 h-3.5 text-text-tertiary group-hover:text-text-secondary flex-shrink-0" />
+        </Link>
 
-      <div className="mt-6 bg-slate-50 rounded-xl border border-slate-200 p-5">
-        <h2 className="text-sm font-semibold text-slate-700 mb-3">How the score is calculated</h2>
-        <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
-          <div>
-            <p className="font-medium text-slate-700">Must-have coverage (default 36%)</p>
-            <p>The primary gate. If key requirements are confirmed absent on a full profile, the score is capped at 50% regardless of other dimensions.</p>
-          </div>
-          <div>
-            <p className="font-medium text-slate-700">Skill fit (default 22%)</p>
-            <p>Technical and role-specific alignment across the candidate&apos;s full profile — harder to fake than title or domain.</p>
-          </div>
-          <div>
-            <p className="font-medium text-slate-700">Domain fit (default 10%)</p>
-            <p>Sector experience and vocabulary alignment. A banking engineer scores higher for a banking role than a general engineer.</p>
-          </div>
-          <div>
-            <p className="font-medium text-slate-700">Seniority fit (default 10%)</p>
-            <p>Career level relative to the role&apos;s expectation. Over- and under-seniority both reduce this score.</p>
-          </div>
-          <div>
-            <p className="font-medium text-slate-700">Location fit (default 8%)</p>
-            <p>Geographic proximity. Kept intentionally low so a strong Wellington candidate isn&apos;t penalised for a slightly different suburb listing.</p>
-          </div>
-          <div>
-            <p className="font-medium text-slate-700">Title fit (default 8%)</p>
-            <p>How closely past job titles match the target role family. Useful signal but easy to game with keyword stuffing.</p>
-          </div>
-        </div>
+        <Card>
+          <CardHeader>
+            <h2 className="text-md font-semibold text-text-primary">How the score is calculated</h2>
+          </CardHeader>
+          <CardBody className="grid grid-cols-2 gap-3 text-xs text-text-secondary">
+            <div>
+              <p className="font-medium text-text-primary">Must-have coverage (default 36%)</p>
+              <p className="mt-0.5">
+                The primary gate. If key requirements are confirmed absent on a full profile, the score is capped at 50% regardless of other dimensions.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-text-primary">Skill fit (default 22%)</p>
+              <p className="mt-0.5">
+                Technical and role-specific alignment across the candidate&apos;s full profile — harder to fake than title or domain.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-text-primary">Domain fit (default 10%)</p>
+              <p className="mt-0.5">
+                Sector experience and vocabulary alignment. A banking engineer scores higher for a banking role than a general engineer.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-text-primary">Seniority fit (default 10%)</p>
+              <p className="mt-0.5">
+                Career level relative to the role&apos;s expectation. Over- and under-seniority both reduce this score.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-text-primary">Location fit (default 8%)</p>
+              <p className="mt-0.5">
+                Geographic proximity. Kept intentionally low so a strong Wellington candidate isn&apos;t penalised for a slightly different suburb listing.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-text-primary">Title fit (default 8%)</p>
+              <p className="mt-0.5">
+                How closely past job titles match the target role family. Useful signal but easy to game with keyword stuffing.
+              </p>
+            </div>
+          </CardBody>
+        </Card>
       </div>
     </div>
   );

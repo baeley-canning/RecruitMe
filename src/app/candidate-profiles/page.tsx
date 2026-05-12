@@ -8,6 +8,8 @@ import {
   ChevronDown, ChevronUp, Scissors,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Card, CardBody } from "@/components/ui/card";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +49,10 @@ type SourceMode = "library" | "documents";
 const STORAGE_KEY = "recruitme:profile-consultant-v2";
 const SETTINGS_ENDPOINT = "/api/candidate-profiles/settings";
 
+// Shared input recipe — the Logic Pro form input class.
+const INPUT = "w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all";
+const INPUT_INLINE = "w-full h-7 px-2 rounded bg-surface-sunken border border-separator text-base text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all";
+
 function str(v: unknown): string { return typeof v === "string" ? v : ""; }
 
 function loadSaved(): { consultant: ContactFields; manager: ContactFields } {
@@ -71,12 +77,16 @@ function ContactBlock({ label, value, onChange }: {
   const f = (field: keyof ContactFields) => (e: React.ChangeEvent<HTMLInputElement>) =>
     onChange({ ...value, [field]: e.target.value });
   return (
-    <div className="space-y-2">
-      <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">{label}</p>
+    <div className="space-y-1.5">
+      <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wider">{label}</p>
       {(["name","email","phone"] as const).map((k) => (
-        <input key={k} type="text" placeholder={k.charAt(0).toUpperCase() + k.slice(1)}
-          value={value[k]} onChange={f(k)}
-          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <input
+          key={k}
+          type="text"
+          placeholder={k.charAt(0).toUpperCase() + k.slice(1)}
+          value={value[k]}
+          onChange={f(k)}
+          className={INPUT}
         />
       ))}
     </div>
@@ -331,462 +341,510 @@ export default function CandidateProfilesPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <div className="flex items-center gap-3 mb-8">
-        <Link href="/jobs" className="text-slate-400 hover:text-slate-600 transition-colors">
-          <ArrowLeft className="w-4 h-4" />
+    <div>
+      {/* Toolbar */}
+      <div className="toolbar">
+        <Link href="/jobs" className="text-text-secondary hover:text-text-primary transition-colors">
+          <ArrowLeft className="w-3.5 h-3.5" />
         </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Candidate Profiles</h1>
-          <p className="text-slate-500 text-sm mt-0.5">Generate client-ready Word documents tailored to the target role</p>
-        </div>
+        <h1 className="text-md font-semibold text-text-primary">Candidate Profiles</h1>
+        <span className="text-xs text-text-tertiary hidden sm:inline">
+          Generate client-ready Word documents tailored to the target role
+        </span>
       </div>
 
-      {/* Step indicator */}
-      {step !== "source" && step !== "download" && (
-        <div className="flex items-center gap-2 mb-6 text-sm">
-          {[
-            { id: "source",     label: "Source" },
-            { id: "generating", label: "Generating" },
-            { id: "review",     label: "Review & Edit" },
-          ].map(({ id, label }, i, arr) => (
-            <div key={id} className="flex items-center gap-2">
-              <span className={cn(
-                "flex items-center gap-1.5 font-medium",
-                step === id ? "text-blue-600" : (
-                  arr.findIndex((a) => a.id === step) > i ? "text-emerald-600" : "text-slate-400"
-                )
-              )}>
-                {arr.findIndex((a) => a.id === step) > i
-                  ? <CheckCircle2 className="w-4 h-4" />
-                  : <span className="w-5 h-5 rounded-full border-2 border-current flex items-center justify-center text-xs">{i + 1}</span>
-                }
-                {label}
-              </span>
-              {i < arr.length - 1 && <span className="text-slate-300">›</span>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── STEP 1: SOURCE ─────────────────────────────────────────────────── */}
-      {step === "source" && (
-        <div className="space-y-6">
-          {genError && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              {genError}
-            </div>
-          )}
-
-          {/* Mode toggle */}
-          <div className="flex gap-2">
-            {(["library","documents"] as SourceMode[]).map((m) => (
-              <button key={m} onClick={() => setSourceMode(m)}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors",
-                  sourceMode === m
-                    ? "bg-blue-600 text-white border-blue-600"
-                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                )}
-              >
-                {m === "library" ? <User className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                {m === "library" ? "From candidate library" : "From documents"}
-              </button>
+      <div className="p-4 max-w-4xl mx-auto">
+        {/* Step indicator */}
+        {step !== "source" && step !== "download" && (
+          <div className="flex items-center gap-2 mb-4 text-base">
+            {[
+              { id: "source",     label: "Source" },
+              { id: "generating", label: "Generating" },
+              { id: "review",     label: "Review & Edit" },
+            ].map(({ id, label }, i, arr) => (
+              <div key={id} className="flex items-center gap-2">
+                <span className={cn(
+                  "flex items-center gap-1.5 font-medium",
+                  step === id
+                    ? "text-accent"
+                    : (arr.findIndex((a) => a.id === step) > i ? "text-success" : "text-text-tertiary")
+                )}>
+                  {arr.findIndex((a) => a.id === step) > i
+                    ? <CheckCircle2 className="w-4 h-4" />
+                    : <span className="w-5 h-5 rounded-full border-2 border-current flex items-center justify-center text-xs">{i + 1}</span>
+                  }
+                  {label}
+                </span>
+                {i < arr.length - 1 && <span className="text-text-tertiary">›</span>}
+              </div>
             ))}
           </div>
+        )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left: source selector */}
-            <div className="bg-white rounded-xl border border-slate-200 p-5">
-              {sourceMode === "library" ? (
-                <div className="space-y-3">
-                  <h2 className="text-sm font-semibold text-slate-900">Select candidate</h2>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text" value={libSearch} onChange={(e) => setLibSearch(e.target.value)}
-                      placeholder="Search by name, role, or company…"
-                      className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div className="max-h-64 overflow-y-auto space-y-1">
-                    {filteredCandidates.length === 0 && (
-                      <p className="text-sm text-slate-400 text-center py-6">No candidates found</p>
-                    )}
-                    {filteredCandidates.map((c) => (
-                      <button key={c.id} onClick={() => setSelectedId(c.id)}
-                        className={cn(
-                          "w-full text-left p-2.5 rounded-lg border text-sm transition-colors",
-                          selectedId === c.id
-                            ? "border-blue-500 bg-blue-50"
-                            : "border-transparent hover:bg-slate-50"
+        {/* ── STEP 1: SOURCE ─────────────────────────────────────────────────── */}
+        {step === "source" && (
+          <div className="space-y-4">
+            {genError && (
+              <div className="flex items-start gap-2 p-2.5 bg-danger-subtle border border-separator rounded text-xs text-danger">
+                <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                {genError}
+              </div>
+            )}
+
+            {/* Mode toggle */}
+            <div className="flex gap-1.5">
+              {(["library","documents"] as SourceMode[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setSourceMode(m)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 h-7 px-3 rounded text-md font-medium border transition-colors",
+                    sourceMode === m
+                      ? "bg-accent text-white border-accent"
+                      : "bg-surface-raised text-text-secondary border-separator hover:bg-surface-hover hover:text-text-primary"
+                  )}
+                >
+                  {m === "library" ? <User className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
+                  {m === "library" ? "From candidate library" : "From documents"}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Left: source selector */}
+              <Card>
+                <CardBody>
+                  {sourceMode === "library" ? (
+                    <div className="space-y-3">
+                      <h2 className="text-md font-semibold text-text-primary">Select candidate</h2>
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-text-tertiary" />
+                        <input
+                          type="text"
+                          value={libSearch}
+                          onChange={(e) => setLibSearch(e.target.value)}
+                          placeholder="Search by name, role, or company…"
+                          className={`${INPUT} pl-8`}
+                        />
+                      </div>
+                      <div className="max-h-64 overflow-y-auto space-y-1">
+                        {filteredCandidates.length === 0 && (
+                          <p className="text-base text-text-tertiary text-center py-6">No candidates found</p>
                         )}
+                        {filteredCandidates.map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setSelectedId(c.id)}
+                            className={cn(
+                              "w-full text-left p-2 rounded border text-base transition-colors",
+                              selectedId === c.id
+                                ? "border-accent bg-accent-subtle"
+                                : "border-transparent hover:bg-surface-hover"
+                            )}
+                          >
+                            <p className="font-medium text-text-primary">{c.name}</p>
+                            <p className="text-text-secondary text-xs truncate">
+                              {c.headline ?? c.job?.title ?? c.archivedJobTitle ?? ""}
+                              {(c.job?.company ?? "") && ` · ${c.job?.company}`}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <h2 className="text-md font-semibold text-text-primary">Upload documents</h2>
+                      <input
+                        type="text"
+                        value={manualName}
+                        onChange={(e) => setManualName(e.target.value)}
+                        placeholder="Candidate full name (required)"
+                        className={INPUT}
+                      />
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className="border-2 border-dashed border-separator-strong rounded-md p-4 text-center cursor-pointer hover:border-accent hover:bg-surface-hover transition-colors"
                       >
-                        <p className="font-medium text-slate-900">{c.name}</p>
-                        <p className="text-slate-500 text-xs truncate">
-                          {c.headline ?? c.job?.title ?? c.archivedJobTitle ?? ""}
-                          {(c.job?.company ?? "") && ` · ${c.job?.company}`}
-                        </p>
-                      </button>
-                    ))}
+                        <Upload className="w-5 h-5 text-text-tertiary mx-auto mb-1.5" />
+                        <p className="text-base text-text-secondary">CV, LinkedIn export, interview notes</p>
+                        <p className="text-xs text-text-tertiary mt-0.5">PDF, Word, or TXT</p>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          multiple
+                          accept=".pdf,.doc,.docx,.txt"
+                          className="hidden"
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files ?? []);
+                            setUploadedFiles((prev) => [...prev, ...files]);
+                          }}
+                        />
+                      </div>
+                      {uploadedFiles.length > 0 && (
+                        <div className="space-y-1">
+                          {uploadedFiles.map((f, i) => (
+                            <div key={i} className="flex items-center justify-between p-2 bg-surface-sunken rounded border border-separator">
+                              <span className="text-xs text-text-primary truncate">{f.name}</span>
+                              <button onClick={() => setUploadedFiles((prev) => prev.filter((_, j) => j !== i))}>
+                                <X className="w-3.5 h-3.5 text-text-tertiary hover:text-danger" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
+
+              {/* Right: target role + JD */}
+              <Card>
+                <CardBody className="space-y-3">
+                  <h2 className="text-md font-semibold text-text-primary">Target role</h2>
+                  <div>
+                    <label className="text-xs text-text-secondary mb-1 block">
+                      Being put forward for <span className="text-danger">*</span>
+                    </label>
+                    <div className="relative">
+                      <Briefcase className="absolute left-2.5 top-2 w-3.5 h-3.5 text-text-tertiary" />
+                      <input
+                        type="text"
+                        value={targetRole}
+                        onChange={(e) => setTargetRole(e.target.value)}
+                        placeholder="e.g. Senior .NET Developer"
+                        className={`${INPUT} pl-8`}
+                      />
+                    </div>
+                    <p className="text-xs text-text-tertiary mt-1">
+                      The AI will curate the profile to this role — irrelevant experience trimmed automatically
+                    </p>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <h2 className="text-sm font-semibold text-slate-900">Upload documents</h2>
-                  <input
-                    type="text" value={manualName} onChange={(e) => setManualName(e.target.value)}
-                    placeholder="Candidate full name (required)"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                  >
-                    <Upload className="w-6 h-6 text-slate-400 mx-auto mb-2" />
-                    <p className="text-sm text-slate-600">CV, LinkedIn export, interview notes</p>
-                    <p className="text-xs text-slate-400 mt-1">PDF, Word, or TXT</p>
-                    <input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.txt"
-                      className="hidden"
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files ?? []);
-                        setUploadedFiles((prev) => [...prev, ...files]);
-                      }}
+                  <div>
+                    <button
+                      onClick={() => setShowJd(!showJd)}
+                      className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent transition-colors"
+                    >
+                      {showJd ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      {showJd ? "Hide job description" : "Add job description (optional, recommended)"}
+                    </button>
+                    {showJd && (
+                      <textarea
+                        value={jdText}
+                        onChange={(e) => setJdText(e.target.value)}
+                        rows={6}
+                        placeholder="Paste the job description here. The AI will use it to angle the executive summary toward the specific requirements."
+                        className="mt-2 w-full px-2.5 py-2 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all resize-none"
+                      />
+                    )}
+                  </div>
+                  <Button onClick={handleGenerate} disabled={!canGenerate} variant="primary" size="lg" className="w-full">
+                    <ArrowRight className="w-4 h-4" />
+                    Generate draft
+                  </Button>
+                </CardBody>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 2: GENERATING ─────────────────────────────────────────────── */}
+        {step === "generating" && (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <Loader2 className="w-7 h-7 text-accent animate-spin" />
+            <p className="text-md font-medium text-text-primary">{genStatus}</p>
+            <p className="text-xs text-text-tertiary">This usually takes 15–25 seconds</p>
+          </div>
+        )}
+
+        {/* ── STEP 3: REVIEW & EDIT ──────────────────────────────────────────── */}
+        {step === "review" && draft && (
+          <div className="space-y-4">
+            {draft.trimmedPositions > 0 && (
+              <div className="flex items-start gap-2 p-2.5 bg-warning-subtle border border-separator rounded text-xs text-warning">
+                <Scissors className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                {draft.trimmedPositions} position{draft.trimmedPositions !== 1 ? "s" : ""} trimmed as not relevant to {draft.targetRole}
+              </div>
+            )}
+            {draft.truncated && (
+              <div className="flex items-start gap-2 p-2.5 bg-accent-subtle border border-separator rounded text-xs text-accent">
+                <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                Profile is long — only the first 16,000 characters were analysed
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Main draft editor */}
+              <div className="lg:col-span-2 space-y-3">
+                {/* Candidate info */}
+                <Card>
+                  <CardBody className="space-y-2.5">
+                    <h3 className="text-md font-semibold text-text-primary flex items-center gap-2">
+                      <User className="w-3.5 h-3.5 text-accent" /> Candidate
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-xs text-text-secondary mb-1 block">Name</label>
+                        <input
+                          value={draft.candidateName}
+                          onChange={(e) => setDraft({ ...draft, candidateName: e.target.value })}
+                          className={INPUT}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-text-secondary mb-1 block">Being put forward for</label>
+                        <input
+                          value={draft.targetRole}
+                          onChange={(e) => setDraft({ ...draft, targetRole: e.target.value })}
+                          className={INPUT}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-text-secondary mb-1 block">Availability</label>
+                        <input
+                          value={dateAvail}
+                          onChange={(e) => setDateAvail(e.target.value)}
+                          placeholder="e.g. Immediate, 2 weeks notice"
+                          className={INPUT}
+                        />
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
+
+                {/* Executive summary */}
+                <Card>
+                  <CardBody>
+                    <h3 className="text-md font-semibold text-text-primary mb-2 flex items-center gap-2">
+                      <Pencil className="w-3.5 h-3.5 text-accent" /> Executive Summary
+                    </h3>
+                    <textarea
+                      value={draft.executiveSummary}
+                      onChange={(e) => setDraft({ ...draft, executiveSummary: e.target.value })}
+                      rows={6}
+                      className="w-full px-2.5 py-2 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all resize-none"
                     />
-                  </div>
-                  {uploadedFiles.length > 0 && (
-                    <div className="space-y-1">
-                      {uploadedFiles.map((f, i) => (
-                        <div key={i} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
-                          <span className="text-xs text-slate-700 truncate">{f.name}</span>
-                          <button onClick={() => setUploadedFiles((prev) => prev.filter((_, j) => j !== i))}>
-                            <X className="w-3.5 h-3.5 text-slate-400 hover:text-red-500" />
+                  </CardBody>
+                </Card>
+
+                {/* Skills */}
+                {draft.skillGroups.length > 0 && (
+                  <Card>
+                    <CardBody className="space-y-2.5">
+                      <h3 className="text-md font-semibold text-text-primary">Key Skills</h3>
+                      {draft.skillGroups.map((group, gi) => (
+                        <div key={gi} className="space-y-1.5">
+                          <input
+                            value={group.title}
+                            onChange={(e) => {
+                              const updated = [...draft.skillGroups];
+                              updated[gi] = { ...group, title: e.target.value };
+                              setDraft({ ...draft, skillGroups: updated });
+                            }}
+                            className="w-full px-2 py-1 rounded bg-surface-sunken border border-separator text-xs font-semibold text-text-primary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+                          />
+                          <div className="flex flex-wrap gap-1.5">
+                            {group.skills.map((skill, si) => (
+                              <div key={si} className="flex items-center gap-1 bg-accent-subtle border border-separator rounded-sm px-2 py-0.5">
+                                <span className="text-xs text-accent">{skill}</span>
+                                <button onClick={() => {
+                                  const updated = [...draft.skillGroups];
+                                  updated[gi] = { ...group, skills: group.skills.filter((_, j) => j !== si) };
+                                  setDraft({ ...draft, skillGroups: updated });
+                                }}>
+                                  <X className="w-3 h-3 text-accent hover:text-danger" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </CardBody>
+                  </Card>
+                )}
+
+                {/* Work history */}
+                {draft.workHistory.length > 0 && (
+                  <Card>
+                    <CardBody className="space-y-3">
+                      <h3 className="text-md font-semibold text-text-primary">Work History</h3>
+                      {draft.workHistory.map((job, ji) => (
+                        <div key={ji} className="border border-separator rounded-md p-2.5 space-y-2 bg-surface-sunken">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <input
+                              value={job.company}
+                              onChange={(e) => {
+                                const wh = [...draft.workHistory];
+                                wh[ji] = { ...job, company: e.target.value };
+                                setDraft({ ...draft, workHistory: wh });
+                              }}
+                              placeholder="Company"
+                              className={`${INPUT_INLINE} font-semibold`}
+                            />
+                            <input
+                              value={job.role}
+                              onChange={(e) => {
+                                const wh = [...draft.workHistory];
+                                wh[ji] = { ...job, role: e.target.value };
+                                setDraft({ ...draft, workHistory: wh });
+                              }}
+                              placeholder="Role"
+                              className={`${INPUT_INLINE} italic`}
+                            />
+                            <input
+                              value={job.dates}
+                              onChange={(e) => {
+                                const wh = [...draft.workHistory];
+                                wh[ji] = { ...job, dates: e.target.value };
+                                setDraft({ ...draft, workHistory: wh });
+                              }}
+                              placeholder="Dates"
+                              className={`${INPUT_INLINE} text-text-secondary data-mono`}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            {job.bullets.map((bullet, bi) => (
+                              <div key={bi} className="flex gap-2">
+                                <span className="text-text-tertiary mt-1.5 flex-shrink-0">·</span>
+                                <textarea
+                                  value={bullet}
+                                  rows={1}
+                                  onChange={(e) => {
+                                    const wh = [...draft.workHistory];
+                                    const bullets = [...job.bullets];
+                                    bullets[bi] = e.target.value;
+                                    wh[ji] = { ...job, bullets };
+                                    setDraft({ ...draft, workHistory: wh });
+                                  }}
+                                  className="flex-1 px-2 py-1 rounded bg-surface-base border border-separator-subtle text-base text-text-primary resize-none focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+                                />
+                                <button onClick={() => {
+                                  const wh = [...draft.workHistory];
+                                  wh[ji] = { ...job, bullets: job.bullets.filter((_, j) => j !== bi) };
+                                  setDraft({ ...draft, workHistory: wh });
+                                }} className="mt-1.5">
+                                  <X className="w-3.5 h-3.5 text-text-tertiary hover:text-danger" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <button onClick={() => {
+                            const wh = [...draft.workHistory];
+                            wh[ji] = { ...job, bullets: [...job.bullets, ""] };
+                            setDraft({ ...draft, workHistory: wh });
+                          }} className="text-xs text-accent hover:text-accent-hover">
+                            + Add bullet
                           </button>
                         </div>
                       ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                    </CardBody>
+                  </Card>
+                )}
 
-            {/* Right: target role + JD */}
-            <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
-              <h2 className="text-sm font-semibold text-slate-900">Target role</h2>
-              <div>
-                <label className="text-xs text-slate-500 mb-1 block">Being put forward for <span className="text-red-500">*</span></label>
-                <div className="relative">
-                  <Briefcase className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text" value={targetRole} onChange={(e) => setTargetRole(e.target.value)}
-                    placeholder="e.g. Senior .NET Developer"
-                    className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <p className="text-xs text-slate-400 mt-1">The AI will curate the profile to this role — irrelevant experience trimmed automatically</p>
-              </div>
-              <div>
-                <button
-                  onClick={() => setShowJd(!showJd)}
-                  className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors"
-                >
-                  {showJd ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  {showJd ? "Hide job description" : "Add job description (optional, recommended)"}
-                </button>
-                {showJd && (
-                  <textarea
-                    value={jdText} onChange={(e) => setJdText(e.target.value)}
-                    rows={6}
-                    placeholder="Paste the job description here. The AI will use it to angle the executive summary toward the specific requirements."
-                    className="mt-2 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                  />
+                {/* Qualifications */}
+                {draft.qualifications.length > 0 && (
+                  <Card>
+                    <CardBody className="space-y-2">
+                      <h3 className="text-md font-semibold text-text-primary">Qualifications</h3>
+                      {draft.qualifications.map((q, qi) => (
+                        <div key={qi} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            value={q.institution}
+                            onChange={(e) => {
+                              const quals = [...draft.qualifications];
+                              quals[qi] = { ...q, institution: e.target.value };
+                              setDraft({ ...draft, qualifications: quals });
+                            }}
+                            placeholder="Institution"
+                            className={`${INPUT_INLINE} font-medium`}
+                          />
+                          <input
+                            value={q.courseYear}
+                            onChange={(e) => {
+                              const quals = [...draft.qualifications];
+                              quals[qi] = { ...q, courseYear: e.target.value };
+                              setDraft({ ...draft, qualifications: quals });
+                            }}
+                            placeholder="Degree | Year"
+                            className={`${INPUT_INLINE} italic`}
+                          />
+                        </div>
+                      ))}
+                    </CardBody>
+                  </Card>
                 )}
               </div>
-              <button
-                onClick={handleGenerate} disabled={!canGenerate}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+
+              {/* Right sidebar: contact details + download */}
+              <div className="space-y-3">
+                <Card className="sticky top-4">
+                  <CardBody className="space-y-3">
+                    <ContactBlock label="Your Consultant" value={consultant} onChange={handleConsultantChange} />
+                    <ContactBlock label="Candidate Manager" value={manager} onChange={handleManagerChange} />
+
+                    {downloadError && (
+                      <p className="text-xs text-danger flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                        {downloadError}
+                      </p>
+                    )}
+
+                    <Button
+                      onClick={handleDownload}
+                      disabled={downloading}
+                      loading={downloading}
+                      variant="primary"
+                      size="lg"
+                      className="w-full"
+                    >
+                      {!downloading && <Download className="w-4 h-4" />}
+                      {downloading ? "Building document…" : "Download Word doc"}
+                    </Button>
+                    <button
+                      onClick={handleReset}
+                      className="w-full text-xs text-text-tertiary hover:text-text-primary transition-colors"
+                    >
+                      Start over
+                    </button>
+                  </CardBody>
+                </Card>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 4: DONE ───────────────────────────────────────────────────── */}
+        {step === "download" && draft && (
+          <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+            <div className="w-12 h-12 bg-success-subtle rounded-full flex items-center justify-center">
+              <CheckCircle2 className="w-6 h-6 text-success" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-text-primary">Profile downloaded</h2>
+              <p className="text-text-secondary text-base mt-0.5">
+                {draft.candidateName} — {draft.targetRole}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleDownload}
+                disabled={downloading}
+                variant="secondary"
+                size="lg"
               >
-                <ArrowRight className="w-4 h-4" />
-                Generate draft
-              </button>
+                <Download className="w-3.5 h-3.5" />
+                {downloading ? "Downloading…" : "Download again"}
+              </Button>
+              <Button onClick={() => setStep("review")} variant="secondary" size="lg">
+                <Pencil className="w-3.5 h-3.5" />
+                Edit profile
+              </Button>
+              <Button onClick={handleReset} variant="primary" size="lg">
+                New profile
+              </Button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* ── STEP 2: GENERATING ─────────────────────────────────────────────── */}
-      {step === "generating" && (
-        <div className="flex flex-col items-center justify-center py-24 gap-4">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-          <p className="text-slate-700 font-medium">{genStatus}</p>
-          <p className="text-slate-400 text-sm">This usually takes 15–25 seconds</p>
-        </div>
-      )}
-
-      {/* ── STEP 3: REVIEW & EDIT ──────────────────────────────────────────── */}
-      {step === "review" && draft && (
-        <div className="space-y-5">
-          {draft.trimmedPositions > 0 && (
-            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
-              <Scissors className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              {draft.trimmedPositions} position{draft.trimmedPositions !== 1 ? "s" : ""} trimmed as not relevant to {draft.targetRole}
-            </div>
-          )}
-          {draft.truncated && (
-            <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
-              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              Profile is long — only the first 16,000 characters were analysed
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            {/* Main draft editor */}
-            <div className="lg:col-span-2 space-y-4">
-
-              {/* Candidate info */}
-              <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
-                <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-                  <User className="w-4 h-4 text-blue-500" /> Candidate
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">Name</label>
-                    <input value={draft.candidateName}
-                      onChange={(e) => setDraft({ ...draft, candidateName: e.target.value })}
-                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">Being put forward for</label>
-                    <input value={draft.targetRole}
-                      onChange={(e) => setDraft({ ...draft, targetRole: e.target.value })}
-                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">Availability</label>
-                    <input value={dateAvail} onChange={(e) => setDateAvail(e.target.value)}
-                      placeholder="e.g. Immediate, 2 weeks notice"
-                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Executive summary */}
-              <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                  <Pencil className="w-4 h-4 text-blue-500" /> Executive Summary
-                </h3>
-                <textarea
-                  value={draft.executiveSummary}
-                  onChange={(e) => setDraft({ ...draft, executiveSummary: e.target.value })}
-                  rows={6}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                />
-              </div>
-
-              {/* Skills */}
-              {draft.skillGroups.length > 0 && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
-                  <h3 className="text-sm font-semibold text-slate-900">Key Skills</h3>
-                  {draft.skillGroups.map((group, gi) => (
-                    <div key={gi} className="space-y-1.5">
-                      <input
-                        value={group.title}
-                        onChange={(e) => {
-                          const updated = [...draft.skillGroups];
-                          updated[gi] = { ...group, title: e.target.value };
-                          setDraft({ ...draft, skillGroups: updated });
-                        }}
-                        className="w-full px-2.5 py-1 border border-slate-200 rounded text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                      <div className="flex flex-wrap gap-1.5">
-                        {group.skills.map((skill, si) => (
-                          <div key={si} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
-                            <span className="text-xs text-blue-700">{skill}</span>
-                            <button onClick={() => {
-                              const updated = [...draft.skillGroups];
-                              updated[gi] = { ...group, skills: group.skills.filter((_, j) => j !== si) };
-                              setDraft({ ...draft, skillGroups: updated });
-                            }}>
-                              <X className="w-3 h-3 text-blue-400 hover:text-red-500" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Work history */}
-              {draft.workHistory.length > 0 && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
-                  <h3 className="text-sm font-semibold text-slate-900">Work History</h3>
-                  {draft.workHistory.map((job, ji) => (
-                    <div key={ji} className="border border-slate-100 rounded-lg p-3 space-y-2">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <input value={job.company}
-                          onChange={(e) => {
-                            const wh = [...draft.workHistory];
-                            wh[ji] = { ...job, company: e.target.value };
-                            setDraft({ ...draft, workHistory: wh });
-                          }}
-                          placeholder="Company"
-                          className="px-2.5 py-1.5 border border-slate-200 rounded text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <input value={job.role}
-                          onChange={(e) => {
-                            const wh = [...draft.workHistory];
-                            wh[ji] = { ...job, role: e.target.value };
-                            setDraft({ ...draft, workHistory: wh });
-                          }}
-                          placeholder="Role"
-                          className="px-2.5 py-1.5 border border-slate-200 rounded text-sm italic focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <input value={job.dates}
-                          onChange={(e) => {
-                            const wh = [...draft.workHistory];
-                            wh[ji] = { ...job, dates: e.target.value };
-                            setDraft({ ...draft, workHistory: wh });
-                          }}
-                          placeholder="Dates"
-                          className="px-2.5 py-1.5 border border-slate-200 rounded text-sm text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        {job.bullets.map((bullet, bi) => (
-                          <div key={bi} className="flex gap-2">
-                            <span className="text-slate-400 mt-2 flex-shrink-0">·</span>
-                            <textarea value={bullet} rows={1}
-                              onChange={(e) => {
-                                const wh = [...draft.workHistory];
-                                const bullets = [...job.bullets];
-                                bullets[bi] = e.target.value;
-                                wh[ji] = { ...job, bullets };
-                                setDraft({ ...draft, workHistory: wh });
-                              }}
-                              className="flex-1 px-2 py-1 border border-slate-100 rounded text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            <button onClick={() => {
-                              const wh = [...draft.workHistory];
-                              wh[ji] = { ...job, bullets: job.bullets.filter((_, j) => j !== bi) };
-                              setDraft({ ...draft, workHistory: wh });
-                            }} className="mt-1.5">
-                              <X className="w-3.5 h-3.5 text-slate-300 hover:text-red-400" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                      <button onClick={() => {
-                        const wh = [...draft.workHistory];
-                        wh[ji] = { ...job, bullets: [...job.bullets, ""] };
-                        setDraft({ ...draft, workHistory: wh });
-                      }} className="text-xs text-blue-500 hover:text-blue-700">
-                        + Add bullet
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Qualifications */}
-              {draft.qualifications.length > 0 && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-2">
-                  <h3 className="text-sm font-semibold text-slate-900">Qualifications</h3>
-                  {draft.qualifications.map((q, qi) => (
-                    <div key={qi} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <input value={q.institution}
-                        onChange={(e) => {
-                          const quals = [...draft.qualifications];
-                          quals[qi] = { ...q, institution: e.target.value };
-                          setDraft({ ...draft, qualifications: quals });
-                        }}
-                        placeholder="Institution"
-                        className="px-2.5 py-1.5 border border-slate-200 rounded text-sm font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                      <input value={q.courseYear}
-                        onChange={(e) => {
-                          const quals = [...draft.qualifications];
-                          quals[qi] = { ...q, courseYear: e.target.value };
-                          setDraft({ ...draft, qualifications: quals });
-                        }}
-                        placeholder="Degree | Year"
-                        className="px-2.5 py-1.5 border border-slate-200 rounded text-sm italic focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Right sidebar: contact details + download */}
-            <div className="space-y-4">
-              <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 sticky top-6">
-                <ContactBlock label="Your Consultant" value={consultant} onChange={handleConsultantChange} />
-                <ContactBlock label="Candidate Manager" value={manager} onChange={handleManagerChange} />
-
-                {downloadError && (
-                  <p className="text-xs text-red-600 flex items-center gap-1">
-                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                    {downloadError}
-                  </p>
-                )}
-
-                <button
-                  onClick={handleDownload} disabled={downloading}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
-                >
-                  {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  {downloading ? "Building document…" : "Download Word doc"}
-                </button>
-                <button onClick={handleReset}
-                  className="w-full text-sm text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  Start over
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── STEP 4: DONE ───────────────────────────────────────────────────── */}
-      {step === "download" && draft && (
-        <div className="flex flex-col items-center justify-center py-20 gap-5 text-center">
-          <div className="w-14 h-14 bg-emerald-50 rounded-full flex items-center justify-center">
-            <CheckCircle2 className="w-7 h-7 text-emerald-500" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-slate-900">Profile downloaded</h2>
-            <p className="text-slate-500 text-sm mt-1">
-              {draft.candidateName} — {draft.targetRole}
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={handleDownload} disabled={downloading}
-              className="flex items-center gap-2 px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              {downloading ? "Downloading…" : "Download again"}
-            </button>
-            <button onClick={() => setStep("review")}
-              className="flex items-center gap-2 px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors"
-            >
-              <Pencil className="w-4 h-4" />
-              Edit profile
-            </button>
-            <button onClick={handleReset}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              New profile
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

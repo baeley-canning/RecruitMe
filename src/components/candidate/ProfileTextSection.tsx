@@ -82,8 +82,8 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
     <div>
       <div className="flex items-center justify-between gap-3 mb-2">
         <div>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">LinkedIn Capture</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">{profileSourceSummary(candidate)}</p>
+          <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide">LinkedIn Capture</p>
+          <p className="text-xs text-text-tertiary mt-0.5">{profileSourceSummary(candidate)}</p>
         </div>
         <div className="flex items-center gap-1.5">
           {!editing && candidate.profileText && <CopyButton text={candidate.profileText} />}
@@ -91,7 +91,7 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
             <button
               type="button"
               onClick={() => { setEditing(true); setSuccessNote(null); setError(null); }}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-separator bg-surface-hover hover:bg-surface-overlay text-text-secondary transition-colors"
               title="Paste missing work history (e.g. older roles the LinkedIn capture didn't pull) and re-score"
             >
               <Pencil className="w-3 h-3" />Add / edit
@@ -101,7 +101,7 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
             <button
               type="button"
               onClick={() => { setEditing(false); setDraft(""); setError(null); }}
-              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-500"
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-separator bg-surface-hover hover:bg-surface-overlay text-text-tertiary transition-colors"
             >
               <X className="w-3 h-3" />Cancel
             </button>
@@ -110,7 +110,7 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
       </div>
 
       {successNote && (
-        <div className="mb-2 p-2 rounded border border-emerald-200 bg-emerald-50 text-xs text-emerald-800">
+        <div className="mb-2 p-2 rounded border border-separator bg-success-subtle text-xs text-success">
           {successNote}
         </div>
       )}
@@ -118,11 +118,11 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
       {editing ? (
         <div className="space-y-2">
           <div className="flex items-center gap-3 text-xs">
-            <label className="flex items-center gap-1.5 text-slate-600 cursor-pointer">
+            <label className="flex items-center gap-1.5 text-text-secondary cursor-pointer">
               <input type="radio" name="mode" value="append" checked={mode === "append"} onChange={() => setMode("append")} />
               Append (keep current text + add this below)
             </label>
-            <label className="flex items-center gap-1.5 text-slate-600 cursor-pointer">
+            <label className="flex items-center gap-1.5 text-text-secondary cursor-pointer">
               <input type="radio" name="mode" value="replace" checked={mode === "replace"} onChange={() => setMode("replace")} />
               Replace (use only this)
             </label>
@@ -132,11 +132,11 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Paste missing work history here. e.g. older roles the LinkedIn capture didn't pull, content from a CV, JobAdder history, etc. The candidate will be re-scored against the current job after save."
             rows={12}
-            className="w-full p-3 text-xs text-slate-700 leading-relaxed bg-white border border-slate-300 rounded-xl font-mono focus:outline-none focus:border-blue-400"
+            className="w-full p-3 text-xs text-text-primary leading-relaxed bg-surface-sunken border border-separator rounded font-mono focus:outline-none focus:border-accent focus:shadow-focus"
           />
-          {error && <p className="text-xs text-red-600">{error}</p>}
+          {error && <p className="text-xs text-danger">{error}</p>}
           <div className="flex items-center justify-between">
-            <p className="text-[11px] text-slate-400">
+            <p className="text-xs text-text-tertiary data-mono">
               {draft.length.toLocaleString()} chars to {mode === "append" ? "append" : "replace existing capture"}.
             </p>
             <button
@@ -144,10 +144,10 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
               onClick={handleSave}
               disabled={saving || !draft.trim()}
               className={cn(
-                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium",
+                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors",
                 saving || !draft.trim()
-                  ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                  : "bg-blue-600 hover:bg-blue-500 text-white",
+                  ? "bg-surface-hover text-text-tertiary cursor-not-allowed"
+                  : "bg-accent hover:bg-accent-hover text-white",
               )}
             >
               {saving ? <><Loader2 className="w-3 h-3 animate-spin" />Saving + re-scoring…</> : "Save & re-score"}
@@ -155,15 +155,15 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
           </div>
         </div>
       ) : candidate.profileText ? (
-        <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl max-h-[50vh] overflow-y-auto">
-          <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+        <div className="p-4 bg-surface-sunken border border-separator rounded-md max-h-[50vh] overflow-y-auto">
+          <p className="text-xs text-text-primary leading-relaxed whitespace-pre-wrap">
             {candidate.profileText}
           </p>
         </div>
       ) : (
-        <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center">
-          <p className="text-sm text-slate-400">No profile text captured yet.</p>
-          <p className="text-xs text-slate-400 mt-1">
+        <div className="p-4 bg-surface-sunken border border-separator rounded-md text-center">
+          <p className="text-sm text-text-tertiary">No profile text captured yet.</p>
+          <p className="text-xs text-text-tertiary mt-1">
             Use &ldquo;Fetch profile&rdquo; to pull the full LinkedIn profile, or click &ldquo;Add / edit&rdquo; above to paste a CV or work history manually.
           </p>
         </div>

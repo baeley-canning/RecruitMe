@@ -91,32 +91,32 @@ export function AddLibraryCandidateModal({ onComplete, onClose }: AddLibraryCand
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
+      <div className="bg-surface-overlay rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto border border-separator" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-separator">
           <div>
-            <h3 className="font-semibold text-slate-900">Add Candidate</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <h3 className="text-md font-semibold text-text-primary">Add Candidate</h3>
+            <p className="text-xs text-text-secondary mt-0.5">
               Upload a CV or paste profile text — AI will extract their details.
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors">
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
           {/* CV upload */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              Upload CV <span className="text-slate-400 font-normal">(PDF, DOCX, TXT)</span>
+            <label className="block text-md font-medium text-text-primary mb-1.5">
+              Upload CV <span className="text-text-tertiary font-normal">(PDF, DOCX, TXT)</span>
             </label>
-            <label className={`flex items-center gap-3 px-4 py-3 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
+            <label className={`flex items-center gap-3 px-4 py-3 border border-dashed rounded-md cursor-pointer transition-colors ${
               extracting
-                ? "border-blue-300 bg-blue-50"
+                ? "border-accent bg-accent-subtle"
                 : fileName
-                ? "border-emerald-300 bg-emerald-50"
-                : "border-slate-200 hover:border-blue-300 hover:bg-blue-50"
+                ? "border-success bg-success-subtle"
+                : "border-separator-strong hover:bg-surface-hover"
             }`}>
               <input
                 ref={fileInputRef}
@@ -132,22 +132,22 @@ export function AddLibraryCandidateModal({ onComplete, onClose }: AddLibraryCand
               />
               {extracting ? (
                 <>
-                  <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
-                  <span className="text-sm text-blue-600">Extracting text…</span>
+                  <Loader2 className="w-4 h-4 text-accent animate-spin flex-shrink-0" />
+                  <span className="text-md text-accent">Extracting text…</span>
                 </>
               ) : fileName ? (
                 <>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                  <span className="text-sm text-emerald-700 truncate flex-1">{fileName}</span>
-                  <button type="button" onClick={clearFile} className="text-slate-400 hover:text-slate-600 flex-shrink-0">
+                  <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
+                  <span className="text-md text-success truncate flex-1">{fileName}</span>
+                  <button type="button" onClick={clearFile} className="text-text-tertiary hover:text-text-primary flex-shrink-0">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </>
               ) : (
                 <>
-                  <Paperclip className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <span className="text-sm text-slate-500">
-                    Click to upload <span className="font-medium text-slate-700">PDF, DOCX or TXT</span>
+                  <Paperclip className="w-4 h-4 text-text-tertiary flex-shrink-0" />
+                  <span className="text-md text-text-secondary">
+                    Click to upload <span className="font-medium text-text-primary">PDF, DOCX or TXT</span>
                   </span>
                 </>
               )}
@@ -157,10 +157,10 @@ export function AddLibraryCandidateModal({ onComplete, onClose }: AddLibraryCand
           {/* Divider */}
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-200" />
+              <div className="w-full border-t border-separator" />
             </div>
             <div className="relative flex justify-center">
-              <span className="bg-white px-3 text-xs text-slate-400">or paste text</span>
+              <span className="bg-surface-overlay px-3 text-xs text-text-tertiary">or paste text</span>
             </div>
           </div>
 
@@ -176,13 +176,13 @@ export function AddLibraryCandidateModal({ onComplete, onClose }: AddLibraryCand
                 }
               }}
               placeholder="Paste CV or LinkedIn profile text here — AI will extract the candidate's name, headline, and location."
-              className="w-full px-3.5 py-3 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              className="w-full px-3 py-2.5 border border-separator rounded bg-surface-sunken text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none transition-all"
               rows={5}
               disabled={extracting || adding}
             />
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-md text-danger">{error}</p>}
 
           <div className="flex gap-3 pt-1">
             <Button variant="secondary" onClick={onClose} className="flex-1" disabled={adding || extracting}>
@@ -194,7 +194,7 @@ export function AddLibraryCandidateModal({ onComplete, onClose }: AddLibraryCand
               disabled={adding || extracting || !profileText.trim()}
               className="flex-1"
             >
-              <UserPlus className="w-4 h-4" />
+              <UserPlus className="w-3.5 h-3.5" />
               {adding ? "Adding…" : "Add to Library"}
             </Button>
           </div>

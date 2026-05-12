@@ -11,19 +11,19 @@ import {
 // ─── Coverage chip configs ────────────────────────────────────────────────────
 
 const MH_CONFIG: Record<MustHaveCoverageStatus, { bg: string; text: string; icon: string }> = {
-  confirmed:         { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", icon: "✓" },
-  equivalent:        { bg: "bg-teal-50 border-teal-200",       text: "text-teal-700",    icon: "≈" },
-  likely:            { bg: "bg-blue-50 border-blue-200",       text: "text-blue-700",    icon: "~" },
-  likely_historical: { bg: "bg-amber-50 border-amber-200",    text: "text-amber-700",   icon: "⟳" },
-  missing:           { bg: "bg-slate-50 border-slate-200",     text: "text-slate-500",   icon: "?" },
-  negative:          { bg: "bg-red-50 border-red-200",         text: "text-red-700",     icon: "✗" },
-  unknown:           { bg: "bg-slate-50 border-slate-200",     text: "text-slate-400",   icon: "?" },
+  confirmed:         { bg: "bg-success-subtle border-separator", text: "text-success",        icon: "✓" },
+  equivalent:        { bg: "bg-success-subtle border-separator", text: "text-success",        icon: "≈" },
+  likely:            { bg: "bg-accent-subtle border-separator",  text: "text-accent",         icon: "~" },
+  likely_historical: { bg: "bg-warning-subtle border-separator", text: "text-warning",        icon: "⟳" },
+  missing:           { bg: "bg-surface-hover border-separator",  text: "text-text-secondary", icon: "?" },
+  negative:          { bg: "bg-surface-hover border-separator",  text: "text-text-tertiary",  icon: "✗" },
+  unknown:           { bg: "bg-surface-hover border-separator",  text: "text-text-tertiary",  icon: "?" },
 };
 
 const NTH_CONFIG: Record<NiceToHaveCoverageStatus, { bg: string; text: string; icon: string }> = {
-  confirmed: { bg: "bg-violet-50 border-violet-200",  text: "text-violet-700",  icon: "✓" },
-  likely:    { bg: "bg-slate-50 border-slate-200",    text: "text-slate-500",   icon: "~" },
-  absent:    { bg: "bg-slate-50 border-slate-100",    text: "text-slate-400",   icon: "–" },
+  confirmed: { bg: "bg-accent-subtle border-separator",   text: "text-accent",         icon: "✓" },
+  likely:    { bg: "bg-surface-hover border-separator",   text: "text-text-secondary", icon: "~" },
+  absent:    { bg: "bg-surface-hover border-separator",   text: "text-text-tertiary",  icon: "–" },
 };
 
 function chip(requirement: string, evidence: string, cfg: { bg: string; text: string; icon: string }, key: number) {
@@ -49,11 +49,11 @@ function MustHaveCoverageChips({ coverage }: { coverage: ScoreBreakdown["must_ha
   const sorted = [...coverage].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
   return (
     <div>
-      <p className="text-xs font-medium text-slate-500 mb-1.5">Must-haves</p>
+      <p className="text-xs font-medium text-text-secondary mb-1.5">Must-haves</p>
       <div className="flex flex-wrap gap-1">
         {sorted.map((c, i) => chip(c.requirement, c.evidence, MH_CONFIG[c.status], i))}
       </div>
-      <p className="text-[10px] text-slate-400 mt-1">Hover for evidence from the profile</p>
+      <p className="text-2xs text-text-tertiary mt-1">Hover for evidence from the profile</p>
     </div>
   );
 }
@@ -64,7 +64,7 @@ function NiceToHaveCoverageChips({ coverage }: { coverage: NonNullable<ScoreBrea
   const sorted = [...coverage].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
   return (
     <div>
-      <p className="text-xs font-medium text-slate-500 mb-1.5">Nice-to-haves</p>
+      <p className="text-xs font-medium text-text-secondary mb-1.5">Nice-to-haves</p>
       <div className="flex flex-wrap gap-1">
         {sorted.map((c, i) => chip(c.requirement, c.evidence, NTH_CONFIG[c.status], i))}
       </div>
@@ -97,13 +97,13 @@ export function ScoreBreakdownPanel({
   return (
     <div className="px-4 pb-2">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-xs text-slate-600 leading-relaxed italic flex-1">
+        <p className="text-xs text-text-secondary leading-relaxed italic flex-1">
           &ldquo;{displaySummary}&rdquo;
         </p>
         {(breakdown?.must_have_coverage?.length ?? 0) > 0 && (
           <button
             onClick={() => setShowReasoning((v) => !v)}
-            className="text-xs text-blue-600 hover:text-blue-700 whitespace-nowrap flex items-center gap-0.5 flex-shrink-0 mt-0.5 font-medium"
+            className="text-xs text-accent hover:text-accent-hover whitespace-nowrap flex items-center gap-0.5 flex-shrink-0 mt-0.5 font-medium transition-colors"
           >
             Why?
             <ChevronDown className={cn("w-3 h-3 transition-transform", showReasoning && "rotate-180")} />
@@ -127,18 +127,18 @@ export function ScoreBreakdownPanel({
               {/* Evidence coverage indicator (v2 only) */}
               {breakdown.version === 2 && breakdown.evidence_coverage_score !== undefined && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-400 whitespace-nowrap">Evidence coverage</span>
-                  <div className="h-1.5 flex-1 bg-slate-100 rounded-full overflow-hidden">
+                  <span className="text-2xs text-text-tertiary whitespace-nowrap">Evidence coverage</span>
+                  <div className="h-1.5 flex-1 bg-surface-sunken rounded-full overflow-hidden">
                     <div
                       className={cn(
                         "h-full rounded-full",
-                        breakdown.evidence_coverage_score >= 60 ? "bg-emerald-400" :
-                        breakdown.evidence_coverage_score >= 30 ? "bg-amber-400" : "bg-slate-300"
+                        breakdown.evidence_coverage_score >= 60 ? "bg-success" :
+                        breakdown.evidence_coverage_score >= 30 ? "bg-warning" : "bg-surface-hover"
                       )}
                       style={{ width: `${breakdown.evidence_coverage_score}%` }}
                     />
                   </div>
-                  <span className="text-[10px] text-slate-400 tabular-nums w-7 text-right">
+                  <span className="text-2xs text-text-tertiary tabular-nums w-7 text-right data-mono">
                     {breakdown.evidence_coverage_score}%
                   </span>
                 </div>
@@ -146,29 +146,29 @@ export function ScoreBreakdownPanel({
 
               {/* Category score bars */}
               <div className="space-y-1">
-                <p className="text-xs font-medium text-slate-500">Score breakdown</p>
+                <p className="text-xs font-medium text-text-secondary">Score breakdown</p>
                 {(Object.entries(breakdown.categories) as [string, { score: number; evidence: string }][]).map(([key, cat]) => (
                   <div key={key} className="flex items-start gap-2">
                     <div className="flex items-center gap-1.5 w-28 flex-shrink-0">
-                      <div className="h-1.5 flex-1 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-1.5 flex-1 bg-surface-sunken rounded-full overflow-hidden">
                         <div
                           className={cn(
                             "h-full rounded-full",
-                            cat.score >= 80 ? "bg-emerald-500" :
-                            cat.score >= 60 ? "bg-blue-500" :
-                            cat.score >= 40 ? "bg-amber-500" : "bg-red-400"
+                            cat.score >= 80 ? "bg-success" :
+                            cat.score >= 60 ? "bg-accent" :
+                            cat.score >= 40 ? "bg-warning" : "bg-surface-hover"
                           )}
                           style={{ width: `${cat.score}%` }}
                         />
                       </div>
-                      <span className="text-[10px] text-slate-500 tabular-nums w-7 text-right">{cat.score}%</span>
+                      <span className="text-2xs text-text-secondary tabular-nums w-7 text-right data-mono">{cat.score}%</span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
+                      <span className="text-2xs font-medium text-text-tertiary uppercase tracking-wide">
                         {key.replace(/_/g, " ").replace(" fit", "")}
                       </span>
                       {cat.evidence && (
-                        <p className="text-[10px] text-slate-500 leading-snug">{cat.evidence}</p>
+                        <p className="text-2xs text-text-secondary leading-snug">{cat.evidence}</p>
                       )}
                     </div>
                   </div>
@@ -176,9 +176,9 @@ export function ScoreBreakdownPanel({
               </div>
             </div>
           ) : matchReason?.reasoning ? (
-            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
-              <p className="text-xs font-medium text-blue-800 mb-1">AI Assessment</p>
-              <p className="text-xs text-slate-700 leading-relaxed">{matchReason.reasoning}</p>
+            <div className="p-3 bg-accent-subtle border border-separator rounded-md">
+              <p className="text-xs font-medium text-accent mb-1">AI Assessment</p>
+              <p className="text-xs text-text-primary leading-relaxed">{matchReason.reasoning}</p>
             </div>
           ) : null}
         </div>

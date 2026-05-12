@@ -75,28 +75,28 @@ export function getRadarDimensions(
 export function locationFitBadge(score: number | null | undefined) {
   if (score == null) {
     return {
-      pill: "bg-slate-100 text-slate-500 border-slate-200",
-      icon: "text-slate-400",
+      pill: "bg-surface-hover text-text-tertiary border-separator",
+      icon: "text-text-tertiary",
       label: "Location unknown",
     };
   }
   if (score >= 75) {
     return {
-      pill: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      icon: "text-emerald-600",
+      pill: "bg-success-subtle text-success border-separator",
+      icon: "text-success",
       label: "Location fit",
     };
   }
   if (score >= 45) {
     return {
-      pill: "bg-blue-50 text-blue-700 border-blue-200",
-      icon: "text-blue-600",
+      pill: "bg-accent-subtle text-accent border-separator",
+      icon: "text-accent",
       label: "Location maybe",
     };
   }
   return {
-    pill: "bg-red-50 text-red-700 border-red-200",
-    icon: "text-red-600",
+    pill: "bg-surface-hover text-text-secondary border-separator",
+    icon: "text-text-tertiary",
     label: "Location mismatch",
   };
 }

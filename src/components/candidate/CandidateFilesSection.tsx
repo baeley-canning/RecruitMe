@@ -28,9 +28,9 @@ function drawerTypeLabel(type: string) {
 }
 
 function drawerTypeColor(type: string) {
-  if (type === "cv") return "bg-blue-50 text-blue-600 border-blue-100";
-  if (type === "cover_letter") return "bg-purple-50 text-purple-600 border-purple-100";
-  return "bg-slate-50 text-slate-500 border-slate-100";
+  if (type === "cv") return "bg-accent-subtle text-accent border-separator";
+  if (type === "cover_letter") return "bg-warning-subtle text-warning border-separator";
+  return "bg-surface-hover text-text-secondary border-separator";
 }
 
 function DrawerFileRow({ file, candidateId, onDeleted }: { file: DrawerFile; candidateId: string; onDeleted: (id: string) => void }) {
@@ -42,19 +42,19 @@ function DrawerFileRow({ file, candidateId, onDeleted }: { file: DrawerFile; can
     onDeleted(file.id);
   };
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white border border-slate-100 group hover:border-slate-200 transition-colors">
-      <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium border flex-shrink-0", drawerTypeColor(file.type))}>
+    <div className="flex items-center gap-2 px-3 py-2 rounded bg-surface-raised border border-separator group hover:bg-surface-hover transition-colors">
+      <span className={cn("px-1.5 py-0.5 rounded-sm text-2xs font-medium border flex-shrink-0", drawerTypeColor(file.type))}>
         {drawerTypeLabel(file.type)}
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-slate-700 truncate">{file.filename}</p>
-        <p className="text-[10px] text-slate-400" suppressHydrationWarning>{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
+        <p className="text-xs font-medium text-text-primary truncate">{file.filename}</p>
+        <p className="text-2xs text-text-tertiary data-mono" suppressHydrationWarning>{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <a
           href={`/api/candidates/${candidateId}/files/${file.id}`}
           download={file.filename}
-          className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+          className="p-1 text-text-tertiary hover:text-accent hover:bg-surface-hover rounded transition-colors"
           title="Download"
         >
           <Download className="w-3.5 h-3.5" />
@@ -62,7 +62,7 @@ function DrawerFileRow({ file, candidateId, onDeleted }: { file: DrawerFile; can
         <button
           onClick={handleDelete}
           disabled={deleting}
-          className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+          className="p-1 text-text-tertiary hover:text-danger hover:bg-surface-hover rounded transition-colors disabled:opacity-50"
           title="Delete"
         >
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -117,15 +117,15 @@ function DrawerUploadZone({ candidateId, onUploaded }: { candidateId: string; on
         <select
           value={type}
           onChange={(e) => setType(e.target.value as typeof type)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 focus:outline-none focus:border-blue-400"
+          className="text-xs border border-separator rounded px-2 py-1.5 bg-surface-sunken text-text-primary focus:outline-none focus:border-accent focus:shadow-focus"
         >
           <option value="cv">CV / Resume</option>
           <option value="cover_letter">Cover Letter</option>
           <option value="other">Other</option>
         </select>
         <label className={cn(
-          "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors",
-          uploading ? "bg-slate-100 text-slate-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500 text-white"
+          "flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors",
+          uploading ? "bg-surface-hover text-text-tertiary cursor-not-allowed" : "bg-accent hover:bg-accent-hover text-white"
         )}>
           {uploading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Uploading…</> : <><Upload className="w-3.5 h-3.5" />Upload file</>}
           <input
@@ -138,9 +138,9 @@ function DrawerUploadZone({ candidateId, onUploaded }: { candidateId: string; on
           />
         </label>
       </div>
-      <p className="text-[10px] text-slate-400">PDF, Word, or plain text · max 10 MB</p>
-      {error && <p className="text-xs text-red-500">{error}</p>}
-      {notice && <p className="text-xs text-slate-500">{notice}</p>}
+      <p className="text-2xs text-text-tertiary">PDF, Word, or plain text · max 10 MB</p>
+      {error && <p className="text-xs text-danger">{error}</p>}
+      {notice && <p className="text-xs text-text-secondary">{notice}</p>}
     </div>
   );
 }
@@ -176,17 +176,17 @@ export function CandidateFilesSection({ candidateId }: CandidateFilesSectionProp
 
   return (
     <div>
-      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Files</p>
+      <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-3">Files</p>
       {filesLoading ? (
-        <div className="flex items-center gap-2 text-xs text-slate-400">
+        <div className="flex items-center gap-2 text-xs text-text-tertiary">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…
         </div>
       ) : filesError ? (
-        <p className="text-xs text-amber-600">{filesError}</p>
+        <p className="text-xs text-warning">{filesError}</p>
       ) : (
         <div className="space-y-2 mb-3">
           {files.length === 0 && (
-            <p className="text-xs text-slate-400">No files uploaded yet.</p>
+            <p className="text-xs text-text-tertiary">No files uploaded yet.</p>
           )}
           {files.map((f) => (
             <DrawerFileRow

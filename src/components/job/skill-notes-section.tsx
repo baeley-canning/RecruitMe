@@ -38,21 +38,21 @@ export function SkillNotesSection({
 
   function renderNote(note: SkillNote, isScarce: boolean) {
     const isDismissing = pendingDismissed.has(note.skill);
-    const borderCls   = isScarce ? "border-blue-200 bg-blue-50"   : "border-amber-200 bg-amber-50";
-    const textCls     = isScarce ? "text-blue-800"                : "text-amber-800";
-    const xCls        = isScarce ? "text-blue-300 hover:text-blue-600" : "text-amber-400 hover:text-amber-600";
+    const borderCls   = isScarce
+      ? "border-l-2 border-l-accent border-separator bg-accent-subtle"
+      : "border-l-2 border-l-warning border-separator bg-warning-subtle";
+    const textCls     = isScarce ? "text-text-primary" : "text-text-primary";
+    const xCls        = "text-text-tertiary hover:text-text-primary";
     const altBase     = isScarce
-      ? "bg-white text-blue-700 border-blue-300 hover:bg-blue-50 hover:border-blue-400"
-      : "bg-white text-amber-700 border-amber-300 hover:bg-amber-100 hover:border-amber-400";
-    const altAccepted = isScarce
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-      : "bg-emerald-50 text-emerald-700 border-emerald-200";
+      ? "bg-surface-raised text-accent border-separator hover:bg-surface-hover"
+      : "bg-surface-raised text-warning border-separator hover:bg-surface-hover";
+    const altAccepted = "bg-success-subtle text-success border-transparent";
     const altPending  = isScarce
-      ? "bg-blue-100 text-blue-600 border-blue-300 opacity-60"
-      : "bg-amber-100 text-amber-600 border-amber-300 opacity-60";
+      ? "bg-accent-subtle text-accent border-separator opacity-60"
+      : "bg-warning-subtle text-warning border-separator opacity-60";
 
     return (
-      <div key={note.skill} className={cn("rounded-lg border px-3 py-2.5", borderCls)}>
+      <div key={note.skill} className={cn("rounded border px-3 py-2.5", borderCls)}>
         <div className="flex items-start justify-between gap-2 mb-2">
           <p className={cn("text-xs leading-relaxed", textCls)}>{note.note}</p>
           <button
@@ -74,7 +74,7 @@ export function SkillNotesSection({
                 onClick={() => !accepted && onAccept(note.skill, alt)}
                 disabled={accepted || accepting}
                 className={cn(
-                  "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border transition-colors",
+                  "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-sm border transition-colors",
                   accepted ? altAccepted : accepting ? cn(altPending, "cursor-wait") : cn(altBase, "cursor-pointer")
                 )}
               >
@@ -92,7 +92,7 @@ export function SkillNotesSection({
     <div className="space-y-4">
       {legacyNotes.length > 0 && (
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide mb-2 flex items-center gap-1.5 text-amber-700">
+          <p className="text-2xs font-medium uppercase tracking-wide mb-2 flex items-center gap-1.5 text-warning">
             <Lightbulb className="w-3 h-3" />
             Search Tips
           </p>
@@ -101,7 +101,7 @@ export function SkillNotesSection({
       )}
       {scarceNotes.length > 0 && (
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide mb-2 flex items-center gap-1.5 text-blue-700">
+          <p className="text-2xs font-medium uppercase tracking-wide mb-2 flex items-center gap-1.5 text-accent">
             <Users className="w-3 h-3" />
             Talent Pool
           </p>

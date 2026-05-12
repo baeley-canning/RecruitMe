@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Loader2, AlertCircle, X, Copy, Check } from "lucide-react";
+import { Modal } from "@/components/ui/modal";
 
 interface JobAdModalProps {
   jobId: string;
@@ -49,55 +50,58 @@ export function JobAdModal({ jobId, onClose }: JobAdModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
-          <div>
-            <h3 className="font-semibold text-slate-900">Generated Job Ad</h3>
-            <p className="text-xs text-slate-500 mt-0.5">AI-written advertisement based on parsed role requirements.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {jobAd && (
-              <button onClick={copyAll} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors">
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                {copied ? "Copied!" : "Copy All"}
-              </button>
-            )}
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+    <Modal
+      open={true}
+      onClose={onClose}
+      labelledBy="job-ad-title"
+      className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-2xl max-h-[90vh] flex flex-col"
+    >
+      <div className="flex items-center justify-between px-5 py-3 border-b border-separator flex-shrink-0">
+        <div>
+          <h3 id="job-ad-title" className="text-md font-semibold text-text-primary">Generated Job Ad</h3>
+          <p className="text-xs text-text-secondary mt-0.5">AI-written advertisement based on parsed role requirements.</p>
         </div>
-        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
-          {loading && (
-            <div className="flex flex-col items-center justify-center py-12 gap-3">
-              <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-              <p className="text-sm text-slate-500">Writing your job ad…</p>
-            </div>
+        <div className="flex items-center gap-2">
+          {jobAd && (
+            <button onClick={copyAll} className="inline-flex items-center gap-1.5 h-7 px-3 text-xs font-medium rounded bg-surface-hover hover:bg-surface-overlay text-text-primary border border-separator transition-colors">
+              {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? "Copied!" : "Copy All"}
+            </button>
           )}
-          {error && !loading && (
-            <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg">
-              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
-          )}
-          {jobAd && !loading && (
-            <>
-              <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
-                <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">Headline</p>
-                <p className="font-bold text-slate-900 text-lg leading-snug">{jobAd.headline}</p>
-              </div>
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Body</p>
-                <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{jobAd.body}</p>
-              </div>
-              <button onClick={regenerate} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
-                Regenerate
-              </button>
-            </>
-          )}
+          <button onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors" aria-label="Close">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
-    </div>
+      <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <Loader2 className="w-5 h-5 text-accent animate-spin" />
+            <p className="text-base text-text-secondary">Writing your job ad…</p>
+          </div>
+        )}
+        {error && !loading && (
+          <div className="flex items-start gap-2 px-3 py-2 bg-danger-subtle border-l-2 border-danger rounded-sm">
+            <AlertCircle className="w-3.5 h-3.5 text-danger flex-shrink-0 mt-0.5" />
+            <p className="text-base text-danger">{error}</p>
+          </div>
+        )}
+        {jobAd && !loading && (
+          <>
+            <div className="p-4 bg-accent-subtle border border-separator rounded">
+              <p className="text-2xs font-semibold text-accent uppercase tracking-wide mb-1">Headline</p>
+              <p className="font-semibold text-text-primary text-lg leading-snug">{jobAd.headline}</p>
+            </div>
+            <div className="p-4 bg-surface-sunken border border-separator rounded">
+              <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Body</p>
+              <p className="text-base text-text-primary leading-relaxed whitespace-pre-wrap">{jobAd.body}</p>
+            </div>
+            <button onClick={regenerate} className="text-xs text-accent hover:text-accent-hover font-medium">
+              Regenerate
+            </button>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }

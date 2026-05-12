@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Loader2, AlertCircle, X, Copy, Check, FileText } from "lucide-react";
+import { Modal } from "@/components/ui/modal";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 
@@ -61,58 +62,61 @@ export function ClientReportModal({ jobId, jobTitle, jobParsedRole, candidates, 
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
-          <div>
-            <h3 className="font-semibold text-slate-900">Client Report</h3>
-            <p className="text-xs text-slate-500 mt-0.5">AI-generated recruiter summaries for shortlisted candidates.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {summaries.length > 0 && (
-              <button onClick={copyAll} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors">
-                {copiedAll ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                {copiedAll ? "Copied!" : "Copy All"}
-              </button>
-            )}
-            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+    <Modal
+      open={true}
+      onClose={onClose}
+      labelledBy="client-report-title"
+      className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-2xl max-h-[90vh] flex flex-col"
+    >
+      <div className="flex items-center justify-between px-5 py-3 border-b border-separator flex-shrink-0">
+        <div>
+          <h3 id="client-report-title" className="text-md font-semibold text-text-primary">Client Report</h3>
+          <p className="text-xs text-text-secondary mt-0.5">AI-generated recruiter summaries for shortlisted candidates.</p>
         </div>
-        <div className="overflow-y-auto flex-1 px-6 py-5">
-          {loading && (
-            <div className="flex flex-col items-center justify-center py-12 gap-3">
-              <Loader2 className="w-6 h-6 text-violet-500 animate-spin" />
-              <p className="text-sm text-slate-500">Claude is writing candidate summaries…</p>
-            </div>
-          )}
-          {error && !loading && (
-            <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg">
-              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
-          )}
+        <div className="flex items-center gap-2">
           {summaries.length > 0 && (
-            <div className="space-y-5">
-              {summaries.map((s) => (
-                <div key={s.id} className="group relative p-4 bg-slate-50 rounded-xl border border-slate-200">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <p className="text-sm font-semibold text-slate-900">{s.name}</p>
-                    <button onClick={() => copyParagraph(s.id, s.paragraph)}
-                      className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors opacity-0 group-hover:opacity-100">
-                      {copiedId === s.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                      {copiedId === s.id ? "Copied" : "Copy"}
-                    </button>
-                  </div>
-                  <p className="text-sm text-slate-700 leading-relaxed">{s.paragraph}</p>
-                </div>
-              ))}
-            </div>
+            <button onClick={copyAll} className="inline-flex items-center gap-1.5 h-7 px-3 text-xs font-medium rounded bg-surface-hover hover:bg-surface-overlay text-text-primary border border-separator transition-colors">
+              {copiedAll ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+              {copiedAll ? "Copied!" : "Copy All"}
+            </button>
           )}
+          <button onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors" aria-label="Close">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
-    </div>
+      <div className="overflow-y-auto flex-1 px-5 py-4">
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <Loader2 className="w-5 h-5 text-llama animate-spin" />
+            <p className="text-base text-text-secondary">Claude is writing candidate summaries…</p>
+          </div>
+        )}
+        {error && !loading && (
+          <div className="flex items-start gap-2 px-3 py-2 bg-danger-subtle border-l-2 border-danger rounded-sm">
+            <AlertCircle className="w-3.5 h-3.5 text-danger flex-shrink-0 mt-0.5" />
+            <p className="text-base text-danger">{error}</p>
+          </div>
+        )}
+        {summaries.length > 0 && (
+          <div className="space-y-4">
+            {summaries.map((s) => (
+              <div key={s.id} className="group relative p-4 bg-surface-sunken rounded border border-separator">
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <p className="text-md font-semibold text-text-primary">{s.name}</p>
+                  <button onClick={() => copyParagraph(s.id, s.paragraph)}
+                    className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs rounded-sm border border-separator bg-surface-raised text-text-secondary hover:bg-surface-hover transition-colors opacity-0 group-hover:opacity-100">
+                    {copiedId === s.id ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
+                    {copiedId === s.id ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-base text-text-secondary leading-relaxed">{s.paragraph}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 

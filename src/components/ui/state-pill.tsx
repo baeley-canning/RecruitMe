@@ -17,12 +17,13 @@ type PillProps = {
   className?: string;
 };
 
-const baseClass = "inline-flex items-center gap-1.5 text-xs leading-snug";
+const baseClass =
+  "inline-flex items-center gap-1 h-5 px-1.5 py-0.5 rounded-sm text-xs font-medium leading-none";
 
 export function ErrorPill({ children, className }: PillProps) {
   return (
-    <span className={cn(baseClass, "text-red-600", className)}>
-      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+    <span className={cn(baseClass, "bg-danger-subtle text-danger", className)}>
+      <AlertCircle className="w-3 h-3 flex-shrink-0" />
       {children}
     </span>
   );
@@ -30,8 +31,8 @@ export function ErrorPill({ children, className }: PillProps) {
 
 export function WarningPill({ children, className }: PillProps) {
   return (
-    <span className={cn(baseClass, "text-amber-700", className)}>
-      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+    <span className={cn(baseClass, "bg-warning-subtle text-warning", className)}>
+      <AlertCircle className="w-3 h-3 flex-shrink-0" />
       {children}
     </span>
   );
@@ -39,8 +40,8 @@ export function WarningPill({ children, className }: PillProps) {
 
 export function SuccessPill({ children, className }: PillProps) {
   return (
-    <span className={cn(baseClass, "text-emerald-600", className)}>
-      <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+    <span className={cn(baseClass, "bg-success-subtle text-success", className)}>
+      <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
       {children}
     </span>
   );
@@ -48,8 +49,8 @@ export function SuccessPill({ children, className }: PillProps) {
 
 export function LoadingPill({ children, className }: PillProps) {
   return (
-    <span className={cn(baseClass, "text-slate-500", className)}>
-      <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" />
+    <span className={cn(baseClass, "bg-surface-hover text-text-secondary", className)}>
+      <Loader2 className="w-3 h-3 flex-shrink-0 animate-spin" />
       {children}
     </span>
   );
@@ -63,11 +64,11 @@ export function LoadingPill({ children, className }: PillProps) {
 export function CardLoadError({ message, className }: { message: string; className?: string }) {
   return (
     <div className={cn(
-      "mb-6 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 flex items-center gap-2",
+      "mb-6 rounded-md border border-separator bg-warning-subtle px-3 py-2 flex items-center gap-2",
       className,
     )}>
-      <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
-      <p className="text-xs text-amber-700">{message}</p>
+      <AlertCircle className="w-3.5 h-3.5 text-warning flex-shrink-0" />
+      <p className="text-xs text-warning">{message}</p>
     </div>
   );
 }

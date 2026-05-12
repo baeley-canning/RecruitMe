@@ -13,8 +13,8 @@ export function JobAdderBadge({ url, className }: { url: string | null; classNam
   const base = cn(
     "inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold leading-none border transition-colors",
     url
-      ? "bg-orange-500 text-white border-orange-600"
-      : "bg-slate-100 text-slate-400 border-slate-200 hover:border-orange-300 hover:text-orange-500",
+      ? "bg-warning text-text-inverse border-warning"
+      : "bg-surface-hover text-text-tertiary border-separator hover:text-warning",
     className,
   );
   if (url) {

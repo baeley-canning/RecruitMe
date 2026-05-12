@@ -37,22 +37,22 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
   if (top.length === 0) return null;
 
   return (
-    <div className="mb-6 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-100">
-        <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
-        <p className="text-sm font-semibold text-slate-800">Top matches — ready to shortlist</p>
+    <div className="mb-6 rounded-md border border-separator bg-surface-raised border-l-2 border-l-warning overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-separator bg-warning-subtle">
+        <Star className="w-3.5 h-3.5 text-warning fill-warning" />
+        <p className="text-md font-semibold text-text-primary">Top matches — ready to shortlist</p>
         {thinMarket && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded ml-1">
+          <span className="inline-flex items-center gap-1 text-2xs font-medium px-1.5 py-0.5 bg-warning-subtle text-warning rounded-sm ml-1">
             <TrendingDown className="w-2.5 h-2.5" />
             Thin market
           </span>
         )}
-        <span className="ml-auto text-[11px] text-slate-400">{top.length} candidate{top.length !== 1 ? "s" : ""}</span>
+        <span className="ml-auto text-xs text-text-tertiary data-mono">{top.length} candidate{top.length !== 1 ? "s" : ""}</span>
       </div>
 
-      <div className="divide-y divide-amber-100/60">
+      <div className="divide-y divide-separator">
         {top.map((c) => (
-          <div key={c.id} className="flex items-center gap-3 px-4 py-3">
+          <div key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-surface-hover transition-colors">
             {/* Score badge */}
             <div className="flex-shrink-0">
               <ScoreBadge score={c.matchScore} size="sm" />
@@ -60,12 +60,12 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
 
             {/* Info */}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-800 truncate">{c.name}</p>
+              <p className="text-md font-medium text-text-primary truncate">{c.name}</p>
               {c.headline && (
-                <p className="text-xs text-slate-500 truncate">{c.headline}</p>
+                <p className="text-xs text-text-secondary truncate">{c.headline}</p>
               )}
               {c.location && (
-                <p className="text-[11px] text-slate-400 truncate">{c.location}</p>
+                <p className="text-xs text-text-tertiary truncate">{c.location}</p>
               )}
             </div>
 
@@ -73,17 +73,17 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
                 onClick={() => onShortlist(c.id)}
-                className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors"
+                className="inline-flex items-center gap-1 h-7 px-3 rounded bg-warning hover:bg-warning-hover text-text-inverse text-md font-medium transition-colors"
               >
                 <Star className="w-3 h-3" />
                 Shortlist
               </button>
               <button
                 onClick={() => onView(c.id)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                 title="View candidate"
               >
-                <ChevronRight className="w-4 h-4" />
+                <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -91,8 +91,8 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
       </div>
 
       {eligible.length > 3 && (
-        <div className="px-4 py-2 text-[11px] text-slate-400 border-t border-amber-100">
-          +{eligible.length - 3} more candidates scoring {threshold}%+
+        <div className="px-4 py-2 text-xs text-text-tertiary border-t border-separator">
+          +<span className="data-mono">{eligible.length - 3}</span> more candidates scoring <span className="data-mono">{threshold}%+</span>
         </div>
       )}
     </div>

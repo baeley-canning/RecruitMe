@@ -49,35 +49,45 @@ export default async function JobsPage() {
   const fetchJobs = Object.values(fetchByJob).sort((a, b) => b.count - a.count);
   const fetchTarget = needsFetchRows.length > 0 ? needsFetchRows[0] : null;
 
+  const tiles = [
+    { label: "Active jobs",      value: activeJobs,       icon: Briefcase },
+    { label: "Total candidates", value: totalCandidates,  icon: Users },
+    { label: "Shortlisted",      value: totalShortlisted, icon: Star },
+  ];
+
   return (
-    <div className="px-4 py-6 sm:px-6 md:p-8 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage your recruitment pipeline</p>
-        </div>
-        <div className="flex items-center gap-3">
+    <div className="bg-surface-base min-h-full">
+      {/* Toolbar */}
+      <div className="toolbar">
+        <h1 className="text-md font-semibold text-text-primary">Jobs</h1>
+        <span className="text-xs text-text-tertiary">Manage your recruitment pipeline</span>
+
+        <div className="ml-auto flex items-center gap-2">
           {/* Fetch status indicator */}
           {fetchTarget ? (
             <div className="relative group">
               <Link
                 href={`/jobs/${fetchTarget.jobId}`}
                 title={fetchJobs.map(j => `${j.title}${j.company ? ` · ${j.company}` : ""}: ${j.count}`).join("\n")}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 transition-colors text-xs font-medium text-orange-700"
+                className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded bg-warning-subtle text-warning text-xs font-medium hover:bg-warning/20 transition-colors"
               >
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500" />
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-warning" />
                 </span>
-                {needsFetchRows.length} to fetch{fetchJobs.length > 1 ? ` · ${fetchJobs.length} jobs` : ""}
+                <span className="data-mono">{needsFetchRows.length}</span> to fetch
+                {fetchJobs.length > 1 && <span className="text-text-tertiary">· {fetchJobs.length} jobs</span>}
               </Link>
               {/* Per-job breakdown on hover */}
-              <div className="absolute right-0 top-full mt-1 z-10 hidden group-hover:block bg-white border border-slate-200 rounded-lg shadow-lg p-2 min-w-[200px]">
+              <div className="absolute right-0 top-full mt-1 z-10 hidden group-hover:block bg-surface-overlay border border-separator rounded-md shadow-popover p-1.5 min-w-[220px]">
                 {fetchJobs.map(j => (
-                  <Link key={j.jobId} href={`/jobs/${j.jobId}`} className="flex items-center justify-between px-2 py-1 hover:bg-slate-50 rounded text-xs">
-                    <span className="text-slate-700 truncate">{j.title}{j.company ? ` · ${j.company}` : ""}</span>
-                    <span className="ml-2 text-orange-600 font-medium flex-shrink-0">{j.count}</span>
+                  <Link
+                    key={j.jobId}
+                    href={`/jobs/${j.jobId}`}
+                    className="flex items-center justify-between px-2 py-1 hover:bg-surface-hover rounded text-xs"
+                  >
+                    <span className="text-text-primary truncate">{j.title}{j.company ? ` · ${j.company}` : ""}</span>
+                    <span className="ml-2 text-warning font-medium flex-shrink-0 data-mono">{j.count}</span>
                   </Link>
                 ))}
               </div>
@@ -85,80 +95,59 @@ export default async function JobsPage() {
           ) : (
             <span
               title="All captured profiles are up to date"
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-medium text-emerald-700"
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded bg-success-subtle text-success text-xs font-medium"
             >
-              <span className="inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              <span className="inline-flex rounded-full h-2 w-2 bg-success" />
               Profiles up to date
             </span>
           )}
           <Link
             href="/jobs/new"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+            className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
           >
-            <Plus className="w-4 h-4" />
-            New Job
+            <Plus className="w-3.5 h-3.5" />
+            New job
           </Link>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
-              <Briefcase className="w-5 h-5 text-blue-600" />
+      <div className="p-5 max-w-5xl mx-auto">
+        {/* Stat tiles */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-5">
+          {tiles.map(({ label, value, icon: Icon }) => (
+            <div
+              key={label}
+              className="bg-surface-raised border border-separator rounded-md p-3"
+            >
+              <div className="flex items-center gap-2 mb-1 text-text-tertiary">
+                <Icon className="w-3.5 h-3.5" />
+                <p className="text-2xs uppercase tracking-wider">{label}</p>
+              </div>
+              <p className="text-2xl data-mono text-text-primary">{value}</p>
             </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-900">{activeJobs}</p>
-              <p className="text-xs text-slate-500">Active Jobs</p>
-            </div>
-          </div>
+          ))}
         </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center">
-              <Users className="w-5 h-5 text-purple-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-900">{totalCandidates}</p>
-              <p className="text-xs text-slate-500">Total Candidates</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center">
-              <Star className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-900">{totalShortlisted}</p>
-              <p className="text-xs text-slate-500">Shortlisted</p>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Job list */}
-      {jobs.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-xl border border-slate-200 border-dashed">
-          <div className="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Briefcase className="w-7 h-7 text-blue-500" />
+        {/* Job list */}
+        {jobs.length === 0 ? (
+          <div className="bg-surface-raised border border-separator rounded-md p-10 text-center">
+            <Briefcase className="w-6 h-6 text-text-tertiary mx-auto mb-3" />
+            <h3 className="text-md font-semibold text-text-primary mb-1">No jobs yet</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Create your first job by uploading or pasting a job description.
+            </p>
+            <Link
+              href="/jobs/new"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Create first job
+            </Link>
           </div>
-          <h3 className="text-lg font-semibold text-slate-900 mb-2">No jobs yet</h3>
-          <p className="text-slate-500 text-sm mb-5">
-            Create your first job by uploading or pasting a job description.
-          </p>
-          <Link
-            href="/jobs/new"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Create first job
-          </Link>
-        </div>
-      ) : (
-        <JobsListClient jobs={jobs} />
-      )}
+        ) : (
+          <JobsListClient jobs={jobs} />
+        )}
+      </div>
     </div>
   );
 }

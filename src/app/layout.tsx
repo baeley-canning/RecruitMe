@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { AuthSessionProvider } from "@/components/session-provider";
 import { Toaster } from "@/components/ui/toast";
 
-const inter = Inter({ subsets: ["latin"] });
+// SF Pro / system fonts only — no Google Fonts loader. The Logic Pro look
+// depends on the OS-native typeface; Inter was the wrong call for this
+// aesthetic. font-sans in Tailwind maps to the SF Pro stack via tailwind.config.
 
 export const metadata: Metadata = {
   title: "RecruitMe",
@@ -20,8 +21,8 @@ export default async function RootLayout({
 }) {
   const session = await getServerSession(authOptions);
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="en" className="dark">
+      <body className="font-sans">
         <AuthSessionProvider session={session}>{children}</AuthSessionProvider>
         <Toaster />
       </body>

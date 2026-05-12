@@ -37,7 +37,7 @@ import { ScoreRadar } from "./score-radar";
 import type { RadarDimensions } from "./score-radar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { cn, statusLabel, statusBadge, safeParseJson } from "@/lib/utils";
+import { cn, statusLabel, safeParseJson } from "@/lib/utils";
 import {
   CATEGORY_WEIGHTS_V2,
   MUST_HAVE_WEIGHT_V2,
@@ -118,20 +118,40 @@ interface Candidate {
 // special document actions. Replacing 140 lines of JSX if-else chains.
 type StatusAction = { label: string; to: string; icon?: string; className: string };
 const PIPELINE_FORWARD: Record<string, StatusAction> = {
-  new:          { label: "Shortlist",       to: "shortlisted",  icon: "star",  className: "text-amber-600 hover:bg-amber-50 hover:text-amber-700" },
-  reviewing:    { label: "Shortlist",       to: "shortlisted",  icon: "star",  className: "text-amber-600 hover:bg-amber-50 hover:text-amber-700" },
-  shortlisted:  { label: "Mark Contacted",  to: "contacted",    icon: "send",  className: "text-violet-600 hover:bg-violet-50" },
-  contacted:    { label: "Interviewing",    to: "interviewing",                className: "text-indigo-600 hover:bg-indigo-50" },
-  interviewing: { label: "Send Offer",      to: "offer_sent",                  className: "text-emerald-600 hover:bg-emerald-50" },
+  new:          { label: "Shortlist",       to: "shortlisted",  icon: "star",  className: "text-warning hover:text-warning hover:bg-warning-subtle" },
+  reviewing:    { label: "Shortlist",       to: "shortlisted",  icon: "star",  className: "text-warning hover:text-warning hover:bg-warning-subtle" },
+  shortlisted:  { label: "Mark Contacted",  to: "contacted",    icon: "send",  className: "text-accent hover:text-accent hover:bg-accent-subtle" },
+  contacted:    { label: "Interviewing",    to: "interviewing",                className: "text-accent hover:text-accent hover:bg-accent-subtle" },
+  interviewing: { label: "Send Offer",      to: "offer_sent",                  className: "text-success hover:text-success hover:bg-success-subtle" },
   // offer_sent is intentionally absent — it has two forward options (Hired / Declined)
   // which are handled explicitly below. Never add offer_sent here or both paths will render.
 } as const satisfies Partial<Record<string, StatusAction>>;
 const PIPELINE_BACK: Record<string, StatusAction> = {
-  shortlisted:  { label: "↩ Reviewing",    to: "reviewing",   className: "text-slate-400 hover:text-slate-600" },
-  contacted:    { label: "↩ Shortlist",    to: "shortlisted", className: "text-slate-400 hover:text-slate-600" },
-  interviewing: { label: "↩ Contacted",    to: "contacted",   className: "text-slate-400 hover:text-slate-600" },
+  shortlisted:  { label: "↩ Reviewing",    to: "reviewing",   className: "text-text-tertiary hover:text-text-primary hover:bg-surface-hover" },
+  contacted:    { label: "↩ Shortlist",    to: "shortlisted", className: "text-text-tertiary hover:text-text-primary hover:bg-surface-hover" },
+  interviewing: { label: "↩ Contacted",    to: "contacted",   className: "text-text-tertiary hover:text-text-primary hover:bg-surface-hover" },
 };
 const TERMINAL_STATUSES = new Set(["hired", "declined", "rejected"]);
+
+// Token-based status pill mapping (overrides legacy slate/blue/amber/etc in
+// lib/utils.statusBadge so the candidate card stays on-design without
+// touching the shared util — other agents are editing that file).
+const STATUS_PILL_TOKENS: Record<string, string> = {
+  new:          "bg-surface-hover text-text-secondary",
+  reviewing:    "bg-surface-hover text-text-secondary",
+  shortlisted:  "bg-accent-subtle text-accent",
+  contacted:    "bg-warning-subtle text-warning",
+  interviewing: "bg-warning-subtle text-warning",
+  offer_sent:   "bg-warning-subtle text-warning",
+  hired:        "bg-success-subtle text-success",
+  // Recruiter dismissed the candidate — this is not an error state, so
+  // we deliberately keep it tonally neutral (NOT danger red).
+  declined:     "bg-surface-hover text-text-tertiary",
+  rejected:     "bg-surface-hover text-text-tertiary",
+};
+function statusPillTokens(status: string): string {
+  return STATUS_PILL_TOKENS[status] ?? "bg-surface-hover text-text-secondary";
+}
 
 interface CandidateCardProps {
   candidate: Candidate;
@@ -162,20 +182,27 @@ function LocationFitPill({
 }) {
   if (!location || !isPlausibleLocation(location)) return null;
 
+  // Use locationFitBadge() only for the label string — colours are derived
+  // locally from design tokens so the pill matches the dark Pro App palette.
   const cfg = locationFitBadge(score);
+  const tone =
+    score == null      ? "bg-surface-hover text-text-tertiary"
+    : score >= 75      ? "bg-success-subtle text-success"
+    : score >= 45      ? "bg-accent-subtle  text-accent"
+    :                    "bg-danger-subtle  text-danger";
 
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border font-medium",
-        compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs",
-        cfg.pill
+        "inline-flex items-center gap-1.5 rounded-sm font-medium",
+        compact ? "px-1.5 py-0.5 text-xs" : "px-2 py-0.5 text-xs",
+        tone,
       )}
       title={score != null ? `${cfg.label}: ${score}%` : cfg.label}
     >
-      <MapPin className={cn(compact ? "w-3 h-3" : "w-3.5 h-3.5", cfg.icon)} />
+      <MapPin className="w-3 h-3" />
       <span className="truncate max-w-[220px]">{location}</span>
-      {score != null && <span className="tabular-nums opacity-80">{score}%</span>}
+      {score != null && <span className="data-mono opacity-80">{score}%</span>}
     </div>
   );
 }
@@ -196,9 +223,9 @@ function AcceptanceBadge({
   const level = score >= 70 ? "high" : score >= 40 ? "medium" : "low";
 
   const config = {
-    high:   { pill: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Likely open",  Icon: TrendingUp },
-    medium: { pill: "bg-amber-50 text-amber-700 border-amber-200",       label: "May consider", Icon: Minus },
-    low:    { pill: "bg-red-50 text-red-600 border-red-100",             label: "Hard to move", Icon: TrendingDown },
+    high:   { pill: "bg-success-subtle text-success", label: "Likely open",  Icon: TrendingUp },
+    medium: { pill: "bg-warning-subtle text-warning", label: "May consider", Icon: Minus },
+    low:    { pill: "bg-surface-hover  text-text-tertiary", label: "Hard to move", Icon: TrendingDown },
   }[level];
 
   const handleMouseEnter = () => {
@@ -221,8 +248,8 @@ function AcceptanceBadge({
         onMouseLeave={() => setShowDetail(false)}
         title="Offer acceptance likelihood — how likely this candidate is to accept an offer based on their career signals"
         className={cn(
-          "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium cursor-default select-none",
-          config.pill
+          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium cursor-default select-none",
+          config.pill,
         )}
       >
         <config.Icon className="w-3 h-3" />
@@ -231,48 +258,48 @@ function AcceptanceBadge({
 
       {showDetail && data && (
         <div
-          className="w-72 bg-slate-900 text-white rounded-xl shadow-2xl overflow-hidden"
+          className="w-72 bg-surface-overlay text-text-primary rounded-md shadow-overlay overflow-hidden border border-separator"
           style={{ position: "fixed", top: tooltipPos.top, right: tooltipPos.right, zIndex: 9999 }}
           onMouseEnter={() => setShowDetail(true)}
           onMouseLeave={() => setShowDetail(false)}
         >
-          <div className="px-4 pt-3 pb-2 border-b border-slate-700">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
+          <div className="px-3 pt-2.5 pb-2 border-b border-separator">
+            <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-1">
               Offer Acceptance Likelihood
             </p>
-            <p className="text-sm font-medium text-white leading-snug">{data.headline}</p>
+            <p className="text-sm font-medium text-text-primary leading-snug">{data.headline}</p>
           </div>
 
           {data.signals.length > 0 && (
-            <div className="px-4 py-2.5 space-y-1.5 border-b border-slate-700">
+            <div className="px-3 py-2 space-y-1.5 border-b border-separator">
               {data.signals.map((s, i) => (
                 <div key={i} className="flex items-start gap-2">
                   {s.positive
-                    ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
-                    : <XCircle    className="w-3.5 h-3.5 text-red-400    flex-shrink-0 mt-0.5" />
+                    ? <CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0 mt-0.5" />
+                    : <XCircle    className="w-3.5 h-3.5 text-danger  flex-shrink-0 mt-0.5" />
                   }
-                  <span className="text-xs text-slate-300 leading-relaxed">{s.label}</span>
+                  <span className="text-xs text-text-secondary leading-relaxed">{s.label}</span>
                 </div>
               ))}
             </div>
           )}
 
           {data.summary && (
-            <div className="px-4 py-2.5 border-b border-slate-700">
-              <p className="text-xs text-slate-400 leading-relaxed">{data.summary}</p>
+            <div className="px-3 py-2 border-b border-separator">
+              <p className="text-xs text-text-tertiary leading-relaxed">{data.summary}</p>
             </div>
           )}
 
-          <div className="px-4 py-3">
+          <div className="px-3 py-2.5">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs text-slate-500">Likelihood score</span>
-              <span className="text-xs font-semibold text-slate-300">{score}%</span>
+              <span className="text-xs text-text-tertiary">Likelihood score</span>
+              <span className="text-xs font-semibold text-text-secondary data-mono">{score}%</span>
             </div>
-            <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+            <div className="h-1 bg-surface-sunken rounded-sm overflow-hidden">
               <div
                 className={cn(
-                  "h-full rounded-full",
-                  level === "high" ? "bg-emerald-500" : level === "medium" ? "bg-amber-500" : "bg-red-500"
+                  "h-full rounded-sm",
+                  level === "high" ? "bg-success" : level === "medium" ? "bg-warning" : "bg-danger",
                 )}
                 style={{ width: `${score}%` }}
               />
@@ -294,9 +321,9 @@ function ConfidenceBadge({ breakdown }: { breakdown: ScoreBreakdown }) {
   const { confidence, data_quality } = breakdown;
 
   const cfg = {
-    high:   { pill: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "High confidence" },
-    medium: { pill: "bg-amber-50 text-amber-700 border-amber-200",       label: "Medium confidence" },
-    low:    { pill: "bg-slate-100 text-slate-500 border-slate-200",      label: "Low confidence" },
+    high:   { pill: "bg-success-subtle text-success",        label: "High confidence" },
+    medium: { pill: "bg-warning-subtle text-warning",        label: "Medium confidence" },
+    low:    { pill: "bg-surface-hover  text-text-tertiary",  label: "Low confidence" },
   }[confidence.level];
 
   const qualityLabel = {
@@ -319,41 +346,41 @@ function ConfidenceBadge({ breakdown }: { breakdown: ScoreBreakdown }) {
         }}
         onMouseLeave={() => setShow(false)}
         className={cn(
-          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border font-medium leading-none cursor-default select-none",
-          cfg.pill
+          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium leading-none cursor-default select-none",
+          cfg.pill,
         )}
       >
         <span className="text-[10px]">◎</span>
-        {confidence.score}%
+        <span className="data-mono">{confidence.score}%</span>
       </div>
 
       {show && (
         <div
-          className="w-64 bg-slate-900 text-white rounded-xl shadow-2xl overflow-hidden"
+          className="w-64 bg-surface-overlay text-text-primary rounded-md shadow-overlay overflow-hidden border border-separator"
           style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 9999 }}
           onMouseEnter={() => setShow(true)}
           onMouseLeave={() => setShow(false)}
         >
-          <div className="px-4 pt-3 pb-2 border-b border-slate-700">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-0.5">Scoring Confidence</p>
-            <p className="text-sm font-medium text-white">
+          <div className="px-3 pt-2.5 pb-2 border-b border-separator">
+            <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-0.5">Scoring Confidence</p>
+            <p className="text-sm font-medium text-text-primary">
               {captureWarning ? "Capture warning" : cfg.label} · {qualityLabel}
             </p>
           </div>
-          <div className="px-4 py-2.5 space-y-1">
+          <div className="px-3 py-2 space-y-1">
             {captureWarning && (
-              <p className="text-xs text-amber-200 leading-snug">{captureWarning.message}</p>
+              <p className="text-xs text-warning leading-snug">{captureWarning.message}</p>
             )}
             {confidence.reasons.map((r, i) => (
-              <p key={i} className="text-xs text-slate-300 leading-snug">· {r}</p>
+              <p key={i} className="text-xs text-text-secondary leading-snug">· {r}</p>
             ))}
           </div>
-          <div className="px-4 pb-3">
-            <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden mt-1">
+          <div className="px-3 pb-2.5">
+            <div className="h-1 bg-surface-sunken rounded-sm overflow-hidden mt-1">
               <div
                 className={cn(
-                  "h-full rounded-full",
-                  confidence.level === "high" ? "bg-emerald-500" : confidence.level === "medium" ? "bg-amber-500" : "bg-slate-500"
+                  "h-full rounded-sm",
+                  confidence.level === "high" ? "bg-success" : confidence.level === "medium" ? "bg-warning" : "bg-text-tertiary",
                 )}
                 style={{ width: `${confidence.score}%` }}
               />
@@ -388,12 +415,12 @@ function FetchPriorityBadge({
 
   const cfg =
     score >= 80
-      ? { pill: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Strong lead" }
+      ? { pill: "bg-success-subtle text-success",        label: "Strong lead" }
       : score >= 65
-        ? { pill: "bg-blue-50 text-blue-700 border-blue-200", label: "Worth fetching" }
+        ? { pill: "bg-accent-subtle text-accent",        label: "Worth fetching" }
         : score >= 50
-          ? { pill: "bg-amber-50 text-amber-700 border-amber-200", label: "Possible lead" }
-          : { pill: "bg-slate-100 text-slate-500 border-slate-200", label: "Weak lead" };
+          ? { pill: "bg-warning-subtle text-warning",    label: "Possible lead" }
+          : { pill: "bg-surface-hover text-text-tertiary", label: "Weak lead" };
 
   return (
     <>
@@ -408,40 +435,40 @@ function FetchPriorityBadge({
         }}
         onMouseLeave={() => setShow(false)}
         className={cn(
-          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border font-medium leading-none cursor-default select-none",
-          cfg.pill
+          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium leading-none cursor-default select-none",
+          cfg.pill,
         )}
       >
         <Gauge className="w-3 h-3" />
-        Fetch {score}%
+        <span>Fetch <span className="data-mono">{score}%</span></span>
       </div>
 
       {show && (
         <div
-          className="w-72 bg-slate-900 text-white rounded-xl shadow-2xl overflow-hidden"
+          className="w-72 bg-surface-overlay text-text-primary rounded-md shadow-overlay overflow-hidden border border-separator"
           style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 9999 }}
           onMouseEnter={() => setShow(true)}
           onMouseLeave={() => setShow(false)}
         >
-          <div className="px-4 pt-3 pb-2 border-b border-slate-700">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-0.5">Fetch Priority</p>
-            <p className="text-sm font-medium text-white">{reason?.label ?? cfg.label}</p>
-            <p className="text-xs text-slate-400 mt-1">
+          <div className="px-3 pt-2.5 pb-2 border-b border-separator">
+            <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-0.5">Fetch Priority</p>
+            <p className="text-sm font-medium text-text-primary">{reason?.label ?? cfg.label}</p>
+            <p className="text-xs text-text-tertiary mt-1">
               Lead quality from search evidence. This is not the candidate match score.
             </p>
           </div>
           {reason?.summary && (
-            <div className="px-4 py-2 border-b border-slate-700">
-              <p className="text-xs text-slate-300 leading-relaxed">{reason.summary}</p>
+            <div className="px-3 py-2 border-b border-separator">
+              <p className="text-xs text-text-secondary leading-relaxed">{reason.summary}</p>
             </div>
           )}
           {(reason?.signals?.length || reason?.risks?.length) && (
-            <div className="px-4 py-2.5 space-y-2">
+            <div className="px-3 py-2 space-y-1.5">
               {reason?.signals?.slice(0, 4).map((signal, i) => (
-                <p key={`s-${i}`} className="text-xs text-slate-300 leading-snug">+ {signal}</p>
+                <p key={`s-${i}`} className="text-xs text-text-secondary leading-snug">+ {signal}</p>
               ))}
               {reason?.risks?.slice(0, 3).map((risk, i) => (
-                <p key={`r-${i}`} className="text-xs text-amber-200 leading-snug">- {risk}</p>
+                <p key={`r-${i}`} className="text-xs text-warning leading-snug">- {risk}</p>
               ))}
             </div>
           )}
@@ -504,11 +531,11 @@ function ScoringDebugPanel({
     Math.round(score * weight * 10) / 10;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Scoring Debug</p>
-          <p className="text-[11px] text-slate-400 mt-1">
+          <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide">Scoring Debug</p>
+          <p className="text-xs text-text-tertiary mt-1">
             Exact scorer excerpt, weighted contributions, and must-have evidence.
           </p>
         </div>
@@ -516,65 +543,65 @@ function ScoringDebugPanel({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Overall</p>
-          <p className="text-lg font-semibold text-slate-900">{breakdown.overall}%</p>
+        <div className="rounded border border-separator bg-surface-sunken px-3 py-2">
+          <p className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">Overall</p>
+          <p className="text-md font-semibold text-text-primary data-mono">{breakdown.overall}%</p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Confidence</p>
-          <p className="text-lg font-semibold text-slate-900">{breakdown.confidence.score}%</p>
+        <div className="rounded border border-separator bg-surface-sunken px-3 py-2">
+          <p className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">Confidence</p>
+          <p className="text-md font-semibold text-text-primary data-mono">{breakdown.confidence.score}%</p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Must-have coverage</p>
-          <p className="text-lg font-semibold text-slate-900">{breakdown.must_have_pct}%</p>
+        <div className="rounded border border-separator bg-surface-sunken px-3 py-2">
+          <p className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">Must-have coverage</p>
+          <p className="text-md font-semibold text-text-primary data-mono">{breakdown.must_have_pct}%</p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Evidence coverage</p>
-          <p className="text-lg font-semibold text-slate-900">{breakdown.evidence_coverage_score}%</p>
+        <div className="rounded border border-separator bg-surface-sunken px-3 py-2">
+          <p className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">Evidence coverage</p>
+          <p className="text-md font-semibold text-text-primary data-mono">{breakdown.evidence_coverage_score}%</p>
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
-        <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Weighted Formula</p>
+      <div className="rounded border border-separator overflow-hidden">
+        <div className="px-3 py-2 border-b border-separator bg-surface-sunken">
+          <p className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">Weighted Formula</p>
         </div>
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-separator">
           {contributions.map((row) => (
             <div key={row.label} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
               <div className="min-w-0">
-                <p className="font-medium text-slate-700">{row.label}</p>
-                <p className="text-slate-400">Weight {(row.weight * 100).toFixed(0)}%</p>
+                <p className="font-medium text-text-secondary">{row.label}</p>
+                <p className="text-text-tertiary">Weight <span className="data-mono">{(row.weight * 100).toFixed(0)}%</span></p>
               </div>
               <div className="text-right flex-shrink-0">
-                <p className="font-medium text-slate-700">{row.score}%</p>
-                <p className="text-slate-400">+{contributionValue(row.score, row.weight)}</p>
+                <p className="font-medium text-text-secondary data-mono">{row.score}%</p>
+                <p className="text-text-tertiary data-mono">+{contributionValue(row.score, row.weight)}</p>
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
-        <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Must-have Evidence</p>
+      <div className="rounded border border-separator overflow-hidden">
+        <div className="px-3 py-2 border-b border-separator bg-surface-sunken">
+          <p className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">Must-have Evidence</p>
         </div>
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-separator">
           {breakdown.must_have_coverage.map((item, index) => (
-            <div key={`${item.requirement}-${index}`} className="px-3 py-2.5">
+            <div key={`${item.requirement}-${index}`} className="px-3 py-2">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-medium text-slate-700">{item.requirement}</p>
+                <p className="text-xs font-medium text-text-secondary">{item.requirement}</p>
                 <span
                   className={cn(
-                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                    "inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium",
                     MH_CONFIG[item.status].bg,
-                    MH_CONFIG[item.status].text
+                    MH_CONFIG[item.status].text,
                   )}
                 >
-                  <span className="text-[10px]">{MH_CONFIG[item.status].icon}</span>
+                  <span className="text-2xs">{MH_CONFIG[item.status].icon}</span>
                   {item.status}
                 </span>
               </div>
-              <p className="text-xs text-slate-500 mt-1 leading-relaxed">{item.evidence}</p>
+              <p className="text-xs text-text-tertiary mt-1 leading-relaxed">{item.evidence}</p>
             </div>
           ))}
         </div>
@@ -584,14 +611,14 @@ function ScoringDebugPanel({
         <div>
           <div className="flex items-center justify-between gap-3 mb-2">
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Exact Scorer Excerpt</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
+              <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide">Exact Scorer Excerpt</p>
+              <p className="text-xs text-text-tertiary mt-0.5">
                 This is the section-aware text currently sent to the match scorer.
               </p>
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap font-mono">
+          <div className="rounded border border-separator bg-surface-sunken p-3">
+            <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-wrap font-mono">
               {excerpt}
             </p>
           </div>
@@ -652,28 +679,28 @@ function ProfileDrawer({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/30 backdrop-blur-[2px] z-[1200]"
+        className="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[1200]"
         onClick={onClose}
       />
       {/* Drawer */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl z-[1210] flex flex-col">
+      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-surface-raised shadow-overlay z-[1210] flex flex-col border-l border-separator">
         {/* Header */}
-        <div className="flex items-start gap-4 px-6 py-5 border-b border-slate-100 flex-shrink-0">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 text-white font-bold text-lg">
+        <div className="flex items-start gap-3 px-4 py-4 border-b border-separator flex-shrink-0">
+          <div className="w-10 h-10 rounded-md bg-surface-hover flex items-center justify-center flex-shrink-0 text-text-primary font-semibold text-md">
             {candidate.name.charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="font-bold text-slate-900 text-base leading-tight">{candidate.name}</h2>
+              <h2 className="font-semibold text-text-primary text-md leading-tight">{candidate.name}</h2>
               {displayableLinkedinUrl(candidate.linkedinUrl) && !editingLinkedIn && (
                 <a
                   href={displayableLinkedinUrl(candidate.linkedinUrl)!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-slate-400 hover:text-[#0A66C2] transition-colors"
+                  className="text-text-tertiary hover:text-accent transition-colors"
                   title="Open LinkedIn profile"
                 >
-                  <LinkedInIcon className="w-4 h-4" />
+                  <LinkedInIcon className="w-3.5 h-3.5" />
                 </a>
               )}
             </div>
@@ -686,20 +713,20 @@ function ProfileDrawer({
                   onChange={(e) => setLinkedInInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleSaveLinkedIn(); if (e.key === "Escape") setEditingLinkedIn(false); }}
                   placeholder="https://linkedin.com/in/..."
-                  className="w-full text-xs border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full h-7 text-md px-2.5 rounded bg-surface-sunken border border-separator text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
                   autoFocus
                 />
                 <div className="flex gap-2 mt-1">
-                  <button onClick={handleSaveLinkedIn} className="text-xs text-blue-600 font-medium hover:text-blue-700">Save</button>
-                  <button onClick={() => setEditingLinkedIn(false)} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                  <button onClick={handleSaveLinkedIn} className="text-xs text-accent font-medium hover:text-accent-hover">Save</button>
+                  <button onClick={() => setEditingLinkedIn(false)} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
                 </div>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 mt-0.5">
-                {candidate.headline && <p className="text-sm text-slate-500">{candidate.headline}</p>}
+                {candidate.headline && <p className="text-base text-text-secondary">{candidate.headline}</p>}
                 <button
                   onClick={() => { setLinkedInInput(candidate.linkedinUrl ?? ""); setEditingLinkedIn(true); }}
-                  className="text-[10px] text-slate-400 hover:text-blue-600 underline underline-offset-2 transition-colors flex-shrink-0"
+                  className="text-xs text-text-tertiary hover:text-accent underline underline-offset-2 transition-colors flex-shrink-0"
                 >
                   {candidate.linkedinUrl ? "Edit LinkedIn" : "Add LinkedIn"}
                 </button>
@@ -715,22 +742,22 @@ function ProfileDrawer({
             {candidate.phone && (
               <a
                 href={`tel:${candidate.phone.replace(/[^+\d]/g, "")}`}
-                className="inline-flex items-center gap-1 mt-1.5 text-xs text-slate-600 hover:text-blue-600 transition-colors"
+                className="inline-flex items-center gap-1 mt-1.5 text-xs text-text-secondary hover:text-accent transition-colors"
                 title="Click to call"
               >
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.95.68l1.49 4.48a1 1 0 01-.5 1.21l-1.6.8a11 11 0 005.52 5.52l.8-1.6a1 1 0 011.21-.5l4.48 1.49a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
                 </svg>
-                {candidate.phone}
+                <span className="data-mono">{candidate.phone}</span>
               </a>
             )}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <Badge className={candidate.source === "extension" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}>
+              <Badge className={candidate.source === "extension" ? "bg-accent-subtle text-accent" : "bg-surface-hover text-text-secondary"}>
                 {captureLabel}
               </Badge>
               {capturedAt && (
-                <span className="text-[11px] text-slate-400" suppressHydrationWarning>
-                  Captured {capturedAt.toLocaleString()}
+                <span className="text-xs text-text-tertiary" suppressHydrationWarning>
+                  Captured <span className="data-mono">{capturedAt.toLocaleString()}</span>
                 </span>
               )}
               {/* Cross-job presence — same LinkedIn URL on N other active
@@ -739,10 +766,10 @@ function ProfileDrawer({
                   lists the jobs so the recruiter can avoid double-outreach. */}
               {candidate.otherActiveJobs && candidate.otherActiveJobs.length > 0 && (
                 <span
-                  className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200"
+                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm bg-warning-subtle text-warning"
                   title={`Also on:\n${candidate.otherActiveJobs.map((j) => ` • ${j.title}${j.company ? ` @ ${j.company}` : ""}${j.matchScore != null ? ` — ${j.matchScore}%` : ""}`).join("\n")}`}
                 >
-                  Also on {candidate.otherActiveJobs.length} other job{candidate.otherActiveJobs.length === 1 ? "" : "s"}
+                  Also on <span className="data-mono">{candidate.otherActiveJobs.length}</span> other job{candidate.otherActiveJobs.length === 1 ? "" : "s"}
                 </span>
               )}
             </div>
@@ -750,10 +777,10 @@ function ProfileDrawer({
               <ScoreBadge score={candidate.matchScore} size="sm" />
               {breakdown?.scoredBy === "ollama" && (
                 <span
-                  className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-llama-subtle text-llama"
                   title="This candidate was scored by the local Llama model because Claude was unavailable. The score has been penalised to reflect lower confidence. Re-score when Claude is back."
                 >
-                  Scored by Llama
+                  Llama
                 </span>
               )}
               {!hasFetchedProfile && (
@@ -772,20 +799,20 @@ function ProfileDrawer({
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 -m-1.5"
+              className="text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded transition-colors p-1.5 -m-1.5"
               aria-label="Close candidate detail"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
             {onFetchProfile && displayableLinkedinUrl(candidate.linkedinUrl) && (
               (fetchQueueState === "waiting" || fetchQueueState === "fetching") ? (
-                <span className="text-[11px] text-blue-500 flex items-center gap-1">
+                <span className="text-xs text-accent flex items-center gap-1">
                   <Loader2 className="w-3 h-3 animate-spin" />Fetching…
                 </span>
               ) : hasFetchedProfile ? (
                 <button
                   onClick={() => onFetchProfile(candidate.id)}
-                  className="text-[11px] text-slate-400 hover:text-slate-600 flex items-center gap-1 transition-colors"
+                  className="text-xs text-text-tertiary hover:text-text-primary flex items-center gap-1 transition-colors"
                   title="Re-fetch LinkedIn profile"
                 >
                   <RefreshCw className="w-3 h-3" />Re-fetch
@@ -793,7 +820,7 @@ function ProfileDrawer({
               ) : (
                 <button
                   onClick={() => onFetchProfile(candidate.id)}
-                  className="text-[11px] text-amber-600 hover:text-amber-700 flex items-center gap-1 font-medium transition-colors"
+                  className="text-xs text-warning hover:text-warning-hover flex items-center gap-1 font-medium transition-colors"
                   title="Fetch full LinkedIn profile"
                 >
                   <RefreshCw className="w-3 h-3" />Fetch profile
@@ -804,39 +831,39 @@ function ProfileDrawer({
         </div>
 
         {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {/* AI summary */}
           {displaySummary && (
-            <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
-              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">AI Assessment</p>
-              <p className="text-sm text-slate-700 leading-relaxed italic">&ldquo;{displaySummary}&rdquo;</p>
+            <div className="p-3 bg-accent-subtle border border-separator rounded-md">
+              <p className="text-2xs font-semibold text-accent uppercase tracking-wide mb-1">AI Assessment</p>
+              <p className="text-base text-text-primary leading-relaxed italic">&ldquo;{displaySummary}&rdquo;</p>
             </div>
           )}
 
           {/* Score breakdown */}
           {breakdown && (
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Score breakdown</p>
+              <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Score breakdown</p>
               <div className="space-y-2">
                 {(Object.entries(breakdown.categories) as [string, { score: number; evidence: string }][]).map(([key, cat]) => (
                   <div key={key}>
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-medium text-slate-600 capitalize">{key.replace(/_/g, " ").replace(" fit", "")}</span>
-                      <span className="text-xs text-slate-500 tabular-nums">{cat.score}%</span>
+                      <span className="text-xs font-medium text-text-secondary capitalize">{key.replace(/_/g, " ").replace(" fit", "")}</span>
+                      <span className="text-xs text-text-tertiary data-mono">{cat.score}%</span>
                     </div>
-                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-1 bg-surface-sunken rounded-sm overflow-hidden">
                       <div
                         className={cn(
-                          "h-full rounded-full",
-                          cat.score >= 80 ? "bg-emerald-500" :
-                          cat.score >= 60 ? "bg-blue-500" :
-                          cat.score >= 40 ? "bg-amber-500" : "bg-red-400"
+                          "h-full rounded-sm",
+                          cat.score >= 80 ? "bg-success" :
+                          cat.score >= 60 ? "bg-accent" :
+                          cat.score >= 40 ? "bg-warning" : "bg-danger",
                         )}
                         style={{ width: `${cat.score}%` }}
                       />
                     </div>
                     {cat.evidence && (
-                      <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{cat.evidence}</p>
+                      <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{cat.evidence}</p>
                     )}
                   </div>
                 ))}
@@ -846,14 +873,14 @@ function ProfileDrawer({
 
           {/* Reasons for / against */}
           {breakdown?.version === 2 && (breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               {breakdown.reasons_for?.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Reasons for</p>
+                  <p className="text-2xs font-semibold text-success uppercase tracking-wide mb-2">Reasons for</p>
                   <ul className="space-y-1">
                     {breakdown.reasons_for.map((r, i) => (
-                      <li key={i} className="text-xs text-slate-600 flex items-start gap-1.5">
-                        <span className="text-emerald-500 flex-shrink-0 mt-0.5">✓</span>{r}
+                      <li key={i} className="text-xs text-text-secondary flex items-start gap-1.5">
+                        <span className="text-success flex-shrink-0 mt-0.5">✓</span>{r}
                       </li>
                     ))}
                   </ul>
@@ -861,11 +888,11 @@ function ProfileDrawer({
               )}
               {breakdown.reasons_against?.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-2">Reasons against</p>
+                  <p className="text-2xs font-semibold text-danger uppercase tracking-wide mb-2">Reasons against</p>
                   <ul className="space-y-1">
                     {breakdown.reasons_against.map((r, i) => (
-                      <li key={i} className="text-xs text-slate-600 flex items-start gap-1.5">
-                        <span className="text-red-400 flex-shrink-0 mt-0.5">✗</span>{r}
+                      <li key={i} className="text-xs text-text-secondary flex items-start gap-1.5">
+                        <span className="text-danger flex-shrink-0 mt-0.5">✗</span>{r}
                       </li>
                     ))}
                   </ul>
@@ -879,8 +906,8 @@ function ProfileDrawer({
           {/* Notes */}
           {candidate.notes && (
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Notes</p>
-              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{candidate.notes}</p>
+              <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Notes</p>
+              <p className="text-base text-text-secondary leading-relaxed whitespace-pre-wrap">{candidate.notes}</p>
             </div>
           )}
 
@@ -889,7 +916,7 @@ function ProfileDrawer({
 
           {/* Contact log — shared across all recruiters in the org */}
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Contact history</p>
+            <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Contact history</p>
             <ContactLog candidateId={candidate.id} />
           </div>
 
@@ -1030,14 +1057,14 @@ export const CandidateCard = memo(function CandidateCard({
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+    <div className="bg-surface-raised border border-separator rounded-md hover:bg-surface-hover transition-colors">
       {/* Header row */}
       <div className="flex items-start gap-3 p-4">
         {/* Avatar */}
         <button
           type="button"
           onClick={() => setShowProfile(true)}
-          className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 text-white font-semibold text-sm hover:shadow-md transition-shadow"
+          className="w-8 h-8 rounded-md bg-surface-hover flex items-center justify-center flex-shrink-0 text-text-primary font-semibold text-md hover:bg-surface-overlay transition-colors"
           title="View stored LinkedIn data"
         >
           {candidate.name.charAt(0).toUpperCase()}
@@ -1051,14 +1078,14 @@ export const CandidateCard = memo(function CandidateCard({
                 <button
                   type="button"
                   onClick={() => setShowProfile(true)}
-                  className="font-semibold text-slate-900 text-sm leading-snug hover:text-blue-700 transition-colors text-left"
+                  className="font-semibold text-text-primary text-md leading-snug hover:text-accent transition-colors text-left"
                   title="View stored LinkedIn data"
                 >
                   {candidate.name}
                 </button>
                 {displayableLinkedinUrl(candidate.linkedinUrl) && (
                   <a href={displayableLinkedinUrl(candidate.linkedinUrl)!} target="_blank" rel="noopener noreferrer"
-                    className="text-slate-400 hover:text-[#0A66C2] transition-colors flex-shrink-0"
+                    className="text-text-tertiary hover:text-accent transition-colors flex-shrink-0"
                     title="Open LinkedIn profile">
                     <LinkedInIcon className="w-3.5 h-3.5" />
                   </a>
@@ -1066,7 +1093,7 @@ export const CandidateCard = memo(function CandidateCard({
                 <JobAdderBadge url={candidate.jobAdderUrl} />
                 {candidate.sharedFromOrgName && (
                   <span
-                    className="inline-flex items-center gap-1 text-[10px] font-medium text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-accent bg-accent-subtle rounded-sm px-1.5 py-0.5"
                     title={`This candidate is in ${candidate.sharedFromOrgName}'s library — read-only via your cross-org subscription`}
                   >
                     Shared from {candidate.sharedFromOrgName}
@@ -1074,7 +1101,7 @@ export const CandidateCard = memo(function CandidateCard({
                 )}
               </div>
               {candidate.headline && (
-                <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
+                <p className="text-base text-text-secondary mt-0.5 line-clamp-1">
                   {candidate.headline}
                 </p>
               )}
@@ -1088,10 +1115,10 @@ export const CandidateCard = memo(function CandidateCard({
                   type="button"
                   onClick={() => setShowProfile(true)}
                   className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors",
+                    "inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium transition-colors",
                     hasExtensionCapture
-                      ? "bg-blue-50 text-blue-700 hover:bg-blue-100"
-                      : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                      ? "bg-accent-subtle text-accent hover:bg-accent/25"
+                      : "bg-surface-hover text-text-tertiary hover:bg-surface-overlay",
                   )}
                   title="Open stored LinkedIn capture"
                 >
@@ -1099,7 +1126,7 @@ export const CandidateCard = memo(function CandidateCard({
                   {captureLabel}
                 </button>
                 {candidate.profileText && (
-                  <span className="text-[11px] text-slate-400" suppressHydrationWarning>
+                  <span className="text-xs text-text-tertiary data-mono" suppressHydrationWarning>
                     {candidate.profileText.length.toLocaleString()} chars saved
                   </span>
                 )}
@@ -1112,25 +1139,36 @@ export const CandidateCard = memo(function CandidateCard({
                   candidate so the recruiter sees one clear signal, not clutter. */}
               {candidate.matchScore != null && (() => {
                 const tag =
-                  breakdown?.data_quality === "minimal" ? { label: "Thin profile", tone: "red", title: "Very little profile data — score is speculative until the full profile is fetched" } :
-                  breakdown?.data_quality === "snippet" ? { label: "Snippet only", tone: "orange", title: "Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" } :
-                  (!hasFetchedProfile && !breakdown?.data_quality) ? { label: "Provisional", tone: "orange", title: "Score is provisional until the full LinkedIn profile is fetched" } :
+                  breakdown?.data_quality === "minimal" ? { label: "Thin profile", tone: "danger",  title: "Very little profile data — score is speculative until the full profile is fetched" } :
+                  breakdown?.data_quality === "snippet" ? { label: "Snippet only", tone: "warning", title: "Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" } :
+                  (!hasFetchedProfile && !breakdown?.data_quality) ? { label: "Provisional", tone: "warning", title: "Score is provisional until the full LinkedIn profile is fetched" } :
                   null;
                 if (!tag) return null;
-                const colour = tag.tone === "red"
-                  ? "text-red-600 bg-red-50 border-red-200"
-                  : "text-orange-600 bg-orange-50 border-orange-200";
+                const colour = tag.tone === "danger"
+                  ? "text-danger bg-danger-subtle"
+                  : "text-warning bg-warning-subtle";
                 return (
-                  <span title={tag.title} className={cn("text-[9px] font-semibold uppercase tracking-wide rounded px-1 py-0.5 border hidden sm:inline-block", colour)}>
+                  <span title={tag.title} className={cn("text-2xs font-semibold uppercase tracking-wide rounded-sm px-1 py-0.5 hidden sm:inline-block", colour)}>
                     {tag.label}
                   </span>
                 );
               })()}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
                 {!hasFetchedProfile && (
                   <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
+                )}
+                {/* "Scored by Llama" pill — surfaced inline next to the score so
+                    the recruiter sees at scan time that this was a failover
+                    run with a penalised, lower-confidence score. */}
+                {breakdown?.scoredBy === "ollama" && (
+                  <span
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium bg-llama-subtle text-llama"
+                    title="Scored by the local Llama model because Claude was unavailable. Score is penalised to reflect lower confidence — re-score when Claude is back."
+                  >
+                    Llama
+                  </span>
                 )}
                 {/* Score badge with radar tooltip on hover */}
                 <div
@@ -1156,21 +1194,21 @@ export const CandidateCard = memo(function CandidateCard({
                   ) && (
                     <span
                       title="Profile captured — AI scoring in progress"
-                      className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border border-white animate-pulse"
+                      className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-accent rounded-full border border-surface-raised animate-pulse"
                     />
                   )}
-                  {/* Amber dot: profile updated since last score */}
+                  {/* Status dot: profile updated since last score */}
                   {candidate.matchScore != null && !candidate.profileTextHash && candidate.profileText && (
                     <span
                       title="Profile updated since last score — re-score recommended"
-                      className="absolute -top-1 -right-1 w-2 h-2 bg-amber-400 rounded-full border border-white"
+                      className="absolute -top-1 -right-1 w-2 h-2 bg-warning rounded-full border border-surface-raised"
                     />
                   )}
-                  {/* Amber dot: provisional score — no full profile captured yet */}
+                  {/* Status dot: provisional score — no full profile captured yet */}
                   {candidate.matchScore != null && !hasFetchedProfile && (
                     <span
                       title="Provisional score — based on a LinkedIn snippet, not a full profile. Fetch the full profile for a reliable score."
-                      className="absolute -top-1 -left-1 w-2 h-2 bg-orange-400 rounded-full border border-white"
+                      className="absolute -top-1 -left-1 w-2 h-2 bg-warning rounded-full border border-surface-raised"
                     />
                   )}
                 </div>
@@ -1183,7 +1221,9 @@ export const CandidateCard = memo(function CandidateCard({
                     <ScoreRadar dimensions={radarDimensions} />
                   </div>
                 )}
-                <Badge className={statusBadge(candidate.status)}>
+                {/* Status pill — bypass the legacy slate/blue util mapping and
+                    use the token-based mapping defined at the top of this file. */}
+                <Badge className={statusPillTokens(candidate.status)}>
                   {statusLabel(candidate.status)}
                 </Badge>
                 {contactCount > 0 && (() => {
@@ -1201,11 +1241,11 @@ export const CandidateCard = memo(function CandidateCard({
                   if (contactCount > 1) tooltipParts.push(`+${contactCount - 1} more contact${contactCount - 1 !== 1 ? "s" : ""}`);
                   return (
                     <span
-                      className="inline-flex items-center gap-1 text-[10px] text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5 font-medium cursor-default"
+                      className="inline-flex items-center gap-1 text-xs text-accent bg-accent-subtle rounded-sm px-1.5 py-0.5 font-medium cursor-default"
                       title={tooltipParts.join("\n")}
                     >
-                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500 inline-block" />
-                      {contactCount}
+                      <span className="w-1.5 h-1.5 rounded-full bg-accent inline-block" />
+                      <span className="data-mono">{contactCount}</span>
                     </span>
                   );
                 })()}
@@ -1226,9 +1266,9 @@ export const CandidateCard = memo(function CandidateCard({
         displaySummary={displaySummary}
       />
 
-      {/* Expanded details */}
+      {/* Expanded details — sunken inset against the raised card surface. */}
       {expanded && (
-        <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+        <div className="px-4 pb-4 space-y-3 border-t border-separator pt-3 bg-surface-sunken">
           {/* v2 breakdown: reasons for / against + missing evidence */}
           {breakdown && breakdown.version === 2 && (
             <>
@@ -1236,11 +1276,11 @@ export const CandidateCard = memo(function CandidateCard({
                 <div className="grid grid-cols-2 gap-3">
                   {breakdown.reasons_for?.length > 0 && (
                     <div>
-                      <p className="text-xs font-medium text-emerald-700 mb-1">Reasons for</p>
+                      <p className="text-2xs font-semibold text-success uppercase tracking-wide mb-1">Reasons for</p>
                       <ul className="space-y-0.5">
                         {breakdown.reasons_for.map((r, i) => (
-                          <li key={i} className="text-xs text-slate-600 flex items-start gap-1">
-                            <span className="text-emerald-500 mt-0.5 flex-shrink-0">✓</span>
+                          <li key={i} className="text-xs text-text-secondary flex items-start gap-1">
+                            <span className="text-success mt-0.5 flex-shrink-0">✓</span>
                             {r}
                           </li>
                         ))}
@@ -1249,11 +1289,11 @@ export const CandidateCard = memo(function CandidateCard({
                   )}
                   {breakdown.reasons_against?.length > 0 && (
                     <div>
-                      <p className="text-xs font-medium text-red-600 mb-1">Reasons against</p>
+                      <p className="text-2xs font-semibold text-danger uppercase tracking-wide mb-1">Reasons against</p>
                       <ul className="space-y-0.5">
                         {breakdown.reasons_against.map((r, i) => (
-                          <li key={i} className="text-xs text-slate-600 flex items-start gap-1">
-                            <span className="text-red-400 mt-0.5 flex-shrink-0">✗</span>
+                          <li key={i} className="text-xs text-text-secondary flex items-start gap-1">
+                            <span className="text-danger mt-0.5 flex-shrink-0">✗</span>
                             {r}
                           </li>
                         ))}
@@ -1264,11 +1304,11 @@ export const CandidateCard = memo(function CandidateCard({
               )}
 
               {breakdown.missing_evidence?.length > 0 && (
-                <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
-                  <p className="text-xs font-medium text-amber-700 mb-1">Missing evidence</p>
+                <div className="p-2.5 bg-warning-subtle border border-separator rounded">
+                  <p className="text-2xs font-semibold text-warning uppercase tracking-wide mb-1">Missing evidence</p>
                   <ul className="space-y-0.5">
                     {breakdown.missing_evidence.map((m, i) => (
-                      <li key={i} className="text-xs text-amber-800 flex items-start gap-1">
+                      <li key={i} className="text-xs text-text-secondary flex items-start gap-1">
                         <span className="mt-0.5 flex-shrink-0">·</span>
                         {m}
                       </li>
@@ -1284,11 +1324,11 @@ export const CandidateCard = memo(function CandidateCard({
             <div className="grid grid-cols-2 gap-3">
               {matchReason.strengths && matchReason.strengths.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-emerald-700 mb-1">Strengths</p>
+                  <p className="text-2xs font-semibold text-success uppercase tracking-wide mb-1">Strengths</p>
                   <ul className="space-y-0.5">
                     {matchReason.strengths.map((s, i) => (
-                      <li key={i} className="text-xs text-slate-600 flex items-start gap-1">
-                        <span className="text-emerald-500 mt-0.5">✓</span>{s}
+                      <li key={i} className="text-xs text-text-secondary flex items-start gap-1">
+                        <span className="text-success mt-0.5">✓</span>{s}
                       </li>
                     ))}
                   </ul>
@@ -1296,11 +1336,11 @@ export const CandidateCard = memo(function CandidateCard({
               )}
               {matchReason.gaps && matchReason.gaps.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-red-600 mb-1">Gaps</p>
+                  <p className="text-2xs font-semibold text-danger uppercase tracking-wide mb-1">Gaps</p>
                   <ul className="space-y-0.5">
                     {matchReason.gaps.map((g, i) => (
-                      <li key={i} className="text-xs text-slate-600 flex items-start gap-1">
-                        <span className="text-red-400 mt-0.5">✗</span>{g}
+                      <li key={i} className="text-xs text-text-secondary flex items-start gap-1">
+                        <span className="text-danger mt-0.5">✗</span>{g}
                       </li>
                     ))}
                   </ul>
@@ -1312,11 +1352,11 @@ export const CandidateCard = memo(function CandidateCard({
           {/* Notes */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <p className="text-xs font-medium text-slate-600">Notes</p>
+              <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide">Notes</p>
               {!editingNotes && (
                 <button
                   onClick={() => setEditingNotes(true)}
-                  className="text-xs text-blue-600 hover:text-blue-700"
+                  className="text-xs text-accent hover:text-accent-hover"
                 >
                   {notes ? "Edit" : "Add note"}
                 </button>
@@ -1327,7 +1367,7 @@ export const CandidateCard = memo(function CandidateCard({
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full text-base bg-surface-raised border border-separator rounded px-2.5 py-2 text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:border-accent focus:shadow-focus transition-all"
                   rows={3}
                   placeholder="Add your notes..."
                   autoFocus
@@ -1335,20 +1375,20 @@ export const CandidateCard = memo(function CandidateCard({
                 <div className="flex gap-2 mt-1.5">
                   <button
                     onClick={handleSaveNotes}
-                    className="text-xs text-blue-600 font-medium hover:text-blue-700"
+                    className="text-xs text-accent font-medium hover:text-accent-hover"
                   >
                     Save
                   </button>
                   <button
                     onClick={() => { setNotes(candidate.notes ?? ""); setEditingNotes(false); }}
-                    className="text-xs text-slate-500 hover:text-slate-700"
+                    className="text-xs text-text-tertiary hover:text-text-primary"
                   >
                     Cancel
                   </button>
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-slate-500">{notes || "No notes yet"}</p>
+              <p className="text-xs text-text-tertiary">{notes || "No notes yet"}</p>
             )}
           </div>
 
@@ -1356,10 +1396,10 @@ export const CandidateCard = memo(function CandidateCard({
           {onLinkedInChange && (
             <div>
               <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-medium text-slate-600">LinkedIn URL</p>
+                <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide">LinkedIn URL</p>
                 {!editingLinkedIn && (
                   <button onClick={() => { setLinkedInInput(candidate.linkedinUrl ?? ""); setEditingLinkedIn(true); }}
-                    className="text-xs text-blue-600 hover:text-blue-700">
+                    className="text-xs text-accent hover:text-accent-hover">
                     {candidate.linkedinUrl ? "Edit" : "Add"}
                   </button>
                 )}
@@ -1369,18 +1409,18 @@ export const CandidateCard = memo(function CandidateCard({
                   <input type="url" value={linkedInInput} onChange={(e) => setLinkedInInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") handleSaveLinkedIn(); if (e.key === "Escape") setEditingLinkedIn(false); }}
                     placeholder="https://linkedin.com/in/..." autoFocus
-                    className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full h-7 text-base bg-surface-raised border border-separator rounded px-2.5 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
                   />
                   <div className="flex gap-2 mt-1.5">
-                    <button onClick={handleSaveLinkedIn} className="text-xs text-blue-600 font-medium hover:text-blue-700">Save</button>
-                    <button onClick={() => setEditingLinkedIn(false)} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                    <button onClick={handleSaveLinkedIn} className="text-xs text-accent font-medium hover:text-accent-hover">Save</button>
+                    <button onClick={() => setEditingLinkedIn(false)} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
                   </div>
                 </div>
               ) : displayableLinkedinUrl(candidate.linkedinUrl) ? (
                 <a href={displayableLinkedinUrl(candidate.linkedinUrl)!} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline truncate block max-w-full">{displayableLinkedinUrl(candidate.linkedinUrl)}</a>
+                  className="text-xs text-accent hover:underline truncate block max-w-full">{displayableLinkedinUrl(candidate.linkedinUrl)}</a>
               ) : (
-                <p className="text-xs text-slate-400">No LinkedIn URL — add one to enable profile fetch</p>
+                <p className="text-xs text-text-tertiary">No LinkedIn URL — add one to enable profile fetch</p>
               )}
             </div>
           )}
@@ -1389,12 +1429,12 @@ export const CandidateCard = memo(function CandidateCard({
           <div>
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-1.5">
-                <JobAdderBadge url={null} className="w-4 h-4 text-[8px]" />
-                <p className="text-xs font-medium text-slate-600">JobAdder</p>
+                <JobAdderBadge url={null} className="w-3.5 h-3.5 text-[8px]" />
+                <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide">JobAdder</p>
               </div>
               {!editingJobAdder && (
                 <button onClick={() => { setJobAdderInput(candidate.jobAdderUrl ?? ""); setJobAdderSaveError(null); setEditingJobAdder(true); }}
-                  className="text-xs text-orange-500 hover:text-orange-600">
+                  className="text-xs text-warning hover:text-warning-hover">
                   {candidate.jobAdderUrl ? "Edit" : "Link"}
                 </button>
               )}
@@ -1404,19 +1444,19 @@ export const CandidateCard = memo(function CandidateCard({
                 <input type="url" value={jobAdderInput} onChange={(e) => setJobAdderInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleSaveJobAdder(); if (e.key === "Escape") setEditingJobAdder(false); }}
                   placeholder="https://app.jobadder.com/candidates/..." autoFocus
-                  className="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  className="w-full h-7 text-base bg-surface-raised border border-separator rounded px-2.5 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-warning focus:shadow-focus transition-all"
                 />
                 <div className="flex gap-2 mt-1.5">
-                  <button onClick={handleSaveJobAdder} className="text-xs text-orange-500 font-medium hover:text-orange-600">Save</button>
-                  <button onClick={() => setEditingJobAdder(false)} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+                  <button onClick={handleSaveJobAdder} className="text-xs text-warning font-medium hover:text-warning-hover">Save</button>
+                  <button onClick={() => setEditingJobAdder(false)} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
                 </div>
-                {jobAdderSaveError && <p className="text-xs text-amber-600 mt-1">{jobAdderSaveError}</p>}
+                {jobAdderSaveError && <p className="text-xs text-danger mt-1">{jobAdderSaveError}</p>}
               </div>
             ) : candidate.jobAdderUrl ? (
               <a href={candidate.jobAdderUrl} target="_blank" rel="noopener noreferrer"
-                className="text-xs text-orange-500 hover:underline truncate block max-w-full">{candidate.jobAdderUrl}</a>
+                className="text-xs text-warning hover:underline truncate block max-w-full">{candidate.jobAdderUrl}</a>
             ) : (
-              <p className="text-xs text-slate-400">Not linked — paste the JobAdder candidate URL to link</p>
+              <p className="text-xs text-text-tertiary">Not linked — paste the JobAdder candidate URL to link</p>
             )}
           </div>
 
@@ -1443,7 +1483,7 @@ export const CandidateCard = memo(function CandidateCard({
       )}
 
       {/* Action bar */}
-      <div className="flex items-center gap-1 px-4 py-2.5 border-t border-slate-100 bg-slate-50 rounded-b-xl">
+      <div className="flex items-center gap-1 px-3 py-2 border-t border-separator bg-surface-sunken rounded-b-md">
         {/* Status actions — driven by PIPELINE_FORWARD / PIPELINE_BACK config */}
         <div className="flex items-center gap-1 flex-1 flex-wrap">
           {/* Forward step */}
@@ -1459,8 +1499,8 @@ export const CandidateCard = memo(function CandidateCard({
           })()}
           {/* offer_sent has two forward options */}
           {candidate.status === "offer_sent" && (<>
-            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Hired?`)) onStatusChange(candidate.id, "hired"); }} className="text-green-700 hover:bg-green-50">Hired</Button>
-            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "declined")} className="text-orange-600 hover:bg-orange-50">Declined</Button>
+            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Hired?`)) onStatusChange(candidate.id, "hired"); }} className="text-success hover:text-success hover:bg-success-subtle">Hired</Button>
+            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "declined")} className="text-text-tertiary hover:text-text-primary hover:bg-surface-hover">Declined</Button>
           </>)}
           {/* Quick "Messaged" — logs a contact event tagged to THIS job without
               expanding the card or advancing the pipeline. Useful when a
@@ -1474,9 +1514,9 @@ export const CandidateCard = memo(function CandidateCard({
               onClick={handleQuickMessage}
               disabled={messageState === "saving" || messageState === "logged"}
               className={
-                messageState === "logged" ? "text-emerald-600 hover:bg-emerald-50"
-                : messageState === "error" ? "text-red-600 hover:bg-red-50"
-                : "text-blue-600 hover:bg-blue-50"
+                messageState === "logged" ? "text-success hover:text-success hover:bg-success-subtle"
+                : messageState === "error" ? "text-danger hover:text-danger hover:bg-danger-subtle"
+                : "text-accent hover:text-accent hover:bg-accent-subtle"
               }
               title="Log that you messaged this candidate about this role"
             >
@@ -1493,23 +1533,23 @@ export const CandidateCard = memo(function CandidateCard({
           })()}
           {/* Reject — available on all non-terminal stages. ↩ Undo button handles recovery. */}
           {!TERMINAL_STATUSES.has(candidate.status) && (
-            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "rejected")} className="text-slate-400 hover:text-red-600 hover:bg-red-50">
+            <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "rejected")} className="text-text-tertiary hover:text-danger hover:bg-danger-subtle">
               <X className="w-3.5 h-3.5" />Reject
             </Button>
           )}
           {/* Document actions + undo for terminal statuses */}
           {["rejected","declined"].includes(candidate.status) && (
             <>
-              <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "reviewing")} className="text-slate-400 hover:text-slate-600 hover:bg-slate-50" title="Move back to reviewing">
+              <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "reviewing")} className="text-text-tertiary hover:text-text-primary hover:bg-surface-hover" title="Move back to reviewing">
                 ↩ Undo
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setRejectionOpen(true)} className="text-slate-500 hover:text-red-700 hover:bg-red-50" title="Draft rejection email">
+              <Button size="sm" variant="ghost" onClick={() => setRejectionOpen(true)} className="text-text-secondary hover:text-danger hover:bg-danger-subtle" title="Draft rejection email">
                 <Mail className="w-3.5 h-3.5" />Draft email
               </Button>
             </>
           )}
           {["offer_sent","hired"].includes(candidate.status) && (
-            <Button size="sm" variant="ghost" onClick={() => setOfferOpen(true)} className="text-emerald-600 hover:bg-emerald-50" title="Generate offer letter">
+            <Button size="sm" variant="ghost" onClick={() => setOfferOpen(true)} className="text-success hover:text-success hover:bg-success-subtle" title="Generate offer letter">
               <Mail className="w-3.5 h-3.5" />Offer letter
             </Button>
           )}
@@ -1519,7 +1559,7 @@ export const CandidateCard = memo(function CandidateCard({
         <div className="flex items-center gap-1 flex-shrink-0">
           {/* View profile — icon-only on mobile */}
           {hasViewableProfile && (
-            <Button size="sm" variant="ghost" onClick={() => setShowProfile(true)} className="text-slate-500 hover:text-blue-700 hover:bg-blue-50" title="View stored LinkedIn profile">
+            <Button size="sm" variant="ghost" onClick={() => setShowProfile(true)} title="View stored LinkedIn profile">
               <FileText className="w-3.5 h-3.5" />
               <span className="hidden sm:inline ml-1">View</span>
             </Button>
@@ -1528,16 +1568,16 @@ export const CandidateCard = memo(function CandidateCard({
           {/* Fetch profile */}
           {displayableLinkedinUrl(candidate.linkedinUrl) && (
             (fetchQueueState === "waiting" || fetchQueueState === "fetching") ? (
-              <Button size="sm" variant="ghost" loading disabled className="text-blue-500">
+              <Button size="sm" variant="ghost" loading disabled className="text-accent">
                 <span className="hidden sm:inline">Fetching…</span>
                 <span className="sm:hidden">…</span>
               </Button>
             ) : hasFetchedProfile ? (
-              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} className="text-slate-400 hover:text-slate-600 hover:bg-slate-100" title="Re-fetch LinkedIn profile" aria-label="Re-fetch LinkedIn profile">
+              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} title="Re-fetch LinkedIn profile" aria-label="Re-fetch LinkedIn profile">
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
             ) : (
-              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 font-medium" title="Fetch full LinkedIn profile" aria-label="Fetch full LinkedIn profile">
+              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} className="text-warning hover:text-warning hover:bg-warning-subtle font-medium" title="Fetch full LinkedIn profile" aria-label="Fetch full LinkedIn profile">
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline ml-1">Fetch</span>
               </Button>
@@ -1546,7 +1586,7 @@ export const CandidateCard = memo(function CandidateCard({
 
           {/* Score */}
           {candidate.profileText && (
-            <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-blue-600 hover:bg-blue-50" disabled={scoring} aria-label={candidate.matchScore != null ? "Re-score this candidate" : "Score this candidate"}>
+            <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-accent hover:text-accent hover:bg-accent-subtle" disabled={scoring} aria-label={candidate.matchScore != null ? "Re-score this candidate" : "Score this candidate"}>
               {!scoring && <Loader2 className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline ml-1">{candidate.matchScore != null ? "Re-score" : "Score"}</span>
             </Button>
@@ -1554,23 +1594,23 @@ export const CandidateCard = memo(function CandidateCard({
 
           {/* Send outreach — hidden on mobile, accessible via expand */}
           {candidate.profileText && (
-            <Button size="sm" variant="ghost" onClick={() => setOutreachOpen(true)} className="hidden sm:flex text-violet-600 hover:bg-violet-50" title="Generate outreach message">
+            <Button size="sm" variant="ghost" onClick={() => setOutreachOpen(true)} className="hidden sm:flex" title="Generate outreach message">
               <Send className="w-3.5 h-3.5" />
             </Button>
           )}
 
           {/* Notes — icon only */}
-          <Button size="sm" variant="ghost" onClick={() => setEditingNotes(true)} className="text-slate-500" title="Edit notes" aria-label="Edit notes">
+          <Button size="sm" variant="ghost" onClick={() => setEditingNotes(true)} title="Edit notes" aria-label="Edit notes">
             <MessageSquare className="w-3.5 h-3.5" />
           </Button>
 
           {/* Expand/collapse */}
-          <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)} className="text-slate-500" title={expanded ? "Collapse" : "Expand"} aria-label={expanded ? "Collapse candidate details" : "Expand candidate details"} aria-expanded={expanded}>
+          <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)} title={expanded ? "Collapse" : "Expand"} aria-label={expanded ? "Collapse candidate details" : "Expand candidate details"} aria-expanded={expanded}>
             {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </Button>
 
           {/* Delete */}
-          <Button size="sm" variant="ghost" onClick={() => onDelete(candidate.id)} className="text-slate-400 hover:text-red-600 hover:bg-red-50" title="Delete candidate" aria-label="Delete candidate">
+          <Button size="sm" variant="ghost" onClick={() => onDelete(candidate.id)} className="hover:text-danger hover:bg-danger-subtle" title="Delete candidate" aria-label="Delete candidate">
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>

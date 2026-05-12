@@ -29,6 +29,15 @@ function snapSalaryCeil(value: number) {
   return match ?? SALARY_OPTIONS[SALARY_OPTIONS.length - 1];
 }
 
+const INPUT_BASE =
+  "w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all";
+
+const TEXTAREA_BASE =
+  "w-full px-3 py-2 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all resize-none";
+
+const SELECT_BASE =
+  "w-full h-7 px-2 rounded bg-surface-sunken border border-separator text-md text-text-primary focus:outline-none focus:border-accent focus:shadow-focus transition-all";
+
 export default function NewJobPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -167,293 +176,291 @@ export default function NewJobPage() {
   };
 
   return (
-    <div className="p-8 max-w-2xl mx-auto">
-      <div className="mb-7">
-        <h1 className="text-2xl font-bold text-slate-900">New Job</h1>
-        <p className="text-slate-500 text-sm mt-1">
-          Build the role search from a finished job description or hiring brief.
-        </p>
+    <div className="bg-surface-base min-h-full">
+      {/* Toolbar */}
+      <div className="toolbar">
+        <h1 className="text-md font-semibold text-text-primary">New job</h1>
+        <span className="text-xs text-text-tertiary">Build a role search from a job description or hiring brief</span>
+        <div className="ml-auto" />
       </div>
 
-      {loadedFromListing && (
-        <div className="mb-5 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-          Draft listing loaded from the Listing Builder. Review it, then create the job search.
-        </div>
-      )}
+      <div className="p-5 max-w-2xl mx-auto">
 
-      {autofilledFromUpload && (
-        <div className="mb-5 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800">
-          Brief uploaded and the top fields were auto-filled. Review them before creating the job.
-        </div>
-      )}
+        {loadedFromListing && (
+          <div className="mb-4 px-3 py-2 bg-accent-subtle border border-accent/30 rounded text-sm text-accent">
+            Draft listing loaded from the Listing Builder. Review it, then create the job search.
+          </div>
+        )}
 
-      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-5 space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Job Title <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Senior Software Engineer"
-            className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
+        {autofilledFromUpload && (
+          <div className="mb-4 px-3 py-2 bg-success-subtle border border-success/30 rounded text-sm text-success">
+            Brief uploaded and the top fields were auto-filled. Review them before creating the job.
+          </div>
+        )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Fields card */}
+        <div className="bg-surface-raised rounded-md border border-separator p-4 mb-4 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              Company
+            <label className="block text-xs font-medium text-text-secondary mb-1">
+              Job title <span className="text-danger">*</span>
             </label>
             <input
               type="text"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              placeholder="e.g. Acme Corp"
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Senior Software Engineer"
+              className={INPUT_BASE}
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              Location
-            </label>
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="e.g. Wellington, NZ"
-              className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
 
-        {/* Optional second location — for hybrid / dual-site roles where
-            candidates in either city should score 100. Hidden unless the
-            recruiter expands it so the form stays compact for the common
-            single-city case. */}
-        <div>
-          <details className="text-xs">
-            <summary className="cursor-pointer text-slate-500 hover:text-slate-700 select-none">
-              {location2.trim()
-                ? <>+ second location: <span className="text-slate-700 font-medium">{location2.trim()}</span></>
-                : <>+ add a second location <span className="text-slate-400">(optional — for dual-site roles)</span></>
-              }
-            </summary>
-            <div className="mt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Company
+              </label>
               <input
                 type="text"
-                value={location2}
-                onChange={(e) => setLocation2(e.target.value)}
-                placeholder="e.g. Christchurch, NZ"
-                className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                value={company}
+                onChange={(e) => setCompany(e.target.value)}
+                placeholder="e.g. Acme Corp"
+                className={INPUT_BASE}
               />
-              <p className="text-[11px] text-slate-400 mt-1">
-                Candidates based in either location will score the same for location fit.
-              </p>
             </div>
-          </details>
-        </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Location
+              </label>
+              <input
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="e.g. Wellington, NZ"
+                className={INPUT_BASE}
+              />
+            </div>
+          </div>
 
-        <div className={cn(
-          "rounded-lg border transition-colors",
-          isRemote ? "border-violet-200 bg-violet-50" : "border-slate-200 bg-slate-50"
-        )}>
-          <button
-            type="button"
-            onClick={() => setIsRemote((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-3"
-          >
-            <div className="flex items-center gap-2.5">
-              <Wifi className={cn("w-4 h-4", isRemote ? "text-violet-600" : "text-slate-400")} />
-              <div className="text-left">
-                <p className={cn("text-sm font-medium", isRemote ? "text-violet-800" : "text-slate-600")}>
-                  Remote Role
-                </p>
-                <p className="text-xs text-slate-400">
-                  {isRemote
-                    ? "Location penalty disabled - out-of-area candidates scored fairly"
-                    : "Enable if candidates can work from anywhere"}
+          {/* Optional second location */}
+          <div>
+            <details className="text-xs">
+              <summary className="cursor-pointer text-text-tertiary hover:text-text-secondary select-none">
+                {location2.trim()
+                  ? <>+ second location: <span className="text-text-primary font-medium">{location2.trim()}</span></>
+                  : <>+ add a second location <span className="text-text-tertiary">(optional — for dual-site roles)</span></>
+                }
+              </summary>
+              <div className="mt-2">
+                <input
+                  type="text"
+                  value={location2}
+                  onChange={(e) => setLocation2(e.target.value)}
+                  placeholder="e.g. Christchurch, NZ"
+                  className={INPUT_BASE}
+                />
+                <p className="text-xs text-text-tertiary mt-1">
+                  Candidates based in either location will score the same for location fit.
                 </p>
               </div>
-            </div>
-            <div className={cn(
-              "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
-              isRemote ? "bg-violet-500" : "bg-slate-300"
-            )}>
+            </details>
+          </div>
+
+          {/* Remote toggle */}
+          <div className="rounded border border-separator bg-surface-sunken">
+            <button
+              type="button"
+              onClick={() => setIsRemote((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2.5"
+            >
+              <div className="flex items-center gap-2.5">
+                <Wifi className={cn("w-4 h-4", isRemote ? "text-llama" : "text-text-tertiary")} />
+                <div className="text-left">
+                  <p className={cn("text-md font-medium", isRemote ? "text-text-primary" : "text-text-secondary")}>
+                    Remote role
+                  </p>
+                  <p className="text-xs text-text-tertiary">
+                    {isRemote
+                      ? "Location penalty disabled — out-of-area candidates scored fairly"
+                      : "Enable if candidates can work from anywhere"}
+                  </p>
+                </div>
+              </div>
               <div className={cn(
-                "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform",
-                isRemote ? "translate-x-5" : "translate-x-0.5"
-              )} />
-            </div>
-          </button>
-        </div>
-
-        <div className={cn(
-          "rounded-lg border transition-colors",
-          salaryEnabled ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50"
-        )}>
-          <button
-            type="button"
-            onClick={() => setSalaryEnabled((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-3"
-          >
-            <div className="flex items-center gap-2.5">
-              <DollarSign className={cn("w-4 h-4", salaryEnabled ? "text-blue-600" : "text-slate-400")} />
-              <div className="text-left">
-                <p className={cn("text-sm font-medium", salaryEnabled ? "text-blue-800" : "text-slate-600")}>
-                  Salary Range
-                </p>
-                <p className="text-xs text-slate-400">
-                  {salaryEnabled
-                    ? `${fmtSalary(salaryMin)} - ${fmtSalary(salaryMax)} NZD / year`
-                    : "Optional - enable to compare candidate seniority"}
-                </p>
+                "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
+                isRemote ? "bg-accent" : "bg-surface-hover"
+              )}>
+                <div className={cn(
+                  "absolute top-0.5 w-4 h-4 bg-text-primary rounded-full shadow transition-transform",
+                  isRemote ? "translate-x-5" : "translate-x-0.5"
+                )} />
               </div>
-            </div>
-            <div className={cn(
-              "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
-              salaryEnabled ? "bg-blue-500" : "bg-slate-300"
-            )}>
+            </button>
+          </div>
+
+          {/* Salary toggle + range */}
+          <div className="rounded border border-separator bg-surface-sunken">
+            <button
+              type="button"
+              onClick={() => setSalaryEnabled((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2.5"
+            >
+              <div className="flex items-center gap-2.5">
+                <DollarSign className={cn("w-4 h-4", salaryEnabled ? "text-accent" : "text-text-tertiary")} />
+                <div className="text-left">
+                  <p className={cn("text-md font-medium", salaryEnabled ? "text-text-primary" : "text-text-secondary")}>
+                    Salary range
+                  </p>
+                  <p className="text-xs text-text-tertiary">
+                    {salaryEnabled
+                      ? <><span className="data-mono">{fmtSalary(salaryMin)} - {fmtSalary(salaryMax)}</span> NZD / year</>
+                      : "Optional — enable to compare candidate seniority"}
+                  </p>
+                </div>
+              </div>
               <div className={cn(
-                "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform",
-                salaryEnabled ? "translate-x-5" : "translate-x-0.5"
-              )} />
-            </div>
-          </button>
-
-          {salaryEnabled && (
-            <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-blue-700 mb-1.5">Minimum</label>
-                <select
-                  value={salaryMin}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setSalaryMin(v);
-                    if (v > salaryMax) setSalaryMax(v);
-                  }}
-                  className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {SALARY_OPTIONS.map((n) => (
-                    <option key={n} value={n}>{fmtSalary(n)}</option>
-                  ))}
-                </select>
+                "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
+                salaryEnabled ? "bg-accent" : "bg-surface-hover"
+              )}>
+                <div className={cn(
+                  "absolute top-0.5 w-4 h-4 bg-text-primary rounded-full shadow transition-transform",
+                  salaryEnabled ? "translate-x-5" : "translate-x-0.5"
+                )} />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-blue-700 mb-1.5">Maximum</label>
-                <select
-                  value={salaryMax}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setSalaryMax(v);
-                    if (v < salaryMin) setSalaryMin(v);
-                  }}
-                  className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {SALARY_OPTIONS.filter((n) => n >= salaryMin).map((n) => (
-                    <option key={n} value={n}>{fmtSalary(n)}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+            </button>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-5">
-        <div className="mb-3">
-          <label className="block text-sm font-medium text-slate-700">
-            Job Description or Hiring Brief <span className="text-red-500">*</span>
-          </label>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Paste a JD, upload a PDF/DOCX/TXT brief, or bring in the finished ad from the Listing Builder.
-          </p>
+            {salaryEnabled && (
+              <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Minimum</label>
+                  <select
+                    value={salaryMin}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setSalaryMin(v);
+                      if (v > salaryMax) setSalaryMax(v);
+                    }}
+                    className={SELECT_BASE}
+                  >
+                    {SALARY_OPTIONS.map((n) => (
+                      <option key={n} value={n}>{fmtSalary(n)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Maximum</label>
+                  <select
+                    value={salaryMax}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setSalaryMax(v);
+                      if (v < salaryMin) setSalaryMin(v);
+                    }}
+                    className={SELECT_BASE}
+                  >
+                    {SALARY_OPTIONS.filter((n) => n >= salaryMin).map((n) => (
+                      <option key={n} value={n}>{fmtSalary(n)}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={cn(
-            "border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors mb-4",
-            dragging
-              ? "border-blue-400 bg-blue-50"
-              : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-          )}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.docx,.doc,.txt"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
-            }}
+        {/* JD card */}
+        <div className="bg-surface-raised rounded-md border border-separator p-4 mb-4">
+          <div className="mb-3">
+            <label className="block text-md font-medium text-text-primary">
+              Job description or hiring brief <span className="text-danger">*</span>
+            </label>
+            <p className="text-xs text-text-tertiary mt-0.5">
+              Paste a JD, upload a PDF/DOCX/TXT brief, or bring in the finished ad from the Listing Builder.
+            </p>
+          </div>
+
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={cn(
+              "border border-dashed rounded p-5 text-center cursor-pointer transition-colors mb-3",
+              dragging
+                ? "border-accent bg-accent-subtle"
+                : "border-separator hover:border-separator-strong hover:bg-surface-hover"
+            )}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.doc,.txt"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+              }}
+            />
+            {uploading ? (
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="w-5 h-5 text-accent animate-spin" />
+                <p className="text-sm text-text-secondary">Reading brief and filling fields...</p>
+              </div>
+            ) : fileName ? (
+              <div className="flex items-center justify-center gap-2">
+                <FileText className="w-4 h-4 text-accent" />
+                <span className="text-sm font-medium text-text-primary">{fileName}</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setFileName(""); setJdText(""); setAutofilledFromUpload(false); }}
+                  className="text-text-tertiary hover:text-danger ml-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-1.5">
+                <Upload className="w-5 h-5 text-text-tertiary" />
+                <p className="text-sm text-text-secondary">
+                  Drop a PDF or TXT, or <span className="text-accent font-medium">click to browse</span>
+                </p>
+                <p className="text-xs text-text-tertiary">PDF, DOCX, TXT up to 10MB</p>
+              </div>
+            )}
+          </div>
+
+          <div className="relative mb-2">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-separator" />
+            </div>
+            <div className="relative flex justify-center">
+              <span className="px-2 bg-surface-raised text-xs text-text-tertiary">or paste below</span>
+            </div>
+          </div>
+
+          <textarea
+            value={jdText}
+            onChange={(e) => setJdText(e.target.value)}
+            placeholder="Paste a job description, hiring brief, client email, or the finished listing you want turned into a candidate search..."
+            className={cn(TEXTAREA_BASE, "mt-2")}
+            rows={10}
           />
-          {uploading ? (
-            <div className="flex flex-col items-center gap-2">
-              <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-              <p className="text-sm text-slate-500">Reading brief and filling fields...</p>
-            </div>
-          ) : fileName ? (
-            <div className="flex items-center justify-center gap-2">
-              <FileText className="w-5 h-5 text-blue-500" />
-              <span className="text-sm font-medium text-slate-700">{fileName}</span>
-              <button
-                onClick={(e) => { e.stopPropagation(); setFileName(""); setJdText(""); setAutofilledFromUpload(false); }}
-                className="text-slate-400 hover:text-red-500 ml-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2">
-              <Upload className="w-8 h-8 text-slate-400" />
-              <p className="text-sm text-slate-500">
-                Drop a PDF or TXT, or <span className="text-blue-600 font-medium">click to browse</span>
-              </p>
-              <p className="text-xs text-slate-400">PDF, TXT up to 10MB</p>
-            </div>
-          )}
         </div>
 
-        <div className="relative mb-1">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-slate-200" />
+        {error && (
+          <div className="mb-4 px-3 py-2 bg-danger-subtle border border-danger/30 rounded text-sm text-danger">
+            {error}
           </div>
-          <div className="relative flex justify-center">
-            <span className="px-3 bg-white text-xs text-slate-400">or paste below</span>
-          </div>
+        )}
+
+        <div className="flex justify-end">
+          <Button
+            onClick={handleCreate}
+            loading={creating}
+            disabled={!title.trim() || !jdText.trim()}
+            size="lg"
+          >
+            Create job & analyse
+            <ChevronRight className="w-3.5 h-3.5" />
+          </Button>
         </div>
-
-        <textarea
-          value={jdText}
-          onChange={(e) => setJdText(e.target.value)}
-          placeholder="Paste a job description, hiring brief, client email, or the finished listing you want turned into a candidate search..."
-          className="w-full mt-3 px-3.5 py-3 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          rows={10}
-        />
-      </div>
-
-      {error && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      <div className="flex justify-end">
-        <Button
-          onClick={handleCreate}
-          loading={creating}
-          disabled={!title.trim() || !jdText.trim()}
-          size="lg"
-        >
-          Create Job & Analyse
-          <ChevronRight className="w-4 h-4" />
-        </Button>
       </div>
     </div>
   );

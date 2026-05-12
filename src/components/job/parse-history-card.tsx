@@ -35,38 +35,38 @@ export function ParseHistoryCard({ jobId }: { jobId: string }) {
   }, [open, loadState, jobId]);
 
   function evalIcon(evaluation: string) {
-    if (evaluation.startsWith("FAIL"))    return <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />;
-    if (evaluation.startsWith("WARNING")) return <AlertCircle className="w-3 h-3 text-amber-500 flex-shrink-0" />;
-    return <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />;
+    if (evaluation.startsWith("FAIL"))    return <XCircle className="w-3 h-3 text-danger flex-shrink-0" />;
+    if (evaluation.startsWith("WARNING")) return <AlertCircle className="w-3 h-3 text-warning flex-shrink-0" />;
+    return <CheckCircle2 className="w-3 h-3 text-success flex-shrink-0" />;
   }
 
   function evalChipClass(evaluation: string) {
-    if (evaluation.startsWith("FAIL"))    return "bg-red-50 text-red-600 border-red-200";
-    if (evaluation.startsWith("WARNING")) return "bg-amber-50 text-amber-700 border-amber-200";
-    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (evaluation.startsWith("FAIL"))    return "bg-danger-subtle text-danger";
+    if (evaluation.startsWith("WARNING")) return "bg-warning-subtle text-warning";
+    return "bg-success-subtle text-success";
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+    <div className="rounded-md border border-separator bg-surface-raised overflow-hidden">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-surface-hover transition-colors"
       >
-        <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
-          <History className="w-4 h-4 text-slate-400" />
+        <span className="flex items-center gap-2 text-md font-semibold text-text-primary">
+          <History className="w-3.5 h-3.5 text-text-tertiary" />
           Analysis History
         </span>
-        {open ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        {open ? <ChevronUp className="w-3.5 h-3.5 text-text-tertiary" /> : <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />}
       </button>
 
       {open && (
-        <div className="border-t border-slate-100 px-4 py-3 space-y-3">
+        <div className="border-t border-separator px-4 py-3 space-y-3">
           {loadState === "loading" && <LoadingPill>Loading…</LoadingPill>}
           {loadState === "error" && (
-            <ErrorPill className="text-amber-700">Couldn&apos;t load analysis history — refresh to try again.</ErrorPill>
+            <ErrorPill>Couldn&apos;t load analysis history — refresh to try again.</ErrorPill>
           )}
           {loadState === "loaded" && history.length === 0 && (
-            <p className="text-xs text-slate-400">No analysis history yet — run Re-analyse to start tracking.</p>
+            <p className="text-xs text-text-tertiary">No analysis history yet — run Re-analyse to start tracking.</p>
           )}
           {loadState === "loaded" && history.map((entry) => {
             const parseJsonSafe = <T,>(s: string, fallback: T): T => { try { return JSON.parse(s) as T; } catch { return fallback; } };
@@ -83,12 +83,12 @@ export function ParseHistoryCard({ jobId }: { jobId: string }) {
                 <div className="flex items-start gap-2">
                   {evalIcon(entry.evaluation)}
                   <div className="flex-1 min-w-0">
-                    <p className="text-[11px] text-slate-500 leading-snug" suppressHydrationWarning>
-                      {date} · {entry.mustHaveCount} must-have{entry.mustHaveCount !== 1 ? "s" : ""}
+                    <p className="text-xs text-text-secondary leading-snug tabular-nums" suppressHydrationWarning>
+                      {date} · <span className="data-mono">{entry.mustHaveCount}</span> must-have{entry.mustHaveCount !== 1 ? "s" : ""}
                       {anchors.length > 0 ? ` · anchors: ${anchors.join(", ")}` : " · no anchors"}
                     </p>
                     <p className={cn(
-                      "text-[10px] mt-1 px-2 py-0.5 rounded-full border inline-block font-medium",
+                      "text-2xs mt-1 px-1.5 py-0.5 rounded-sm inline-block font-medium",
                       evalChipClass(entry.evaluation)
                     )}>
                       {entry.evaluation}
@@ -96,21 +96,21 @@ export function ParseHistoryCard({ jobId }: { jobId: string }) {
                     {showChanges.length > 0 && (
                       <ul className="mt-1.5 space-y-0.5">
                         {showChanges.map((c, i) => (
-                          <li key={i} className="text-[10px] text-slate-400 before:content-['·'] before:mr-1">
+                          <li key={i} className="text-2xs text-text-tertiary before:content-['·'] before:mr-1">
                             {c}
                           </li>
                         ))}
                         {extra > 0 && (
-                          <li className="text-[10px] text-slate-400">+{extra} more change{extra !== 1 ? "s" : ""}</li>
+                          <li className="text-2xs text-text-tertiary">+<span className="data-mono">{extra}</span> more change{extra !== 1 ? "s" : ""}</li>
                         )}
                       </ul>
                     )}
                     {showChanges.length === 0 && (
-                      <p className="text-[10px] text-slate-400 mt-1">No changes from previous analysis</p>
+                      <p className="text-2xs text-text-tertiary mt-1">No changes from previous analysis</p>
                     )}
                   </div>
                 </div>
-                <div className="border-b border-slate-100 last:border-0" />
+                <div className="border-b border-separator last:border-0" />
               </div>
             );
           })}

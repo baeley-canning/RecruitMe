@@ -74,12 +74,12 @@ function AcceptancePill({ score }: { score: number | null }) {
   if (score == null) return null;
   const level = score >= 70 ? "high" : score >= 40 ? "medium" : "low";
   const config = {
-    high:   { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Likely open",  Icon: TrendingUp },
-    medium: { cls: "bg-amber-50 text-amber-700 border-amber-200",       label: "May consider", Icon: Minus },
-    low:    { cls: "bg-red-50 text-red-600 border-red-100",             label: "Hard to move", Icon: TrendingDown },
+    high:   { cls: "bg-success-subtle text-success", label: "Likely open",  Icon: TrendingUp },
+    medium: { cls: "bg-warning-subtle text-warning", label: "May consider", Icon: Minus },
+    low:    { cls: "bg-danger-subtle text-danger",   label: "Hard to move", Icon: TrendingDown },
   }[level];
   return (
-    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium", config.cls)}>
+    <span className={cn("inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium", config.cls)}>
       <config.Icon className="w-3 h-3" />
       {config.label}
     </span>
@@ -100,41 +100,39 @@ function CandidateBrief({
   const acceptance = safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden print:shadow-none print:border-slate-300 print:rounded-none print:break-inside-avoid">
-      <div className="h-1 bg-gradient-to-r from-blue-500 to-blue-400 print:hidden" />
-
-      <div className="p-6">
+    <div className="bg-surface-raised border border-separator rounded-md overflow-hidden print:shadow-none print:border print:rounded-none print:break-inside-avoid">
+      <div className="p-4">
         {/* Identity + scores */}
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex items-start justify-between gap-4 mb-3">
           <div className="flex items-start gap-3">
-            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 text-white font-bold print:hidden">
+            <div className="w-9 h-9 rounded-full bg-accent-subtle border border-separator flex items-center justify-center flex-shrink-0 text-accent font-semibold print:hidden">
               {candidate.name.charAt(0).toUpperCase()}
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-bold text-slate-900 text-base">
-                  #{rank} — {candidate.name}
+                <span className="font-semibold text-text-primary text-md">
+                  <span className="data-mono text-text-tertiary">#{rank}</span> — {candidate.name}
                 </span>
                 {displayableLinkedinUrl(candidate.linkedinUrl) && (
                   <a
                     href={displayableLinkedinUrl(candidate.linkedinUrl)!}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[#0A66C2] hover:opacity-80 transition-opacity print:hidden"
+                    className="text-accent hover:text-accent-hover transition-colors print:hidden"
                     title="LinkedIn profile"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
                 )}
                 {candidate.linkedinUrl && (
-                  <span className="hidden print:inline text-xs text-slate-400">{candidate.linkedinUrl}</span>
+                  <span className="hidden print:inline text-xs text-text-tertiary">{candidate.linkedinUrl}</span>
                 )}
                 {candidate.jobAdderUrl && (
                   <a
                     href={candidate.jobAdderUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold bg-orange-500 text-white border border-orange-600 hover:opacity-80 transition-opacity print:hidden"
+                    className="inline-flex items-center justify-center w-5 h-5 rounded-xs text-2xs font-semibold bg-warning text-text-inverse hover:opacity-80 transition-opacity print:hidden"
                     title="Open in JobAdder"
                   >
                     JA
@@ -142,12 +140,12 @@ function CandidateBrief({
                 )}
               </div>
               {candidate.headline && (
-                <p className="text-sm text-slate-600 mt-0.5">{candidate.headline}</p>
+                <p className="text-sm text-text-secondary mt-0.5">{candidate.headline}</p>
               )}
               {candidate.location && (
                 <div className="flex items-center gap-1 mt-0.5">
-                  <MapPin className="w-3 h-3 text-slate-400" />
-                  <span className="text-xs text-slate-400">{candidate.location}</span>
+                  <MapPin className="w-3 h-3 text-text-tertiary" />
+                  <span className="text-xs text-text-tertiary">{candidate.location}</span>
                 </div>
               )}
             </div>
@@ -161,21 +159,21 @@ function CandidateBrief({
 
         {/* AI summary */}
         {(breakdown?.recruiter_summary || match?.summary) && (
-          <blockquote className="text-sm text-slate-600 italic border-l-2 border-blue-200 pl-3 mb-4 leading-relaxed">
+          <blockquote className="text-sm text-text-secondary italic border-l-2 border-accent/50 pl-3 mb-3 leading-relaxed">
             {breakdown?.recruiter_summary ?? match?.summary}
           </blockquote>
         )}
 
         {/* Strengths & gaps */}
         {((breakdown?.reasons_for?.length || breakdown?.reasons_against?.length) || match?.strengths?.length || match?.gaps?.length) && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 print:grid-cols-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3 print:grid-cols-2">
             {((breakdown?.reasons_for?.length ?? 0) > 0 || (match?.strengths?.length ?? 0) > 0) && (
               <div>
-                <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide mb-2">Strengths</p>
+                <p className="text-2xs font-semibold text-success uppercase tracking-wide mb-2">Strengths</p>
                 <ul className="space-y-1">
                   {(breakdown?.reasons_for ?? match?.strengths ?? []).map((s, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-text-primary">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0 mt-0.5" />
                       {s}
                     </li>
                   ))}
@@ -184,11 +182,11 @@ function CandidateBrief({
             )}
             {((breakdown?.reasons_against?.length ?? 0) > 0 || (match?.gaps?.length ?? 0) > 0) && (
               <div>
-                <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-2">Gaps</p>
+                <p className="text-2xs font-semibold text-danger uppercase tracking-wide mb-2">Gaps</p>
                 <ul className="space-y-1">
                   {(breakdown?.reasons_against ?? match?.gaps ?? []).map((g, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-xs text-slate-700">
-                      <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                    <li key={i} className="flex items-start gap-1.5 text-xs text-text-primary">
+                      <XCircle className="w-3.5 h-3.5 text-danger flex-shrink-0 mt-0.5" />
                       {g}
                     </li>
                   ))}
@@ -200,18 +198,18 @@ function CandidateBrief({
 
         {/* Acceptance signals */}
         {acceptance && acceptance.signals.length > 0 && (
-          <div className="mb-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+          <div className="mb-3 p-3 bg-surface-sunken rounded-md border border-separator">
+            <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">
               Offer Acceptance Signals
             </p>
-            <p className="text-xs text-slate-600 italic mb-2">{acceptance.headline}</p>
+            <p className="text-xs text-text-secondary italic mb-2">{acceptance.headline}</p>
             <div className="space-y-1">
               {acceptance.signals.map((s, i) => (
                 <div key={i} className="flex items-start gap-1.5">
                   {s.positive
-                    ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
-                    : <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />}
-                  <span className="text-xs text-slate-600">{s.label}</span>
+                    ? <CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0 mt-0.5" />
+                    : <XCircle className="w-3.5 h-3.5 text-danger flex-shrink-0 mt-0.5" />}
+                  <span className="text-xs text-text-secondary">{s.label}</span>
                 </div>
               ))}
             </div>
@@ -220,20 +218,20 @@ function CandidateBrief({
 
         {/* Recruiter notes */}
         {candidate.notes && (
-          <div className="mb-4 p-3 bg-amber-50 border border-amber-100 rounded-xl">
-            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Recruiter Notes</p>
-            <p className="text-xs text-slate-700 leading-relaxed">{candidate.notes}</p>
+          <div className="mb-3 p-3 bg-warning-subtle border border-separator rounded-md">
+            <p className="text-2xs font-semibold text-warning uppercase tracking-wide mb-1">Recruiter Notes</p>
+            <p className="text-xs text-text-primary leading-relaxed">{candidate.notes}</p>
           </div>
         )}
 
         {/* Actions */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100 print:hidden">
+        <div className="flex items-center justify-between pt-3 border-t border-separator print:hidden">
           {displayableLinkedinUrl(candidate.linkedinUrl) ? (
             <a
               href={displayableLinkedinUrl(candidate.linkedinUrl)!}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-[#0A66C2] hover:opacity-80 font-medium transition-opacity"
+              className="inline-flex items-center gap-1.5 text-sm text-accent hover:text-accent-hover font-medium transition-colors"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               View LinkedIn profile
@@ -241,7 +239,7 @@ function CandidateBrief({
           ) : <span />}
           <button
             onClick={() => onRemove(candidate.id)}
-            className="text-xs text-slate-400 hover:text-red-600 transition-colors"
+            className="text-xs text-text-tertiary hover:text-danger transition-colors"
           >
             Remove from shortlist
           </button>
@@ -285,13 +283,13 @@ export default function ShortlistPage({
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+        <Loader2 className="w-6 h-6 text-accent animate-spin" />
       </div>
     );
   }
 
   if (!job) {
-    return <div className="p-8 text-center text-slate-500">Job not found.</div>;
+    return <div className="p-6 text-center text-text-tertiary">Job not found.</div>;
   }
 
   const shortlisted = job.candidates
@@ -307,51 +305,52 @@ export default function ShortlistPage({
   const highAcceptance = shortlisted.filter((c) => (c.acceptanceScore ?? 0) >= 70).length;
 
   return (
-    <div className="p-8 max-w-4xl mx-auto print:p-0 print:max-w-none">
+    <div className="bg-surface-base min-h-screen">
+      <div className="p-4 sm:p-6 max-w-4xl mx-auto print:p-0 print:max-w-none">
       {/* Nav bar — hidden on print */}
-      <div className="flex items-center justify-between mb-8 print:hidden">
+      <div className="flex items-center justify-between mb-5 print:hidden">
         <Link
           href={`/jobs/${id}`}
-          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to {job.title}
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <ShareShortlistButton jobId={id} shortlistCount={shortlisted.length} />
           <button
             onClick={() => window.print()}
-            className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
+            className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md font-medium border border-separator transition-colors"
           >
-            <Printer className="w-4 h-4" />
+            <Printer className="w-3.5 h-3.5" />
             Print / Save PDF
           </button>
         </div>
       </div>
 
       {/* Header */}
-      <div className="mb-8 print:mb-6">
-        <div className="flex items-center gap-2 text-xs text-slate-400 uppercase tracking-widest font-medium mb-2">
-          <Star className="w-3.5 h-3.5 text-amber-500" />
+      <div className="mb-5 print:mb-6">
+        <div className="flex items-center gap-2 text-2xs text-text-tertiary uppercase tracking-widest font-medium mb-2">
+          <Star className="w-3.5 h-3.5 text-warning" />
           Candidate Shortlist
         </div>
-        <h1 className="text-3xl font-bold text-slate-900 mb-2 print:text-2xl">{job.title}</h1>
-        <div className="flex items-center gap-4 text-sm text-slate-500 flex-wrap">
+        <h1 className="text-xl font-semibold text-text-primary mb-2 print:text-2xl">{job.title}</h1>
+        <div className="flex items-center gap-4 text-sm text-text-secondary flex-wrap">
           {job.company && (
             <span className="flex items-center gap-1">
-              <Briefcase className="w-3.5 h-3.5" />
+              <Briefcase className="w-3.5 h-3.5 text-text-tertiary" />
               {job.company}
             </span>
           )}
           {job.location && (
             <span className="flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5" />
+              <MapPin className="w-3.5 h-3.5 text-text-tertiary" />
               {job.location}
             </span>
           )}
           {(job.salaryMin || job.salaryMax) && (
-            <span className="flex items-center gap-1">
-              <DollarSign className="w-3.5 h-3.5" />
+            <span className="flex items-center gap-1 data-mono">
+              <DollarSign className="w-3.5 h-3.5 text-text-tertiary" />
               {job.salaryMin && job.salaryMax
                 ? `$${(job.salaryMin / 1000).toFixed(0)}k–$${(job.salaryMax / 1000).toFixed(0)}k NZD`
                 : job.salaryMin
@@ -360,23 +359,23 @@ export default function ShortlistPage({
             </span>
           )}
         </div>
-        <p className="text-xs text-slate-400 mt-3 hidden print:block" suppressHydrationWarning>
+        <p className="text-xs text-text-tertiary mt-3 hidden print:block" suppressHydrationWarning>
           Prepared {new Date().toLocaleDateString("en-NZ", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
         </p>
       </div>
 
       {/* Stats strip */}
       {shortlisted.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 print:mb-6 print:grid-cols-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5 print:mb-6 print:grid-cols-3">
           {[
-            { icon: <Users className="w-4 h-4 text-blue-500" />, value: shortlisted.length, label: "Shortlisted" },
-            { icon: <Star className="w-4 h-4 text-amber-500" />, value: avgScore != null ? `${avgScore}%` : "—", label: "Avg. match score" },
-            { icon: <TrendingUp className="w-4 h-4 text-emerald-500" />, value: highAcceptance, label: "Likely to accept" },
+            { icon: <Users className="w-4 h-4 text-accent" />, value: shortlisted.length, label: "Shortlisted" },
+            { icon: <Star className="w-4 h-4 text-warning" />, value: avgScore != null ? `${avgScore}%` : "—", label: "Avg. match score" },
+            { icon: <TrendingUp className="w-4 h-4 text-success" />, value: highAcceptance, label: "Likely to accept" },
           ].map(({ icon, value, label }) => (
-            <div key={label} className="bg-white border border-slate-200 rounded-xl p-4 text-center print:border-slate-300 print:rounded-none">
+            <div key={label} className="bg-surface-raised border border-separator rounded-md p-3 text-center print:rounded-none">
               <div className="flex justify-center mb-1 print:hidden">{icon}</div>
-              <p className="text-2xl font-bold text-slate-900 print:text-xl">{value}</p>
-              <p className="text-xs text-slate-500 mt-0.5">{label}</p>
+              <p className="text-xl font-semibold text-text-primary data-mono print:text-xl">{value}</p>
+              <p className="text-xs text-text-secondary mt-0.5">{label}</p>
             </div>
           ))}
         </div>
@@ -384,13 +383,13 @@ export default function ShortlistPage({
 
       {/* Role context — print only */}
       {parsedRole && (
-        <div className="hidden print:block mb-6 p-4 border border-slate-200 rounded">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Role Requirements</p>
+        <div className="hidden print:block mb-6 p-4 border border-separator rounded">
+          <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Role Requirements</p>
           <div className="text-sm space-y-1">
-            {parsedRole.experience && <p><span className="text-slate-500">Experience: </span>{parsedRole.experience}</p>}
-            {parsedRole.location && <p><span className="text-slate-500">Location: </span>{parsedRole.location}</p>}
+            {parsedRole.experience && <p><span className="text-text-tertiary">Experience: </span>{parsedRole.experience}</p>}
+            {parsedRole.location && <p><span className="text-text-tertiary">Location: </span>{parsedRole.location}</p>}
             {parsedRole.skills_required.length > 0 && (
-              <p><span className="text-slate-500">Required skills: </span>{parsedRole.skills_required.join(", ")}</p>
+              <p><span className="text-text-tertiary">Required skills: </span>{parsedRole.skills_required.join(", ")}</p>
             )}
           </div>
         </div>
@@ -398,22 +397,22 @@ export default function ShortlistPage({
 
       {/* Candidate list */}
       {shortlisted.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-200">
-          <Star className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium">No candidates shortlisted yet</p>
-          <p className="text-slate-400 text-sm mt-1">
+        <div className="text-center py-12 bg-surface-raised rounded-md border border-dashed border-separator">
+          <Star className="w-10 h-10 text-text-tertiary mx-auto mb-3" />
+          <p className="text-text-primary font-medium">No candidates shortlisted yet</p>
+          <p className="text-text-tertiary text-sm mt-1">
             Go back and star candidates to add them here.
           </p>
           <Link
             href={`/jobs/${id}`}
-            className="inline-flex items-center gap-1.5 mt-4 text-sm text-blue-600 hover:text-blue-700 font-medium"
+            className="inline-flex items-center gap-1.5 mt-4 text-sm text-accent hover:text-accent-hover font-medium"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Back to candidates
           </Link>
         </div>
       ) : (
-        <div className="space-y-5 print:space-y-6">
+        <div className="space-y-3 print:space-y-6">
           {shortlisted.map((candidate, i) => (
             <CandidateBrief
               key={candidate.id}
@@ -426,8 +425,9 @@ export default function ShortlistPage({
       )}
 
       {/* Print footer */}
-      <div className="hidden print:block mt-10 pt-4 border-t border-slate-200 text-xs text-slate-400 text-center">
+      <div className="hidden print:block mt-10 pt-4 border-t border-separator text-xs text-text-tertiary text-center">
         Generated by RecruitMe · {new Date().getFullYear()}
+      </div>
       </div>
     </div>
   );

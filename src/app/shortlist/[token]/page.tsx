@@ -50,25 +50,36 @@ export default async function PublicShortlistPage({
   const { job, candidates } = data;
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
+    <div className="min-h-screen bg-surface-base">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {/* Header */}
-        <div className="mb-6 sm:mb-8">
-          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">Shortlist</p>
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 leading-tight">{job.title}</h1>
-          <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-500">
+        <div className="mb-6">
+          <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wider mb-1">Shortlist</p>
+          <h1 className="text-xl sm:text-2xl font-semibold text-text-primary leading-tight">{job.title}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-base text-text-secondary">
             {job.company && (
-              <span className="flex items-center gap-1.5"><Briefcase className="w-4 h-4" />{job.company}</span>
+              <span className="flex items-center gap-1.5">
+                <Briefcase className="w-3.5 h-3.5" />
+                {job.company}
+              </span>
             )}
             {job.location && (
-              <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4" />{job.location}</span>
+              <span className="flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5" />
+                {job.location}
+              </span>
             )}
-            <span>{candidates.length} candidate{candidates.length !== 1 ? "s" : ""}</span>
+            <span className="data-mono text-text-tertiary">
+              {candidates.length} candidate{candidates.length !== 1 ? "s" : ""}
+            </span>
           </div>
           {job.mustHaves.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-1.5">
+            <div className="mt-3 flex flex-wrap gap-1.5">
               {job.mustHaves.slice(0, 8).map((m) => (
-                <span key={m} className="text-[11px] bg-slate-100 text-slate-600 border border-slate-200 rounded-md px-2 py-0.5">
+                <span
+                  key={m}
+                  className="text-xs bg-surface-hover text-text-secondary border border-separator rounded-sm px-2 py-0.5"
+                >
                   {m}
                 </span>
               ))}
@@ -78,31 +89,39 @@ export default async function PublicShortlistPage({
 
         {/* Candidates */}
         {candidates.length === 0 ? (
-          <div className="bg-white rounded-xl border border-slate-200 border-dashed p-10 text-center">
-            <Briefcase className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-700 font-medium text-sm">Candidates are being evaluated</p>
-            <p className="text-slate-400 text-xs mt-1">Check back soon — your recruiter is actively reviewing profiles for this role.</p>
+          <div className="bg-surface-raised rounded-md border border-separator border-dashed p-8 text-center">
+            <Briefcase className="w-7 h-7 text-text-tertiary mx-auto mb-2" />
+            <p className="text-text-primary font-medium text-base">Candidates are being evaluated</p>
+            <p className="text-text-tertiary text-xs mt-1">
+              Check back soon — your recruiter is actively reviewing profiles for this role.
+            </p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {candidates.map((c) => (
-              <article key={c.id} className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5">
-                <div className="flex items-start justify-between gap-4 mb-3">
+              <article
+                key={c.id}
+                className="bg-surface-raised rounded-md border border-separator p-4"
+              >
+                <div className="flex items-start justify-between gap-4 mb-2.5">
                   <div className="min-w-0 flex-1">
-                    <h2 className="text-lg font-semibold text-slate-900 truncate">{c.name}</h2>
+                    <h2 className="text-md font-semibold text-text-primary truncate">{c.name}</h2>
                     {c.headline && (
-                      <p className="text-sm text-slate-600 mt-0.5">{c.headline}</p>
+                      <p className="text-base text-text-secondary mt-0.5">{c.headline}</p>
                     )}
-                    <div className="mt-1.5 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-tertiary">
                       {c.location && (
-                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.location}</span>
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3" />
+                          {c.location}
+                        </span>
                       )}
                       {displayableLinkedinUrl(c.linkedinUrl) && (
                         <a
                           href={displayableLinkedinUrl(c.linkedinUrl)!}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-blue-600 hover:text-blue-700"
+                          className="flex items-center gap-1 text-accent hover:text-accent-hover"
                         >
                           LinkedIn <ExternalLink className="w-3 h-3" />
                         </a>
@@ -113,18 +132,20 @@ export default async function PublicShortlistPage({
                 </div>
 
                 {c.summary && (
-                  <p className="text-sm text-slate-700 leading-relaxed mb-3">{c.summary}</p>
+                  <p className="text-base text-text-secondary leading-relaxed mb-3">{c.summary}</p>
                 )}
 
                 {(c.strengths.length > 0 || c.gaps.length > 0) && (
                   <div className="grid sm:grid-cols-2 gap-3">
                     {c.strengths.length > 0 && (
                       <div>
-                        <p className="text-[10px] uppercase tracking-wide text-emerald-700 font-semibold mb-1.5">Strengths</p>
+                        <p className="text-2xs uppercase tracking-wider text-success font-semibold mb-1">
+                          Strengths
+                        </p>
                         <ul className="space-y-1">
                           {c.strengths.slice(0, 4).map((s, i) => (
-                            <li key={i} className="text-xs text-slate-600 flex items-start gap-1.5">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-500 mt-0.5 flex-shrink-0" />
+                            <li key={i} className="text-xs text-text-secondary flex items-start gap-1.5">
+                              <CheckCircle2 className="w-3 h-3 text-success mt-0.5 flex-shrink-0" />
                               <span>{s}</span>
                             </li>
                           ))}
@@ -133,11 +154,13 @@ export default async function PublicShortlistPage({
                     )}
                     {c.gaps.length > 0 && (
                       <div>
-                        <p className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold mb-1.5">Gaps</p>
+                        <p className="text-2xs uppercase tracking-wider text-warning font-semibold mb-1">
+                          Gaps
+                        </p>
                         <ul className="space-y-1">
                           {c.gaps.slice(0, 4).map((g, i) => (
-                            <li key={i} className="text-xs text-slate-600 flex items-start gap-1.5">
-                              <AlertCircle className="w-3 h-3 text-amber-500 mt-0.5 flex-shrink-0" />
+                            <li key={i} className="text-xs text-text-secondary flex items-start gap-1.5">
+                              <AlertCircle className="w-3 h-3 text-warning mt-0.5 flex-shrink-0" />
                               <span>{g}</span>
                             </li>
                           ))}
@@ -151,7 +174,7 @@ export default async function PublicShortlistPage({
           </div>
         )}
 
-        <p className="mt-10 text-center text-[11px] text-slate-400">
+        <p className="mt-10 text-center text-xs text-text-tertiary">
           Read-only shortlist · Generated by RecruitMe
         </p>
       </div>

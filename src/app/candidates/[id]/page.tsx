@@ -19,6 +19,9 @@ import {
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
+import { Card, CardHeader, CardBody } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface CandidateFile {
   id: string;
@@ -63,11 +66,13 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function scoreRing(score: number) {
-  if (score >= 80) return { ring: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-200", label: "Strong" };
-  if (score >= 60) return { ring: "text-blue-600", bg: "bg-blue-50", border: "border-blue-200", label: "Good" };
-  if (score >= 40) return { ring: "text-amber-500", bg: "bg-amber-50", border: "border-amber-200", label: "Moderate" };
-  return { ring: "text-slate-400", bg: "bg-slate-50", border: "border-slate-200", label: "Weak" };
+// Score tier mapping — token-only. Used for the score number color, the
+// progress-bar fill, and the small label next to the score.
+function scoreTier(score: number) {
+  if (score >= 80) return { text: "text-success", fill: "bg-success", label: "Strong" };
+  if (score >= 60) return { text: "text-accent",  fill: "bg-accent",  label: "Good" };
+  if (score >= 40) return { text: "text-warning", fill: "bg-warning", label: "Moderate" };
+  return            { text: "text-text-tertiary", fill: "bg-text-tertiary", label: "Weak" };
 }
 
 function parseSkills(headline: string | null): { skills: string[]; rest: string } {
@@ -83,10 +88,10 @@ function typeLabel(type: string) {
   return "Other";
 }
 
-function typeColor(type: string) {
-  if (type === "cv") return "bg-blue-50 text-blue-600 border-blue-100";
-  if (type === "cover_letter") return "bg-purple-50 text-purple-600 border-purple-100";
-  return "bg-slate-50 text-slate-500 border-slate-100";
+function typeBadgeClass(type: string) {
+  if (type === "cv") return "bg-accent-subtle text-accent";
+  if (type === "cover_letter") return "bg-llama-subtle text-llama";
+  return "bg-surface-hover text-text-secondary";
 }
 
 function LinkedInIcon({ className }: { className?: string }) {
@@ -116,19 +121,21 @@ function FileRow({
   };
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white border border-slate-100 group hover:border-slate-200 transition-colors">
-      <div className={cn("px-1.5 py-0.5 rounded text-xs font-medium border flex-shrink-0", typeColor(file.type))}>
-        {typeLabel(file.type)}
-      </div>
+    <div className="flex items-center gap-2 px-3 py-2 rounded border border-separator bg-surface-sunken group hover:bg-surface-hover transition-colors">
+      <Badge className={typeBadgeClass(file.type)}>{typeLabel(file.type)}</Badge>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-slate-700 truncate">{file.filename}</p>
-        <p className="text-xs text-slate-400">{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
+        <p className="text-base font-medium text-text-primary truncate">{file.filename}</p>
+        <p className="text-xs text-text-tertiary">
+          <span className="data-mono">{formatBytes(file.size)}</span>
+          <span className="mx-1">·</span>
+          <span suppressHydrationWarning>{timeAgo(new Date(file.createdAt))}</span>
+        </p>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <a
           href={`/api/candidates/${candidateId}/files/${file.id}`}
           download={file.filename}
-          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+          className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
           title="Download"
         >
           <Download className="w-3.5 h-3.5" />
@@ -136,7 +143,7 @@ function FileRow({
         <button
           onClick={handleDelete}
           disabled={deleting}
-          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+          className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-surface-hover transition-colors disabled:opacity-50"
           title="Delete"
         >
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -197,7 +204,7 @@ function UploadZone({
         <select
           value={type}
           onChange={(e) => setType(e.target.value as typeof type)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 focus:outline-none focus:border-blue-400"
+          className="h-7 px-2 rounded bg-surface-sunken border border-separator text-base text-text-primary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
         >
           <option value="cv">CV / Resume</option>
           <option value="cover_letter">Cover Letter</option>
@@ -205,10 +212,10 @@ function UploadZone({
         </select>
         <label
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors",
+            "inline-flex items-center gap-1.5 h-7 px-3 rounded text-md font-medium cursor-pointer transition-colors",
             uploading
-              ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-              : "bg-blue-600 hover:bg-blue-500 text-white"
+              ? "bg-surface-hover text-text-tertiary cursor-not-allowed"
+              : "bg-accent hover:bg-accent-hover text-white"
           )}
         >
           {uploading ? (
@@ -226,9 +233,9 @@ function UploadZone({
           />
         </label>
       </div>
-      <p className="text-xs text-slate-400">PDF, Word, or plain text · max 10 MB</p>
-      {error && <p className="text-xs text-red-500 flex items-center gap-1"><X className="w-3 h-3" /> {error}</p>}
-      {notice && <p className="text-xs text-slate-500">{notice}</p>}
+      <p className="text-xs text-text-tertiary">PDF, Word, or plain text · max 10 MB</p>
+      {error && <p className="text-xs text-danger flex items-center gap-1"><X className="w-3 h-3" /> {error}</p>}
+      {notice && <p className="text-xs text-text-secondary">{notice}</p>}
     </div>
   );
 }
@@ -284,134 +291,141 @@ export default function CandidateDetailPage({
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
+        <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
       </div>
     );
   }
 
   if (notFound || !candidate) {
     return (
-      <div className="p-8 text-center text-slate-500">
+      <div className="p-8 text-center text-text-secondary text-base">
         Candidate not found.{" "}
-        <Link href="/candidates" className="text-blue-600 hover:underline">Back to library</Link>
+        <Link href="/candidates" className="text-accent hover:text-accent-hover">Back to library</Link>
       </div>
     );
   }
 
   const { skills, rest } = parseSkills(candidate.headline);
   const initials = candidate.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-  const scoreInfo = candidate.matchScore !== null ? scoreRing(candidate.matchScore) : null;
+  const score = candidate.matchScore;
+  const tier = score !== null ? scoreTier(score) : null;
   const allJobs = [
     ...(candidate.job ? [{ id: candidate.job.id, title: candidate.job.title, company: candidate.job.company, matchScore: candidate.matchScore, status: candidate.status }] : []),
     ...candidate.otherJobs,
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Top bar */}
-      <div className="bg-white border-b border-slate-200 px-8 py-3">
+    <div className="min-h-screen bg-surface-base">
+      {/* Toolbar */}
+      <div className="toolbar">
         <Link
           href="/candidates"
-          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 transition-colors"
+          className="inline-flex items-center gap-1.5 h-7 px-2 rounded text-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Candidates Library
+          <ArrowLeft className="w-3.5 h-3.5" />
+          Candidates
         </Link>
-      </div>
-
-      {/* Hero header */}
-      <div className="bg-white border-b border-slate-200">
-        <div className="max-w-5xl mx-auto px-8 py-8">
-          <div className="flex items-start gap-6">
-            {/* Avatar */}
-            <div className="relative flex-shrink-0">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-blue-200">
-                {initials}
-              </div>
-              {scoreInfo && (
-                <div className={cn(
-                  "absolute -bottom-2 -right-2 w-9 h-9 rounded-xl border-2 border-white flex items-center justify-center text-xs font-bold shadow-sm",
-                  scoreInfo.bg, scoreInfo.ring
-                )}>
-                  {candidate.matchScore}
-                </div>
-              )}
-            </div>
-
-            {/* Name + details */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h1 className="text-2xl font-bold text-slate-900">{candidate.name}</h1>
-                  {rest && <p className="text-slate-500 mt-0.5">{rest}</p>}
-                </div>
-                {scoreInfo && (
-                  <div className={cn("flex flex-col items-center px-4 py-2 rounded-xl border", scoreInfo.bg, scoreInfo.border)}>
-                    <span className={cn("text-2xl font-bold", scoreInfo.ring)}>{candidate.matchScore}%</span>
-                    <span className={cn("text-xs font-medium", scoreInfo.ring)}>{scoreInfo.label}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Skill tags */}
-              {skills.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  {skills.map((skill) => (
-                    <span
-                      key={skill}
-                      className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-blue-50 hover:text-blue-700 transition-colors"
-                    >
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Meta row */}
-              <div className="flex flex-wrap items-center gap-4 mt-3">
-                {candidate.location && (
-                  <span className="flex items-center gap-1.5 text-sm text-slate-500">
-                    <MapPin className="w-3.5 h-3.5" />
-                    {candidate.location}
-                  </span>
-                )}
-                {displayableLinkedinUrl(candidate.linkedinUrl) && (
-                  <a
-                    href={displayableLinkedinUrl(candidate.linkedinUrl)!}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-sm text-[#0077B5] hover:text-[#005582] font-medium transition-colors"
-                  >
-                    <LinkedInIcon className="w-4 h-4" />
-                    LinkedIn profile
-                  </a>
-                )}
-                <span className="text-sm text-slate-400">
-                  {candidate.profileCapturedAt
-                    ? `Captured ${timeAgo(new Date(candidate.profileCapturedAt))}`
-                    : `Added ${timeAgo(new Date(candidate.createdAt))}`}
-                </span>
-              </div>
-            </div>
-          </div>
+        <span className="text-text-tertiary">/</span>
+        <span className="text-md text-text-primary font-medium truncate">{candidate.name}</span>
+        <Badge className="ml-1 bg-surface-hover text-text-secondary capitalize">
+          {candidate.status.replace(/_/g, " ")}
+        </Badge>
+        <div className="ml-auto flex items-center gap-1.5">
+          {displayableLinkedinUrl(candidate.linkedinUrl) && (
+            <a
+              href={displayableLinkedinUrl(candidate.linkedinUrl)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-overlay text-text-primary text-md border border-separator transition-colors"
+            >
+              <LinkedInIcon className="w-3.5 h-3.5" />
+              LinkedIn
+            </a>
+          )}
         </div>
       </div>
 
-      {/* Body */}
-      <div className="max-w-5xl mx-auto px-4 sm:px-8 py-7">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Body — two columns */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-          {/* Left — profile + notes */}
-          <div className="col-span-2 space-y-5">
+          {/* LEFT — candidate header, score, profile, notes */}
+          <div className="lg:col-span-2 space-y-4">
 
-            {/* LinkedIn Profile */}
+            {/* Header card: avatar + name + meta + score */}
+            <Card>
+              <CardBody>
+                <div className="flex items-start gap-4">
+                  {/* Avatar */}
+                  <div className="w-14 h-14 rounded-md bg-surface-hover border border-separator flex items-center justify-center text-text-primary text-lg font-semibold flex-shrink-0">
+                    {initials}
+                  </div>
+                  {/* Identity */}
+                  <div className="flex-1 min-w-0">
+                    <h1 className="text-xl font-semibold text-text-primary truncate">{candidate.name}</h1>
+                    {rest && <p className="text-base text-text-secondary mt-0.5">{rest}</p>}
+                    {skills.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {skills.slice(0, 8).map((skill) => (
+                          <Badge key={skill} className="bg-surface-hover text-text-secondary">
+                            {skill}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-3 mt-2.5 text-xs text-text-tertiary">
+                      {candidate.location && (
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5" />
+                          {candidate.location}
+                        </span>
+                      )}
+                      <span suppressHydrationWarning>
+                        {candidate.profileCapturedAt
+                          ? `Captured ${timeAgo(new Date(candidate.profileCapturedAt))}`
+                          : `Added ${timeAgo(new Date(candidate.createdAt))}`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* Score breakdown */}
+            {tier && score !== null && (
+              <Card>
+                <CardHeader className="flex items-center justify-between">
+                  <h2 className="text-md font-semibold text-text-primary">Match score</h2>
+                  <Badge className={cn("bg-surface-hover", tier.text)}>{tier.label}</Badge>
+                </CardHeader>
+                <CardBody>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-baseline gap-1">
+                      <span className={cn("text-2xl data-mono font-semibold", tier.text)}>{score}</span>
+                      <span className="text-md text-text-tertiary data-mono">%</span>
+                    </div>
+                    <div className="flex-1">
+                      <div className="h-1 bg-separator rounded-full overflow-hidden">
+                        <div
+                          className={cn("h-full rounded-full transition-all", tier.fill)}
+                          style={{ width: `${Math.max(2, Math.min(100, score))}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-text-tertiary mt-1.5">Overall fit against current job</p>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+
+            {/* LinkedIn profile text */}
             {candidate.profileText && (
-              <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-                  <h2 className="text-sm font-semibold text-slate-800">LinkedIn Profile</h2>
+              <Card>
+                <CardHeader className="flex items-center justify-between">
+                  <h2 className="text-md font-semibold text-text-primary">LinkedIn profile</h2>
                   <button
                     onClick={() => setProfileExpanded((v) => !v)}
-                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700 transition-colors"
+                    className="inline-flex items-center gap-1 h-6 px-2 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                   >
                     {profileExpanded ? (
                       <><ChevronUp className="w-3.5 h-3.5" />Collapse</>
@@ -419,42 +433,45 @@ export default function CandidateDetailPage({
                       <><ChevronDown className="w-3.5 h-3.5" />Expand</>
                     )}
                   </button>
-                </div>
-                <div className="relative px-5 py-4">
+                </CardHeader>
+                <div className="relative px-4 py-3">
                   <div
                     className={cn(
-                      "text-sm text-slate-600 whitespace-pre-wrap leading-relaxed overflow-hidden transition-all duration-300",
+                      "text-base text-text-secondary whitespace-pre-wrap leading-relaxed overflow-hidden transition-all duration-300",
                       profileExpanded ? "max-h-[2000px]" : "max-h-44"
                     )}
                   >
                     {candidate.profileText}
                   </div>
                   {!profileExpanded && (
-                    <div className="absolute bottom-0 left-0 right-0 h-14 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+                    <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-surface-raised to-transparent pointer-events-none" />
                   )}
                 </div>
                 {!profileExpanded && (
-                  <div className="px-5 pb-4">
+                  <div className="px-4 pb-3">
                     <button
                       onClick={() => setProfileExpanded(true)}
-                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      className="text-xs text-accent hover:text-accent-hover font-medium"
                     >
                       Show full profile
                     </button>
                   </div>
                 )}
-              </section>
+              </Card>
             )}
 
             {/* Notes */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <Card>
+              <CardHeader className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <StickyNote className="w-4 h-4 text-slate-400" />
-                  <h2 className="text-sm font-semibold text-slate-800">Notes</h2>
+                  <StickyNote className="w-3.5 h-3.5 text-text-tertiary" />
+                  <h2 className="text-md font-semibold text-text-primary">Notes</h2>
                 </div>
                 {notesStatus !== "idle" && (
-                  <span className={cn("text-xs flex items-center gap-1", notesStatus === "saved" ? "text-emerald-600" : "text-slate-400")}>
+                  <span className={cn(
+                    "text-xs flex items-center gap-1",
+                    notesStatus === "saved" ? "text-success" : "text-text-tertiary"
+                  )}>
                     {notesStatus === "saving" ? (
                       <><Loader2 className="w-3 h-3 animate-spin" />Saving…</>
                     ) : (
@@ -462,37 +479,35 @@ export default function CandidateDetailPage({
                     )}
                   </span>
                 )}
-              </div>
-              <div className="px-5 py-4">
+              </CardHeader>
+              <CardBody>
                 <textarea
                   value={notes}
                   onChange={(e) => { setNotes(e.target.value); setNotesStatus("idle"); }}
                   onBlur={saveNotes}
                   rows={5}
                   placeholder="Add notes about this candidate…"
-                  className="w-full text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 placeholder-slate-400 focus:outline-none focus:border-blue-400 focus:bg-white resize-none transition-colors"
+                  className="w-full text-base text-text-primary bg-surface-sunken border border-separator rounded px-3 py-2 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none transition-all"
                 />
-              </div>
-            </section>
+              </CardBody>
+            </Card>
           </div>
 
-          {/* Right — docs + jobs */}
-          <div className="space-y-5">
+          {/* RIGHT — activity log: docs + jobs */}
+          <div className="space-y-4">
 
             {/* Documents */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100">
-                <FileText className="w-4 h-4 text-slate-400" />
-                <h2 className="text-sm font-semibold text-slate-800">Documents</h2>
+            <Card>
+              <CardHeader className="flex items-center gap-2">
+                <FileText className="w-3.5 h-3.5 text-text-tertiary" />
+                <h2 className="text-md font-semibold text-text-primary">Documents</h2>
                 {candidate.files.length > 0 && (
-                  <span className="ml-auto text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
-                    {candidate.files.length}
-                  </span>
+                  <Badge className="ml-auto data-mono">{candidate.files.length}</Badge>
                 )}
-              </div>
-              <div className="px-4 py-4 space-y-2">
+              </CardHeader>
+              <CardBody className="p-3 space-y-1.5">
                 {candidate.files.length === 0 && (
-                  <p className="text-xs text-slate-400 text-center py-2">No files yet</p>
+                  <p className="text-xs text-text-tertiary text-center py-2">No files yet</p>
                 )}
                 {candidate.files.map((f) => (
                   <FileRow
@@ -502,46 +517,51 @@ export default function CandidateDetailPage({
                     onDeleted={handleFileDeleted}
                   />
                 ))}
-              </div>
-              <div className="px-4 pb-4">
-                <UploadZone candidateId={candidate.id} onUploaded={handleFileUploaded} />
-              </div>
-            </section>
+                <div className="pt-2">
+                  <UploadZone candidateId={candidate.id} onUploaded={handleFileUploaded} />
+                </div>
+              </CardBody>
+            </Card>
 
             {/* Jobs */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100">
-                <Briefcase className="w-4 h-4 text-slate-400" />
-                <h2 className="text-sm font-semibold text-slate-800">Jobs</h2>
-              </div>
-              <div className="px-3 py-3 space-y-1">
-                {allJobs.map((job) => (
-                  <Link
-                    key={job.id}
-                    href={`/jobs/${job.id}`}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-50 transition-colors group"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-700 group-hover:text-blue-600 line-clamp-1 transition-colors">
-                        {job.title}
-                      </p>
-                      {job.company && (
-                        <p className="text-xs text-slate-400 line-clamp-1">{job.company}</p>
+            <Card>
+              <CardHeader className="flex items-center gap-2">
+                <Briefcase className="w-3.5 h-3.5 text-text-tertiary" />
+                <h2 className="text-md font-semibold text-text-primary">Jobs</h2>
+                {allJobs.length > 0 && (
+                  <Badge className="ml-auto data-mono">{allJobs.length}</Badge>
+                )}
+              </CardHeader>
+              <CardBody className="p-2 space-y-0.5">
+                {allJobs.length === 0 && (
+                  <p className="text-xs text-text-tertiary text-center py-2">No jobs linked</p>
+                )}
+                {allJobs.map((job) => {
+                  const jobTier = job.matchScore !== null ? scoreTier(job.matchScore) : null;
+                  return (
+                    <Link
+                      key={job.id}
+                      href={`/jobs/${job.id}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded hover:bg-surface-hover transition-colors group"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-base font-medium text-text-primary group-hover:text-accent line-clamp-1 transition-colors">
+                          {job.title}
+                        </p>
+                        {job.company && (
+                          <p className="text-xs text-text-tertiary line-clamp-1">{job.company}</p>
+                        )}
+                      </div>
+                      {job.matchScore !== null && jobTier && (
+                        <span className={cn("text-xs font-medium data-mono flex-shrink-0", jobTier.text)}>
+                          {job.matchScore}%
+                        </span>
                       )}
-                    </div>
-                    {job.matchScore !== null && (
-                      <span className={cn(
-                        "text-xs font-bold px-2 py-0.5 rounded-lg flex-shrink-0",
-                        scoreRing(job.matchScore).bg,
-                        scoreRing(job.matchScore).ring
-                      )}>
-                        {job.matchScore}%
-                      </span>
-                    )}
-                  </Link>
-                ))}
-              </div>
-            </section>
+                    </Link>
+                  );
+                })}
+              </CardBody>
+            </Card>
           </div>
         </div>
       </div>

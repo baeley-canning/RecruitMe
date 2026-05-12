@@ -204,32 +204,32 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     return (
       <Card className="mb-6">
         <CardBody>
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
-              <Key className="w-5 h-5 text-slate-500" />
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 bg-surface-hover rounded flex items-center justify-center flex-shrink-0">
+              <Key className="w-3.5 h-3.5 text-text-secondary" />
             </div>
             <div className="flex-1">
-              <p className="font-semibold text-slate-900 text-sm">Enable Candidate Search</p>
-              <p className="text-xs text-slate-500 mt-1 mb-3">
-                Add one or more of the keys below to <code className="bg-slate-100 px-1 rounded">.env.local</code>, then restart the server.
+              <p className="text-md font-semibold text-text-primary">Enable Candidate Search</p>
+              <p className="text-base text-text-secondary mt-1 mb-3">
+                Add one or more of the keys below to <code className="bg-surface-sunken text-text-primary px-1 rounded-xs font-mono">.env.local</code>, then restart the server.
               </p>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {[
                   { label: "SerpAPI", required: true, env: "SERPAPI_API_KEY", desc: "Searches Google for LinkedIn profiles. 100 searches/month free.", url: "https://serpapi.com" },
                 ].map(({ label, required, env, desc, url }) => (
-                  <div key={env} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                  <div key={env} className="flex items-start gap-3 p-3 bg-surface-sunken rounded border border-separator">
                     <div>
                       <div className="flex items-center gap-2 mb-0.5">
-                        <p className="text-xs font-semibold text-slate-800">{label}</p>
+                        <p className="text-base font-semibold text-text-primary">{label}</p>
                         {required
-                          ? <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">Required</span>
-                          : <span className="text-xs px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">Optional</span>
+                          ? <span className="text-xs px-1.5 py-0.5 bg-accent-subtle text-accent rounded-sm font-medium">Required</span>
+                          : <span className="text-xs px-1.5 py-0.5 bg-surface-hover text-text-tertiary rounded-sm">Optional</span>
                         }
                       </div>
-                      <p className="text-xs text-slate-500 mb-1">{desc}</p>
+                      <p className="text-xs text-text-secondary mb-1">{desc}</p>
                       <div className="flex items-center gap-2">
-                        <code className="text-xs bg-slate-900 text-emerald-400 px-2 py-0.5 rounded font-mono">{env}=your-key</code>
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 inline-flex items-center gap-0.5">
+                        <code className="text-xs bg-surface-sunken text-success px-2 py-0.5 rounded-sm font-mono">{env}=your-key</code>
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:text-accent-hover inline-flex items-center gap-0.5">
                           Get key <ExternalLink className="w-3 h-3" />
                         </a>
                       </div>
@@ -250,12 +250,12 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", searching ? "bg-blue-50" : "bg-emerald-50")}>
-                {searching ? <Loader2 className="w-5 h-5 text-blue-500 animate-spin" /> : <Search className="w-5 h-5 text-emerald-600" />}
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center flex-shrink-0", searching ? "bg-accent-subtle" : "bg-success-subtle")}>
+                {searching ? <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" /> : <Search className="w-3.5 h-3.5 text-success" />}
               </div>
               <div>
                 <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                  <p className="font-semibold text-slate-900 text-sm">
+                  <p className="text-md font-semibold text-text-primary">
                     {searching ? "Searching..." : "Step 2 — Find Candidates"}
                   </p>
                   {sources && (
@@ -269,11 +269,11 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                           <span
                             key={key}
                             title={isConfigured ? `${label} key is set but not yet verified — will confirm on first search` : undefined}
-                            className={cn("text-xs px-1.5 py-0.5 rounded font-medium border",
-                              isOk        ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                              isConfigured? "bg-amber-50 text-amber-600 border-amber-200" :
-                              isError     ? "bg-red-50 text-red-600 border-red-200" :
-                                            "bg-slate-50 text-slate-400 border-slate-200"
+                            className={cn("text-xs px-1.5 py-0.5 rounded-sm font-medium",
+                              isOk        ? "bg-success-subtle text-success" :
+                              isConfigured? "bg-warning-subtle text-warning" :
+                              isError     ? "bg-danger-subtle text-danger" :
+                                            "bg-surface-hover text-text-tertiary"
                             )}>
                             {label}
                           </span>
@@ -282,7 +282,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                     </div>
                   )}
                 </div>
-                <p className="text-xs text-slate-500">
+                <p className="text-base text-text-secondary">
                   {searching
                     ? searchingPool
                       ? "Checking your candidate library first. LinkedIn search only runs for the remaining gap."
@@ -291,20 +291,20 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   }
                 </p>
                 {searchResultDisplay && (
-                  <p className={`text-xs mt-1 flex items-center gap-1 ${searchResultDisplay.tone === "warning" ? "text-amber-600" : "text-emerald-600"}`}>
+                  <p className={`text-xs mt-1 flex items-center gap-1 ${searchResultDisplay.tone === "warning" ? "text-warning" : "text-success"}`}>
                     {searchResultDisplay.tone === "warning" ? <AlertCircle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
                     {searchResultDisplay.message}
                   </p>
                 )}
                 {searchError && (
                   <div className="mt-1 flex items-center gap-2 flex-wrap">
-                    <p className="text-xs text-red-600 flex items-center gap-1">
+                    <p className="text-xs text-danger flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />{searchError}
                     </p>
                     {searchTimedOut && (
                       <button
                         onClick={handleSearch}
-                        className="text-xs text-blue-600 hover:text-blue-700 font-medium underline"
+                        className="text-xs text-accent hover:text-accent-hover font-medium underline"
                       >
                         Retry search
                       </button>
@@ -315,10 +315,10 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   <div className="mt-2 space-y-1.5">
                     {searchHistory.map((s) => (
                       <div key={s.id} className="space-y-0.5">
-                        <p className="text-[11px] text-slate-400 flex items-center gap-1.5" suppressHydrationWarning>
+                        <p className="text-xs text-text-tertiary flex items-center gap-1.5 tabular-nums" suppressHydrationWarning>
                           {s.status === "complete"
-                            ? <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0" />
-                            : <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" />}
+                            ? <CheckCircle2 className="w-3 h-3 text-success flex-shrink-0" />
+                            : <AlertCircle className="w-3 h-3 text-warning flex-shrink-0" />}
                           {new Date(s.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                           {" · "}
                           {s.status === "complete"
@@ -331,10 +331,10 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                         </p>
                         {s.evaluation && (
                           <p className={cn(
-                            "text-[10px] px-2 py-0.5 rounded-full border inline-flex items-center gap-1 font-medium",
-                            s.evaluation.startsWith("FAIL")    ? "bg-red-50 text-red-600 border-red-200" :
-                            s.evaluation.startsWith("WARNING") ? "bg-amber-50 text-amber-700 border-amber-200" :
-                                                                 "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            "text-2xs px-1.5 py-0.5 rounded-sm inline-flex items-center gap-1 font-medium",
+                            s.evaluation.startsWith("FAIL")    ? "bg-danger-subtle text-danger" :
+                            s.evaluation.startsWith("WARNING") ? "bg-warning-subtle text-warning" :
+                                                                 "bg-success-subtle text-success"
                           )}>
                             {s.evaluation}
                           </p>
@@ -344,7 +344,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   </div>
                 )}
                 {poolResult && (
-                  <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-success mt-1 flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3" />
                     {poolResult.count > 0
                       ? `Added ${poolResult.count} candidate${poolResult.count !== 1 ? "s" : ""} from talent pool — scroll down to see them`
@@ -352,12 +352,12 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   </p>
                 )}
                 {poolError && (
-                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-danger mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />{poolError}
                   </p>
                 )}
                 {searchingPool && (
-                  <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-accent mt-1 flex items-center gap-1">
                     <Loader2 className="w-3 h-3 animate-spin" />Searching candidate library…
                   </p>
                 )}
@@ -365,15 +365,15 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
             </div>
             <div className="flex flex-col gap-2 flex-shrink-0 items-end">
               <Button onClick={handleSearch} loading={searching} disabled={searching || searchingPool || jobStatus === "closed"} size="lg">
-                <Search className="w-4 h-4" />
+                <Search className="w-3.5 h-3.5" />
                 {searching ? "Searching..." : searchResult ? "Search Again" : "Find Candidates"}
               </Button>
-              <p className="text-[10px] text-slate-400 max-w-[180px] text-right">
+              <p className="text-2xs text-text-tertiary max-w-[180px] text-right">
                 Searches LinkedIn and your talent pool together.
                 <button
                   onClick={handleSearchPool}
                   disabled={searching || searchingPool || jobStatus === "closed"}
-                  className="ml-1 underline underline-offset-2 hover:text-slate-600 disabled:opacity-50 disabled:no-underline"
+                  className="ml-1 underline underline-offset-2 hover:text-text-secondary disabled:opacity-50 disabled:no-underline"
                 >
                   {searchingPool ? "Searching pool…" : "Pool only"}
                 </button>
@@ -381,18 +381,18 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
             </div>
           </div>
 
-          <div className="space-y-3 pt-1 border-t border-slate-100">
+          <div className="space-y-3 pt-1 border-t border-separator">
             <div className="flex flex-wrap gap-x-4 gap-y-2 items-center">
               <div className="flex items-center gap-2">
-                <label className="text-xs text-slate-500 whitespace-nowrap">Max candidates</label>
+                <label className="text-xs text-text-secondary whitespace-nowrap">Max candidates</label>
                 <select value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} disabled={searching}
-                  className="text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50">
+                  className="h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary focus:outline-none focus:border-accent focus:shadow-focus disabled:opacity-50 tabular-nums">
                   {[10, 20, 30, 50, 75, 100].map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
               {defaultSearchLocation && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 whitespace-nowrap">Location</span>
+                  <span className="text-xs text-text-secondary whitespace-nowrap">Location</span>
                   <NZLocationInput
                     value={locationOverride ?? defaultSearchLocation}
                     onChange={(v) => setLocationOverride(v || null)}
@@ -401,7 +401,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                     className="w-full sm:w-44"
                   />
                   {locationOverride?.trim() && (
-                    <button onClick={() => setLocationOverride(null)} className="text-[10px] text-slate-400 hover:text-slate-600 underline">reset</button>
+                    <button onClick={() => setLocationOverride(null)} className="text-2xs text-text-tertiary hover:text-text-secondary underline">reset</button>
                   )}
                 </div>
               )}
@@ -411,16 +411,16 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                     onClick={() => !searching && setRelaxClearance((v) => !v)}
                     className={cn(
                       "relative w-8 h-4 rounded-full transition-colors flex-shrink-0",
-                      relaxClearance ? "bg-blue-500" : "bg-slate-300",
+                      relaxClearance ? "bg-accent" : "bg-surface-hover",
                       searching ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
                     )}
                   >
                     <span className={cn(
-                      "absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform",
+                      "absolute top-0.5 w-3 h-3 bg-text-primary rounded-full shadow transition-transform",
                       relaxClearance ? "translate-x-4" : "translate-x-0.5"
                     )} />
                   </div>
-                  <span className="text-xs text-slate-500">Ignore clearance for this search</span>
+                  <span className="text-xs text-text-secondary">Ignore clearance for this search</span>
                 </label>
               )}
             </div>
@@ -432,10 +432,10 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
             search would mix two pipelines (LinkedIn-URL keyed vs GitHub-user
             keyed); a separate page keeps the UX clean. */}
         {(parsedRole.must_haves ?? []).length + (parsedRole.skills_required ?? []).length > 0 && (
-          <div className="mt-4 pt-4 border-t border-slate-100">
+          <div className="mt-4 pt-3 border-t border-separator">
             <a
               href={`/github-search?role=${encodeURIComponent(parsedRole.title ?? "")}&languages=${encodeURIComponent([...(parsedRole.must_haves ?? []), ...(parsedRole.skills_required ?? [])].join(","))}&jobId=${encodeURIComponent(jobId)}`}
-              className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent transition-colors"
             >
               <span>Also search GitHub for developers in {jobLocation || "NZ"}</span>
               <ExternalLink className="w-3 h-3" />

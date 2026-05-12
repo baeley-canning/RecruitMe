@@ -68,9 +68,12 @@ export function Modal({ open, onClose, children, labelledBy, dismissable = true,
 
   if (!open) return null;
 
+  // Backdrop: translucent black layer over the page. The dialog itself sits
+  // on surface-overlay (#2c2c2e) with rounded-xl + shadow-overlay — the one
+  // place we lean on a real shadow because the modal is genuinely floating.
   return (
     <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4"
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1210] p-4"
       onClick={() => { if (dismissable) onClose(); }}
       role="presentation"
     >
@@ -79,7 +82,7 @@ export function Modal({ open, onClose, children, labelledBy, dismissable = true,
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
-        className={className ?? "bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col"}
+        className={className ?? "bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-2xl max-h-[90vh] flex flex-col"}
         onClick={(e) => e.stopPropagation()}
       >
         {children}

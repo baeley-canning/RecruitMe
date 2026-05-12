@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { X, Loader2, Search, MapPin, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
 import { ScoreBadge } from "@/components/score-badge";
 
 interface LibraryCandidate {
@@ -88,114 +89,111 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="browse-library-title"
-        className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <div>
-            <h3 id="browse-library-title" className="font-semibold text-slate-900">Add from library</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Browse candidates from across your org and pick people for this job. They&apos;ll be scored automatically.
-            </p>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-600">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="px-6 py-3 border-b border-slate-100">
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search by name, headline, or location"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-full text-sm border border-slate-200 rounded-md pl-9 pr-3 py-2 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {!loaded && (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-5 h-5 text-slate-400 animate-spin" />
-            </div>
-          )}
-          {loaded && filtered.length === 0 && (
-            <div className="text-center py-12 text-sm text-slate-400">
-              {candidates.length === 0
-                ? "Your library is empty. Add candidates from previous jobs first."
-                : "No candidates match your search."}
-            </div>
-          )}
-          {loaded && filtered.map((c) => {
-            const isSelected = selected.has(c.id);
-            return (
-              <button
-                key={c.id}
-                onClick={() => toggle(c.id)}
-                className={`w-full text-left px-6 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex items-start gap-3 ${
-                  isSelected ? "bg-blue-50/50" : ""
-                }`}
-              >
-                <div className={`mt-1 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                  isSelected ? "bg-blue-600 border-blue-600" : "border-slate-300"
-                }`}>
-                  {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-slate-700 truncate">{c.name}</p>
-                    <ScoreBadge score={c.matchScore} size="sm" />
-                  </div>
-                  {c.headline && (
-                    <p className="text-xs text-slate-500 truncate mt-0.5">{c.headline}</p>
-                  )}
-                  <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 flex-wrap">
-                    {c.location && (
-                      <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.location}</span>
-                    )}
-                    {c.job?.title && (
-                      <span className="text-slate-400">from {c.job.title}</span>
-                    )}
-                    {!c.job?.title && c.archivedJobTitle && (
-                      <span className="text-slate-400">archived from {c.archivedJobTitle}</span>
-                    )}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="px-6 py-3 border-t border-slate-100 flex items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
-            {selected.size} selected
-            {progress && (
-              <span className="ml-2 text-emerald-600 font-medium">
-                · added {progress.added}{progress.failed > 0 ? `, ${progress.failed} failed` : ""}{(progress.unscored ?? 0) > 0 ? ` · ${progress.unscored} unscored (scoring failed — re-score from job page)` : ""}
-              </span>
-            )}
+    <Modal
+      open={true}
+      onClose={onClose}
+      labelledBy="browse-library-title"
+      className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-2xl max-h-[90vh] flex flex-col"
+    >
+      <div className="flex items-center justify-between px-5 py-3 border-b border-separator">
+        <div>
+          <h3 id="browse-library-title" className="text-md font-semibold text-text-primary">Add from library</h3>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Browse candidates from across your org and pick people for this job. They&apos;ll be scored automatically.
           </p>
-          <div className="flex items-center gap-2">
-            <Button onClick={onClose} size="sm" variant="outline">Cancel</Button>
-            <Button
-              onClick={handleAdd}
-              loading={adding}
-              disabled={adding || selected.size === 0}
-              size="sm"
-            >
-              Add {selected.size > 0 ? selected.size : ""} to job
-            </Button>
-          </div>
+        </div>
+        <button onClick={onClose} aria-label="Close" className="text-text-tertiary hover:text-text-primary transition-colors">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="px-5 py-3 border-b border-separator">
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-text-tertiary absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search by name, headline, or location"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full h-7 pl-8 pr-3 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
+          />
         </div>
       </div>
-    </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {!loaded && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-3.5 h-3.5 text-text-tertiary animate-spin" />
+          </div>
+        )}
+        {loaded && filtered.length === 0 && (
+          <div className="text-center py-12 text-base text-text-tertiary">
+            {candidates.length === 0
+              ? "Your library is empty. Add candidates from previous jobs first."
+              : "No candidates match your search."}
+          </div>
+        )}
+        {loaded && filtered.map((c) => {
+          const isSelected = selected.has(c.id);
+          return (
+            <button
+              key={c.id}
+              onClick={() => toggle(c.id)}
+              className={`w-full text-left px-5 py-3 border-b border-separator hover:bg-surface-hover transition-colors flex items-start gap-3 ${
+                isSelected ? "bg-accent-subtle" : ""
+              }`}
+            >
+              <div className={`mt-1 w-4 h-4 rounded-sm border flex items-center justify-center flex-shrink-0 ${
+                isSelected ? "bg-accent border-accent" : "border-separator-strong"
+              }`}>
+                {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-md font-medium text-text-primary truncate">{c.name}</p>
+                  <ScoreBadge score={c.matchScore} size="sm" />
+                </div>
+                {c.headline && (
+                  <p className="text-xs text-text-secondary truncate mt-0.5">{c.headline}</p>
+                )}
+                <div className="flex items-center gap-3 mt-1 text-xs text-text-tertiary flex-wrap">
+                  {c.location && (
+                    <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.location}</span>
+                  )}
+                  {c.job?.title && (
+                    <span>from {c.job.title}</span>
+                  )}
+                  {!c.job?.title && c.archivedJobTitle && (
+                    <span>archived from {c.archivedJobTitle}</span>
+                  )}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="px-5 py-3 border-t border-separator flex items-center justify-between gap-3">
+        <p className="text-xs text-text-secondary">
+          <span className="data-mono">{selected.size}</span> selected
+          {progress && (
+            <span className="ml-2 text-success font-medium">
+              · added <span className="data-mono">{progress.added}</span>{progress.failed > 0 ? <>, <span className="data-mono">{progress.failed}</span> failed</> : ""}{(progress.unscored ?? 0) > 0 ? <> · <span className="data-mono">{progress.unscored}</span> unscored (scoring failed — re-score from job page)</> : ""}
+            </span>
+          )}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button onClick={onClose} size="sm" variant="outline">Cancel</Button>
+          <Button
+            onClick={handleAdd}
+            loading={adding}
+            disabled={adding || selected.size === 0}
+            size="sm"
+          >
+            Add {selected.size > 0 ? selected.size : ""} to job
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

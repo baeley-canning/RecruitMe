@@ -40,7 +40,7 @@ import { OnboardingCard } from "@/components/job/onboarding-card";
 import { JobWeightsCard } from "@/components/job/job-weights-card";
 import { TopCandidatesCard } from "@/components/job/top-candidates-card";
 import { BrowseLibraryModal } from "@/components/job/browse-library-modal";
-import { PipelineCard } from "@/components/job/pipeline-card";
+import { PipelineStepper, type PipelineStage } from "@/components/job/pipeline-stepper";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
 import { ClientReportModal } from "@/components/job/client-report-modal";
@@ -110,10 +110,10 @@ function SourceBadge({ source }: { source?: ParsedRoleSource }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        "inline-flex items-center rounded-sm px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wide",
         normalized === "explicit"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-blue-200 bg-blue-50 text-blue-700"
+          ? "bg-success-subtle text-success"
+          : "bg-accent-subtle text-accent"
       )}
     >
       {normalized === "explicit" ? "Explicit" : "Inferred"}
@@ -141,7 +141,7 @@ function HiringBriefChipSection({
 
   return (
     <div>
-      <p className={cn("text-xs font-medium uppercase tracking-wide mb-2", labelClassName ?? "text-slate-500")}>
+      <p className={cn("text-2xs font-medium uppercase tracking-wide mb-2", labelClassName ?? "text-text-tertiary")}>
         {title}
       </p>
       <div className="flex flex-wrap gap-1.5">
@@ -149,9 +149,9 @@ function HiringBriefChipSection({
           <span
             key={item}
             className={cn(
-              "px-2 py-0.5 text-xs rounded-md border",
+              "px-1.5 py-0.5 text-xs rounded-sm",
               chipClassName,
-              monospace && "font-mono"
+              monospace && "font-mono tabular-nums"
             )}
           >
             {item}
@@ -207,8 +207,12 @@ export default function JobDetailPage({
   // extension paces actual LinkedIn captures via its own rate limiter — so
   // there is no client-side queue. The recruiter can have N sessions in
   // flight; the extension grinds through them in age order.
-  // Empty array = no filter (show all). Multiple entries = OR-filter across statuses.
-  const [filter, setFilter] = useState<string[]>([]);
+  // PipelineStepper-driven stage filter. "all" = no filter; a stage value
+  // narrows the candidate list to that pipeline bucket (see filteredCandidates
+  // below for the stage→status mapping). Replaces the previous string-array
+  // filter while preserving all downstream behaviour (Top Candidates, empty
+  // states, bulk select pruning).
+  const [selectedStage, setSelectedStage] = useState<PipelineStage | "all">("all");
   // Progressive rendering — render the first N candidates initially, expand on
   // recruiter request. Each CandidateCard is heavy (1600+ line component);
   // rendering 500 of them on a job page creates a noticeable initial-paint
@@ -1197,7 +1201,32 @@ ${toHtml(job.rawJd)}
     // hired / rejected mixed in with the active pipeline they're still working.
     const TERMINAL_STATUSES = new Set(["hired", "declined", "rejected"]);
     return [...jobCandidates]
-      .filter((candidate) => (filter.length === 0 ? true : filter.includes(candidate.status)))
+      .filter((candidate) => {
+        // Stage → status mapping (mirrors the buckets surfaced by
+        // PipelineStepper). "fetched" deliberately includes "scored" rows
+        // because the stepper renders both — clicking Fetched should still
+        // show those candidates.
+        if (selectedStage === "all") return true;
+        if (selectedStage === "fetched") {
+          return candidate.status === "new" || candidate.status === "reviewing";
+        }
+        if (selectedStage === "scored") {
+          return (
+            (candidate.status === "new" || candidate.status === "reviewing") &&
+            (candidate.matchScore ?? 0) > 0
+          );
+        }
+        if (selectedStage === "shortlisted") return candidate.status === "shortlisted";
+        if (selectedStage === "contacted") {
+          return (
+            candidate.status === "contacted" ||
+            candidate.status === "interviewing" ||
+            candidate.status === "offer_sent"
+          );
+        }
+        if (selectedStage === "hired") return candidate.status === "hired";
+        return true;
+      })
       .filter((candidate) => {
         if (!normalizedSearchQuery) return true;
         return (
@@ -1255,7 +1284,7 @@ ${toHtml(job.rawJd)}
         const bComplete = (b.profileText ? 1 : 0) + (b.headline ? 1 : 0) + (b.location ? 1 : 0);
         return bComplete - aComplete;
       });
-  }, [filter, jobCandidates, normalizedSearchQuery, minScoreFilter, hideSnippetOnly]);
+  }, [selectedStage, jobCandidates, normalizedSearchQuery, minScoreFilter, hideSnippetOnly]);
 
   // Prune selectedIds when candidates leave the filtered view (filter change,
   // search filter, candidate removed). Otherwise bulk-delete or bulk-move
@@ -1282,23 +1311,45 @@ ${toHtml(job.rawJd)}
   }, [jobCandidates]);
   const shortlistCount = statusCounts.shortlisted ?? 0;
 
+  // Pipeline-stepper bucket counts. "fetched" includes everything pre-shortlist
+  // (new + reviewing). "scored" is a subset of fetched with matchScore > 0
+  // (the stepper is fine rendering both — same source data, two lenses).
+  const pipelineCounts = useMemo<Record<PipelineStage, number>>(() => {
+    let fetched = 0, scored = 0, shortlisted = 0, contacted = 0, hired = 0;
+    for (const c of jobCandidates) {
+      if (c.status === "new" || c.status === "reviewing") {
+        fetched += 1;
+        if ((c.matchScore ?? 0) > 0) scored += 1;
+      } else if (c.status === "shortlisted") {
+        shortlisted += 1;
+      } else if (c.status === "contacted" || c.status === "interviewing" || c.status === "offer_sent") {
+        contacted += 1;
+      } else if (c.status === "hired") {
+        hired += 1;
+      }
+    }
+    return { fetched, scored, shortlisted, contacted, hired };
+  }, [jobCandidates]);
+  const rejectedCount =
+    (statusCounts.declined ?? 0) + (statusCounts.rejected ?? 0);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+        <Loader2 className="w-6 h-6 text-accent animate-spin" />
       </div>
     );
   }
 
   if (fetchError) {
     return (
-      <div className="p-8 text-center">
-        <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-3" />
-        <p className="text-slate-700 font-medium mb-1">Failed to load job</p>
-        <p className="text-slate-400 text-sm mb-4">Check your connection and try again.</p>
+      <div className="p-6 text-center">
+        <AlertCircle className="w-7 h-7 text-danger mx-auto mb-3" />
+        <p className="text-text-primary font-medium mb-1">Failed to load job</p>
+        <p className="text-text-tertiary text-sm mb-4">Check your connection and try again.</p>
         <button
           onClick={() => { setLoading(true); setFetchError(false); fetchJob(); }}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+          className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
         >
           Retry
         </button>
@@ -1307,130 +1358,98 @@ ${toHtml(job.rawJd)}
   }
 
   if (!job) {
-    return <div className="px-4 py-6 text-center text-slate-500">Job not found.</div>;
+    return <div className="px-4 py-6 text-center text-text-tertiary">Job not found.</div>;
   }
 
+  const jobStatusPillClass =
+    job.status === "active"
+      ? "bg-success-subtle text-success"
+      : job.status === "closed"
+        ? "bg-surface-hover text-text-secondary"
+        : "bg-surface-hover text-text-secondary";
+
   return (
-    <div className="px-4 py-6 sm:px-6 md:p-8 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        {/* Title row */}
-        <div className="flex items-start justify-between gap-3 mb-1">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight">{job.title}</h1>
-              <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0", statusBadge(job.status))}>
-                {statusLabel(job.status)}
-              </span>
-            </div>
-            <div className="flex items-center gap-3 text-sm text-slate-500 flex-wrap">
-              {job.company && (
-                <span className="flex items-center gap-1">
-                  <Briefcase className="w-3.5 h-3.5 flex-shrink-0" />
-                  {job.company}
-                </span>
-              )}
-              {editingLocation ? (
-                <span className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-                  <input
-                    type="text"
-                    value={locationDraft}
-                    onChange={(e) => setLocationDraft(e.target.value)}
-                    placeholder="Primary location"
-                    className="px-2 py-0.5 text-xs border border-slate-300 rounded w-32 focus:outline-none focus:border-blue-400"
-                    autoFocus
-                  />
-                  <span className="text-slate-400">/</span>
-                  <input
-                    type="text"
-                    value={location2Draft}
-                    onChange={(e) => setLocation2Draft(e.target.value)}
-                    placeholder="Second location (optional)"
-                    className="px-2 py-0.5 text-xs border border-slate-300 rounded w-36 focus:outline-none focus:border-blue-400"
-                  />
-                  <button
-                    onClick={handleSaveLocation}
-                    disabled={savingLocation}
-                    className="text-xs text-blue-600 hover:text-blue-700 disabled:text-slate-400"
-                  >
-                    {savingLocation ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    onClick={() => setEditingLocation(false)}
-                    className="text-xs text-slate-400 hover:text-slate-600"
-                  >
-                    Cancel
-                  </button>
-                </span>
-              ) : (
-                <span className="flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-                  {job.location || <span className="italic text-slate-400">No location</span>}
-                  {job.location2 && <span> / {job.location2}</span>}
-                  <button
-                    onClick={() => {
-                      setLocationDraft(job.location ?? "");
-                      setLocation2Draft(job.location2 ?? "");
-                      setEditingLocation(true);
-                    }}
-                    className="ml-1 text-[10px] text-blue-600 hover:text-blue-700"
-                    title="Edit locations"
-                  >
-                    edit
-                  </button>
-                </span>
-              )}
-            </div>
-          </div>
-          {/* Overflow ⋯ always visible, even on mobile */}
-          <div className="relative flex-shrink-0" ref={overflowRef}>
+    <div className="max-w-5xl mx-auto">
+      {/* Toolbar — 36px page chrome. Title left, actions right. */}
+      <div className="toolbar -mx-4 sm:mx-0 sm:rounded-md mb-3">
+        <div className="min-w-0 flex-1 flex items-center gap-2">
+          <h1 className="text-md font-semibold text-text-primary truncate">{job.title}</h1>
+          <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded-sm text-2xs font-medium uppercase tracking-wide flex-shrink-0", jobStatusPillClass)}>
+            {statusLabel(job.status)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {shortlistCount > 0 && (
+            <Link
+              href={`/jobs/${id}/shortlist`}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded text-md font-medium text-warning bg-warning-subtle hover:bg-warning/25 transition-colors"
+            >
+              <Star className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Shortlist</span>
+              <span className="data-mono">{shortlistCount}</span>
+            </Link>
+          )}
+          <Button variant="secondary" size="md" onClick={() => openModal("bulkUpload")}>
+            <Upload className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Upload CVs</span>
+          </Button>
+          <Button variant="secondary" size="md" onClick={() => openModal("browseLibrary")}>
+            <Users className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Library</span>
+          </Button>
+          <Button onClick={() => openModal("addCandidate")}>
+            <UserPlus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Add Candidate</span>
+            <span className="sm:hidden">Add</span>
+          </Button>
+          {/* Overflow ⋯ */}
+          <div className="relative" ref={overflowRef}>
             <button
               onClick={() => setOverflowOpen((o) => !o)}
-              className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+              className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
               title="More options"
               aria-label="More options"
             >
               <MoreHorizontal className="w-4 h-4" />
             </button>
             {overflowOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-20">
+              <div className="absolute right-0 top-full mt-1.5 w-52 bg-surface-overlay border border-separator rounded-md shadow-overlay py-1 z-20">
                 <button
                   onClick={() => { handleExportJdPdf(); setOverflowOpen(false); }}
-                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-text-primary hover:bg-surface-hover"
                 >
-                  <Download className="w-3.5 h-3.5 text-slate-400" />
+                  <Download className="w-3.5 h-3.5 text-text-tertiary" />
                   Export JD as PDF
                 </button>
                 {shortlistCount > 0 && (
                   <button
                     onClick={() => { openModal("report"); setOverflowOpen(false); }}
-                    className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-text-primary hover:bg-surface-hover"
                   >
-                    <Star className="w-3.5 h-3.5 text-slate-400" />
+                    <Star className="w-3.5 h-3.5 text-text-tertiary" />
                     Client report
                   </button>
                 )}
                 <button
                   onClick={() => { void handleEnrichPhones(); setOverflowOpen(false); }}
                   disabled={enrichingPhones}
-                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-text-primary hover:bg-surface-hover disabled:opacity-50"
                   title="Looks up phone numbers from Firmable for every candidate on this job that doesn't already have one. Skips candidates enriched in the last 90 days."
                 >
                   {enrichingPhones
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
-                    : <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin text-text-tertiary" />
+                    : <svg className="w-3.5 h-3.5 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.95.68l1.49 4.48a1 1 0 01-.5 1.21l-1.6.8a11 11 0 005.52 5.52l.8-1.6a1 1 0 011.21-.5l4.48 1.49a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
                       </svg>}
                   {enrichingPhones ? "Enriching…" : "Enrich phone numbers"}
                 </button>
                 {job.status === "active" && (
                   <>
-                    <div className="my-1 border-t border-slate-100" />
+                    <div className="my-1 border-t border-separator" />
                     <button
                       onClick={() => { handleToggleStatus(); setOverflowOpen(false); }}
                       disabled={togglingStatus}
-                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-danger hover:bg-danger-subtle disabled:opacity-50"
                     >
                       {togglingStatus
                         ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1443,52 +1462,87 @@ ${toHtml(job.rawJd)}
             )}
           </div>
         </div>
+      </div>
 
-        {/* Action buttons — wrap on mobile */}
-        <div className="flex items-center gap-2 flex-wrap mt-3">
-          {shortlistCount > 0 && (
-            <Link
-              href={`/jobs/${id}/shortlist`}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
+      {/* Page body */}
+      <div className="px-4 pb-6">
+      {/* Meta row — company, location (editable) */}
+      <div className="mb-3 flex items-center gap-3 text-sm text-text-secondary flex-wrap">
+        {job.company && (
+          <span className="flex items-center gap-1">
+            <Briefcase className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            {job.company}
+          </span>
+        )}
+        {editingLocation ? (
+          <span className="flex items-center gap-1.5">
+            <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            <input
+              type="text"
+              value={locationDraft}
+              onChange={(e) => setLocationDraft(e.target.value)}
+              placeholder="Primary location"
+              className="h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent w-32 transition-all"
+              autoFocus
+            />
+            <span className="text-text-tertiary">/</span>
+            <input
+              type="text"
+              value={location2Draft}
+              onChange={(e) => setLocation2Draft(e.target.value)}
+              placeholder="Second location (optional)"
+              className="h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent w-36 transition-all"
+            />
+            <button
+              onClick={handleSaveLocation}
+              disabled={savingLocation}
+              className="text-xs text-accent hover:text-accent-hover disabled:text-text-tertiary"
             >
-              <Star className="w-3.5 h-3.5" />
-              Shortlist ({shortlistCount})
-            </Link>
-          )}
-          <Button variant="outline" size="sm" onClick={() => openModal("bulkUpload")}>
-            <Upload className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Upload CVs</span>
-            <span className="sm:hidden">Upload</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => openModal("browseLibrary")}>
-            <Users className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">From Library</span>
-            <span className="sm:hidden">Library</span>
-          </Button>
-          <Button onClick={() => openModal("addCandidate")}>
-            <UserPlus className="w-4 h-4" />
-            <span className="hidden sm:inline">Add Candidate</span>
-            <span className="sm:hidden">Add</span>
-          </Button>
-        </div>
-        {enrichResult && (
-          <div className="mt-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 inline-flex items-center gap-2">
-            {enrichResult}
-            <button onClick={() => setEnrichResult(null)} className="text-slate-400 hover:text-slate-600">✕</button>
-          </div>
+              {savingLocation ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={() => setEditingLocation(false)}
+              className="text-xs text-text-tertiary hover:text-text-secondary"
+            >
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <span className="flex items-center gap-1">
+            <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            {job.location || <span className="italic text-text-tertiary">No location</span>}
+            {job.location2 && <span> / {job.location2}</span>}
+            <button
+              onClick={() => {
+                setLocationDraft(job.location ?? "");
+                setLocation2Draft(job.location2 ?? "");
+                setEditingLocation(true);
+              }}
+              className="ml-1 text-2xs text-accent hover:text-accent-hover"
+              title="Edit locations"
+            >
+              edit
+            </button>
+          </span>
         )}
       </div>
+      {enrichResult && (
+        <div className="mb-3 text-xs text-text-secondary bg-surface-raised border border-separator rounded-md px-3 py-2 inline-flex items-center gap-2">
+          {enrichResult}
+          <button onClick={() => setEnrichResult(null)} className="text-text-tertiary hover:text-text-primary">✕</button>
+        </div>
+      )}
 
       {/* Closed job banner */}
       {job.status === "closed" && (
-        <div className="mb-5 flex items-center justify-between gap-4 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl">
-          <p className="text-sm text-slate-600">
-            This job is <span className="font-semibold text-slate-800">closed</span> — searching and scoring are disabled.
+        <div className="mb-4 flex items-center justify-between gap-4 px-3 py-2 bg-surface-raised border border-separator rounded-md">
+          <p className="text-sm text-text-secondary">
+            This job is <span className="font-medium text-text-primary">closed</span> — searching and scoring are disabled.
           </p>
           <button
             onClick={handleToggleStatus}
             disabled={togglingStatus}
-            className="text-xs text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap disabled:opacity-50"
+            className="text-xs text-accent hover:text-accent-hover font-medium whitespace-nowrap disabled:opacity-50"
           >
             {togglingStatus ? "Reopening…" : "Reopen job"}
           </button>
@@ -1509,32 +1563,32 @@ ${toHtml(job.rawJd)}
 
       {/* Step 1: Parse JD */}
       {!parsedRole && (
-        <Card className="mb-6">
+        <Card className="mb-4">
           <CardBody className="flex items-center justify-between">
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <Sparkles className="w-4 h-4 text-blue-600" />
+              <div className="w-8 h-8 bg-accent-subtle rounded flex items-center justify-center flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-accent" />
               </div>
               <div>
-                <p className="font-medium text-slate-900 text-sm">Step 1 — Analyse Job Description</p>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="font-medium text-text-primary text-md">Step 1 — Analyse Job Description</p>
+                <p className="text-xs text-text-secondary mt-0.5">
                   AI reads the JD and extracts what to look for in candidates.
                 </p>
                 {parseError && (
-                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-danger mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />
                     {parseError}
                   </p>
                 )}
                 {parseChanges.length > 0 && !parseError && (
-                  <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="mt-2 p-2 bg-accent-subtle border border-separator rounded">
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-[11px] font-medium text-blue-700">What changed</p>
-                      <button onClick={() => setParseChanges([])} className="text-[10px] text-blue-400 hover:text-blue-600">dismiss</button>
+                      <p className="text-xs font-medium text-accent">What changed</p>
+                      <button onClick={() => setParseChanges([])} className="text-2xs text-text-tertiary hover:text-text-primary">dismiss</button>
                     </div>
                     <ul className="space-y-0.5">
                       {parseChanges.map((c, i) => (
-                        <li key={i} className="text-[11px] text-blue-600">· {c}</li>
+                        <li key={i} className="text-xs text-text-secondary">· {c}</li>
                       ))}
                     </ul>
                   </div>
@@ -1549,19 +1603,31 @@ ${toHtml(job.rawJd)}
         </Card>
       )}
 
+      {/* Pipeline stepper — primary status filter for the candidate list below. */}
+      {parsedRole && (
+        <div className="mb-3">
+          <PipelineStepper
+            counts={pipelineCounts}
+            rejectedCount={rejectedCount}
+            selectedStage={selectedStage}
+            onStageChange={setSelectedStage}
+          />
+        </div>
+      )}
+
       {/* Main layout once parsed */}
       {parsedRole && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+        <div className="mb-4">
           {/* Hiring brief */}
-          <Card className="col-span-2">
+          <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-slate-900 text-sm">Hiring Brief</h2>
+                <h2 className="font-semibold text-text-primary text-md">Hiring Brief</h2>
                 <div className="flex items-center gap-3">
                   {!editingJd && (
                     <button
                       onClick={() => { setJdDraft(job.rawJd); setEditingJd(true); }}
-                      className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1"
+                      className="text-xs text-text-tertiary hover:text-accent transition-colors flex items-center gap-1"
                     >
                       <Pencil className="w-3 h-3" />
                       Edit JD
@@ -1570,7 +1636,7 @@ ${toHtml(job.rawJd)}
                   <button
                     onClick={handleParse}
                     disabled={parsing}
-                    className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1"
+                    className="text-xs text-text-tertiary hover:text-accent transition-colors flex items-center gap-1"
                   >
                     {parsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                     Re-analyse
@@ -1587,7 +1653,7 @@ ${toHtml(job.rawJd)}
                     value={jdDraft}
                     onChange={(e) => setJdDraft(e.target.value)}
                     rows={16}
-                    className="w-full px-3 py-2.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono leading-relaxed resize-y"
+                    className="w-full px-3 py-2 text-sm bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus font-mono leading-relaxed resize-y transition-all"
                   />
                   <div className="flex items-center justify-end gap-2">
                     <button
@@ -1595,14 +1661,14 @@ ${toHtml(job.rawJd)}
                         if (jdDraft !== job.rawJd && !confirm("Discard unsaved changes to the job description?")) return;
                         setEditingJd(false);
                       }}
-                      className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                      className="h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md border border-separator transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSaveJd}
                       disabled={savingJd || !jdDraft.trim()}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-md font-medium transition-colors"
                     >
                       {savingJd ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                       {savingJd ? "Saving…" : "Save & Re-analyse"}
@@ -1616,29 +1682,29 @@ ${toHtml(job.rawJd)}
                 {parsedRole.seniority_band && (
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Seniority</p>
+                      <p className="text-2xs font-medium text-text-tertiary uppercase tracking-wide">Seniority</p>
                       <SourceBadge source={senioritySource} />
                     </div>
-                    <p className="text-sm text-slate-800">{parsedRole.seniority_band}</p>
+                    <p className="text-sm text-text-primary">{parsedRole.seniority_band}</p>
                   </div>
                 )}
                 {(parsedRole.location_rules || parsedRole.location) && (
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Location / Remote</p>
+                      <p className="text-2xs font-medium text-text-tertiary uppercase tracking-wide">Location / Remote</p>
                       <SourceBadge source={locationSource} />
                     </div>
-                    <p className="text-sm text-slate-800">{parsedRole.location_rules || parsedRole.location}</p>
+                    <p className="text-sm text-text-primary">{parsedRole.location_rules || parsedRole.location}</p>
                   </div>
                 )}
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Salary (NZD)</p>
+                      <p className="text-2xs font-medium text-text-tertiary uppercase tracking-wide">Salary (NZD)</p>
                       <SourceBadge source={salarySource} />
                     </div>
                     {!editingSalary && (
-                      <button onClick={() => setEditingSalary(true)} className="text-xs text-blue-600 hover:text-blue-700">
+                      <button onClick={() => setEditingSalary(true)} className="text-xs text-accent hover:text-accent-hover">
                         {job.salaryMin || job.salaryMax ? "Edit" : "Set"}
                       </button>
                     )}
@@ -1647,45 +1713,45 @@ ${toHtml(job.rawJd)}
                     <>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <div className="relative w-24">
-                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary text-xs">$</span>
                           <input
                             type="number"
                             placeholder="Min"
                             value={salaryMin}
                             onChange={(e) => setSalaryMin(e.target.value)}
-                            className="w-full pl-5 pr-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full h-7 pl-5 pr-2 text-md bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-all data-mono"
                           />
                         </div>
-                        <span className="text-slate-400 text-sm">–</span>
+                        <span className="text-text-tertiary text-sm">–</span>
                         <div className="relative w-24">
-                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary text-xs">$</span>
                           <input
                             type="number"
                             placeholder="Max"
                             value={salaryMax}
                             onChange={(e) => setSalaryMax(e.target.value)}
-                            className="w-full pl-5 pr-2 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full h-7 pl-5 pr-2 text-md bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-all data-mono"
                           />
                         </div>
-                        <span className="text-slate-400 text-xs">k NZD</span>
-                        <button onClick={handleSaveSalary} disabled={savingSalary} className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50">
+                        <span className="text-text-tertiary text-xs">k NZD</span>
+                        <button onClick={handleSaveSalary} disabled={savingSalary} className="h-7 px-3 bg-accent hover:bg-accent-hover text-white text-md font-medium rounded disabled:opacity-50 transition-colors">
                           {savingSalary ? "…" : "Save"}
                         </button>
-                        <button onClick={() => { setEditingSalary(false); setSalaryError(""); }} className="p-1.5 text-slate-400 hover:text-slate-600">
+                        <button onClick={() => { setEditingSalary(false); setSalaryError(""); }} className="h-7 w-7 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      {salaryError && <p className="text-xs text-red-500 mt-1">{salaryError}</p>}
+                      {salaryError && <p className="text-xs text-danger mt-1">{salaryError}</p>}
                     </>
                   ) : (
-                    <p className="text-sm text-slate-800">
+                    <p className="text-sm text-text-primary data-mono">
                       {job.salaryMin && job.salaryMax
                         ? `$${(job.salaryMin / 1000).toFixed(0)}k – $${(job.salaryMax / 1000).toFixed(0)}k`
                         : job.salaryMin ? `From $${(job.salaryMin / 1000).toFixed(0)}k`
                         : job.salaryMax ? `Up to $${(job.salaryMax / 1000).toFixed(0)}k`
                         : parsedRole.salary_band
-                        ? <span className="text-slate-500 italic text-xs">{parsedRole.salary_band} (est.)</span>
-                        : <span className="text-slate-400 italic">Not set</span>}
+                        ? <span className="text-text-tertiary italic text-xs font-sans">{parsedRole.salary_band} (est.)</span>
+                        : <span className="text-text-tertiary italic font-sans">Not set</span>}
                     </p>
                   )}
                 </div>
@@ -1694,15 +1760,15 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Explicitly Stated"
                 items={parsedRole.explicitly_stated}
-                labelClassName="text-emerald-700"
-                chipClassName="bg-emerald-50 text-emerald-700 border-emerald-200"
+                labelClassName="text-success"
+                chipClassName="bg-success-subtle text-success"
               />
 
               <HiringBriefChipSection
                 title="Strongly Inferred"
                 items={parsedRole.strongly_inferred}
-                labelClassName="text-blue-700"
-                chipClassName="bg-blue-50 text-blue-700 border-blue-200"
+                labelClassName="text-accent"
+                chipClassName="bg-accent-subtle text-accent"
               />
 
               {/* Knockout criteria — each item can be dismissed to remove it from scoring */}
@@ -1710,7 +1776,7 @@ ${toHtml(job.rawJd)}
                 const dismissed = parsedRole.dismissed_knockout_criteria ?? [];
                 return (
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide mb-2 text-red-600" title="Binary gates — candidates who fail these are excluded regardless of other qualifications. Click × to relax a requirement (treats it as informational only for this search).">Hard Requirements</p>
+                    <p className="text-2xs font-medium uppercase tracking-wide mb-2 text-danger" title="Binary gates — candidates who fail these are excluded regardless of other qualifications. Click × to relax a requirement (treats it as informational only for this search).">Hard Requirements</p>
                     <div className="flex flex-wrap gap-1.5">
                       {parsedRole.knockout_criteria.map((item) => {
                         const isDismissed = dismissed.includes(item);
@@ -1721,10 +1787,10 @@ ${toHtml(job.rawJd)}
                             key={item}
                             title={isDismissed ? "Click ↺ to re-enable this as a hard requirement" : "Click × to relax — candidates without this will still be scored (not automatically excluded)"}
                             className={cn(
-                              "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border font-medium transition-colors",
+                              "inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded-sm font-medium transition-colors",
                               isDismissed
-                                ? "bg-slate-50 text-slate-400 border-slate-200 line-through"
-                                : "bg-red-50 text-red-700 border-red-200"
+                                ? "bg-surface-hover text-text-tertiary line-through"
+                                : "bg-danger-subtle text-danger"
                             )}
                           >
                             {item}
@@ -1734,7 +1800,7 @@ ${toHtml(job.rawJd)}
                               <button
                                 onClick={() => handleRequirementAction("restore-knockout", item)}
                                 title="Re-enable as hard requirement"
-                                className="text-slate-400 hover:text-red-600 transition-colors flex-shrink-0"
+                                className="text-text-tertiary hover:text-danger transition-colors flex-shrink-0"
                               >
                                 <RotateCcw className="w-2.5 h-2.5" />
                               </button>
@@ -1742,7 +1808,7 @@ ${toHtml(job.rawJd)}
                               <button
                                 onClick={() => handleRequirementAction("dismiss-knockout", item)}
                                 title="Relax this requirement (still shown but won't exclude candidates)"
-                                className="text-red-300 hover:text-red-600 transition-colors flex-shrink-0"
+                                className="text-danger/60 hover:text-danger transition-colors flex-shrink-0"
                               >
                                 <X className="w-2.5 h-2.5" />
                               </button>
@@ -1759,14 +1825,14 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Must-haves"
                 items={mustHaves}
-                chipClassName="bg-violet-50 text-violet-700 border-violet-100 font-medium"
+                chipClassName="bg-accent-subtle text-accent font-medium"
               />
 
               {/* Nice-to-haves — fall back to skills_preferred */}
               <HiringBriefChipSection
                 title="Nice-to-haves"
                 items={niceToHaves}
-                chipClassName="bg-slate-100 text-slate-600 border-slate-200"
+                chipClassName="bg-surface-hover text-text-secondary"
               />
 
               {/* AI search tips — legacy/rare tech with suggested modern alternatives.
@@ -1787,8 +1853,8 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Application / Screening"
                 items={parsedRole.application_requirements}
-                labelClassName="text-amber-700"
-                chipClassName="bg-amber-50 text-amber-800 border-amber-200"
+                labelClassName="text-warning"
+                chipClassName="bg-warning-subtle text-warning"
               />
 
               {/* Work Rights / visa flags — items can be promoted into must_haves */}
@@ -1801,7 +1867,7 @@ ${toHtml(job.rawJd)}
                 const promoted = parsedRole.promoted_visa_flags ?? [];
                 return (
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide mb-2 text-amber-700">Work Rights</p>
+                    <p className="text-2xs font-medium uppercase tracking-wide mb-2 text-warning">Work Rights</p>
                     <div className="flex flex-wrap gap-1.5">
                       {items.map((item) => {
                         const isPromoted = promoted.includes(item);
@@ -1812,10 +1878,10 @@ ${toHtml(job.rawJd)}
                             key={item}
                             title={isPromoted ? "Enforced as a must-have — click × to relax" : "Click + to enforce as a scoring must-have"}
                             className={cn(
-                              "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md border transition-colors",
+                              "inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded-sm transition-colors",
                               isPromoted
-                                ? "bg-violet-50 text-violet-700 border-violet-200 font-medium"
-                                : "bg-amber-50 text-amber-800 border-amber-200"
+                                ? "bg-accent-subtle text-accent font-medium"
+                                : "bg-warning-subtle text-warning"
                             )}
                           >
                             {item}
@@ -1825,7 +1891,7 @@ ${toHtml(job.rawJd)}
                               <button
                                 onClick={() => handleRequirementAction("demote-visa-flag", item)}
                                 title="Remove from must-haves"
-                                className="text-violet-400 hover:text-violet-700 transition-colors flex-shrink-0"
+                                className="text-accent/60 hover:text-accent transition-colors flex-shrink-0"
                               >
                                 <X className="w-2.5 h-2.5" />
                               </button>
@@ -1833,7 +1899,7 @@ ${toHtml(job.rawJd)}
                               <button
                                 onClick={() => handleRequirementAction("promote-visa-flag", item)}
                                 title="Enforce as a must-have in scoring"
-                                className="text-amber-400 hover:text-amber-700 transition-colors flex-shrink-0"
+                                className="text-warning/60 hover:text-warning transition-colors flex-shrink-0"
                               >
                                 <Plus className="w-2.5 h-2.5" />
                               </button>
@@ -1849,27 +1915,20 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Search Expansion"
                 items={parsedRole.search_expansion}
-                labelClassName="text-slate-600"
-                chipClassName="bg-slate-50 text-slate-600 border-slate-200"
+                labelClassName="text-text-tertiary"
+                chipClassName="bg-surface-hover text-text-secondary"
               />
 
               {/* Synonym titles searched */}
               <HiringBriefChipSection
                 title="Titles Searched"
                 items={parsedRole.synonym_titles}
-                chipClassName="bg-slate-50 text-slate-500 border-slate-200"
+                chipClassName="bg-surface-hover text-text-tertiary"
                 monospace
               />
 
             </CardBody>
           </Card>
-
-          <PipelineCard
-            totalCount={jobCandidates.length}
-            statusCounts={statusCounts}
-            filter={filter}
-            onFilterChange={setFilter}
-          />
         </div>
       )}
 
@@ -1903,7 +1962,7 @@ ${toHtml(job.rawJd)}
       {parsedRole && <ParseHistoryCard jobId={id} />}
 
       {/* Top matches card — surfaces best unreviewed candidates so recruiter doesn't have to scroll */}
-      {filter.length === 0 && (
+      {selectedStage === "all" && (
         <TopCandidatesCard
           candidates={jobCandidates}
           onShortlist={(cid) => handleStatusChange(cid, "shortlisted")}
@@ -1921,7 +1980,7 @@ ${toHtml(job.rawJd)}
             {filteredCandidates.length > 0 && (
               <input
                 type="checkbox"
-                className="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer"
+                className="w-4 h-4 rounded-sm accent-accent cursor-pointer"
                 checked={filteredCandidates.length > 0 && filteredCandidates.every((c) => selectedIds.has(c.id))}
                 onChange={(e) => {
                   if (e.target.checked) setSelectedIds(new Set(filteredCandidates.map((c) => c.id)));
@@ -1930,24 +1989,26 @@ ${toHtml(job.rawJd)}
                 title="Select all"
               />
             )}
-            <h2 className="font-semibold text-slate-900">
+            <h2 className="text-md font-semibold text-text-primary">
               Candidates
               {filteredCandidates.length > 0 && (
-                <span className="ml-2 text-sm font-normal text-slate-500">
+                <span className="ml-2 text-sm font-normal text-text-secondary data-mono">
                   ({filteredCandidates.length})
                 </span>
               )}
             </h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {selectedIds.size > 0 ? (
               <>
-                <span className="text-xs font-medium text-slate-600">{selectedIds.size} selected</span>
+                <span className="text-xs font-medium text-text-secondary">
+                  <span className="data-mono">{selectedIds.size}</span> selected
+                </span>
                 <select
                   onChange={(e) => { if (e.target.value) handleBulkStatusChange(e.target.value); e.target.value = ""; }}
                   disabled={bulkStatusChanging}
                   defaultValue=""
-                  className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
+                  className="h-7 text-xs bg-surface-sunken border border-separator rounded px-2 text-text-primary focus:outline-none focus:border-accent disabled:opacity-50 transition-all"
                 >
                   <option value="" disabled>Move to…</option>
                   <option value="reviewing">Reviewing</option>
@@ -1959,29 +2020,28 @@ ${toHtml(job.rawJd)}
                   <option value="rejected">Rejected</option>
                 </select>
                 <Button
-                  size="sm"
-                  variant="outline"
+                  size="md"
+                  variant="danger"
                   onClick={handleBulkDelete}
                   loading={bulkDeleting}
                   disabled={bulkDeleting || bulkStatusChanging}
-                  className="text-red-600 border-red-200 hover:bg-red-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   {bulkDeleting ? "Deleting…" : `Delete ${selectedIds.size}`}
                 </Button>
                 <button
                   onClick={() => setSelectedIds(new Set())}
-                  className="text-xs text-slate-400 hover:text-slate-600"
+                  className="text-xs text-text-tertiary hover:text-text-primary"
                 >
                   Cancel
                 </button>
               </>
             ) : (
               <>
-                {filter.length > 0 && (
+                {selectedStage !== "all" && (
                   <button
-                    onClick={() => setFilter([])}
-                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                    onClick={() => setSelectedStage("all")}
+                    className="text-xs text-accent hover:text-accent-hover flex items-center gap-1"
                   >
                     <X className="w-3 h-3" />
                     Clear filter
@@ -1989,8 +2049,8 @@ ${toHtml(job.rawJd)}
                 )}
                 {parsedRole && job.candidates.some((c) => c.profileText) && (
                   <Button
-                    size="sm"
-                    variant="outline"
+                    size="md"
+                    variant="secondary"
                     onClick={handleRescoreAll}
                     loading={rescoringAll}
                     disabled={rescoringAll}
@@ -2006,8 +2066,8 @@ ${toHtml(job.rawJd)}
                 )}
                 {filteredCandidates.length > 0 && (
                   <Button
-                    size="sm"
-                    variant="outline"
+                    size="md"
+                    variant="secondary"
                     onClick={handleExportCsv}
                     title="Download candidates as CSV"
                   >
@@ -2015,7 +2075,7 @@ ${toHtml(job.rawJd)}
                     Export CSV
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={() => openModal("addCandidate")}>
+                <Button size="md" variant="secondary" onClick={() => openModal("addCandidate")}>
                   <UserPlus className="w-3.5 h-3.5" />
                   Add manually
                 </Button>
@@ -2026,20 +2086,20 @@ ${toHtml(job.rawJd)}
 
         {/* Keyword search */}
         {job.candidates.length > 0 && (
-          <div className="mb-4 space-y-2">
+          <div className="mb-3 space-y-2">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search by name, role, location, or notes…"
-                className="w-full pl-8 pr-8 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 placeholder:text-slate-400"
+                className="w-full h-7 pl-7 pr-7 text-md bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -2054,7 +2114,7 @@ ${toHtml(job.rawJd)}
                 can't get stuck on a too-strict filter and assume the list is
                 empty. */}
             <div className="flex items-center gap-2 flex-wrap text-xs">
-              <label className="flex items-center gap-2 text-slate-600 select-none">
+              <label className="flex items-center gap-2 text-text-secondary select-none">
                 <span className="font-medium">Min match</span>
                 <input
                   type="range"
@@ -2063,19 +2123,19 @@ ${toHtml(job.rawJd)}
                   step={5}
                   value={minScoreFilter}
                   onChange={(e) => setMinScoreFilter(Number(e.target.value))}
-                  className="w-32 accent-blue-600"
+                  className="w-32 accent-accent"
                 />
-                <span className={cn("tabular-nums w-9 text-right", minScoreFilter > 0 ? "text-blue-700 font-semibold" : "text-slate-400")}>
+                <span className={cn("data-mono w-9 text-right", minScoreFilter > 0 ? "text-accent font-semibold" : "text-text-tertiary")}>
                   {minScoreFilter > 0 ? `${minScoreFilter}%` : "off"}
                 </span>
               </label>
 
-              <label className="flex items-center gap-1.5 text-slate-600 select-none cursor-pointer ml-2">
+              <label className="flex items-center gap-1.5 text-text-secondary select-none cursor-pointer ml-2">
                 <input
                   type="checkbox"
                   checked={hideSnippetOnly}
                   onChange={(e) => setHideSnippetOnly(e.target.checked)}
-                  className="w-3.5 h-3.5 accent-blue-600"
+                  className="w-3.5 h-3.5 accent-accent"
                 />
                 Full profiles only
               </label>
@@ -2083,7 +2143,7 @@ ${toHtml(job.rawJd)}
               {(minScoreFilter > 0 || hideSnippetOnly) && (
                 <button
                   onClick={() => { setMinScoreFilter(0); setHideSnippetOnly(false); }}
-                  className="ml-auto text-blue-600 hover:text-blue-700 underline underline-offset-2"
+                  className="ml-auto text-accent hover:text-accent-hover underline underline-offset-2"
                 >
                   Clear filters
                 </button>
@@ -2125,10 +2185,10 @@ ${toHtml(job.rawJd)}
             <button
               type="button"
               onClick={scrollToFirst}
-              className="mb-3 w-full flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 hover:bg-amber-100 transition-colors text-left"
+              className="mb-3 w-full flex items-center gap-1.5 text-xs text-warning bg-warning-subtle border border-separator rounded px-3 py-2 hover:bg-warning/25 transition-colors text-left"
             >
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              {n} candidate{n > 1 ? "s" : ""} {n > 1 ? "need" : "needs"} a full profile fetch — look for the amber <strong className="mx-0.5">Fetch profile</strong> button on each card.
+              <span className="data-mono">{n}</span> candidate{n > 1 ? "s" : ""} {n > 1 ? "need" : "needs"} a full profile fetch — look for the amber <strong className="mx-0.5">Fetch profile</strong> button on each card.
             </button>
           );
         })()}
@@ -2138,7 +2198,7 @@ ${toHtml(job.rawJd)}
           const parsedMs  = new Date(job.lastParsedAt!).getTime();
           const scoredMs  = new Date(job.lastScoredAt!).getTime();
           return parsedMs > scoredMs ? (
-            <div className="mb-3 flex items-center justify-between gap-3 text-xs rounded-lg px-3 py-2 border text-amber-700 bg-amber-50 border-amber-200">
+            <div className="mb-3 flex items-center justify-between gap-3 text-xs rounded px-3 py-2 border text-warning bg-warning-subtle border-separator">
               <div className="flex items-center gap-1.5">
                 <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Requirements updated since last score — re-score all to apply new criteria.</span>
@@ -2146,7 +2206,7 @@ ${toHtml(job.rawJd)}
               <button
                 onClick={handleRescoreAll}
                 disabled={rescoringAll}
-                className="text-xs font-medium px-3 py-1 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:bg-slate-300"
+                className="h-6 text-xs font-medium px-3 rounded bg-warning text-text-inverse hover:bg-warning-hover disabled:opacity-50 transition-colors"
               >
                 Re-score all now
               </button>
@@ -2157,67 +2217,65 @@ ${toHtml(job.rawJd)}
         {/* Re-score result */}
         {rescoreResult && !rescoringAll && (
           <div className={cn(
-            "mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border",
+            "mb-3 flex items-center gap-1.5 text-xs rounded px-3 py-2 border border-separator",
             rescoreResult.partial
-              ? "text-amber-700 bg-amber-50 border-amber-200"
-              : "text-emerald-700 bg-emerald-50 border-emerald-200"
+              ? "text-warning bg-warning-subtle"
+              : "text-success bg-success-subtle"
           )}>
             {rescoreResult.partial
               ? <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
               : <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />}
             {rescoreResult.partial
-              ? `Scored ${rescoreResult.scored} of ${rescoreResult.total} — connection dropped, re-run to finish`
-              : `Re-scored ${rescoreResult.scored} of ${rescoreResult.total} candidates`}
+              ? <span>Scored <span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> — connection dropped, re-run to finish</span>
+              : <span>Re-scored <span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> candidates</span>}
             {!rescoreResult.partial && rescoreResult.failedIds && rescoreResult.failedIds.length > 0 && (
-              <span className="ml-2 text-amber-600">· {rescoreResult.failedIds.length} failed</span>
+              <span className="ml-2 text-warning">· <span className="data-mono">{rescoreResult.failedIds.length}</span> failed</span>
             )}
           </div>
         )}
 
         {filteredCandidates.length === 0 ? (
-          <div className="text-center py-12 px-6 bg-white rounded-xl border border-slate-200 border-dashed">
-            <Users className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-            <p className="text-slate-700 text-sm font-semibold mb-1">
-              {filter.length === 0
+          <div className="text-center py-10 px-6 bg-surface-raised rounded-md border border-separator border-dashed">
+            <Users className="w-9 h-9 text-text-tertiary mx-auto mb-3" />
+            <p className="text-text-primary text-md font-semibold mb-1">
+              {selectedStage === "all"
                 ? (jobCandidates.length === 0 ? "No candidates yet" : "No candidates match your filter")
-                : (filter.length === 1
-                    ? `No ${statusLabel(filter[0]).toLowerCase()} candidates`
-                    : `No candidates in the ${filter.length} selected statuses`)}
+                : `No candidates in ${selectedStage}`}
             </p>
-            {filter.length === 0 && jobCandidates.length === 0 && parsedRole && (
+            {selectedStage === "all" && jobCandidates.length === 0 && parsedRole && (
               <>
-                <p className="text-slate-500 text-xs mt-1 mb-4">
+                <p className="text-text-secondary text-xs mt-1 mb-4">
                   Find candidates from the role brief, or add them manually below.
                 </p>
                 <button
                   onClick={() => document.getElementById("job-search-card")?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
                 >
                   Find candidates
                 </button>
               </>
             )}
-            {filter.length === 0 && jobCandidates.length === 0 && !parsedRole && (
-              <p className="text-slate-500 text-xs mt-1">
+            {selectedStage === "all" && jobCandidates.length === 0 && !parsedRole && (
+              <p className="text-text-secondary text-xs mt-1">
                 Paste a job description above and click <strong>Analyse</strong> to start.
               </p>
             )}
-            {filter.length > 0 && (
+            {selectedStage !== "all" && (
               <button
-                onClick={() => setFilter([])}
-                className="text-blue-600 hover:text-blue-700 text-xs underline underline-offset-2 mt-2"
+                onClick={() => setSelectedStage("all")}
+                className="text-accent hover:text-accent-hover text-xs underline underline-offset-2 mt-2"
               >
                 Clear filter
               </button>
             )}
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {filteredCandidates.slice(0, renderCap).map((candidate) => (
               <div key={candidate.id} id={`candidate-${candidate.id}`} className="flex items-start gap-3">
                 <input
                   type="checkbox"
-                  className="mt-4 w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer flex-shrink-0"
+                  className="mt-4 w-4 h-4 rounded-sm accent-accent cursor-pointer flex-shrink-0"
                   checked={selectedIds.has(candidate.id)}
                   onChange={() => toggleSelect(candidate.id)}
                   aria-label={`Select ${candidate.name}`}
@@ -2250,15 +2308,15 @@ ${toHtml(job.rawJd)}
               <div className="flex items-center justify-center gap-3 py-4">
                 <button
                   onClick={() => setRenderCap((n) => n + RENDER_BATCH_SIZE)}
-                  className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors"
+                  className="h-7 px-3 text-md font-medium text-accent bg-accent-subtle hover:bg-accent/25 rounded transition-colors"
                 >
                   Show {Math.min(RENDER_BATCH_SIZE, filteredCandidates.length - renderCap)} more
                 </button>
                 <button
                   onClick={() => setRenderCap(filteredCandidates.length)}
-                  className="text-xs text-slate-500 hover:text-slate-700 underline underline-offset-2"
+                  className="text-xs text-text-tertiary hover:text-text-primary underline underline-offset-2"
                 >
-                  Show all {filteredCandidates.length}
+                  Show all <span className="data-mono">{filteredCandidates.length}</span>
                 </button>
               </div>
             )}
@@ -2306,6 +2364,7 @@ ${toHtml(job.rawJd)}
           }}
         />
       )}
+      </div>
     </div>
   );
 }

@@ -71,18 +71,18 @@ export function OnboardingCard({ jobId, hasParsedRole, candidateCount, scoredCou
   };
 
   return (
-    <div className="mb-6 rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white px-4 py-3 relative">
+    <div className="mb-6 rounded-md border border-separator bg-surface-raised border-l-2 border-l-accent px-4 py-3 relative">
       <button
         onClick={handleDismiss}
-        className="absolute top-3 right-3 text-slate-400 hover:text-slate-600"
+        className="absolute top-3 right-3 text-text-tertiary hover:text-text-primary transition-colors"
         aria-label="Dismiss onboarding"
       >
-        <X className="w-4 h-4" />
+        <X className="w-3.5 h-3.5" />
       </button>
 
       <div className="flex items-center gap-2 mb-3">
-        <Sparkles className="w-4 h-4 text-blue-500" />
-        <p className="text-sm font-semibold text-slate-800">Get started — finding your first candidate</p>
+        <Sparkles className="w-3.5 h-3.5 text-accent" />
+        <p className="text-md font-semibold text-text-primary">Get started — finding your first candidate</p>
       </div>
 
       <ol className="space-y-2.5">
@@ -90,20 +90,20 @@ export function OnboardingCard({ jobId, hasParsedRole, candidateCount, scoredCou
           <li key={i} className="flex items-start gap-3">
             <div className="flex-shrink-0 mt-0.5">
               {step.done
-                ? <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                : <Circle className={cn("w-4 h-4", step.current ? "text-blue-500" : "text-slate-300")} />
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+                : <Circle className={cn("w-3.5 h-3.5", step.current ? "text-accent" : "text-text-tertiary")} />
               }
             </div>
             <div className="flex-1 min-w-0">
               <p className={cn(
-                "text-sm font-medium leading-tight",
-                step.done ? "text-slate-500 line-through" : step.current ? "text-slate-800" : "text-slate-500"
+                "text-md font-medium leading-tight",
+                step.done ? "text-text-tertiary line-through" : step.current ? "text-text-primary" : "text-text-secondary"
               )}>
                 {step.title}
               </p>
               {step.current && (
-                <p className="text-xs text-slate-500 mt-0.5 flex items-start gap-1">
-                  <ArrowRight className="w-3 h-3 mt-0.5 flex-shrink-0 text-blue-400" />
+                <p className="text-base text-text-secondary mt-0.5 flex items-start gap-1">
+                  <ArrowRight className="w-3 h-3 mt-0.5 flex-shrink-0 text-accent" />
                   {step.description}
                 </p>
               )}

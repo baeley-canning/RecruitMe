@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Briefcase, Users, Star, Activity, AlertCircle, CheckCircle2,
-  ChevronRight, Search, Camera, Loader2, TrendingUp,
+  Briefcase, Users, Star, AlertCircle, CheckCircle2,
+  ChevronRight, Search, Camera, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScoreBadge } from "@/components/score-badge";
@@ -26,10 +26,10 @@ interface DashboardData {
 }
 
 function evalColour(ev: string | null) {
-  if (!ev) return "text-slate-400";
-  if (ev.startsWith("FAIL")) return "text-red-600";
-  if (ev.startsWith("WARNING")) return "text-amber-600";
-  return "text-emerald-600";
+  if (!ev) return "text-text-tertiary";
+  if (ev.startsWith("FAIL")) return "text-danger";
+  if (ev.startsWith("WARNING")) return "text-warning";
+  return "text-success";
 }
 
 export default function DashboardPage() {
@@ -45,7 +45,7 @@ export default function DashboardPage() {
   if (!data) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
+        <Loader2 className="w-5 h-5 text-text-tertiary animate-spin" />
       </div>
     );
   }
@@ -54,125 +54,133 @@ export default function DashboardPage() {
   const needsAttention = jobs.filter((j) => j.needsAttention);
   const healthy = jobs.filter((j) => !j.needsAttention);
 
+  const tiles = [
+    { label: "Active jobs",         value: totals.activeJobs,        icon: Briefcase },
+    { label: "Total candidates",    value: totals.totalCandidates,   icon: Users },
+    { label: "Shortlisted",         value: totals.shortlisted,       icon: Star },
+    { label: "Captured this week",  value: totals.capturedThisWeek,  icon: Camera },
+  ];
+
   return (
-    <div className="px-4 py-6 sm:px-6 md:p-8 max-w-6xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500 mt-1">What needs your attention right now.</p>
+    <div className="bg-surface-base min-h-full">
+      {/* Toolbar */}
+      <div className="toolbar">
+        <h1 className="text-md font-semibold text-text-primary">Dashboard</h1>
+        <span className="text-xs text-text-tertiary">What needs your attention right now</span>
+        <div className="ml-auto" />
       </div>
 
-      {/* Stat strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        {[
-          { label: "Active jobs",        value: totals.activeJobs,        icon: Briefcase,  colour: "text-blue-600 bg-blue-50" },
-          { label: "Total candidates",   value: totals.totalCandidates,   icon: Users,      colour: "text-slate-600 bg-slate-100" },
-          { label: "Shortlisted",        value: totals.shortlisted,       icon: Star,       colour: "text-amber-600 bg-amber-50" },
-          { label: "Captured this week", value: totals.capturedThisWeek,  icon: Camera,     colour: "text-emerald-600 bg-emerald-50" },
-        ].map(({ label, value, icon: Icon, colour }) => (
-          <div key={label} className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">
-            <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0", colour)}>
-              <Icon className="w-4 h-4" />
-            </div>
-            <div>
-              <p className="text-xl font-bold text-slate-900">{value}</p>
-              <p className="text-xs text-slate-500">{label}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left col: jobs needing attention + healthy jobs */}
-        <div className="lg:col-span-2 space-y-6">
-
-          {/* Needs attention */}
-          {needsAttention.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2 mb-3">
-                <AlertCircle className="w-4 h-4 text-amber-500" />
-                Needs attention
-              </h2>
-              <div className="space-y-2">
-                {needsAttention.map((job) => (
-                  <JobRow key={job.id} job={job} attention />
-                ))}
+      <div className="p-5 max-w-6xl mx-auto">
+        {/* Stat tiles */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
+          {tiles.map(({ label, value, icon: Icon }) => (
+            <div
+              key={label}
+              className="bg-surface-raised border border-separator rounded-md p-3"
+            >
+              <div className="flex items-center gap-2 mb-1 text-text-tertiary">
+                <Icon className="w-3.5 h-3.5" />
+                <p className="text-2xs uppercase tracking-wider">{label}</p>
               </div>
+              <p className="text-2xl data-mono text-text-primary">{value}</p>
             </div>
-          )}
-
-          {/* Active jobs */}
-          <div>
-            <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2 mb-3">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              {needsAttention.length > 0 ? "Other active jobs" : "Active jobs"}
-            </h2>
-            {healthy.length === 0 && jobs.length === 0 && (
-              <div className="text-center py-10 bg-white rounded-xl border border-dashed border-slate-200">
-                <Briefcase className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm text-slate-500">No active jobs yet.</p>
-                <Link href="/jobs/new" className="text-sm text-blue-600 hover:text-blue-700 font-medium mt-1 inline-block">Create your first job →</Link>
-              </div>
-            )}
-            <div className="space-y-2">
-              {(needsAttention.length > 0 ? healthy : jobs).map((job) => (
-                <JobRow key={job.id} job={job} />
-              ))}
-            </div>
-          </div>
+          ))}
         </div>
 
-        {/* Right col: recent activity */}
-        <div className="space-y-5">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Left: jobs */}
+          <div className="lg:col-span-2 space-y-5">
 
-          {/* Recent captures */}
-          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
-              <Camera className="w-4 h-4 text-slate-400" />
-              <p className="text-sm font-medium text-slate-700">Recent captures</p>
-              <span className="ml-auto text-[11px] text-slate-400">last 7 days</span>
-            </div>
-            {recentCaptures.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-6">No profiles captured yet</p>
-            ) : (
-              <div className="divide-y divide-slate-50">
-                {recentCaptures.slice(0, 6).map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
-                    <ScoreBadge score={c.matchScore} size="sm" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-slate-800 truncate">{c.name}</p>
-                      {c.job && <p className="text-[11px] text-slate-400 truncate">{c.job.title}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {needsAttention.length > 0 && (
+              <section>
+                <h2 className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-warning" />
+                  Needs attention
+                </h2>
+                <div className="bg-surface-raised border border-separator rounded-md divide-y divide-separator overflow-hidden">
+                  {needsAttention.map((job) => (
+                    <JobRow key={job.id} job={job} attention />
+                  ))}
+                </div>
+              </section>
             )}
+
+            <section>
+              <h2 className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+                {needsAttention.length > 0 ? "Other active jobs" : "Active jobs"}
+              </h2>
+              {healthy.length === 0 && jobs.length === 0 ? (
+                <div className="bg-surface-raised border border-separator rounded-md p-8 text-center">
+                  <p className="text-sm text-text-secondary mb-3">No active jobs yet.</p>
+                  <Link
+                    href="/jobs/new"
+                    className="inline-flex items-center h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+                  >
+                    Create your first job
+                  </Link>
+                </div>
+              ) : (
+                <div className="bg-surface-raised border border-separator rounded-md divide-y divide-separator overflow-hidden">
+                  {(needsAttention.length > 0 ? healthy : jobs).map((job) => (
+                    <JobRow key={job.id} job={job} />
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
 
-          {/* Recent searches */}
-          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
-              <Search className="w-4 h-4 text-slate-400" />
-              <p className="text-sm font-medium text-slate-700">Recent searches</p>
-            </div>
-            {recentSearches.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-6">No searches this week</p>
-            ) : (
-              <div className="divide-y divide-slate-50">
-                {recentSearches.map((s) => (
-                  <div key={s.id} className="px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-slate-700">{s.job?.title ?? "Unknown"}</span>
-                      <span className="ml-auto text-xs text-slate-500">{s.collected} found</span>
-                    </div>
-                    {s.evaluation && (
-                      <p className={cn("text-[11px] truncate mt-0.5", evalColour(s.evaluation))}>
-                        {s.evaluation.slice(0, 60)}
-                      </p>
-                    )}
-                  </div>
-                ))}
+          {/* Right: recent activity */}
+          <div className="space-y-5">
+
+            <section className="bg-surface-raised border border-separator rounded-md overflow-hidden">
+              <div className="px-3 py-2 border-b border-separator flex items-center gap-2">
+                <Camera className="w-3.5 h-3.5 text-text-tertiary" />
+                <p className="text-md font-medium text-text-primary">Recent captures</p>
+                <span className="ml-auto text-2xs text-text-tertiary">last 7 days</span>
               </div>
-            )}
+              {recentCaptures.length === 0 ? (
+                <p className="text-xs text-text-tertiary text-center py-6">No profiles captured yet</p>
+              ) : (
+                <div className="divide-y divide-separator">
+                  {recentCaptures.slice(0, 6).map((c) => (
+                    <div key={c.id} className="flex items-center gap-2 px-3 py-2">
+                      <ScoreBadge score={c.matchScore} size="sm" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-text-primary truncate">{c.name}</p>
+                        {c.job && <p className="text-xs text-text-tertiary truncate">{c.job.title}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="bg-surface-raised border border-separator rounded-md overflow-hidden">
+              <div className="px-3 py-2 border-b border-separator flex items-center gap-2">
+                <Search className="w-3.5 h-3.5 text-text-tertiary" />
+                <p className="text-md font-medium text-text-primary">Recent searches</p>
+              </div>
+              {recentSearches.length === 0 ? (
+                <p className="text-xs text-text-tertiary text-center py-6">No searches this week</p>
+              ) : (
+                <div className="divide-y divide-separator">
+                  {recentSearches.map((s) => (
+                    <div key={s.id} className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-text-primary truncate">{s.job?.title ?? "Unknown"}</span>
+                        <span className="ml-auto text-xs text-text-secondary data-mono">{s.collected} found</span>
+                      </div>
+                      {s.evaluation && (
+                        <p className={cn("text-xs truncate mt-0.5", evalColour(s.evaluation))}>
+                          {s.evaluation.slice(0, 60)}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         </div>
       </div>
@@ -184,45 +192,46 @@ function JobRow({ job, attention }: { job: JobStat; attention?: boolean }) {
   return (
     <Link
       href={`/jobs/${job.id}`}
-      className={cn(
-        "flex items-center gap-4 bg-white rounded-xl border px-4 py-3 hover:border-blue-200 hover:bg-blue-50/30 transition-colors group",
-        attention ? "border-amber-200" : "border-slate-200"
-      )}
+      className="flex items-center gap-3 px-3 py-2 hover:bg-surface-hover transition-colors group"
     >
+      <Briefcase className={cn("w-4 h-4 flex-shrink-0", attention ? "text-warning" : "text-text-tertiary")} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <p className="text-sm font-medium text-slate-800 truncate">{job.title}</p>
+          <p className="text-md font-medium text-text-primary truncate">{job.title}</p>
           {job.staleScores && (
-            <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-200 rounded px-1.5 py-0.5 font-medium flex-shrink-0">
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-2xs font-medium bg-warning-subtle text-warning flex-shrink-0">
               Re-score
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
+        <div className="flex items-center gap-2 text-xs text-text-tertiary flex-wrap">
           {job.company && <span>{job.company}</span>}
-          <span>{job.totalCandidates} candidates</span>
+          <span><span className="data-mono">{job.totalCandidates}</span> candidates</span>
           {job.shortlisted > 0
-            ? <span className="text-amber-600 font-medium">★ {job.shortlisted} shortlisted</span>
+            ? <span className="text-warning">★ <span className="data-mono">{job.shortlisted}</span> shortlisted</span>
             : job.scored > 0
-            ? <span className="text-slate-400">0 shortlisted</span>
+            ? <span>0 shortlisted</span>
             : null}
-          {job.needsFetch > 0 && <span className="text-blue-500">{job.needsFetch} to fetch</span>}
-          {job.avgScore !== null && <span>avg {job.avgScore}%</span>}
+          {job.needsFetch > 0 && <span className="text-accent"><span className="data-mono">{job.needsFetch}</span> to fetch</span>}
+          {job.avgScore !== null && <span>avg <span className="data-mono">{job.avgScore}%</span></span>}
         </div>
       </div>
 
-      {/* Top candidate score preview */}
       {job.topCandidates.length > 0 && (
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="hidden sm:flex items-center gap-1 flex-shrink-0">
           {job.topCandidates.slice(0, 3).map((c) => (
-            <div key={c.id} className="w-8 h-8 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center -ml-1 first:ml-0" title={c.name}>
-              <span className="text-[9px] font-bold text-slate-600">{c.matchScore}%</span>
+            <div
+              key={c.id}
+              className="h-6 min-w-[2.25rem] px-1 rounded-sm bg-surface-hover border border-separator flex items-center justify-center"
+              title={c.name}
+            >
+              <span className="text-2xs data-mono text-text-secondary">{c.matchScore}%</span>
             </div>
           ))}
         </div>
       )}
 
-      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-400 flex-shrink-0" />
+      <ChevronRight className="w-3.5 h-3.5 text-text-tertiary group-hover:text-text-secondary flex-shrink-0" />
     </Link>
   );
 }

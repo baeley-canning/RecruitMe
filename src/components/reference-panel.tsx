@@ -6,6 +6,7 @@ import {
   Loader2, X, CheckCircle2, ChevronRight,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import { cn, safeParseJson } from "@/lib/utils";
 
 interface ReferenceQuestion {
@@ -40,11 +41,13 @@ const STATUS_LABELS: Record<string, string> = {
   complete: "Complete",
 };
 
+// Status colour tokens — keep these aligned with the global status palette so
+// "received" is amber/attention, "complete" is success, etc.
 const STATUS_COLORS: Record<string, string> = {
-  pending:   "bg-slate-100 text-slate-500",
-  contacted: "bg-blue-50 text-blue-600",
-  received:  "bg-amber-50 text-amber-700",
-  complete:  "bg-emerald-50 text-emerald-700",
+  pending:   "bg-surface-hover text-text-secondary",
+  contacted: "bg-accent-subtle text-accent",
+  received:  "bg-warning-subtle text-warning",
+  complete:  "bg-success-subtle text-success",
 };
 
 interface ReferencePanelProps {
@@ -170,29 +173,31 @@ export function ReferencePanel({ candidateId, jobId }: ReferencePanelProps) {
   const completeCount = refs.filter((r) => r.status === "complete").length;
 
   return (
-    <div className="border border-slate-200 rounded-xl overflow-hidden">
+    <div className="rounded-md border border-separator bg-surface-raised overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-50 hover:bg-slate-100 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-surface-hover transition-colors"
       >
         <div className="flex items-center gap-2">
-          <UserCheck className="w-3.5 h-3.5 text-slate-400" />
-          <span className="text-xs font-medium text-slate-700">Reference Checks</span>
+          <UserCheck className="w-3.5 h-3.5 text-text-tertiary" />
+          <span className="text-md font-medium text-text-primary">Reference checks</span>
           {refs.length > 0 && (
-            <span className="text-[10px] bg-slate-200 text-slate-600 rounded-full px-1.5 py-0.5">
+            <Badge className="data-mono">
               {completeCount}/{refs.length}
-            </span>
+            </Badge>
           )}
         </div>
-        {open ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+        {open
+          ? <ChevronUp className="w-3.5 h-3.5 text-text-tertiary" />
+          : <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />}
       </button>
 
       {open && (
-        <div className="p-3 space-y-3">
+        <div className="p-3 space-y-2.5 border-t border-separator">
           {loading && (
             <div className="flex items-center justify-center py-4">
-              <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-text-tertiary" />
             </div>
           )}
 
@@ -217,7 +222,7 @@ export function ReferencePanel({ candidateId, jobId }: ReferencePanelProps) {
             <button
               type="button"
               onClick={() => setAddOpen(true)}
-              className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
+              className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-accent-hover font-medium"
             >
               <Plus className="w-3.5 h-3.5" />
               Add referee
@@ -280,29 +285,34 @@ function RefCard({
   };
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 bg-white">
+    <div className="rounded border border-separator bg-surface-sunken overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2">
         <button type="button" onClick={onToggle} className="flex-1 flex items-center gap-2 text-left min-w-0">
-          <ChevronRight className={cn("w-3.5 h-3.5 text-slate-400 flex-shrink-0 transition-transform", expanded && "rotate-90")} />
+          <ChevronRight
+            className={cn(
+              "w-3.5 h-3.5 text-text-tertiary flex-shrink-0 transition-transform",
+              expanded && "rotate-90",
+            )}
+          />
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-800 truncate">{ref_.refereeName}</p>
+            <p className="text-base font-medium text-text-primary truncate">{ref_.refereeName}</p>
             {(ref_.refereeTitle || ref_.refereeCompany) && (
-              <p className="text-[10px] text-slate-500 truncate">
+              <p className="text-xs text-text-tertiary truncate">
                 {[ref_.refereeTitle, ref_.refereeCompany].filter(Boolean).join(" · ")}
               </p>
             )}
           </div>
         </button>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full font-medium", STATUS_COLORS[ref_.status] ?? "bg-slate-100 text-slate-500")}>
+          <Badge className={STATUS_COLORS[ref_.status] ?? "bg-surface-hover text-text-secondary"}>
             {STATUS_LABELS[ref_.status] ?? ref_.status}
-          </span>
-          {ref_.status === "complete" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+          </Badge>
+          {ref_.status === "complete" && <CheckCircle2 className="w-3.5 h-3.5 text-success" />}
           <button
             type="button"
             onClick={onDelete}
             disabled={deleting}
-            className="text-slate-400 hover:text-red-500 transition-colors ml-1"
+            className="h-6 w-6 rounded flex items-center justify-center text-text-tertiary hover:text-danger hover:bg-surface-hover transition-colors ml-0.5"
           >
             {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
           </button>
@@ -310,12 +320,18 @@ function RefCard({
       </div>
 
       {expanded && (
-        <div className="px-3 pb-3 space-y-3 border-t border-slate-100">
+        <div className="px-3 pb-3 space-y-2.5 border-t border-separator">
           {/* Referee details */}
-          <div className="pt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-slate-600">
-            {ref_.relationship && <p><span className="text-slate-400">Relationship:</span> {ref_.relationship}</p>}
-            {ref_.refereeEmail && <p><span className="text-slate-400">Email:</span> {ref_.refereeEmail}</p>}
-            {ref_.refereePhone && <p><span className="text-slate-400">Phone:</span> {ref_.refereePhone}</p>}
+          <div className="pt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-text-secondary">
+            {ref_.relationship && (
+              <p><span className="text-text-tertiary">Relationship:</span> {ref_.relationship}</p>
+            )}
+            {ref_.refereeEmail && (
+              <p><span className="text-text-tertiary">Email:</span> {ref_.refereeEmail}</p>
+            )}
+            {ref_.refereePhone && (
+              <p><span className="text-text-tertiary">Phone:</span> {ref_.refereePhone}</p>
+            )}
           </div>
 
           {/* Status stepper */}
@@ -326,10 +342,10 @@ function RefCard({
                 type="button"
                 onClick={() => onStatusChange(s)}
                 className={cn(
-                  "text-[10px] px-2 py-0.5 rounded-full border font-medium transition-colors",
+                  "text-xs px-2 py-0.5 rounded-sm border font-medium transition-colors",
                   ref_.status === s
-                    ? cn(STATUS_COLORS[s], "border-current")
-                    : "border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600"
+                    ? cn(STATUS_COLORS[s], "border-separator-strong")
+                    : "border-separator text-text-tertiary hover:border-separator-strong hover:text-text-secondary",
                 )}
               >
                 {STATUS_LABELS[s]}
@@ -339,20 +355,20 @@ function RefCard({
 
           {/* AI Summary */}
           {ref_.summary && (
-            <div className="p-2.5 bg-emerald-50 border border-emerald-100 rounded-lg">
-              <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide mb-1">AI Summary</p>
-              <p className="text-xs text-slate-700 leading-relaxed">{ref_.summary}</p>
+            <div className="p-2.5 bg-success-subtle border border-success/30 rounded">
+              <p className="text-2xs font-semibold text-success uppercase tracking-wider mb-1">AI Summary</p>
+              <p className="text-base text-text-primary leading-relaxed">{ref_.summary}</p>
             </div>
           )}
 
           {/* Questions & answers or generate button */}
           {questions.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Questions</p>
+              <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wider">Questions</p>
               {questions.map((q, i) => (
                 <div key={i}>
-                  <p className="text-xs font-medium text-slate-700 mb-1">
-                    <span className="text-[10px] text-slate-400 mr-1 uppercase">{q.category}</span>
+                  <p className="text-xs font-medium text-text-primary mb-1">
+                    <span className="text-2xs text-text-tertiary mr-1 uppercase tracking-wider">{q.category}</span>
                     {q.question}
                   </p>
                   <textarea
@@ -360,12 +376,12 @@ function RefCard({
                     onChange={(e) => setAnswers((a) => { const next = [...a]; next[i] = e.target.value; return next; })}
                     rows={2}
                     placeholder="Enter referee's answer…"
-                    className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    className="w-full text-base text-text-primary bg-surface-base border border-separator rounded px-2.5 py-1.5 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none transition-all"
                   />
                 </div>
               ))}
               <div className="flex items-center gap-2 pt-1">
-                <Button size="sm" variant="ghost" onClick={handleSave} className="text-blue-600 hover:bg-blue-50">
+                <Button size="sm" variant="ghost" onClick={handleSave}>
                   Save answers
                 </Button>
                 {ref_.responses && (
@@ -375,7 +391,7 @@ function RefCard({
                     onClick={onSummarise}
                     loading={summarising}
                     disabled={summarising}
-                    className="text-violet-600 hover:bg-violet-50"
+                    className="text-llama hover:text-llama hover:bg-llama-subtle"
                   >
                     {!summarising && <Sparkles className="w-3.5 h-3.5" />}
                     {summarising ? "Summarising…" : "AI summarise"}
@@ -390,7 +406,7 @@ function RefCard({
               onClick={onGenerateQuestions}
               loading={generatingQuestions}
               disabled={generatingQuestions}
-              className="text-violet-600 hover:bg-violet-50"
+              className="text-llama hover:text-llama hover:bg-llama-subtle"
             >
               {!generatingQuestions && <Sparkles className="w-3.5 h-3.5" />}
               {generatingQuestions ? "Generating questions…" : "Generate AI questions"}
@@ -415,20 +431,20 @@ function AddRefForm({
 }) {
   const f = (label: string, key: keyof typeof value, placeholder?: string) => (
     <div>
-      <label className="block text-[10px] font-medium text-slate-500 mb-1">{label}</label>
+      <label className="block text-2xs font-medium text-text-tertiary uppercase tracking-wider mb-1">{label}</label>
       <input
         type="text"
         value={value[key]}
         onChange={(e) => onChange({ ...value, [key]: e.target.value })}
         placeholder={placeholder ?? ""}
-        className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+        className="w-full h-7 text-base text-text-primary bg-surface-base border border-separator rounded px-2.5 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
       />
     </div>
   );
 
   return (
-    <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 space-y-2">
-      <p className="text-xs font-semibold text-slate-700">Add referee</p>
+    <div className="rounded border border-accent/40 bg-accent-subtle p-3 space-y-2">
+      <p className="text-md font-semibold text-text-primary">Add referee</p>
       <div className="grid grid-cols-2 gap-2">
         {f("Full name *", "refereeName", "Jane Smith")}
         {f("Relationship", "relationship", "Direct manager")}
@@ -442,12 +458,11 @@ function AddRefForm({
           size="sm"
           onClick={onSubmit}
           disabled={!value.refereeName.trim()}
-          className="text-xs"
         >
           <Plus className="w-3.5 h-3.5" />
           Add
         </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel} className="text-slate-500">
+        <Button size="sm" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
       </div>
