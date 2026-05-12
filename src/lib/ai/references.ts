@@ -1,4 +1,5 @@
 import { chat, parseJson } from "./chat";
+import { chatWithMaybeFailover } from "./chat-with-failover";
 import { escapeXmlForPrompt } from "../profile-excerpt";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ Tailor the questions to the referee relationship (e.g. manager questions differ 
 Return ONLY a JSON array, no commentary:
 [{"question":"...", "category":"performance"}, ...]`;
 
-  const text = await chat(prompt, 0.3, 1200);
+  const text = await chatWithMaybeFailover(prompt, 0.3, 1200);
   try {
     const parsed = parseJson<ReferenceQuestion[]>(text);
     if (!Array.isArray(parsed)) return [];
@@ -82,5 +83,5 @@ Write a 3–4 sentence professional summary of this reference check suitable for
 
 Be direct and specific. No bullet points. Professional tone. Return only the paragraph.`;
 
-  return (await chat(prompt, 0.3, 400)).trim();
+  return (await chatWithMaybeFailover(prompt, 0.3, 400)).trim();
 }

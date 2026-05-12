@@ -576,9 +576,18 @@ export async function POST(
     excludeContractTitles,
   }).catch((err) => {
     reportError(err, { route: "search:background", jobId: id, orgId: auth.orgId });
+    // Use status "failed" — NOT "rate_limited". The previous mis-labelling
+    // caused recruiters to retry forever thinking they were being throttled
+    // when the real cause was a code-level crash. "failed" surfaces the
+    // actual error message in the session row so the user sees what broke.
+    const message = err instanceof Error ? err.message : "Search crashed";
     prisma.searchSession.update({
       where: { id: session.id },
-      data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search crashed" },
+      data: {
+        status: "failed",
+        message: `Search crashed: ${message}`,
+        evaluation: `FAIL — Search crashed unexpectedly: ${message}. This is a code-level error, not a rate limit. Reload the page and try again; if it keeps happening, contact support.`,
+      },
     }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
   });
 
@@ -882,6 +891,13 @@ async function runSearchBackground(args: {
       } catch { /* ignore */ }
     }
 
+    // Track free-provider errors across the entire search so that when
+    // we end up at the "no candidates found" path with free providers
+    // configured but failing, the recruiter sees WHY (e.g. SearXNG
+    // returned 502, OpenSERP timed out). Without this the audit found
+    // the error info dies in console.log and the user sees only "0 found".
+    const freeProviderErrors = new Set<string>();
+
     // ── Phase 1b: SerpAPI — paginate until we have enough raw results ──
     // Each round fires all queries for one page in parallel.
     // Retryable failures (rate limits / transient timeouts) back off and retry
@@ -971,6 +987,13 @@ async function runSearchBackground(args: {
             console.log(
               `[search] free-providers page=${page} attempt=${attempt} — ${totalFreeHits} hits across ${freeProviderOutcomes.length} queries, ${failedFree} errored`,
             );
+            // Capture per-provider errors so the final session message can
+            // surface them when the search ends with 0 candidates. Without
+            // this, a misconfigured SearXNG / unreachable OpenSERP just
+            // shows "0 found" with no diagnostic.
+            for (const o of freeProviderOutcomes) {
+              if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
+            }
           }
           const primaryOutcomes = [...serpOutcomes, ...secondarySerpOutcomes, ...freeProviderOutcomes];
           const anchorTerms = extractAnchorRequirementTerms(parsedRole);
@@ -1723,9 +1746,18 @@ async function runSearchBackground(args: {
     });
 
     if (sorted.length === 0) {
+      // Build the message with diagnostic context. Include free-provider
+      // errors if any were captured — recruiters need to see WHY 0
+      // candidates returned, not just "try re-analysing".
+      const freeProviderHint = freeProviderErrors.size > 0
+        ? ` Free providers (SearXNG/OpenSERP) also errored: ${[...freeProviderErrors].slice(0, 2).join("; ")}.`
+        : "";
+      const filterHint = totalFiltered > 0
+        ? ` Of ${totalExamined} examined, ${totalFiltered} were filtered (source-gated: ${skippedSourceGate}, overseas: ${skippedOverseas}, seniority: ${skippedSeniorityGate}, name-check: ${skippedNameCheck}).`
+        : "";
       const reason = sawRetryableSearchFailure
-        ? "Search was rate-limited before returning results. Run search again — already-imported candidates won't be duplicated."
-        : "No matching candidates found. Try re-analysing the job description.";
+        ? `Search was rate-limited before returning results.${freeProviderHint} Run search again — already-imported candidates won't be duplicated.`
+        : `No matching candidates found.${filterHint}${freeProviderHint} Try re-analysing the job description or broadening the location.`;
       await prisma.searchSession.update({
         where: { id: sessionId },
         data: { status: sawRetryableSearchFailure ? "rate_limited" : "complete", message: reason },
@@ -1757,9 +1789,17 @@ async function runSearchBackground(args: {
     }
   } catch (err) {
     reportError(err, { route: "search:runBackground", jobId, orgId });
+    // status "failed" — NOT "rate_limited". See the outer-catch comment for
+    // why: code-level crashes don't recover by waiting, and the misleading
+    // "rate_limited" status caused recruiters to retry forever.
+    const message = err instanceof Error ? err.message : "Search failed";
     await prisma.searchSession.update({
       where: { id: sessionId },
-      data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search failed" },
+      data: {
+        status: "failed",
+        message: `Search failed: ${message}`,
+        evaluation: `FAIL — Search hit an unexpected error: ${message}. Check Railway logs for the stack trace; this is not a rate limit.`,
+      },
     }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
   }
 }

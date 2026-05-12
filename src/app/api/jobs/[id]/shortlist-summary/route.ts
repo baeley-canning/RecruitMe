@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { chat } from "@/lib/ai";
 import { parseJson } from "@/lib/ai/chat";
+import { chatWithMaybeFailover } from "@/lib/ai/chat-with-failover";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
@@ -119,7 +119,7 @@ ${candidateBlurbs}`;
   try {
     // Allow up to 200 tokens per candidate for the output
     const tokenBudget = Math.min(4096, Math.max(1024, candidates.length * 200));
-    const text = await chat(prompt, 0.3, tokenBudget);
+    const text = await chatWithMaybeFailover(prompt, 0.3, tokenBudget);
 
     // parseJson handles the brace-balancing + trailing-comma fixup that the
     // greedy `match(/\[[\s\S]*\]/)` previously got wrong when the model

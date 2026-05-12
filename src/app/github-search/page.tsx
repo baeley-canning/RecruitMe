@@ -12,11 +12,54 @@ import { cn } from "@/lib/utils";
 import type { GitHubUser } from "@/lib/github-search";
 import { githubUserToProfileText } from "@/lib/github-search";
 
-const LANGUAGE_OPTIONS = [
-  "C++", "C", "Rust", "Python", "JavaScript", "TypeScript", "Go",
-  "Java", "C#", "Ruby", "PHP", "Kotlin", "Swift", "Scala",
-  "SQL", "Shell", "PowerShell",
+const LANGUAGE_GROUPS: Array<{ label: string; languages: string[] }> = [
+  {
+    label: "Web",
+    languages: [
+      "JavaScript", "TypeScript", "PHP", "Ruby", "Python", "HTML", "CSS",
+      "Vue", "Svelte", "Astro", "Hack",
+    ],
+  },
+  {
+    label: "Backend",
+    languages: [
+      "Java", "C#", "Go", "Kotlin", "Scala", "Elixir", "Erlang",
+      "Clojure", "F#", "Groovy", "Dart",
+    ],
+  },
+  {
+    label: "Systems",
+    languages: [
+      "C++", "C", "Rust", "Objective-C", "Swift", "Zig", "Nim", "D",
+    ],
+  },
+  {
+    label: "Data",
+    languages: [
+      "SQL", "R", "Julia", "MATLAB", "Jupyter Notebook", "SAS", "Stata",
+    ],
+  },
+  {
+    label: "DevOps",
+    languages: [
+      "Shell", "PowerShell", "HCL", "Dockerfile", "Makefile", "Nix", "Puppet",
+    ],
+  },
+  {
+    label: "Enterprise",
+    languages: [
+      "Apex", "Visual Basic .NET", "VBA", "Delphi", "COBOL", "PLSQL", "TSQL",
+    ],
+  },
+  {
+    label: "Mobile/Game",
+    languages: [
+      "Swift", "Kotlin", "Dart", "C#", "GDScript", "Lua",
+    ],
+  },
 ];
+
+const LANGUAGE_OPTIONS = [...new Set(LANGUAGE_GROUPS.flatMap((group) => group.languages))];
 
 interface Job { id: string; title: string; company: string | null; }
 interface ImportState { jobId: string; status: "loading" | "done" | "exists" | "error"; warning?: string | null; }
@@ -24,6 +67,7 @@ interface ImportState { jobId: string; status: "loading" | "done" | "exists" | "
 export default function GitHubSearchPage() {
   const [location, setLocation]   = useState("New Zealand");
   const [languages, setLanguages] = useState<string[]>([]);
+  const [customLanguage, setCustomLanguage] = useState("");
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
   const [results, setResults]     = useState<GitHubUser[]>([]);
@@ -37,6 +81,13 @@ export default function GitHubSearchPage() {
 
   const toggleLang = (lang: string) =>
     setLanguages((prev) => prev.includes(lang) ? prev.filter((l) => l !== lang) : [...prev, lang]);
+
+  const addCustomLanguage = () => {
+    const lang = customLanguage.trim();
+    if (!lang) return;
+    setLanguages((prev) => prev.some((l) => l.toLowerCase() === lang.toLowerCase()) ? prev : [...prev, lang]);
+    setCustomLanguage("");
+  };
 
   const handleSearch = async () => {
     setLoading(true);
@@ -147,24 +198,63 @@ export default function GitHubSearchPage() {
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
                 Filter by language (optional — pick one or more)
               </label>
-              <div className="flex flex-wrap gap-1.5">
-                {LANGUAGE_OPTIONS.map((lang) => {
-                  const active = languages.includes(lang);
-                  return (
-                    <button
-                      key={lang}
-                      onClick={() => toggleLang(lang)}
-                      className={cn(
-                        "text-xs px-2 py-0.5 rounded-sm border font-medium transition-colors",
-                        active
-                          ? "bg-accent-subtle text-accent border-accent/40"
-                          : "bg-surface-sunken text-text-secondary border-separator hover:border-separator-strong hover:text-text-primary"
-                      )}
-                    >
-                      {lang}
-                    </button>
-                  );
-                })}
+              <div className="space-y-2">
+                {LANGUAGE_GROUPS.map((group) => (
+                  <div key={group.label} className="flex gap-2">
+                    <span className="w-20 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-tertiary flex-shrink-0">
+                      {group.label}
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {group.languages.map((lang) => {
+                        const active = languages.includes(lang);
+                        return (
+                          <button
+                            key={`${group.label}:${lang}`}
+                            onClick={() => toggleLang(lang)}
+                            className={cn(
+                              "text-xs px-2 py-0.5 rounded-sm border font-medium transition-colors",
+                              active
+                                ? "bg-accent-subtle text-accent border-accent/40"
+                                : "bg-surface-sunken text-text-secondary border-separator hover:border-separator-strong hover:text-text-primary"
+                            )}
+                          >
+                            {lang}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 pl-0 sm:pl-20">
+                  <input
+                    value={customLanguage}
+                    onChange={(e) => setCustomLanguage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addCustomLanguage();
+                      }
+                    }}
+                    placeholder="Add any GitHub language"
+                    className="h-8 w-full max-w-xs rounded border border-separator bg-surface-raised px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent/20"
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={addCustomLanguage}>
+                    Add
+                  </Button>
+                </div>
+                {languages.some((lang) => !LANGUAGE_OPTIONS.includes(lang)) && (
+                  <div className="flex flex-wrap gap-1.5 pl-0 sm:pl-20">
+                    {languages.filter((lang) => !LANGUAGE_OPTIONS.includes(lang)).map((lang) => (
+                      <button
+                        key={lang}
+                        onClick={() => toggleLang(lang)}
+                        className="text-xs px-2 py-0.5 rounded-sm border font-medium transition-colors bg-accent-subtle text-accent border-accent/40"
+                      >
+                        {lang}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </CardBody>

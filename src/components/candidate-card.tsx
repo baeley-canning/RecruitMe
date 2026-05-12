@@ -1138,9 +1138,18 @@ export const CandidateCard = memo(function CandidateCard({
                   Snippet / Provisional) — shows the worst-case warning for this
                   candidate so the recruiter sees one clear signal, not clutter. */}
               {candidate.matchScore != null && (() => {
+                // A "stub" breakdown is produced when Claude returned
+                // unparseable JSON OR the capture path explicitly signalled
+                // an incomplete profile. The breakdown carries
+                // profile_capture_warning.code = "incomplete_capture" in
+                // that case — the score is deterministic-only and NOT a
+                // real Claude assessment. Flag this distinctly from "snippet"
+                // so a recruiter doesn't trust a 50% stub as a 50% Claude score.
+                const isStub = breakdown?.profile_capture_warning?.code === "incomplete_capture";
                 const tag =
-                  breakdown?.data_quality === "minimal" ? { label: "Thin profile", tone: "danger",  title: "Very little profile data — score is speculative until the full profile is fetched" } :
-                  breakdown?.data_quality === "snippet" ? { label: "Snippet only", tone: "warning", title: "Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" } :
+                  isStub                                  ? { label: "Stub score",   tone: "danger",  title: "Score is a deterministic stub — Claude either couldn't parse the profile or the capture is incomplete. Re-fetch the profile and re-score for a real assessment." } :
+                  breakdown?.data_quality === "minimal"   ? { label: "Thin profile", tone: "danger",  title: "Very little profile data — score is speculative until the full profile is fetched" } :
+                  breakdown?.data_quality === "snippet"   ? { label: "Snippet only", tone: "warning", title: "Score is based on a LinkedIn snippet — fetch the full profile for a reliable assessment" } :
                   (!hasFetchedProfile && !breakdown?.data_quality) ? { label: "Provisional", tone: "warning", title: "Score is provisional until the full LinkedIn profile is fetched" } :
                   null;
                 if (!tag) return null;

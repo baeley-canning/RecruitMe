@@ -1,4 +1,5 @@
 import { chat, parseJson } from "./chat";
+import { chatWithMaybeFailover } from "./chat-with-failover";
 import {
   OUTREACH_PROFILE_EXCERPT_MAX_CHARS,
   buildProfileExcerpt,
@@ -31,7 +32,7 @@ export async function generateOutreachMessage(
   candidateName: string
 ): Promise<OutreachMessage> {
   const profileSlice = buildProfileExcerpt(profileText, OUTREACH_PROFILE_EXCERPT_MAX_CHARS);
-  const text = await chat(`You are a recruitment consultant writing a personalized outreach message to a passive candidate.
+  const text = await chatWithMaybeFailover(`You are a recruitment consultant writing a personalized outreach message to a passive candidate.
 
 Role being offered:
 Title: ${parsedRole.title}
@@ -50,7 +51,7 @@ Write two personalised outreach messages. Reference their ACTUAL job titles, com
 2. Email (subject line + 3 short paragraphs: hook on their background, why this role fits, clear call to action)
 
 Return ONLY valid JSON (no markdown):
-{"linkedin":"Hi [FirstName], noticed your [specific detail] — working on a [role] that looks relevant. Worth a quick chat?","email":"Subject: [Role] — [hook]\\n\\nHi [FirstName],\\n\\n[Para 1]\\n\\n[Para 2]\\n\\n[CTA]\\n\\n[Sign-off]"}`, 0.4);
+{"linkedin":"Hi [FirstName], noticed your [specific detail] — working on a [role] that looks relevant. Worth a quick chat?","email":"Subject: [Role] — [hook]\\n\\nHi [FirstName],\\n\\n[Para 1]\\n\\n[Para 2]\\n\\n[CTA]\\n\\n[Sign-off]"}`, 0.4, 2048);
 
   const parsed = parseJson<Partial<OutreachMessage>>(text);
 
@@ -102,7 +103,7 @@ Keep it honest, direct, and compelling. No filler phrases like "dynamic" or "pas
 
 Return JSON: {"headline": "short compelling tagline under 10 words", "body": "full ad text with sections"}`;
 
-  const text = await chat(prompt, 0.4, 2000);
+  const text = await chatWithMaybeFailover(prompt, 0.4, 2000);
   try {
     const parsed = parseJson<GeneratedJobAd>(text);
     if (parsed.headline && parsed.body) return parsed;
@@ -133,7 +134,7 @@ Write a rejection email that:
 
 Write only the email body (no subject line). No filler phrases like "we were overwhelmed with applications". Keep it real.`;
 
-  return (await chat(prompt, 0.4, 600)).trim();
+  return (await chatWithMaybeFailover(prompt, 0.4, 600)).trim();
 }
 
 export async function generateOfferLetter(
@@ -166,7 +167,7 @@ Write a professional offer letter that:
 Return JSON: {"subject": "email subject line", "body": "full letter text"}
 Use [PLACEHOLDER] format for anything that needs to be filled in.`;
 
-  const text = await chat(prompt, 0.4, 800);
+  const text = await chatWithMaybeFailover(prompt, 0.4, 800);
   try {
     const parsed = parseJson<GeneratedOfferLetter>(text);
     if (parsed.subject && parsed.body) return parsed;

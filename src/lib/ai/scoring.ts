@@ -60,6 +60,15 @@ export interface AcceptancePrediction {
   headline: string;
   signals: AcceptanceSignal[];
   summary: string;
+  /**
+   * Which model produced this prediction. Mirrors the same field on
+   * ScoreBreakdown so the UI can mark Llama-derived acceptance scores
+   * the same way as Llama-derived match scores. Without this, a Llama
+   * acceptance likelihood looks identical to a Claude one in the UI,
+   * violating the "don't silently pretend Llama is Claude-quality" rule.
+   * Absent on legacy rows; "claude" by default for fresh predictions.
+   */
+  scoredBy?: "claude" | "ollama";
 }
 
 // ─── Private helpers ───────────────────────────────────────────────────────────
@@ -211,9 +220,19 @@ ${ACCEPTANCE_ASSESSMENT_RULES}`;
   // Acceptance prediction is gated behind ENABLE_LOCAL_MODEL_FINAL_SCORING
   // because the likelihood feeds into recruiter shortlists. Without the
   // flag, this is pure Claude — Llama is dead code.
-  const text = isLocalFinalScoringFailoverEnabled()
-    ? (await chatWithFailover(acceptancePrompt, 0.1, 2048, { model: SONNET })).text
-    : await chat(acceptancePrompt, 0.1, 2048, { model: SONNET });
+  // Track source so the returned prediction is tagged scoredBy="ollama"
+  // when Llama produced it — without this tag the UI shows the Llama
+  // likelihood as if Claude wrote it, which violates the "don't pretend
+  // Llama is Claude-quality" rule.
+  let source: "claude" | "ollama" = "claude";
+  let text: string;
+  if (isLocalFinalScoringFailoverEnabled()) {
+    const result = await chatWithFailover(acceptancePrompt, 0.1, 2048, { model: SONNET });
+    text = result.text;
+    source = result.source;
+  } else {
+    text = await chat(acceptancePrompt, 0.1, 2048, { model: SONNET });
+  }
 
   const parsed = parseJson<Partial<AcceptancePrediction>>(text);
   const clamp  = (v: unknown) => typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : 50;
@@ -227,6 +246,7 @@ ${ACCEPTANCE_ASSESSMENT_RULES}`;
     score:     clamp(parsed.score),
     likelihood,
     headline:  parsed.headline ?? "",
+    scoredBy:  source,
     signals:   Array.isArray(parsed.signals)
       ? parsed.signals
           .filter((s): s is AcceptanceSignal => typeof s === "object" && s !== null && typeof s.label === "string")

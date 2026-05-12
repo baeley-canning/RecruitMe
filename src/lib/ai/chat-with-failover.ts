@@ -149,3 +149,33 @@ export async function chatWithFailover(
     };
   }
 }
+
+/**
+ * Drop-in replacement for `chat()` for callers that DON'T care about the
+ * provenance (Claude vs Llama). Returns just the text; routes through the
+ * failover wrapper when EITHER `ENABLE_LOCAL_MODEL_FAILOVER` or
+ * `ENABLE_LOCAL_MODEL_FINAL_SCORING` is set, falls through to raw chat()
+ * otherwise.
+ *
+ * Use this for outreach generation, reference Q&A, profile-section
+ * generation, shortlist summaries, candidate-info extraction — anywhere
+ * the output is one-shot text whose source the recruiter doesn't need to
+ * see explicitly. For SCORING calls where Llama-attributed scores need
+ * the visible badge + penalty, call `chatWithFailover` directly and
+ * inspect `.source`.
+ *
+ * This closes the 11-callsite gap the audit found where raw `chat()`
+ * calls hard-failed on dead Claude despite the failover being enabled.
+ */
+export async function chatWithMaybeFailover(
+  prompt: string,
+  temperature: number,
+  maxTokens: number,
+  options: ChatOptions = {},
+): Promise<string> {
+  if (isLocalFailoverEnabled() || isLocalFinalScoringFailoverEnabled()) {
+    const result = await chatWithFailover(prompt, temperature, maxTokens, options);
+    return result.text;
+  }
+  return chat(prompt, temperature, maxTokens, options);
+}
