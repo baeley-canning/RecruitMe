@@ -115,11 +115,24 @@ describe("chatWithFailover — behaviour matrix", () => {
     expect(result.failoverReason).toBe("rate_limited");
   });
 
-  it("still rethrows TRULY transient errors (non-429 4xx) even with failover enabled", async () => {
-    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "true";
+  it("attempts Ollama on ANY Claude error (including generic 400) — the classifier no longer gates failover", async () => {
+    // Eagerness change: chatWithFailover used to skip Ollama on
+    // "not-dead" errors (generic 400 validation, etc.). That kept biting
+    // production every time Anthropic introduced a new error shape. Now
+    // any error triggers failover; cost is one Ollama call on a Claude
+    // validation bug, which is strictly better than silent breakage.
     vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Bad request"), { status: 400 }));
+    vi.mocked(ollamaGenerate).mockResolvedValue({ text: "Llama answered.", durationMs: 50 });
+    const result = await chatWithFailover("hi", 0.1, 100);
+    expect(result.source).toBe("ollama");
+    expect(ollamaGenerate).toHaveBeenCalled();
+  });
+
+  it("re-throws the ORIGINAL Claude error when Ollama is unreachable (only path back to caller)", async () => {
+    vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Bad request"), { status: 400 }));
+    vi.mocked(ollamaGenerate).mockResolvedValue(null);
     await expect(chatWithFailover("hi", 0.1, 100)).rejects.toThrow(/bad request/i);
-    expect(ollamaGenerate).not.toHaveBeenCalled();
+    expect(ollamaGenerate).toHaveBeenCalled();
   });
 
   it("falls over to Ollama when Claude is DEAD and failover is enabled", async () => {

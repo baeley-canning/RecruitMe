@@ -21,11 +21,7 @@
 
 import { chat, type ChatOptions } from "./chat";
 import { ollamaGenerate } from "../local-model/client";
-import {
-  isLocalFailoverEnabled,
-  isLocalFinalScoringFailoverEnabled,
-  readLocalModelConfig,
-} from "../local-model/config";
+import { readLocalModelConfig } from "../local-model/config";
 import { recordClaudeSuccess, recordOllamaFailover } from "../ai-failover-health";
 import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 
@@ -110,12 +106,19 @@ export function classifyClaudeError(err: unknown): { dead: boolean; reason?: Cla
  *
  * Behaviour:
  *   - Always tries Claude first via chat(prompt, ...).
- *   - On a Claude-dead error AND env flag set, tries Ollama.
+ *   - On ANY Claude error, attempts Ollama. The previous status-code
+ *     classifier (only fail over on 401/403/429/5xx/network) repeatedly
+ *     missed real production failures (e.g. Anthropic's 400 invalid_request_
+ *     error for depleted credits) and left users staring at raw Claude
+ *     errors despite a healthy local model sitting right there. The
+ *     classifier still runs for telemetry / log labels — but it no longer
+ *     gates whether failover is attempted. Cost of being "too eager":
+ *     one Ollama call on a Claude validation bug. Cost of being too
+ *     cautious: production breakage every time Anthropic introduces a
+ *     new error shape. Eager is strictly better.
  *   - On Ollama success, returns { text, source: "ollama", failoverReason }.
- *   - On Ollama failure (null), re-throws the original Claude error so the
- *     caller's existing "AI scoring unavailable" / stub path applies.
- *   - If the env flag is unset, original Claude error always bubbles up.
- *     ZERO behaviour change for default deployments.
+ *   - On Ollama failure (returns null), re-throws the original Claude
+ *     error so the caller's existing stub / error path applies.
  */
 export async function chatWithFailover(
   prompt: string,
@@ -130,16 +133,14 @@ export async function chatWithFailover(
     return { text, source: "claude" };
   } catch (err) {
     recordProviderFailure("claude", err instanceof Error ? err.message : String(err));
-    // EITHER flag enables the failover machine. Without this, someone who
-    // only sets ENABLE_LOCAL_MODEL_FINAL_SCORING=true (expecting score
-    // failover) would silently get nothing because this gate would still
-    // block it. Caller-level gates already decide WHICH callers participate.
-    if (!isLocalFailoverEnabled() && !isLocalFinalScoringFailoverEnabled()) throw err;
 
-    const { dead, reason } = classifyClaudeError(err);
-    if (!dead || !reason) throw err;
+    // Classifier runs for the log label, NOT to gate the failover.
+    // "Unknown" errors fall through with a generic reason so we always
+    // attempt Ollama.
+    const { reason: classified } = classifyClaudeError(err);
+    const reason: ClaudeDeadReason = classified ?? "service_unavailable";
 
-    console.warn(`[chat-failover] Claude dead (${reason}) — attempting Ollama fallback`);
+    console.warn(`[chat-failover] Claude failed (${reason}) — attempting Ollama fallback`);
 
     const cfg = readLocalModelConfig();
     const ollamaResult = await ollamaGenerate(prompt, {
@@ -168,21 +169,15 @@ export async function chatWithFailover(
 }
 
 /**
- * Drop-in replacement for `chat()` for callers that DON'T care about the
- * provenance (Claude vs Llama). Returns just the text; routes through the
- * failover wrapper when EITHER `ENABLE_LOCAL_MODEL_FAILOVER` or
- * `ENABLE_LOCAL_MODEL_FINAL_SCORING` is set, falls through to raw chat()
- * otherwise.
- *
- * Use this for outreach generation, reference Q&A, profile-section
- * generation, shortlist summaries, candidate-info extraction — anywhere
- * the output is one-shot text whose source the recruiter doesn't need to
- * see explicitly. For SCORING calls where Llama-attributed scores need
- * the visible badge + penalty, call `chatWithFailover` directly and
- * inspect `.source`.
- *
- * This closes the 11-callsite gap the audit found where raw `chat()`
- * calls hard-failed on dead Claude despite the failover being enabled.
+ * Drop-in replacement for `chat()` for callers that DON'T care about
+ * the provenance (Claude vs Llama). Returns just the text. Always
+ * routes through `chatWithFailover` — Llama failover is unconditional
+ * (see file header). Use this for outreach generation, reference Q&A,
+ * profile-section generation, shortlist summaries — anywhere the
+ * output is one-shot text whose source the recruiter doesn't need to
+ * see explicitly. For SCORING calls where Llama-attributed scores
+ * need the visible badge + penalty, call `chatWithFailover` directly
+ * and inspect `.source`.
  */
 export async function chatWithMaybeFailover(
   prompt: string,
@@ -190,9 +185,6 @@ export async function chatWithMaybeFailover(
   maxTokens: number,
   options: ChatOptions = {},
 ): Promise<string> {
-  if (isLocalFailoverEnabled() || isLocalFinalScoringFailoverEnabled()) {
-    const result = await chatWithFailover(prompt, temperature, maxTokens, options);
-    return result.text;
-  }
-  return chat(prompt, temperature, maxTokens, options);
+  const result = await chatWithFailover(prompt, temperature, maxTokens, options);
+  return result.text;
 }
