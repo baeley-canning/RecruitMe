@@ -13,7 +13,12 @@
 
 import { normaliseLinkedInUrl } from "../linkedin";
 
-const TRACKING_PARAM_RE = /^(utm_|fbclid|gclid|mc_|igshid|trk$|trkInfo$|originalSubdomain$|original_referer$|miniProfileUrn$)/i;
+// Tracking params we want to strip so two URLs that only differ in their
+// click-attribution noise collapse into one canonical key. Anchor at start
+// for `utm_` / `mc_` / `_ga` (prefix patterns) and use end-anchors for
+// single-name params so we don't accidentally strip legit params that
+// happen to contain these substrings.
+const TRACKING_PARAM_RE = /^(utm_|mc_|_ga$|_gid$|_gac_|fbclid$|gclid$|dclid$|msclkid$|twclid$|li_fat_id$|igshid$|hsCtaTracking$|ref$|ref_src$|ref_url$|trk$|trkInfo$|originalSubdomain$|original_referer$|miniProfileUrn$)/i;
 
 function isLinkedInProfileUrl(url: string): boolean {
   return /linkedin\.com\/in\//i.test(url);

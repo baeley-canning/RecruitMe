@@ -44,4 +44,19 @@ describe("canonicalizeUrl — non-LinkedIn", () => {
   it("returns empty string for empty input", () => {
     expect(canonicalizeUrl("")).toBe("");
   });
+
+  it("strips the extended tracking-param set: msclkid, twclid, li_fat_id, _ga, hsCtaTracking, ref, dclid", () => {
+    const noisy = canonicalizeUrl(
+      "https://example.com/p?msclkid=a&twclid=b&li_fat_id=c&_ga=GA1.2.3.4&hsCtaTracking=x&ref=tw&dclid=z&id=42",
+    );
+    const clean = canonicalizeUrl("https://example.com/p?id=42");
+    expect(noisy).toBe(clean);
+  });
+
+  it("does NOT strip params that legitimately contain a tracking substring (e.g. `reference`, `gaol`)", () => {
+    // The regex uses anchors so `ref` matches as a standalone param name but
+    // `reference=` is preserved. Same idea protects `_gaol=` from `_ga$`.
+    const a = canonicalizeUrl("https://example.com/p?reference=spec");
+    expect(a).toContain("reference=spec");
+  });
 });
