@@ -85,6 +85,10 @@ export class OpenserpProvider implements SearchProvider {
 
   async search(opts: SearchProviderOptions): Promise<ProviderSearchHit[]> {
     const url = buildOpenserpUrl(this.baseUrl, opts);
+    try {
+      const u = new URL(url);
+      console.log(`[openserp] fetching ${u.protocol}//${u.host}${u.pathname}`);
+    } catch { /* malformed URL — fetch below will throw and we'll record it */ }
     let res: Response;
     try {
       res = await fetch(url, {
@@ -93,7 +97,9 @@ export class OpenserpProvider implements SearchProvider {
         signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
       });
     } catch (err) {
-      recordProviderFailure("openserp", err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[openserp] fetch FAILED for baseUrl=${this.baseUrl} — ${msg}`);
+      recordProviderFailure("openserp", msg);
       throw err;
     }
     if (!res.ok) {

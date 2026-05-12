@@ -99,6 +99,15 @@ export class SearxngProvider implements SearchProvider {
 
   async search(opts: SearchProviderOptions): Promise<ProviderSearchHit[]> {
     const url = buildSearxngUrl(this.baseUrl, opts);
+    // Log the actual URL we're about to hit (host:port + path only — query
+    // omitted so the line stays one short row in Railway logs). This is the
+    // signal you need when the env-var value is wrong: the log shows the
+    // exact hostname your container is trying to resolve, so misconfigured
+    // SEARXNG_BASE_URL fails loudly instead of silently timing out.
+    try {
+      const u = new URL(url);
+      console.log(`[searxng] fetching ${u.protocol}//${u.host}${u.pathname}`);
+    } catch { /* malformed URL — fetch below will throw and we'll record it */ }
     let res: Response;
     try {
       res = await fetch(url, {
@@ -107,7 +116,9 @@ export class SearxngProvider implements SearchProvider {
         signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
       });
     } catch (err) {
-      recordProviderFailure("searxng", err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[searxng] fetch FAILED for baseUrl=${this.baseUrl} — ${msg}`);
+      recordProviderFailure("searxng", msg);
       throw err;  // manager catches throws
     }
     if (!res.ok) {
