@@ -1,4 +1,6 @@
 import { chat, getJobParsingProvider, parseJson, SONNET } from "./chat";
+import { chatWithFailover } from "./chat-with-failover";
+import { isLocalFailoverEnabled } from "../local-model/config";
 import { enrichRoleWithSecurityClearance } from "../security-clearance";
 import {
   PARSING_SYSTEM_CONTEXT,
@@ -147,10 +149,16 @@ ${scarceBlock}`;
   // parseJson handles minor truncation but full-blown 4096 cuts produce
   // unrecoverable JSON.
   const callOnce = async (extraNudge: string = "") => {
-    return chat(`${promptBody}${extraNudge ? `\n\n${extraNudge}` : ""}`, 0.1, 8192, {
-      provider: getJobParsingProvider(),
-      model: SONNET,
-    });
+    const fullPrompt = `${promptBody}${extraNudge ? `\n\n${extraNudge}` : ""}`;
+    const opts = { provider: getJobParsingProvider(), model: SONNET };
+    // JD parsing is a LOW-RISK failover target: a Llama-parsed JD only
+    // affects this one role's downstream scoring (and the next Claude run
+    // will overwrite it), so we accept reduced quality during outages.
+    if (isLocalFailoverEnabled()) {
+      const { text } = await chatWithFailover(fullPrompt, 0.1, 8192, opts);
+      return text;
+    }
+    return chat(fullPrompt, 0.1, 8192, opts);
   };
 
   // Try once, retry once with a stricter "output ONLY valid JSON" nudge if

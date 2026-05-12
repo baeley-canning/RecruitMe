@@ -1,4 +1,6 @@
 import { chat, withRetry, parseJson, SONNET } from "./chat";
+import { chatWithFailover } from "./chat-with-failover";
+import { isLocalFailoverEnabled } from "../local-model/config";
 import {
   sanitizeCandidateProfileDraft,
   type EvidenceCandidateProfileDraft,
@@ -314,8 +316,10 @@ Return ONLY the summary text. No JSON. No headings. No labels.`;
 // and broken line breaks. This runs once per manual upload and dramatically
 // improves downstream scoring accuracy.
 export async function cleanCvText(rawText: string): Promise<string> {
-  const text = await chat(
-    `You are processing a CV that was extracted from a PDF. The raw text may have broken line breaks, jumbled columns, or garbled formatting from the PDF parser.
+  // LOW-RISK failover: CV cleanup is one-shot text reformatting (no scoring,
+  // no JSON schema). A Llama-cleaned CV slightly degrades downstream parsing
+  // quality, but is far better than blocking uploads when Claude is down.
+  const prompt = `You are processing a CV that was extracted from a PDF. The raw text may have broken line breaks, jumbled columns, or garbled formatting from the PDF parser.
 
 Rewrite it as clean, readable plain text preserving ALL information. Structure it naturally:
 - Full name and contact details at the top
@@ -336,10 +340,10 @@ Rules:
 ${escapeXmlForPrompt(rawText.slice(0, 12000))}
 </cv_text>
 
-Return ONLY the cleaned CV text. No commentary, no preamble.`,
-    0,
-    2048
-  );
+Return ONLY the cleaned CV text. No commentary, no preamble.`;
+  const text = isLocalFailoverEnabled()
+    ? (await chatWithFailover(prompt, 0, 2048)).text
+    : await chat(prompt, 0, 2048);
   // If Claude returns something extremely short it probably failed — fall back to raw
   return text.trim().length > 100 ? text.trim() : rawText;
 }

@@ -748,6 +748,14 @@ function ProfileDrawer({
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               <ScoreBadge score={candidate.matchScore} size="sm" />
+              {breakdown?.scoredBy === "ollama" && (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200"
+                  title="This candidate was scored by the local Llama model because Claude was unavailable. The score has been penalised to reflect lower confidence. Re-score when Claude is back."
+                >
+                  Scored by Llama
+                </span>
+              )}
               {!hasFetchedProfile && (
                 <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
               )}
