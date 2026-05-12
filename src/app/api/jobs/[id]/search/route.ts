@@ -1013,12 +1013,25 @@ async function runSearchBackground(args: {
             ]),
           ]).slice(0, 4);
 
+          // Specialist NZ sweep: run SerpAPI AND free providers in parallel
+          // so anchor-term queries (PHP/SilverStripe, COBOL, Sybase, …) get
+          // the union of both indexes. The free providers don't paginate,
+          // but that's fine — this sweep only runs on page 0 / attempt 0.
           const specialistNzOutcomes = shouldRunSpecialistNzSweep
-            ? await executeSearchTaskQueue(
-                hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
-                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
-              )
+            ? (await Promise.all([
+                executeSearchTaskQueue(
+                  hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
+                  { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+                ),
+                executeSearchTaskQueue(
+                  hasFreeProviders ? buildTasks("free-providers", "New Zealand", nzSweepQueries) : [],
+                  { concurrency: 4, delayMs: 0 },
+                ),
+              ])).flat()
             : [];
+          for (const o of specialistNzOutcomes) {
+            if (o.provider === "free-providers" && o.error) freeProviderErrors.add(o.error.slice(0, 100));
+          }
           const primaryItems = [...primaryOutcomes, ...specialistNzOutcomes].flatMap((outcome) => outcome.items);
           const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
           const normalizedSearch = normalizeLocationText(searchLocation);
@@ -1040,10 +1053,21 @@ async function runSearchBackground(args: {
               data: { message: `No results in ${searchLocation} — trying Auckland` },
             }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
             const akQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
-            aucklandOutcomes = await executeSearchTaskQueue(
-              hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
-              { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
-            );
+            // Free providers fire alongside SerpAPI for the Auckland sweep.
+            const [akSerpOutcomes, akFreeOutcomes] = await Promise.all([
+              executeSearchTaskQueue(
+                hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
+                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+              ),
+              executeSearchTaskQueue(
+                hasFreeProviders ? buildTasks("free-providers", "Auckland", akQueries) : [],
+                { concurrency: 4, delayMs: 0 },
+              ),
+            ]);
+            aucklandOutcomes = [...akSerpOutcomes, ...akFreeOutcomes];
+            for (const o of akFreeOutcomes) {
+              if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
+            }
           }
           const aucklandItems = aucklandOutcomes.flatMap((o) => o.items);
 
@@ -1062,11 +1086,17 @@ async function runSearchBackground(args: {
           }
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
+          // Broad-NZ fallback: SerpAPI + free providers in parallel.
           const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
-          const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
-            concurrency: SERPAPI_CONCURRENCY,
-            delayMs: SERPAPI_DELAY_MS,
-          });
+          const fallbackFreeTasks = hasFreeProviders ? buildTasks("free-providers", "New Zealand", fallbackQueries) : [];
+          const [fbSerpOutcomes, fbFreeOutcomes] = await Promise.all([
+            executeSearchTaskQueue(fallbackSerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
+            executeSearchTaskQueue(fallbackFreeTasks, { concurrency: 4, delayMs: 0 }),
+          ]);
+          for (const o of fbFreeOutcomes) {
+            if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
+          }
+          const fallbackOutcomes = [...fbSerpOutcomes, ...fbFreeOutcomes];
           return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes, ...fallbackOutcomes];
         },
         sleep,
@@ -1170,11 +1200,23 @@ async function runSearchBackground(args: {
             offset: 0,
             resolvedKey: serpApiKey,
           }));
+        // Scarce-skill fallback fires SerpAPI AND free providers in parallel
+        // so adjacent-skill substitutes (Sybase → SQL Server, COBOL → Java,
+        // …) get the union of both indexes. The hasFreeProviders flag is
+        // recomputed here because this branch lives outside the page closure.
+        const scarceFreeCfg = readSearchProvidersConfig();
+        const scarceHasFreeProviders = scarceFreeCfg.enabled.length > 0 &&
+          (scarceFreeCfg.searxngBaseUrl !== null || scarceFreeCfg.openserpBaseUrl !== null);
         const fallbackSerpTasks = hasSerpApi ? mkFallbackTasks("serpapi") : [];
-        const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
-          concurrency: SERPAPI_CONCURRENCY,
-          delayMs: SERPAPI_DELAY_MS,
-        });
+        const fallbackFreeTasks = scarceHasFreeProviders ? mkFallbackTasks("free-providers") : [];
+        const [scarceSerpOutcomes, scarceFreeOutcomes] = await Promise.all([
+          executeSearchTaskQueue(fallbackSerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
+          executeSearchTaskQueue(fallbackFreeTasks, { concurrency: 4, delayMs: 0 }),
+        ]);
+        for (const o of scarceFreeOutcomes) {
+          if (o.error) freeProviderErrors.add(o.error.slice(0, 100));
+        }
+        const fallbackOutcomes = [...scarceSerpOutcomes, ...scarceFreeOutcomes];
 
         // Surface auth failures immediately — invalid keys look like "no results" otherwise
         const authFailed = fallbackOutcomes.some((o) => o.error && isAuthFailure(o.error));
