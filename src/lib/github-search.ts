@@ -1,3 +1,5 @@
+import { recordProviderFailure, recordProviderSuccess } from "./provider-health";
+
 /**
  * GitHub developer search.
  *
@@ -143,16 +145,24 @@ export async function searchGitHubDevelopers(opts: {
 
   const searchUrl = `https://api.github.com/search/users?q=${q}&sort=joined&order=desc&per_page=${Math.min(maxResults, 30)}`;
 
-  const searchRes = await fetch(searchUrl, {
-    headers: authHeaders(),
-    next: { revalidate: 300 }, // 5-min cache on search results
-  });
+  let searchRes: Response;
+  try {
+    searchRes = await fetch(searchUrl, {
+      headers: authHeaders(),
+      next: { revalidate: 300 }, // 5-min cache on search results
+    });
+  } catch (err) {
+    recordProviderFailure("github", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 
   if (!searchRes.ok) {
     const body = await searchRes.text().catch(() => "");
+    recordProviderFailure("github", `${searchRes.status} ${body.slice(0, 100)}`);
     if (searchRes.status === 403) throw new Error("GitHub rate limit exceeded — add a GITHUB_TOKEN to increase limits");
     throw new Error(`GitHub search failed: ${searchRes.status} ${body.slice(0, 200)}`);
   }
+  recordProviderSuccess("github");
 
   const rateLimitRemaining = Number(searchRes.headers.get("x-ratelimit-remaining") ?? null) || null;
   const data = await searchRes.json() as { total_count: number; items: Array<{ login: string; avatar_url: string; html_url: string }> };

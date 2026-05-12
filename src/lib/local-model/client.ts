@@ -14,6 +14,7 @@
  */
 
 import { readLocalModelConfig } from "./config";
+import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 
 interface OllamaGenerateOptions {
   /** Override the configured model for one call. */
@@ -68,18 +69,22 @@ export async function ollamaGenerate(
     });
     if (!res.ok) {
       console.warn(`[ollama] non-OK ${res.status}`);
+      recordProviderFailure("ollama", `non-OK ${res.status}`);
       return null;
     }
     const body = await res.json().catch(() => null) as { response?: unknown } | null;
     const text = typeof body?.response === "string" ? body.response : "";
     if (!text) {
       console.warn("[ollama] empty / non-string response field");
+      recordProviderFailure("ollama", "empty response");
       return null;
     }
+    recordProviderSuccess("ollama");
     return { text, durationMs: Date.now() - started };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[ollama] generate failed: ${msg}`);
+    recordProviderFailure("ollama", msg);
     return null;
   }
 }

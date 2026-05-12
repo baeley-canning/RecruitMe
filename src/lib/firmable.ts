@@ -15,6 +15,8 @@
  * enrichment is a nice-to-have; the candidate record must save regardless.
  */
 
+import { recordProviderFailure, recordProviderSuccess } from "./provider-health";
+
 const FIRMABLE_BASE_URL = "https://api.firmable.com";
 const FIRMABLE_TIMEOUT_MS = 8000;
 // Skip re-enrichment within this window so a recruiter hitting "Enrich
@@ -125,28 +127,35 @@ export async function enrichByLinkedIn(
     });
 
     if (res.status === 404) {
-      // Firmable doesn't have this person — common, not an error.
+      // Firmable doesn't have this person — common, not an error. The API
+      // call itself succeeded, so we still want the badge to read green.
+      recordProviderSuccess("firmable");
       return null;
     }
     if (res.status === 429) {
       // Rate limited. Callers driving bulk runs should slow down.
       console.warn("[firmable] 429 rate limited — caller should back off");
+      recordProviderFailure("firmable", "429 rate limited");
       return null;
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.warn(`[firmable] non-OK response ${res.status}: ${body.slice(0, 200)}`);
+      recordProviderFailure("firmable", `${res.status} ${body.slice(0, 100)}`);
       return null;
     }
 
     const raw = (await res.json()) as FirmablePersonRaw;
+    recordProviderSuccess("firmable");
     return shapeResult(raw);
   } catch (err) {
     if ((err as { name?: string })?.name === "AbortError") {
       console.warn(`[firmable] timeout after ${FIRMABLE_TIMEOUT_MS}ms for ${linkedinUrl}`);
+      recordProviderFailure("firmable", "request timeout");
       return null;
     }
     console.warn("[firmable] request failed:", err instanceof Error ? err.message : err);
+    recordProviderFailure("firmable", err instanceof Error ? err.message : String(err));
     return null;
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);

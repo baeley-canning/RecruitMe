@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude, OpenAI, and Ollama so all AI functions stay clean.
@@ -70,19 +71,32 @@ export async function chat(
           : options.system)
       : undefined;
 
-    const response = await client.messages.create({
-      model,
-      max_tokens: maxTokens,
-      temperature,
-      ...(systemBlock !== undefined ? { system: systemBlock } : {}),
-      messages: [{ role: "user", content: prompt }],
-    });
+    let response;
+    try {
+      response = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        temperature,
+        ...(systemBlock !== undefined ? { system: systemBlock } : {}),
+        messages: [{ role: "user", content: prompt }],
+      });
+    } catch (err) {
+      // Record into provider-health so the Claude badge flips amber/red the
+      // moment a real scoring call fails — including credit-exhausted 429s
+      // that the /v1/models key-validation probe cannot detect. Recorded
+      // here (not only inside chatWithFailover) because some callers —
+      // e.g. scoring when ENABLE_LOCAL_MODEL_FINAL_SCORING is off — call
+      // chat() directly.
+      recordProviderFailure("claude", err instanceof Error ? err.message : String(err));
+      throw err;
+    }
 
     // Log token usage for cost visibility — surfaced in admin analytics
     if (response.usage) {
       const { input_tokens, output_tokens } = response.usage;
       console.log(`[ai] model=${model} input=${input_tokens} output=${output_tokens}`);
     }
+    recordProviderSuccess("claude");
 
     const block = response.content[0];
     return block.type === "text" ? block.text : "";

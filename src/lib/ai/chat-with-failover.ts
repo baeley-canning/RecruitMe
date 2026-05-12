@@ -27,6 +27,7 @@ import {
   readLocalModelConfig,
 } from "../local-model/config";
 import { recordClaudeSuccess, recordOllamaFailover } from "../ai-failover-health";
+import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
 
 export type ChatSource = "claude" | "ollama";
 
@@ -108,8 +109,10 @@ export async function chatWithFailover(
   try {
     const text = await chat(prompt, temperature, maxTokens, options);
     recordClaudeSuccess();
+    recordProviderSuccess("claude");
     return { text, source: "claude" };
   } catch (err) {
+    recordProviderFailure("claude", err instanceof Error ? err.message : String(err));
     // EITHER flag enables the failover machine. Without this, someone who
     // only sets ENABLE_LOCAL_MODEL_FINAL_SCORING=true (expecting score
     // failover) would silently get nothing because this gate would still
@@ -137,6 +140,7 @@ export async function chatWithFailover(
     }
 
     recordOllamaFailover(reason);
+    // ollama provider-health is recorded inside ollamaGenerate itself.
     return {
       text: ollamaResult.text,
       source: "ollama",

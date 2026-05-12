@@ -1,6 +1,7 @@
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isPlausibleLocation } from "./location";
 import { getCityCoords, NZ_CITIES } from "./nz-cities";
+import { recordProviderFailure, recordProviderSuccess } from "./provider-health";
 
 export interface SearchResult {
   name: string;
@@ -230,13 +231,23 @@ export async function searchLinkedInProfiles(
     gl: "nz",
   });
 
-  const res = await fetch(`https://serpapi.com/search.json?${params}`);
-  if (!res.ok) throw new Error(`SerpAPI error: ${res.status} ${res.statusText}`);
+  let res: Response;
+  try {
+    res = await fetch(`https://serpapi.com/search.json?${params}`);
+  } catch (err) {
+    recordProviderFailure("serpapi", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  if (!res.ok) {
+    recordProviderFailure("serpapi", `${res.status} ${res.statusText}`);
+    throw new Error(`SerpAPI error: ${res.status} ${res.statusText}`);
+  }
 
   const data = await res.json() as {
     organic_results?: Array<{ title?: string; link?: string; snippet?: string }>;
   };
 
+  recordProviderSuccess("serpapi");
   return parseLinkedInResults(data.organic_results ?? [], "serpapi");
 }
 
@@ -374,9 +385,15 @@ export async function searchPDLProfiles(
       signal: AbortSignal.timeout(15_000),
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+      recordProviderFailure("pdl", `${res.status} ${res.statusText}`);
+      return [];
+    }
 
     const data = await res.json() as { status: number; data?: PDLPerson[] };
+    // Even with empty results, the API call itself succeeded — record that
+    // so the badge stays green when PDL is configured but returns 0 hits.
+    recordProviderSuccess("pdl");
     if (!data.data?.length) return [];
 
     return data.data
@@ -396,7 +413,8 @@ export async function searchPDLProfiles(
           source: "pdl" as const,
         };
       });
-  } catch {
+  } catch (err) {
+    recordProviderFailure("pdl", err instanceof Error ? err.message : String(err));
     return [];
   }
 }

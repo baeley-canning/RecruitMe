@@ -6,6 +6,7 @@ import { NZLocationInput } from "@/components/ui/nz-location-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { ProviderBadgeRow, type ProviderHealth } from "@/components/provider-badge";
 import { getSearchResultDisplay, type SearchResultSummary } from "@/lib/search-result-display";
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 import type { ParsedRole } from "@/lib/ai";
@@ -28,7 +29,10 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [poolError, setPoolError] = useState("");
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
   const [sources, setSources] = useState<{ serpapi: boolean | "configured"; pdl: boolean | "configured" } | null>(null);
-  const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
+  // Live per-provider health (Claude / Llama / SerpAPI / PDL / Firmable /
+  // GitHub) for the green/amber/red badges. Polled every 30s so a failed
+  // call flips the badge before the recruiter notices via output quality.
+  const [providerHealth, setProviderHealth] = useState<ProviderHealth[]>([]);
   const [searchHistory, setSearchHistory] = useState<Array<{
     id: string; status: string; collected: number; location: string;
     message: string | null; createdAt: string;
@@ -61,9 +65,28 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       .then((d: { available: boolean; sources: { serpapi: boolean | "configured"; pdl: boolean | "configured" }; ai?: { provider: string; claude: "ok" | "invalid" | "error" | "unconfigured" } }) => {
         setHasSerpApi(d.available);
         setSources(d.sources ?? null);
-        if (d.ai?.provider === "claude") setClaudeStatus(d.ai.claude);
       })
       .catch(() => setHasSerpApi(false));
+  }, []);
+
+  // Poll /api/ai/status for the full per-provider health snapshot. 30s
+  // cadence — slow enough not to spam the endpoint, fast enough that a
+  // failed scoring run flips the Claude badge to red before the recruiter
+  // wonders why their results look weird. The status endpoint reads
+  // in-memory state, so polling is cheap.
+  useEffect(() => {
+    let cancelled = false;
+    const loadHealth = () => {
+      fetch("/api/ai/status")
+        .then((r) => r.json())
+        .then((d: { providers?: ProviderHealth[] }) => {
+          if (!cancelled && Array.isArray(d.providers)) setProviderHealth(d.providers);
+        })
+        .catch(() => {/* keep last known state on transient errors */});
+    };
+    loadHealth();
+    const id = setInterval(loadHealth, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   useEffect(() => {
@@ -258,28 +281,8 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   <p className="text-md font-semibold text-text-primary">
                     {searching ? "Searching..." : "Step 2 — Find Candidates"}
                   </p>
-                  {sources && (
-                    <div className="flex items-center gap-1">
-                      {[{ key: "serpapi", label: "SerpAPI" }, { key: "claude", label: "Claude" }].map(({ key, label }) => {
-                        const rawVal = key === "claude" ? claudeStatus : (sources as Record<string, boolean | "configured">)[key];
-                        const isOk        = rawVal === "ok" || rawVal === true;
-                        const isConfigured = rawVal === "configured"; // key present but not verified
-                        const isError     = rawVal === "invalid" || rawVal === "error";
-                        return (
-                          <span
-                            key={key}
-                            title={isConfigured ? `${label} key is set but not yet verified — will confirm on first search` : undefined}
-                            className={cn("text-xs px-1.5 py-0.5 rounded-sm font-medium",
-                              isOk        ? "bg-success-subtle text-success" :
-                              isConfigured? "bg-warning-subtle text-warning" :
-                              isError     ? "bg-danger-subtle text-danger" :
-                                            "bg-surface-hover text-text-tertiary"
-                            )}>
-                            {label}
-                          </span>
-                        );
-                      })}
-                    </div>
+                  {providerHealth.length > 0 && (
+                    <ProviderBadgeRow providers={providerHealth} />
                   )}
                 </div>
                 <p className="text-base text-text-secondary">
