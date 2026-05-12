@@ -41,10 +41,14 @@ ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
     # Skip Next.js telemetry pings out of the build container.
     NEXT_TELEMETRY_DISABLED=1
 
-# 1) Install deps. Lockfile-only layer so it's cached aggressively.
+# 1) Install deps. The COPY-then-RUN pattern means Docker reuses this
+# layer whenever package-lock.json is unchanged, so `npm ci` only re-runs
+# when dependencies actually move. We DON'T use BuildKit cache mounts
+# (--mount=type=cache) because Railway requires their cache IDs to be
+# prefixed with `s/<service-id>-`, which would tie this Dockerfile to one
+# specific Railway service. Plain layer caching is portable.
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,id=npm,target=/root/.npm \
-    npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
 # 2) Source.
 COPY . .
@@ -52,9 +56,7 @@ COPY . .
 # 3) Build. Dummy DATABASE_URL is enough for `prisma generate` —
 # Prisma validates the schema URL format but does not connect. The real
 # Railway DATABASE_URL kicks in at runtime via process.env.
-RUN --mount=type=cache,id=next-cache,target=/app/.next/cache \
-    --mount=type=cache,id=node-cache,target=/app/node_modules/.cache \
-    DATABASE_URL=postgresql://build:build@localhost:5432/build \
+RUN DATABASE_URL=postgresql://build:build@localhost:5432/build \
     npm run build
 
 EXPOSE 3000
