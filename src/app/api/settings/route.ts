@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSetting, setServerSetting } from "@/lib/settings";
 import { getAuth, unauthorized } from "@/lib/session";
 
-const MANAGED_KEYS = ["PDL_API_KEY", "SERPAPI_API_KEY", "BING_API_KEY"];
+const MANAGED_KEYS = ["PDL_API_KEY", "SERPAPI_API_KEY"];
 
 export async function GET() {
   const auth = await getAuth();

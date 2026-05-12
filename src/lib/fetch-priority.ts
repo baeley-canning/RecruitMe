@@ -81,7 +81,6 @@ function looksJuniorForSeniorRole(text: string, parsedRole: ParsedRole) {
 
 function sourceLabel(source: SearchResult["source"]) {
   if (source === "pdl") return "PDL profile data";
-  if (source === "bing") return "Bing LinkedIn result";
   return "Google LinkedIn result";
 }
 

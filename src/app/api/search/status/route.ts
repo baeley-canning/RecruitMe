@@ -31,9 +31,8 @@ export async function GET() {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
-  const [serpapi, bing, pdl] = await Promise.all([
+  const [serpapi, pdl] = await Promise.all([
     getServerSetting("SERPAPI_API_KEY"),
-    getServerSetting("BING_API_KEY"),
     getServerSetting("PDL_API_KEY"),
   ]);
 
@@ -53,15 +52,14 @@ export async function GET() {
     }
   }
 
-  // SerpAPI and Bing keys are not tested here — making a live test request on every
+  // SerpAPI keys are not tested here — making a live test request on every
   // page load would add latency and consume quota. We return "configured" (key present,
   // not verified) vs false (not configured). If a search returns 401/403, the search
   // session will be marked with "invalid key" to surface the real cause.
   return NextResponse.json({
-    available: Boolean(serpapi || bing),
+    available: Boolean(serpapi),
     sources: {
       serpapi: serpapi ? "configured" : false,
-      bing:    bing    ? "configured" : false,
       pdl:     pdl     ? "configured" : false,
     },
     ai: {

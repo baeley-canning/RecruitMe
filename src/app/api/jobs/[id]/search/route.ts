@@ -3,7 +3,6 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
   searchLinkedInProfiles,
-  searchBingLinkedInProfiles,
   searchPDLProfiles,
   inferEmploymentType,
   type SearchResult,
@@ -220,9 +219,7 @@ const EMPTY_ROUNDS_BEFORE_STOP = 2;
 const MAX_QUERY_VARIANTS = 6;
 const MAX_SPECIALIST_QUERY_VARIANTS = 8;
 const SERPAPI_CONCURRENCY = 1;
-const BING_CONCURRENCY = 2;
 const SERPAPI_DELAY_MS = 600;
-const BING_DELAY_MS = 150;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
@@ -305,7 +302,7 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
   ].filter(Boolean) as string[]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
 }
 
-type SearchProvider = "serpapi" | "bing" | "free-providers";
+type SearchProvider = "serpapi" | "free-providers";
 
 interface SearchTaskOutcome extends SearchPageTaskResult<SearchResult> {
   provider: SearchProvider;
@@ -371,14 +368,14 @@ function isAuthFailure(message: string): boolean {
 /**
  * Run the free-first search-provider stack (SearXNG + OpenSERP) for a
  * single query. Returns a SearchTaskOutcome shaped exactly like the
- * SerpAPI/Bing outcomes so it slots into the existing primaryOutcomes
- * merge without any downstream change. Never throws — per-provider
- * failures map to empty items and a retryable=false outcome (the manager
+ * SerpAPI outcome so it slots into the existing primaryOutcomes merge
+ * without any downstream change. Never throws — per-provider failures
+ * map to empty items and a retryable=false outcome (the manager
  * already retried internally where it could).
  *
  * This path runs ONLY when SEARCH_PROVIDERS env is set and at least one
  * provider's base URL is configured. Otherwise returns an empty outcome
- * and the route falls back to the existing SerpAPI/Bing-only behaviour.
+ * and the route falls back to SerpAPI-only behaviour.
  */
 async function executeFreeProvidersTask(
   query: string,
@@ -432,9 +429,7 @@ async function executeSearchTask(
     return executeFreeProvidersTask(query, location, options);
   }
   try {
-    const items = provider === "serpapi"
-      ? await searchLinkedInProfiles(query, location, offset, resolvedKey, options)
-      : await searchBingLinkedInProfiles(query, location, offset, resolvedKey, options);
+    const items = await searchLinkedInProfiles(query, location, offset, resolvedKey, options);
     return { provider, query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -465,20 +460,17 @@ export async function POST(
   // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
   // We do NOT mutate process.env so changing a key in settings takes effect immediately
   // without requiring a server restart.
-  const [dbSerpApi, dbBing, dbPdl] = await Promise.all([
+  const [dbSerpApi, dbPdl] = await Promise.all([
     process.env.SERPAPI_API_KEY ? null : getServerSetting("SERPAPI_API_KEY"),
-    process.env.BING_API_KEY    ? null : getServerSetting("BING_API_KEY"),
     process.env.PDL_API_KEY     ? null : getServerSetting("PDL_API_KEY"),
   ]);
   const serpApiKey = process.env.SERPAPI_API_KEY || dbSerpApi || "";
-  const bingKey    = process.env.BING_API_KEY    || dbBing    || "";
   const pdlKey     = process.env.PDL_API_KEY     || dbPdl     || "";
 
   const hasSerpApi = Boolean(serpApiKey);
-  const hasBing    = Boolean(bingKey);
   const hasPDL     = Boolean(pdlKey);
 
-  if (!hasSerpApi && !hasBing && !hasPDL) {
+  if (!hasSerpApi && !hasPDL) {
     return NextResponse.json({ error: "No search API configured. Add SERPAPI_API_KEY to .env.local." }, { status: 400 });
   }
 
@@ -574,10 +566,8 @@ export async function POST(
     targetLocation,
     knownTargets,
     hasSerpApi,
-    hasBing,
     hasPDL,
     serpApiKey,
-    bingKey,
     pdlKey,
     isOwner: auth.isOwner,
     orgId: auth.orgId,
@@ -735,10 +725,8 @@ async function runSearchBackground(args: {
   targetLocation: string;
   knownTargets: string[];  // all accepted cities from the parsed location (e.g. ["Wellington","Christchurch"])
   hasSerpApi: boolean;
-  hasBing: boolean;
   hasPDL: boolean;
   serpApiKey: string;
-  bingKey: string;
   pdlKey: string;
   isOwner: boolean;
   orgId: string | null;
@@ -749,8 +737,8 @@ async function runSearchBackground(args: {
   excludeContractTitles: boolean;
 }) {
   const { sessionId, jobId, job, parsedRole, salary, weights, maxResults, targetRaw,
-    searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasBing, hasPDL,
-    serpApiKey, bingKey, pdlKey, isOwner, orgId, savedSearchId, relaxClearance,
+    searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasPDL,
+    serpApiKey, pdlKey, isOwner, orgId, savedSearchId, relaxClearance,
     excludeContractTitles } = args;
 
   // When relaxClearance=true, remove clearance/work-rights requirements from scoring
@@ -894,7 +882,7 @@ async function runSearchBackground(args: {
       } catch { /* ignore */ }
     }
 
-    // ── Phase 1b: SerpAPI / Bing — paginate until we have enough raw results ──
+    // ── Phase 1b: SerpAPI — paginate until we have enough raw results ──
     // Each round fires all queries for one page in parallel.
     // Retryable failures (rate limits / transient timeouts) back off and retry
     // the same page instead of ending the search early.
@@ -915,19 +903,17 @@ async function runSearchBackground(args: {
           const queriesForAttempt = limitQueriesForAttempt(searchQueries, page, attempt);
 
           const buildTasks = (provider: SearchProvider, taskLocation: string, queries = queriesForAttempt) => {
-            const key = provider === "serpapi" ? serpApiKey : bingKey;
             return queries.map((q) => ({
               provider,
               query: q,
               location: taskLocation,
               offset,
-              resolvedKey: key,
+              resolvedKey: serpApiKey,
               searchOptions: { excludeContractTitles },
             }));
           };
 
           const serpTasks = hasSerpApi ? buildTasks("serpapi", searchLocation) : [];
-          const bingTasks = hasBing ? buildTasks("bing", searchLocation) : [];
 
           // When the JD explicitly accepts candidates from multiple cities (e.g.
           // "Wellington, Christchurch"), search secondary cities in the same pass
@@ -941,15 +927,12 @@ async function runSearchBackground(args: {
           const secondarySerpTasks = hasSerpApi
             ? secondaryCities.flatMap((city) => buildTasks("serpapi", city, queriesForAttempt.slice(0, 2)))
             : [];
-          const secondaryBingTasks = hasBing
-            ? secondaryCities.flatMap((city) => buildTasks("bing", city, queriesForAttempt.slice(0, 2)))
-            : [];
 
           // Free-first providers (SearXNG + OpenSERP). Runs ONLY when
           // SEARCH_PROVIDERS env is set and at least one base URL is
           // configured — otherwise resolveEnabledProviders() returns []
           // and runProviderSearch produces zero hits. The task is added to
-          // primaryOutcomes alongside SerpAPI/Bing so it feeds the SAME
+          // primaryOutcomes alongside SerpAPI so it feeds the SAME
           // downstream pipeline (dedupe, country gate, scoring) with no
           // behaviour change for users who haven't configured providers.
           const freeProvidersConfig = readSearchProvidersConfig();
@@ -960,8 +943,8 @@ async function runSearchBackground(args: {
           // results each time. The route's keyFn=linkedinUrl dedupes the
           // duplicates downstream, but the wasted HTTP calls hammer
           // self-hosted instances. Fire free-providers ONLY on page 0.
-          // Pagination beyond page 0 still goes through SerpAPI / Bing,
-          // which do honour offset.
+          // Pagination beyond page 0 still goes through SerpAPI, which does
+          // honour offset.
           const freeProviderTasks = hasFreeProviders && page === 0
             ? queriesForAttempt.map((q) => ({
                 provider: "free-providers" as SearchProvider,
@@ -973,13 +956,11 @@ async function runSearchBackground(args: {
               }))
             : [];
 
-          if (serpTasks.length === 0 && bingTasks.length === 0 && secondarySerpTasks.length === 0 && secondaryBingTasks.length === 0 && freeProviderTasks.length === 0) return null;
+          if (serpTasks.length === 0 && secondarySerpTasks.length === 0 && freeProviderTasks.length === 0) return null;
 
-          const [serpOutcomes, bingOutcomes, secondarySerpOutcomes, secondaryBingOutcomes, freeProviderOutcomes] = await Promise.all([
+          const [serpOutcomes, secondarySerpOutcomes, freeProviderOutcomes] = await Promise.all([
             executeSearchTaskQueue(serpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
-            executeSearchTaskQueue(bingTasks, { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS }),
             executeSearchTaskQueue(secondarySerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
-            executeSearchTaskQueue(secondaryBingTasks, { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS }),
             // Free providers handle their own per-provider parallelism +
             // timeout inside runProviderSearch, so no concurrency wrapper.
             executeSearchTaskQueue(freeProviderTasks, { concurrency: 4, delayMs: 0 }),
@@ -991,7 +972,7 @@ async function runSearchBackground(args: {
               `[search] free-providers page=${page} attempt=${attempt} — ${totalFreeHits} hits across ${freeProviderOutcomes.length} queries, ${failedFree} errored`,
             );
           }
-          const primaryOutcomes = [...serpOutcomes, ...bingOutcomes, ...secondarySerpOutcomes, ...secondaryBingOutcomes, ...freeProviderOutcomes];
+          const primaryOutcomes = [...serpOutcomes, ...secondarySerpOutcomes, ...freeProviderOutcomes];
           const anchorTerms = extractAnchorRequirementTerms(parsedRole);
           const shouldRunSpecialistNzSweep =
             page === 0 &&
@@ -1010,16 +991,10 @@ async function runSearchBackground(args: {
           ]).slice(0, 4);
 
           const specialistNzOutcomes = shouldRunSpecialistNzSweep
-            ? [
-                ...(await executeSearchTaskQueue(
-                  hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
-                  { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
-                )),
-                ...(await executeSearchTaskQueue(
-                  hasBing ? buildTasks("bing", "New Zealand", nzSweepQueries) : [],
-                  { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS },
-                )),
-              ]
+            ? await executeSearchTaskQueue(
+                hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
+                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+              )
             : [];
           const primaryItems = [...primaryOutcomes, ...specialistNzOutcomes].flatMap((outcome) => outcome.items);
           const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
@@ -1042,16 +1017,10 @@ async function runSearchBackground(args: {
               data: { message: `No results in ${searchLocation} — trying Auckland` },
             }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
             const akQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
-            aucklandOutcomes = [
-              ...(await executeSearchTaskQueue(
-                hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
-                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
-              )),
-              ...(await executeSearchTaskQueue(
-                hasBing ? buildTasks("bing", "Auckland", akQueries) : [],
-                { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS },
-              )),
-            ];
+            aucklandOutcomes = await executeSearchTaskQueue(
+              hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
+              { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+            );
           }
           const aucklandItems = aucklandOutcomes.flatMap((o) => o.items);
 
@@ -1071,17 +1040,10 @@ async function runSearchBackground(args: {
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
           const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
-          const fallbackBingTasks = hasBing ? buildTasks("bing", "New Zealand", fallbackQueries) : [];
-          const fallbackOutcomes = [
-            ...(await executeSearchTaskQueue(fallbackSerpTasks, {
-              concurrency: SERPAPI_CONCURRENCY,
-              delayMs: SERPAPI_DELAY_MS,
-            })),
-            ...(await executeSearchTaskQueue(fallbackBingTasks, {
-              concurrency: BING_CONCURRENCY,
-              delayMs: BING_DELAY_MS,
-            })),
-          ];
+          const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
+            concurrency: SERPAPI_CONCURRENCY,
+            delayMs: SERPAPI_DELAY_MS,
+          });
           return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes, ...fallbackOutcomes];
         },
         sleep,
@@ -1132,25 +1094,23 @@ async function runSearchBackground(args: {
             query: q,
             location: "New Zealand",
             offset: 0,
-            resolvedKey: provider === "serpapi" ? serpApiKey : bingKey,
+            resolvedKey: serpApiKey,
           }));
         const fallbackSerpTasks = hasSerpApi ? mkFallbackTasks("serpapi") : [];
-        const fallbackBingTasks = hasBing   ? mkFallbackTasks("bing")    : [];
-        const fallbackOutcomes = [
-          ...(await executeSearchTaskQueue(fallbackSerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS })),
-          ...(await executeSearchTaskQueue(fallbackBingTasks, { concurrency: BING_CONCURRENCY,   delayMs: BING_DELAY_MS   })),
-        ];
+        const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
+          concurrency: SERPAPI_CONCURRENCY,
+          delayMs: SERPAPI_DELAY_MS,
+        });
 
         // Surface auth failures immediately — invalid keys look like "no results" otherwise
         const authFailed = fallbackOutcomes.some((o) => o.error && isAuthFailure(o.error));
         if (authFailed) {
-          const failedProvider = fallbackOutcomes.find((o) => o.error && isAuthFailure(o.error))?.provider ?? "search";
           await prisma.searchSession.update({
             where: { id: sessionId },
             data: {
               status: "complete",
-              message: `${failedProvider} API key is invalid or expired.`,
-              evaluation: `FAIL — ${failedProvider === "serpapi" ? "SerpAPI" : "Bing"} key rejected (401). Check Settings → API Keys and replace the key.`,
+              message: `SerpAPI key is invalid or expired.`,
+              evaluation: `FAIL — SerpAPI key rejected (401). Check Settings → API Keys and replace the key.`,
             },
           }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
           return;

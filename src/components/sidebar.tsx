@@ -27,7 +27,6 @@ interface KeyStatus {
 const KEY_LABELS: Record<string, { label: string; hint: string }> = {
   PDL_API_KEY:     { label: "People Data Labs Key", hint: "Candidate search & enrichment — 100 free calls/month" },
   SERPAPI_API_KEY: { label: "SerpAPI Key", hint: "Google LinkedIn search — 100 searches/month free" },
-  BING_API_KEY:    { label: "Bing Search Key", hint: "Bing LinkedIn search" },
 };
 
 function SettingsModal({ onClose }: { onClose: () => void }) {

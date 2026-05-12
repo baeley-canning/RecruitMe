@@ -75,7 +75,7 @@ describe("runProviderSearch — parallel dispatch + partial-result resilience", 
   // Critic-flagged edge case: when every provider times out (e.g. all
   // self-hosted instances are down), the search should still return an
   // empty result rather than throw. The route can then fall back to the
-  // existing SerpAPI / Bing path.
+  // existing SerpAPI path.
   it("returns empty byProvider + per-provider timeout outcomes when ALL providers fail", async () => {
     const slow1: SearchProvider = {
       name: "searxng", enabled: () => true,

@@ -10,10 +10,10 @@ export interface SearchResult {
   snippet: string;
   fullText?: string; // full profile text for sources that return it (PDL)
   matchedQuery?: string;
-  // "searxng" / "openserp" are the new free-first providers (lib/search-providers).
-  // "serpapi"/"bing"/"pdl" remain unchanged. Manual / extension / talent_pool /
+  // "searxng" / "openserp" are the free-first providers (lib/search-providers).
+  // "serpapi" / "pdl" remain unchanged. Manual / extension / talent_pool /
   // github values come from the Candidate.source field on save sites.
-  source: "serpapi" | "bing" | "pdl" | "searxng" | "openserp";
+  source: "serpapi" | "pdl" | "searxng" | "openserp";
 }
 
 // ─── Name / org filtering ────────────────────────────────────────────────────
@@ -89,10 +89,7 @@ export function inferEmploymentType(jdOrRoleText: string | null | undefined): "p
 
 function buildLinkedInSearchQuery(query: string, location: string, options: { excludeContractTitles?: boolean } = {}): string {
   const locationTerm = buildLocationSearchTerm(location);
-  // Google-specific negative-intitle clauses. SerpAPI passes them straight
-  // through to Google; Bing tolerates `-` exclusion (operator differs but
-  // the syntax is graceful — Bing treats `-intitle:` as a stop-token and
-  // weights but doesn't strict-exclude, which is the lesser harm).
+  // Google-specific negative-intitle clauses, passed through by SerpAPI.
   // Excluded titles: "contract", "freelancer", "consultant" (self-employed
   // pattern), "available for hire". Senior recruiter playbook: when the
   // JD is explicitly permanent, these are noise.
@@ -184,7 +181,7 @@ function looksLikePersonName(name: string): boolean {
 /** Parse LinkedIn profiles out of a generic list of search result items */
 export function parseLinkedInResults(
   items: Array<{ title?: string; url?: string; link?: string; snippet?: string }>,
-  source: "serpapi" | "bing" | "searxng" | "openserp"
+  source: "serpapi" | "searxng" | "openserp"
 ): SearchResult[] {
   const results: SearchResult[] = [];
   for (const item of items) {
@@ -241,44 +238,6 @@ export async function searchLinkedInProfiles(
   };
 
   return parseLinkedInResults(data.organic_results ?? [], "serpapi");
-}
-
-// ─── Bing Web Search ──────────────────────────────────────────────────────────
-
-export async function searchBingLinkedInProfiles(
-  query: string,
-  location: string,
-  offset = 0,
-  resolvedKey?: string,
-  options: { excludeContractTitles?: boolean } = {},
-): Promise<SearchResult[]> {
-  const apiKey = resolvedKey || process.env.BING_API_KEY;
-  if (!apiKey) throw new Error("BING_API_KEY is not configured");
-
-  const searchQuery = buildLinkedInSearchQuery(query, location, options);
-
-  const params = new URLSearchParams({
-    q: searchQuery,
-    count: "10",
-    offset: String(offset),
-    mkt: "en-NZ",
-    responseFilter: "Webpages",
-  });
-
-  const res = await fetch(`https://api.bing.microsoft.com/v7.0/search?${params}`, {
-    headers: { "Ocp-Apim-Subscription-Key": apiKey },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) throw new Error(`Bing API error: ${res.status}`);
-
-  const data = await res.json() as {
-    webPages?: { value?: Array<{ name?: string; url?: string; snippet?: string }> };
-  };
-
-  return parseLinkedInResults(
-    (data.webPages?.value ?? []).map((r) => ({ title: r.name, url: r.url, snippet: r.snippet })),
-    "bing"
-  );
 }
 
 // ─── People Data Labs ─────────────────────────────────────────────────────────

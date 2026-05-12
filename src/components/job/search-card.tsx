@@ -27,7 +27,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [poolResult, setPoolResult] = useState<{ count: number; message?: string } | null>(null);
   const [poolError, setPoolError] = useState("");
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
-  const [sources, setSources] = useState<{ serpapi: boolean | "configured"; bing: boolean | "configured"; pdl: boolean | "configured" } | null>(null);
+  const [sources, setSources] = useState<{ serpapi: boolean | "configured"; pdl: boolean | "configured" } | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<"ok" | "invalid" | "error" | "unconfigured" | null>(null);
   const [searchHistory, setSearchHistory] = useState<Array<{
     id: string; status: string; collected: number; location: string;
@@ -58,7 +58,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   useEffect(() => {
     fetch("/api/search/status")
       .then((r) => r.json())
-      .then((d: { available: boolean; sources: { serpapi: boolean | "configured"; bing: boolean | "configured"; pdl: boolean | "configured" }; ai?: { provider: string; claude: "ok" | "invalid" | "error" | "unconfigured" } }) => {
+      .then((d: { available: boolean; sources: { serpapi: boolean | "configured"; pdl: boolean | "configured" }; ai?: { provider: string; claude: "ok" | "invalid" | "error" | "unconfigured" } }) => {
         setHasSerpApi(d.available);
         setSources(d.sources ?? null);
         if (d.ai?.provider === "claude") setClaudeStatus(d.ai.claude);
@@ -216,7 +216,6 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
               <div className="space-y-3">
                 {[
                   { label: "SerpAPI", required: true, env: "SERPAPI_API_KEY", desc: "Searches Google for LinkedIn profiles. 100 searches/month free.", url: "https://serpapi.com" },
-                  { label: "Bing Web Search", required: false, env: "BING_API_KEY", desc: "Second search index — finds different profiles. $5/1000 searches via Azure.", url: "https://portal.azure.com" },
                 ].map(({ label, required, env, desc, url }) => (
                   <div key={env} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
                     <div>

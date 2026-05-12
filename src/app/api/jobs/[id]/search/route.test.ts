@@ -62,7 +62,6 @@ vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/search", () => ({
   searchLinkedInProfiles: vi.fn(),
-  searchBingLinkedInProfiles: vi.fn(),
   searchPDLProfiles: vi.fn(),
   // Mock matches the real signature: classifies JD text into permanent /
   // contract / unknown. Default to "unknown" in tests — they don't care
@@ -121,7 +120,6 @@ describe("search import route", () => {
     });
     dbMocks.prisma.candidate.findMany.mockReset();
     process.env.SERPAPI_API_KEY = "test";
-    delete process.env.BING_API_KEY;
     delete process.env.PDL_API_KEY;
 
     const job = {
@@ -401,7 +399,6 @@ describe("search route — pool-first integration scenarios", () => {
 
   function setupBaselineMocks() {
     process.env.SERPAPI_API_KEY = "test";
-    delete process.env.BING_API_KEY;
     delete process.env.PDL_API_KEY;
     const job = {
       id: "job-power",

@@ -2,7 +2,7 @@
  * Route-integration safety net for the free-providers wiring.
  *
  * Goal: verify the route's `executeSearchTask` produces a SearchTaskOutcome
- * for the "free-providers" path that has the SAME SHAPE as the SerpAPI/Bing
+ * for the "free-providers" path that has the SAME SHAPE as the SerpAPI
  * outcomes — so the downstream pipeline (dedupe, country gate, scoring)
  * doesn't notice any difference.
  *

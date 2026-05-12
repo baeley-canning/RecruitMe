@@ -226,7 +226,7 @@ export function isExplicitlyOverseasLocation(location: string): boolean {
     return normalized.includes(normalizedMarker);
   })) return true;
   // Bare overseas city names (e.g. "Sydney" without "Australia") — these were
-  // the silent leak path: SerpAPI/Bing snippets often only carry the city.
+  // the silent leak path: SerpAPI snippets often only carry the city.
   if (OVERSEAS_CITIES.some((city) => normalized.includes(city))) return true;
   // US/AU state abbreviations and known US city names in the location string
   if (US_STATE_RE.test(location) || AU_STATE_RE.test(location) || US_CITIES_RE.test(normalized)) return true;

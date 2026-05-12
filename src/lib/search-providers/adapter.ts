@@ -12,7 +12,7 @@
  * knows how to parse LinkedIn titles (split on " - " / " | "), extract
  * headline, infer location from snippet via inferLocationFromSearchText,
  * and filter out non-person names. Re-using it guarantees parity with the
- * SerpAPI / Bing path.
+ * SerpAPI path.
  *
  * "source" is set to the FIRST provider in the merge — for a multi-
  * provider hit we report it as whichever found it first (lowest rank).

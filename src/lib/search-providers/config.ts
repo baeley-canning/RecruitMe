@@ -9,7 +9,7 @@ import type { SearchProviderName } from "./types";
 export interface SearchProvidersConfig {
   /** Providers the recruiter has enabled via SEARCH_PROVIDERS env. When this
    *  list is empty, the route should fall back to its existing behaviour
-   *  (SerpAPI / Bing / PDL) — no new code path activates. */
+   *  (SerpAPI / PDL) — no new code path activates. */
   enabled: SearchProviderName[];
   searxngBaseUrl: string | null;
   openserpBaseUrl: string | null;
