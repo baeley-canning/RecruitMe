@@ -131,32 +131,32 @@ describe("Llama scoring invariant — scoredBy + penalty must accompany every Ll
     expect(mockOllamaGenerate).not.toHaveBeenCalled();
   });
 
-  it("when both flags are explicitly opted OUT, a Claude failure throws (recruiter has disabled Llama)", async () => {
-    // Failover is default-ON since 2026-05; explicit opt-out is "false".
-    // This invariant guards the path where a recruiter has deliberately
-    // disabled local-model fallback (e.g. compliance requirement). They
-    // must see the Claude error rather than a silent Llama substitution.
+  it("falls over to Llama on Claude failure regardless of env vars (failover is hardcoded ON)", async () => {
+    // Failover is hardcoded ON in code as of 2026-05-13. Stale env vars
+    // that used to opt out (ENABLE_LOCAL_MODEL_FAILOVER=false etc.) no
+    // longer suppress it. The protection against silent quality
+    // degradation is delivered by scoredBy + 10pt penalty + UI pill,
+    // not by the env-var gate that production kept stomping on.
     process.env.ENABLE_LOCAL_MODEL_FAILOVER = "false";
     process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING = "false";
-    mockChat.mockRejectedValue(Object.assign(new Error("Invalid API key"), { status: 401 }));
-    mockOllamaGenerate.mockResolvedValue({ text: validScoringJson(85), durationMs: 600 });
-
-    await expect(scoreCandidateStructured(FULL_PROFILE, PARSED_ROLE)).rejects.toThrow(/invalid api key/i);
-    expect(mockOllamaGenerate).not.toHaveBeenCalled();
-  });
-
-  it("when both flags are UNSET (default), a Claude failure falls over to Llama with scoredBy + penalty", async () => {
-    // Default-on behaviour: unset env vars → failover active. This is the
-    // common case in production where the recruiter never touches the
-    // env vars and expects the app to gracefully handle Claude outages.
-    delete process.env.ENABLE_LOCAL_MODEL_FAILOVER;
-    delete process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING;
     mockChat.mockRejectedValue(Object.assign(new Error("Invalid API key"), { status: 401 }));
     mockOllamaGenerate.mockResolvedValue({ text: validScoringJson(85), durationMs: 600 });
 
     const breakdown = await scoreCandidateStructured(FULL_PROFILE, PARSED_ROLE);
     expect(breakdown.scoredBy).toBe("ollama");
     expect(breakdown.overall).toBeLessThanOrEqual(100 - getLlamaScorePenaltyPoints());
+    expect(mockOllamaGenerate).toHaveBeenCalled();
+  });
+
+  it("rethrows Claude error when Claude AND Ollama BOTH fail (only way scoring 400s reach the recruiter)", async () => {
+    // Ollama is the sole "off-switch" — disabling it operationally
+    // (not via env var) is the only path for the original Claude error
+    // to reach the caller.
+    mockChat.mockRejectedValue(Object.assign(new Error("Invalid API key"), { status: 401 }));
+    mockOllamaGenerate.mockResolvedValue(null); // Ollama also unreachable
+
+    await expect(scoreCandidateStructured(FULL_PROFILE, PARSED_ROLE)).rejects.toThrow(/invalid api key/i);
+    expect(mockOllamaGenerate).toHaveBeenCalled();
   });
 
   it("respects LLAMA_SCORE_PENALTY_POINTS env override", async () => {

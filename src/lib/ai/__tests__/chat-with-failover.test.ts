@@ -75,14 +75,15 @@ describe("chatWithFailover — behaviour matrix", () => {
     expect(ollamaGenerate).not.toHaveBeenCalled();
   });
 
-  it("rethrows Claude error when both failover flags are explicitly OPTED OUT", async () => {
-    // Explicit opt-out — both flags set to "false". This matches a
-    // recruiter who has deliberately disabled the local-model fallback.
-    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "false";
-    process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING = "false";
+  it("rethrows the ORIGINAL Claude error when Ollama is unreachable (only operational way to opt out of failover)", async () => {
+    // Failover is hardcoded ON in code — env vars can't suppress it.
+    // The only way the Claude error reaches the caller is when Ollama
+    // itself is unreachable / returns null. Simulate that by making
+    // ollamaGenerate resolve to null (its fail-closed contract).
     vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Credit balance too low"), { status: 429 }));
+    vi.mocked(ollamaGenerate).mockResolvedValue(null);
     await expect(chatWithFailover("hi", 0.1, 100)).rejects.toThrow(/credit balance/i);
-    expect(ollamaGenerate).not.toHaveBeenCalled();
+    expect(ollamaGenerate).toHaveBeenCalled();
   });
 
   it("falls over to Ollama on a plain 429 rate-limit when failover is enabled (rate_limited reason)", async () => {
@@ -122,12 +123,14 @@ describe("chatWithFailover — behaviour matrix", () => {
     await expect(chatWithFailover("hi", 0.1, 100)).rejects.toBe(claudeErr);
   });
 
-  it("does NOT fall over on auth errors when both flags are explicitly OPTED OUT", async () => {
-    process.env.ENABLE_LOCAL_MODEL_FAILOVER = "false";
-    process.env.ENABLE_LOCAL_MODEL_FINAL_SCORING = "false";
+  it("rethrows Claude auth error when Ollama is also unreachable", async () => {
     vi.mocked(chat).mockRejectedValue(Object.assign(new Error("Invalid API key"), { status: 401 }));
+    vi.mocked(ollamaGenerate).mockResolvedValue(null);
     await expect(chatWithFailover("hi", 0.1, 100)).rejects.toThrow(/invalid api key/i);
-    expect(ollamaGenerate).not.toHaveBeenCalled();
+    // Failover IS attempted (hardcoded on); it just fails because Ollama
+    // returned null. Compare with the prior assertion above where Ollama
+    // was wired and the test expected Llama to take over.
+    expect(ollamaGenerate).toHaveBeenCalled();
   });
 
   it("DOES fall over on auth errors when flag IS set", async () => {
