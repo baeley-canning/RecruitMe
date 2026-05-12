@@ -33,7 +33,12 @@ export interface LocalModelConfig {
 
 const DEFAULT_BASE_URL = "http://localhost:11434";
 const DEFAULT_MODEL = "qwen2.5:7b";
-const DEFAULT_TIMEOUT_MS = 30_000; // local inference is slow on commodity hardware
+// 60s default tolerates Ollama cold-start on small Railway containers
+// (model load + first-token can take 30-50s when the daemon has unloaded
+// the model after idle). Was 30s; raised after agent audit flagged
+// timeout-during-cold-start as the highest-likelihood Llama-failover
+// failure mode after the classifier was fixed.
+const DEFAULT_TIMEOUT_MS = 60_000;
 
 export function readLocalModelConfig(): LocalModelConfig {
   return {

@@ -93,8 +93,11 @@ export function classifyClaudeError(err: unknown): { dead: boolean; reason?: Cla
 
   // Network-level errors with no HTTP status. withRetry already retries
   // these — if we still got an error after retries exhausted, treat as
-  // dead and fall over to Ollama.
-  if (!status && /econnrefused|enotfound|etimedout|getaddrinfo|network|abort/.test(message)) {
+  // dead and fall over to Ollama. Includes the Anthropic SDK's
+  // APIConnectionError ("Connection error.") and APIConnectionTimeoutError
+  // ("Request timed out.") which surface with no status code and were
+  // previously slipping through the classifier as not-dead.
+  if (!status && /econnrefused|enotfound|etimedout|getaddrinfo|network|abort|request timed out|connection error|connect timeout/.test(message)) {
     return { dead: true, reason: "network_unreachable" };
   }
 

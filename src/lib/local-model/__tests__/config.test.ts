@@ -18,7 +18,7 @@ describe("readLocalModelConfig", () => {
     const cfg = readLocalModelConfig();
     expect(cfg.baseUrl).toBe("http://localhost:11434");
     expect(cfg.model).toBe("qwen2.5:7b");
-    expect(cfg.timeoutMs).toBe(30_000);
+    expect(cfg.timeoutMs).toBe(60_000);
   });
 
   it("reads URL / model / timeout overrides from env", () => {
@@ -33,7 +33,7 @@ describe("readLocalModelConfig", () => {
 
   it("falls back to default timeout when LOCAL_MODEL_TIMEOUT_MS is junk", () => {
     process.env.LOCAL_MODEL_TIMEOUT_MS = "not a number";
-    expect(readLocalModelConfig().timeoutMs).toBe(30_000);
+    expect(readLocalModelConfig().timeoutMs).toBe(60_000);
   });
 
   // Failover gates: hardcoded ON since the env-var dependency was a

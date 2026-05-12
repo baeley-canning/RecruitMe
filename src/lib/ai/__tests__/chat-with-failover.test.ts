@@ -60,6 +60,11 @@ describe("classifyClaudeError — distinguishes DEAD vs transient", () => {
     expect(classifyClaudeError(new Error("ECONNREFUSED")).reason).toBe("network_unreachable");
     expect(classifyClaudeError(new Error("getaddrinfo ENOTFOUND api.anthropic.com")).reason).toBe("network_unreachable");
     expect(classifyClaudeError(new Error("aborted")).reason).toBe("network_unreachable");
+    // Anthropic SDK's APIConnectionTimeoutError + APIConnectionError surface
+    // with no status code and these exact message strings — were previously
+    // slipping through as not-dead.
+    expect(classifyClaudeError(new Error("Request timed out.")).reason).toBe("network_unreachable");
+    expect(classifyClaudeError(new Error("Connection error.")).reason).toBe("network_unreachable");
   });
 
   it("returns { dead: false } for unknown / non-error patterns", () => {
