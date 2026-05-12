@@ -297,10 +297,7 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
   ].filter(Boolean) as string[]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
 }
 
-type SearchProvider = "serpapi";
-
 interface SearchTaskOutcome extends SearchPageTaskResult<SearchResult> {
-  provider: SearchProvider;
   query: string;
   error?: string;
 }
@@ -317,7 +314,7 @@ function limitQueriesForAttempt(queries: string[], page: number, attempt: number
 }
 
 async function executeSearchTaskQueue(
-  tasks: Array<{ provider: SearchProvider; query: string; location: string; offset: number; resolvedKey?: string; searchOptions?: { excludeContractTitles?: boolean } }>,
+  tasks: Array<{ query: string; location: string; offset: number; resolvedKey?: string; searchOptions?: { excludeContractTitles?: boolean } }>,
   options: { concurrency: number; delayMs: number },
 ): Promise<SearchTaskOutcome[]> {
   const outcomes: SearchTaskOutcome[] = [];
@@ -325,7 +322,7 @@ async function executeSearchTaskQueue(
   for (let i = 0; i < tasks.length; i += options.concurrency) {
     const batch = tasks.slice(i, i + options.concurrency);
     const batchOutcomes = await Promise.all(
-      batch.map((task) => executeSearchTask(task.provider, task.query, task.location, task.offset, task.resolvedKey, task.searchOptions))
+      batch.map((task) => executeSearchTask(task.query, task.location, task.offset, task.resolvedKey, task.searchOptions))
     );
     outcomes.push(...batchOutcomes);
 
@@ -361,7 +358,6 @@ function isAuthFailure(message: string): boolean {
 }
 
 async function executeSearchTask(
-  provider: SearchProvider,
   query: string,
   location: string,
   offset: number,
@@ -370,11 +366,10 @@ async function executeSearchTask(
 ): Promise<SearchTaskOutcome> {
   try {
     const items = await searchLinkedInProfiles(query, location, offset, resolvedKey, options);
-    return { provider, query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
+    return { query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
-      provider,
       query,
       items: [],
       error: message,
@@ -411,7 +406,10 @@ export async function POST(
   const hasPDL     = Boolean(pdlKey);
 
   if (!hasSerpApi && !hasPDL) {
-    return NextResponse.json({ error: "No search API configured. Add SERPAPI_API_KEY to .env.local." }, { status: 400 });
+    return NextResponse.json(
+      { error: "No search API configured. Set SERPAPI_API_KEY and/or PDL_API_KEY (in env, or via the Settings → API Keys panel)." },
+      { status: 400 }
+    );
   }
 
   const { job, error } = await requireJobAccess(id, auth);
@@ -851,9 +849,8 @@ async function runSearchBackground(args: {
           const offset = page * PAGE_SIZE;
           const queriesForAttempt = limitQueriesForAttempt(searchQueries, page, attempt);
 
-          const buildTasks = (provider: SearchProvider, taskLocation: string, queries = queriesForAttempt) => {
+          const buildTasks = (taskLocation: string, queries = queriesForAttempt) => {
             return queries.map((q) => ({
-              provider,
               query: q,
               location: taskLocation,
               offset,
@@ -862,7 +859,7 @@ async function runSearchBackground(args: {
             }));
           };
 
-          const serpTasks = hasSerpApi ? buildTasks("serpapi", searchLocation) : [];
+          const serpTasks = hasSerpApi ? buildTasks(searchLocation) : [];
 
           // When the JD explicitly accepts candidates from multiple cities (e.g.
           // "Wellington, Christchurch"), search secondary cities in the same pass
@@ -874,7 +871,7 @@ async function runSearchBackground(args: {
               )
             : [];
           const secondarySerpTasks = hasSerpApi
-            ? secondaryCities.flatMap((city) => buildTasks("serpapi", city, queriesForAttempt.slice(0, 2)))
+            ? secondaryCities.flatMap((city) => buildTasks(city, queriesForAttempt.slice(0, 2)))
             : [];
 
           if (serpTasks.length === 0 && secondarySerpTasks.length === 0) return null;
@@ -904,7 +901,7 @@ async function runSearchBackground(args: {
           // Specialist NZ sweep: anchor-term queries via SerpAPI only.
           const specialistNzOutcomes = shouldRunSpecialistNzSweep
             ? await executeSearchTaskQueue(
-                hasSerpApi ? buildTasks("serpapi", "New Zealand", nzSweepQueries) : [],
+                hasSerpApi ? buildTasks("New Zealand", nzSweepQueries) : [],
                 { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
               )
             : [];
@@ -930,7 +927,7 @@ async function runSearchBackground(args: {
             }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
             const akQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
             aucklandOutcomes = await executeSearchTaskQueue(
-              hasSerpApi ? buildTasks("serpapi", "Auckland", akQueries) : [],
+              hasSerpApi ? buildTasks("Auckland", akQueries) : [],
               { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
             );
           }
@@ -951,7 +948,7 @@ async function runSearchBackground(args: {
           }
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
-          const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
+          const fallbackSerpTasks = hasSerpApi ? buildTasks("New Zealand", fallbackQueries) : [];
           const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
             concurrency: SERPAPI_CONCURRENCY,
             delayMs: SERPAPI_DELAY_MS,
@@ -1000,15 +997,14 @@ async function runSearchBackground(args: {
           data: { message: `No exact matches — trying adjacent skills (${anchorTermsForFallback.join(", ")} substitutes)` },
         }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
 
-        const mkFallbackTasks = (provider: SearchProvider) =>
-          fallbackQueries.map((q) => ({
-            provider,
-            query: q,
-            location: "New Zealand",
-            offset: 0,
-            resolvedKey: serpApiKey,
-          }));
-        const fallbackSerpTasks = hasSerpApi ? mkFallbackTasks("serpapi") : [];
+        const fallbackSerpTasks = hasSerpApi
+          ? fallbackQueries.map((q) => ({
+              query: q,
+              location: "New Zealand",
+              offset: 0,
+              resolvedKey: serpApiKey,
+            }))
+          : [];
         const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
           concurrency: SERPAPI_CONCURRENCY,
           delayMs: SERPAPI_DELAY_MS,
