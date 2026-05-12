@@ -8,6 +8,11 @@ import {
   inferEmploymentType,
   type SearchResult,
 } from "@/lib/search";
+import { runProviderSearch } from "@/lib/search-providers/manager";
+import { mergeProviderHits } from "@/lib/search-providers/merge";
+import { rankMergedResults } from "@/lib/search-providers/ranking";
+import { mergedResultsToSearchResults } from "@/lib/search-providers/adapter";
+import { readSearchProvidersConfig } from "@/lib/search-providers/config";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
@@ -300,7 +305,7 @@ function buildSearchQueries(parsedRole: ParsedRole): string[] {
   ].filter(Boolean) as string[]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
 }
 
-type SearchProvider = "serpapi" | "bing";
+type SearchProvider = "serpapi" | "bing" | "free-providers";
 
 interface SearchTaskOutcome extends SearchPageTaskResult<SearchResult> {
   provider: SearchProvider;
@@ -363,6 +368,58 @@ function isAuthFailure(message: string): boolean {
   return lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("forbidden");
 }
 
+/**
+ * Run the free-first search-provider stack (SearXNG + OpenSERP) for a
+ * single query. Returns a SearchTaskOutcome shaped exactly like the
+ * SerpAPI/Bing outcomes so it slots into the existing primaryOutcomes
+ * merge without any downstream change. Never throws — per-provider
+ * failures map to empty items and a retryable=false outcome (the manager
+ * already retried internally where it could).
+ *
+ * This path runs ONLY when SEARCH_PROVIDERS env is set and at least one
+ * provider's base URL is configured. Otherwise returns an empty outcome
+ * and the route falls back to the existing SerpAPI/Bing-only behaviour.
+ */
+async function executeFreeProvidersTask(
+  query: string,
+  location: string,
+  options: { excludeContractTitles?: boolean } = {},
+): Promise<SearchTaskOutcome> {
+  try {
+    const { byProvider, outcomes } = await runProviderSearch({
+      query,
+      location,
+      excludeContractTitles: options.excludeContractTitles,
+    });
+    // If every provider returned empty AND at least one errored, surface
+    // the first error so the route's logs make it clear free providers
+    // aren't contributing. Doesn't mark retryable — the manager already
+    // handled per-provider timeouts and would just hit them again.
+    const allEmpty = Object.values(byProvider).every((hits) => !hits || hits.length === 0);
+    const firstError = outcomes.find((o) => o.error)?.error;
+    if (allEmpty) {
+      return {
+        provider: "free-providers",
+        query,
+        items: [],
+        error: firstError,
+        retryable: false,
+      };
+    }
+    const merged = mergeProviderHits(byProvider);
+    const ranked = rankMergedResults(merged);
+    const items = mergedResultsToSearchResults(ranked).map((item) => ({ ...item, matchedQuery: query }));
+    return { provider: "free-providers", query, items, retryable: false };
+  } catch (error) {
+    // Defensive — runProviderSearch is designed not to throw, but if a
+    // future change breaks that contract we don't want it to crash the
+    // entire search.
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[search] free-providers task failed for query="${query}":`, message);
+    return { provider: "free-providers", query, items: [], error: message, retryable: false };
+  }
+}
+
 async function executeSearchTask(
   provider: SearchProvider,
   query: string,
@@ -371,6 +428,9 @@ async function executeSearchTask(
   resolvedKey?: string,
   options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchTaskOutcome> {
+  if (provider === "free-providers") {
+    return executeFreeProvidersTask(query, location, options);
+  }
   try {
     const items = provider === "serpapi"
       ? await searchLinkedInProfiles(query, location, offset, resolvedKey, options)
@@ -885,15 +945,53 @@ async function runSearchBackground(args: {
             ? secondaryCities.flatMap((city) => buildTasks("bing", city, queriesForAttempt.slice(0, 2)))
             : [];
 
-          if (serpTasks.length === 0 && bingTasks.length === 0 && secondarySerpTasks.length === 0 && secondaryBingTasks.length === 0) return null;
+          // Free-first providers (SearXNG + OpenSERP). Runs ONLY when
+          // SEARCH_PROVIDERS env is set and at least one base URL is
+          // configured — otherwise resolveEnabledProviders() returns []
+          // and runProviderSearch produces zero hits. The task is added to
+          // primaryOutcomes alongside SerpAPI/Bing so it feeds the SAME
+          // downstream pipeline (dedupe, country gate, scoring) with no
+          // behaviour change for users who haven't configured providers.
+          const freeProvidersConfig = readSearchProvidersConfig();
+          const hasFreeProviders = freeProvidersConfig.enabled.length > 0 &&
+            (freeProvidersConfig.searxngBaseUrl !== null || freeProvidersConfig.openserpBaseUrl !== null);
+          // Pagination guard: SearXNG and OpenSERP don't take an `offset`
+          // param, so calling them on every page returns the same first-page
+          // results each time. The route's keyFn=linkedinUrl dedupes the
+          // duplicates downstream, but the wasted HTTP calls hammer
+          // self-hosted instances. Fire free-providers ONLY on page 0.
+          // Pagination beyond page 0 still goes through SerpAPI / Bing,
+          // which do honour offset.
+          const freeProviderTasks = hasFreeProviders && page === 0
+            ? queriesForAttempt.map((q) => ({
+                provider: "free-providers" as SearchProvider,
+                query: q,
+                location: searchLocation,
+                offset,
+                resolvedKey: undefined,
+                searchOptions: { excludeContractTitles },
+              }))
+            : [];
 
-          const [serpOutcomes, bingOutcomes, secondarySerpOutcomes, secondaryBingOutcomes] = await Promise.all([
+          if (serpTasks.length === 0 && bingTasks.length === 0 && secondarySerpTasks.length === 0 && secondaryBingTasks.length === 0 && freeProviderTasks.length === 0) return null;
+
+          const [serpOutcomes, bingOutcomes, secondarySerpOutcomes, secondaryBingOutcomes, freeProviderOutcomes] = await Promise.all([
             executeSearchTaskQueue(serpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
             executeSearchTaskQueue(bingTasks, { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS }),
             executeSearchTaskQueue(secondarySerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
             executeSearchTaskQueue(secondaryBingTasks, { concurrency: BING_CONCURRENCY, delayMs: BING_DELAY_MS }),
+            // Free providers handle their own per-provider parallelism +
+            // timeout inside runProviderSearch, so no concurrency wrapper.
+            executeSearchTaskQueue(freeProviderTasks, { concurrency: 4, delayMs: 0 }),
           ]);
-          const primaryOutcomes = [...serpOutcomes, ...bingOutcomes, ...secondarySerpOutcomes, ...secondaryBingOutcomes];
+          if (freeProviderOutcomes.length > 0) {
+            const totalFreeHits = freeProviderOutcomes.reduce((sum, o) => sum + o.items.length, 0);
+            const failedFree = freeProviderOutcomes.filter((o) => o.error).length;
+            console.log(
+              `[search] free-providers page=${page} attempt=${attempt} — ${totalFreeHits} hits across ${freeProviderOutcomes.length} queries, ${failedFree} errored`,
+            );
+          }
+          const primaryOutcomes = [...serpOutcomes, ...bingOutcomes, ...secondarySerpOutcomes, ...secondaryBingOutcomes, ...freeProviderOutcomes];
           const anchorTerms = extractAnchorRequirementTerms(parsedRole);
           const shouldRunSpecialistNzSweep =
             page === 0 &&
