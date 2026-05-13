@@ -28,6 +28,7 @@
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "docx": "^9.6.1",
+    "googleapis": "^171.4.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.12.0",
