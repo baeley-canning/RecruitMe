@@ -107,16 +107,19 @@ function planRow(
   const candidate = candidatesByKey.get(`${jobId}::${url}`);
   if (!candidate) return { action: "skip", reason: "candidate_not_found", sheetRow: row };
 
-  // Status decision — only write when delta AND not protected.
+  // Status decision — "contacted" is INTENTIONALLY not set here.
+  // The existing UX surfaces contacts via the blue dot on the candidate
+  // card, driven by ContactEvent rows + the latest event's userName.
+  // Overwriting Candidate.status with "contacted" would (a) clobber any
+  // legitimate pipeline state (new / reviewing) and (b) hide the
+  // recruiter-attribution the dot displays. ONLY "Not interested" rows
+  // flip status — that's a terminal candidate-side decision, not a touch.
   let newStatus: string | undefined;
-  if (mapping.mapped === "contacted" || mapping.mapped === "declined") {
+  if (mapping.mapped === "declined") {
     if (isProtectedStatus(candidate.status)) {
-      // Pipeline state set manually by recruiter — never overwrite.
-      // We still create the ContactEvent (recruiter wants to see the touch)
-      // but skip the status flip.
-      newStatus = undefined;
-    } else if (candidate.status !== mapping.mapped) {
-      newStatus = mapping.mapped;
+      newStatus = undefined; // pipeline state wins
+    } else if (candidate.status !== "declined") {
+      newStatus = "declined";
     }
   }
 
@@ -206,12 +209,22 @@ export async function executePlan(args: {
 
     if (plan.addContactEvent) {
       const date = plan.sheetRow.lastContacted ?? fallback;
+      // Use the sheet's Owner column as the display name on the
+      // ContactEvent so the candidate-card blue-dot tooltip reads
+      // "Messaged by Baeley · 13 May 2026" instead of "Messaged by
+      // Contact-sheet sync …". The userId stays synthetic so we can
+      // tell sheet-sourced events apart from in-app ones.
+      const ownerName = plan.sheetRow.owner?.trim();
+      const userName = ownerName || SYNC_USER_NAME;
+      const userId   = ownerName
+        ? `sheet-sync:${ownerName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+        : SYNC_USER_ID;
       await db.contactEvent.create({
         data: {
           candidateId: plan.candidateId,
           orgId: args.orgId,
-          userId: SYNC_USER_ID,
-          userName: SYNC_USER_NAME,
+          userId,
+          userName,
           jobId: plan.jobId,
           type: "email",
           note: plan.sheetRow.notes?.trim() || null,

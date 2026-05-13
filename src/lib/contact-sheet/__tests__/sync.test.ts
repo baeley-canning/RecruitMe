@@ -27,7 +27,11 @@ const row = (over: Partial<SheetRow>): SheetRow => ({
 });
 
 describe("planSync", () => {
-  it("matches tab to job + flips new→contacted on 'JD sent'", () => {
+  it("matches tab to job + creates ContactEvent on 'JD sent' WITHOUT changing Candidate.status", () => {
+    // Existing UX: contacts surface via the blue-dot ContactEvent indicator
+    // on the candidate card. The sync should NEVER flip Candidate.status
+    // to "contacted" — that would clobber the recruiter's pipeline state
+    // AND hide the per-event userName attribution shown by the dot.
     const candidatesByKey = new Map([[`job1::https://www.linkedin.com/in/rohit-prasad-7a440040`, cand({})]]);
     const { plans, unmatchedTabs } = planSync({
       tabs: new Map([["Technical Support & Sales Engineer ADR", [row({})]]]),
@@ -39,13 +43,15 @@ describe("planSync", () => {
     expect(plans).toHaveLength(1);
     expect(plans[0].action).toBe("update");
     if (plans[0].action === "update") {
-      expect(plans[0].newStatus).toBe("contacted");
+      expect(plans[0].newStatus).toBeUndefined();
       expect(plans[0].addContactEvent).toBe(true);
       expect(plans[0].jobId).toBe("job1");
     }
   });
 
-  it("does NOT overwrite a candidate already at 'shortlisted' (protected status)", () => {
+  it("ContactEvent is added even when candidate is already at a protected pipeline state", () => {
+    // 'shortlisted' is protected for STATUS overwrites — but we still
+    // want to record the touch so the blue-dot tooltip shows it.
     const candidatesByKey = new Map([
       [`job1::https://www.linkedin.com/in/rohit-prasad-7a440040`, cand({ status: "shortlisted" })],
     ]);
@@ -57,7 +63,6 @@ describe("planSync", () => {
     });
     expect(plans[0].action).toBe("update");
     if (plans[0].action === "update") {
-      // Status flip is suppressed but ContactEvent still added — the touch is real.
       expect(plans[0].newStatus).toBeUndefined();
       expect(plans[0].addContactEvent).toBe(true);
     }
