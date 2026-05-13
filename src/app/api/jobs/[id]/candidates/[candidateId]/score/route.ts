@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
-import { withRetry } from "@/lib/ai/chat";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
@@ -36,14 +35,16 @@ export async function POST(
       : null;
     const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
-    // Wrapped in withRetry to match score-all behaviour. Without this a
-    // single transient 429/502/503 from Anthropic surfaces as a hard error
-    // to the recruiter clicking Re-score, while the same transient handled
-    // by score-all retries silently. Inconsistent resilience confused
-    // recruiters who'd see "scoring failed" on manual click but not bulk.
+    // No withRetry wrapper — scoreCandidateStructured / predictAcceptance
+    // both route through chatWithFailover, which already attempts the
+    // secondary provider (OpenAI) on any Claude error. Stacking a
+    // 3-attempt retry on top would mean a single Claude outage burns
+    // up to 6 paid API calls per Re-score click (3 × Claude + 3 ×
+    // OpenAI). The failover wrapper is the resilience layer; one
+    // primary attempt + one secondary attempt is enough.
     const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-      withRetry(() => scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId)),
-      withRetry(() => predictAcceptance(candidate.profileText!, parsedRole, salary)),
+      scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId),
+      predictAcceptance(candidate.profileText!, parsedRole, salary),
     ]);
 
     if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;

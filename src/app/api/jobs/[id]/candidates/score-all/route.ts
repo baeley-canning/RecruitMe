@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured, predictAcceptance, withRetry } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
@@ -119,9 +119,15 @@ export async function POST(
             });
 
             try {
+              // No withRetry wrapper here — scoreCandidateStructured /
+              // predictAcceptance already route through chatWithFailover,
+              // which retries internally (primary → secondary). Stacking
+              // a 3-attempt withRetry on top means a single Claude
+              // outage triggers up to 6 paid API calls per candidate
+              // (3 × Claude + 3 × OpenAI) instead of 2.
               const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-                withRetry(() => scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId, recruiterContext)),
-                withRetry(() => predictAcceptance(candidate.profileText!, parsedRole, salary)),
+                scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId, recruiterContext),
+                predictAcceptance(candidate.profileText!, parsedRole, salary),
               ]);
               if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
               const breakdown = applyLocationFitOverride(

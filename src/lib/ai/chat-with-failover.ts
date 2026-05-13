@@ -141,8 +141,13 @@ export async function chatWithFailover(
       console.log(`[chat-failover] ✓ RECOVERED via ${secondary} — durationMs=${durationMs} chars=${text.length}`);
       return { text, source: secondary, failoverReason: reason, durationMs };
     } catch (secondaryErr) {
-      recordProviderFailure(secondary, secondaryErr instanceof Error ? secondaryErr.message : String(secondaryErr));
-      console.warn(`[chat-failover] ${secondary} also failed — re-throwing original ${preferred} error`);
+      const secondaryMsg = secondaryErr instanceof Error ? secondaryErr.message : String(secondaryErr);
+      recordProviderFailure(secondary, secondaryMsg);
+      // Surface the actual secondary error reason — without this, "openai
+      // also failed" appears for any reason (bad key, no credits, wrong
+      // model, network) and there's no way to tell which.
+      const secondaryReason = summariseError(secondaryErr);
+      console.warn(`[chat-failover] ${secondary} also failed (${secondaryReason}) — re-throwing original ${preferred} error`);
       throw primaryErr;
     }
   }
