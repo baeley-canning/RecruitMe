@@ -33,16 +33,17 @@ export function getJobParsingProvider(): ChatProvider | undefined {
   return process.env.ANTHROPIC_API_KEY ? "claude" : undefined;
 }
 
-// Model tiering within Claude: Sonnet for full profiles where judgment matters,
-// Haiku for snippets (provisional scores that get replaced when a full profile
-// is captured anyway — no point spending Sonnet tokens on them).
-export function resolveModelForDataQuality(dataQuality: "full_profile" | "snippet" | "minimal"): {
+// Model tiering: all Claude calls now go through Haiku 4.5 to cut spend.
+// Previously Sonnet was forced for full-profile work — switched per the
+// user's "use 4.5 for now" directive after a $10 rescore burn.
+// resolveModelForDataQuality is kept as the seam so we can re-introduce
+// per-quality tiering later (Opus for full, Haiku for snippets, etc.)
+// without rewriting call sites.
+export function resolveModelForDataQuality(_dataQuality: "full_profile" | "snippet" | "minimal"): {
   provider: ChatProvider;
   model?: string;
 } {
-  return dataQuality === "full_profile"
-    ? { provider: "claude", model: SONNET }
-    : { provider: "claude" }; // defaults to ANTHROPIC_MODEL env var (Haiku)
+  return { provider: "claude" }; // defaults to ANTHROPIC_MODEL env var (Haiku 4.5)
 }
 
 export async function chat(
@@ -256,4 +257,10 @@ function repairTruncatedJson(input: string): string[] {
   return candidates;
 }
 
-export const SONNET = "claude-sonnet-4-6";
+// Premium-model knob. Was Sonnet 4.6; flipped to Haiku 4.5 to reduce
+// per-rescore cost (Sonnet input is ~12× Haiku, output ~5×). All call
+// sites that previously forced `{ model: SONNET }` will now pin to
+// Haiku 4.5 explicitly — which matches the default anyway, so behaviour
+// is uniform across scoring, parsing, profile extraction.
+// Restore "claude-sonnet-4-6" here if you want premium-tier work back.
+export const SONNET = "claude-haiku-4-5-20251001";

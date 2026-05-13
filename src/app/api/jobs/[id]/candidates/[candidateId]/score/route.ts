@@ -35,6 +35,28 @@ export async function POST(
       : null;
     const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
+    // Cache hit: profile text + role + salary + location + weights all
+    // match what was previously scored. Skip the API call entirely and
+    // return the existing record. This is what makes re-pulling a
+    // library candidate against the same job cost-free.
+    const scoreCacheKey = buildScoreCacheKey({
+      profileText: candidate.profileText,
+      parsedRole,
+      salary,
+      jobLocation: job.location,
+      jobLocation2: job.location2,
+      isRemote: job.isRemote,
+      weights,
+    });
+    if (
+      candidate.profileTextHash === scoreCacheKey &&
+      candidate.matchScore !== null &&
+      candidate.scoreBreakdown
+    ) {
+      console.log(`[score] cache hit for candidate=${candidateId} — skipping API`);
+      return NextResponse.json(candidate);
+    }
+
     // No withRetry wrapper — scoreCandidateStructured / predictAcceptance
     // both route through chatWithFailover, which already attempts the
     // secondary provider (OpenAI) on any Claude error. Stacking a
@@ -86,15 +108,7 @@ export async function POST(
       where: { id: candidateId },
       data: {
         ...deriveUpdateData(breakdown),
-        profileTextHash: buildScoreCacheKey({
-          profileText: candidate.profileText,
-          parsedRole,
-          salary,
-          jobLocation: job.location,
-          jobLocation2: job.location2,
-          isRemote: job.isRemote,
-          weights,
-        }),
+        profileTextHash: scoreCacheKey,
         ...(acceptanceData && {
           acceptanceScore: acceptanceData.score,
           acceptanceReason: JSON.stringify(acceptanceData),

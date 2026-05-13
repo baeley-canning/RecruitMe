@@ -69,6 +69,12 @@ export async function POST(
       id: true,
       profileText: true,
       location: true,
+      // Cache-hit signal: skip the API call when these match the freshly
+      // computed cache key. Avoids re-scoring candidates whose profile +
+      // role + salary + weights haven't materially changed.
+      profileTextHash: true,
+      matchScore: true,
+      scoreBreakdown: true,
     },
   });
 
@@ -90,6 +96,7 @@ export async function POST(
 
   const total = candidates.length;
   let scored = 0;
+  let cached = 0;
   const failed: string[] = [];
   const encoder = new TextEncoder();
 
@@ -117,6 +124,22 @@ export async function POST(
               isRemote: job.isRemote,
               weights,
             });
+
+            // Cache hit: profile text + role + salary + location + weights
+            // all match what was previously scored. Skip the API call
+            // entirely. Saves Sonnet/Haiku tokens on every re-pull of a
+            // candidate that hasn't materially changed. Only writes the
+            // hash + matchScore are already present — if the candidate has
+            // a stored hash but no score (rare), fall through and rescore.
+            if (
+              candidate.profileTextHash === scoreCacheKey &&
+              candidate.matchScore !== null &&
+              candidate.scoreBreakdown
+            ) {
+              cached++;
+              send({ scored, cached, total });
+              return;
+            }
 
             try {
               // No withRetry wrapper here — scoreCandidateStructured /
@@ -151,7 +174,7 @@ export async function POST(
                 },
               });
               scored++;
-              send({ scored, total });
+              send({ scored, cached, total });
             } catch (err) {
               reportError(err, { route: "score-all", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
               failed.push(candidate.id);
@@ -161,11 +184,11 @@ export async function POST(
       }
 
       // Final message signals completion to the client, including any failures.
-      send({ scored, total, done: true, ...(failed.length > 0 && { failedIds: failed }) });
+      send({ scored, cached, total, done: true, ...(failed.length > 0 && { failedIds: failed }) });
       controller.close();
 
-      console.log(`[score-all] scored=${scored} of ${total}`);
-      void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored });
+      console.log(`[score-all] scored=${scored} cached=${cached} of ${total}`);
+      void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored, cached });
     },
   });
 
