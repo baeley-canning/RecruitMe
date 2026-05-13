@@ -664,6 +664,7 @@ function ProfileDrawer({
   jobId,
   onClose,
   onLinkedInChange,
+  onJobAdderChange,
   onFetchProfile,
   fetchingProfile = false,
   fetchQueueState,
@@ -672,6 +673,7 @@ function ProfileDrawer({
   jobId: string;
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
+  onJobAdderChange?: (id: string, url: string) => void;
   onFetchProfile?: (id: string) => void;
   fetchingProfile?: boolean;
   fetchQueueState?: FetchState;
@@ -706,6 +708,22 @@ function ProfileDrawer({
     setEditingLinkedIn(false);
   }, [candidate.id, linkedInInput, onLinkedInChange]);
 
+  // JobAdder URL edit — mirrors the LinkedIn pattern so a recruiter can
+  // attach / fix a JobAdder link from the same side panel they see the
+  // candidate in, without opening the expanded card.
+  const [editingJobAdder, setEditingJobAdder] = useState(false);
+  const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
+  const [jobAdderSaveError, setJobAdderSaveError] = useState<string | null>(null);
+  const handleSaveJobAdder = useCallback(async () => {
+    try {
+      await onJobAdderChange?.(candidate.id, jobAdderInput.trim());
+      setEditingJobAdder(false);
+      setJobAdderSaveError(null);
+    } catch {
+      setJobAdderSaveError("Failed to save — try again");
+    }
+  }, [candidate.id, jobAdderInput, onJobAdderChange]);
+
   return (
     <>
       {/* Backdrop */}
@@ -734,6 +752,9 @@ function ProfileDrawer({
                   <LinkedInIcon className="w-3.5 h-3.5" />
                 </a>
               )}
+              {!editingJobAdder && (
+                <JobAdderBadge url={candidate.jobAdderUrl} className="w-3.5 h-3.5 text-[8px]" />
+              )}
             </div>
             {/* LinkedIn edit */}
             {editingLinkedIn ? (
@@ -753,7 +774,7 @@ function ProfileDrawer({
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 mt-0.5">
+              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                 {candidate.headline && <p className="text-base text-text-secondary">{candidate.headline}</p>}
                 <button
                   onClick={() => { setLinkedInInput(candidate.linkedinUrl ?? ""); setEditingLinkedIn(true); }}
@@ -761,6 +782,35 @@ function ProfileDrawer({
                 >
                   {candidate.linkedinUrl ? "Edit LinkedIn" : "Add LinkedIn"}
                 </button>
+                {onJobAdderChange && (
+                  <button
+                    onClick={() => { setJobAdderInput(candidate.jobAdderUrl ?? ""); setJobAdderSaveError(null); setEditingJobAdder(true); }}
+                    className="text-xs text-text-tertiary hover:text-accent underline underline-offset-2 transition-colors flex-shrink-0"
+                  >
+                    {candidate.jobAdderUrl ? "Edit JobAdder" : "Add JobAdder"}
+                  </button>
+                )}
+              </div>
+            )}
+            {editingJobAdder && (
+              <div className="mt-1.5">
+                <input
+                  type="url"
+                  value={jobAdderInput}
+                  onChange={(e) => setJobAdderInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveJobAdder();
+                    if (e.key === "Escape") { setEditingJobAdder(false); setJobAdderSaveError(null); }
+                  }}
+                  placeholder="https://recruit.jobadder.com/#/candidates/..."
+                  className="w-full h-7 text-md px-2.5 rounded bg-surface-sunken border border-separator text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+                  autoFocus
+                />
+                <div className="flex gap-2 mt-1 items-center">
+                  <button onClick={handleSaveJobAdder} className="text-xs text-accent font-medium hover:text-accent-hover">Save</button>
+                  <button onClick={() => { setEditingJobAdder(false); setJobAdderSaveError(null); }} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
+                  {jobAdderSaveError && <span className="text-xs text-danger">{jobAdderSaveError}</span>}
+                </div>
               </div>
             )}
             {candidate.location && (
@@ -1680,6 +1730,7 @@ export const CandidateCard = memo(function CandidateCard({
           jobId={jobId}
           onClose={() => setShowProfile(false)}
           onLinkedInChange={onLinkedInChange}
+          onJobAdderChange={onJobAdderChange}
           onFetchProfile={onFetchProfile}
           fetchingProfile={fetchingProfile}
           fetchQueueState={fetchQueueState}
