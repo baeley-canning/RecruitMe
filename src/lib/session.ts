@@ -173,3 +173,37 @@ export function jobsWhere(auth: AuthResult) {
   if (auth.isOwner) return {};
   return { orgId: auth.orgId };
 }
+
+/**
+ * Jobs for the sidebar, ordered by most-recent activity descending.
+ * "Activity" = the latest of the Job's own updatedAt and the latest
+ * Candidate.updatedAt on the job — so adding/scoring/editing a candidate
+ * bubbles the job to the top, not just edits to the job itself.
+ */
+export async function getSidebarJobs(auth: AuthResult) {
+  const rows = await prisma.job.findMany({
+    where: jobsWhere(auth),
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      status: true,
+      updatedAt: true,
+      _count: { select: { candidates: true } },
+      candidates: {
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+        select: { updatedAt: true },
+      },
+    },
+  });
+
+  return rows
+    .map((j) => {
+      const latestCand = j.candidates[0]?.updatedAt;
+      const activityAt = latestCand && latestCand > j.updatedAt ? latestCand : j.updatedAt;
+      return { id: j.id, title: j.title, company: j.company, status: j.status, _count: j._count, activityAt };
+    })
+    .sort((a, b) => b.activityAt.getTime() - a.activityAt.getTime())
+    .map(({ activityAt: _a, ...rest }) => rest);
+}

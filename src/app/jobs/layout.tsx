@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/db";
 import { Sidebar, SidebarWrapper } from "@/components/sidebar";
-import { getAuth, jobsWhere } from "@/lib/session";
+import { getAuth, getSidebarJobs } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -13,18 +12,7 @@ export default async function JobsLayout({
   const auth = await getAuth();
   if (!auth) redirect("/login");
 
-  const where = jobsWhere(auth);
-  const jobs = await prisma.job.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      title: true,
-      company: true,
-      status: true,
-      _count: { select: { candidates: true } },
-    },
-  });
+  const jobs = await getSidebarJobs(auth);
 
   return (
     <SidebarWrapper>
