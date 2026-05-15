@@ -322,11 +322,17 @@ model UsageEvent {
   id        String   @id @default(cuid())
   orgId     String?
   userId    String?
-  type      String   // "search" | "score" | "score_all" | "capture" | "parse"
+  type      String   // "search" | "score" | "score_all" | "capture" | "parse" | "ai_call"
   meta      String?  // JSON: extra context (jobId, count, etc.)
+  // AI cost tracking — populated on type="ai_call" events written by chat.ts.
+  // Nullable so the existing rate-limit event types (score, parse, etc.) keep working.
+  inputTokens  Int?
+  outputTokens Int?
+  costUsd      Float?
   createdAt DateTime @default(now())
 
   @@index([orgId, type, createdAt])
+  @@index([orgId, createdAt])
 }
 
 model ReferenceCheck {

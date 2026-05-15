@@ -23,17 +23,31 @@
  */
 
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { getAuth } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { fetchAllTabs } from "@/lib/contact-sheet/fetch-google";
 import { executePlan, planSync, summarisePlans } from "@/lib/contact-sheet/sync";
 import type { SyncSummary } from "@/lib/contact-sheet/types";
+import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
+
+const SYNC_LOCK_NAME = "contact-sheet-sync";
+
+/** Constant-time compare that bails on length mismatch before timingSafeEqual
+ *  (which throws on unequal-length buffers). Both args required to be non-empty. */
+function secretsMatch(provided: string | null | undefined, expected: string | undefined): boolean {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 export async function POST(req: Request): Promise<NextResponse<SyncSummary | { error: string }>> {
   const cronSecret = req.headers.get("x-cron-secret");
   const expectedSecret = process.env.CONTACT_SYNC_CRON_SECRET;
-  const cronAuth = Boolean(expectedSecret && cronSecret === expectedSecret);
+  const cronAuth = secretsMatch(cronSecret, expectedSecret);
 
   let orgId: string | null = null;
   if (!cronAuth) {
@@ -69,71 +83,85 @@ export async function POST(req: Request): Promise<NextResponse<SyncSummary | { e
     );
   }
 
-  const startedAt = new Date();
+  // Prevent concurrent runs. Railway cron may retry, and the user can hit
+  // this manually mid-cron — both would double-write ContactEvents.
+  const lockAcquired = await tryAcquireLock(SYNC_LOCK_NAME);
+  if (!lockAcquired) {
+    return NextResponse.json(
+      { error: "Sync already in progress — try again in a minute" },
+      { status: 409 },
+    );
+  }
 
-  // 1. Pull the sheet.
-  let tabs: Awaited<ReturnType<typeof fetchAllTabs>>;
   try {
-    tabs = await fetchAllTabs({ sheetId, credentials: creds });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[contact-sheet] fetch failed: ${msg}`);
-    return NextResponse.json({ error: `Sheet fetch failed: ${msg}` }, { status: 502 });
+    const startedAt = new Date();
+
+    // 1. Pull the sheet.
+    let tabs: Awaited<ReturnType<typeof fetchAllTabs>>;
+    try {
+      tabs = await fetchAllTabs({ sheetId, credentials: creds });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[contact-sheet] fetch failed: ${msg}`);
+      return NextResponse.json({ error: `Sheet fetch failed: ${msg}` }, { status: 502 });
+    }
+
+    // 2. Load active jobs + candidates in this org so the planner can
+    //    decide everything without further DB chatter.
+    const activeJobs = await prisma.job.findMany({
+      where: { orgId: resolvedOrgId, status: "active" },
+      select: { id: true, title: true, orgId: true },
+    });
+    const jobIds = activeJobs.map((j) => j.id);
+
+    const candidates = jobIds.length > 0
+      ? await prisma.candidate.findMany({
+          where: { jobId: { in: jobIds }, linkedinUrl: { not: null } },
+          select: { id: true, jobId: true, linkedinUrl: true, status: true, notes: true },
+        })
+      : [];
+
+    const candidatesByKey = new Map<string, { id: string; jobId: string; linkedinUrl: string; status: string; notes: string | null }>();
+    for (const c of candidates) {
+      if (!c.linkedinUrl || !c.jobId) continue;
+      const norm = normaliseLinkedInUrl(c.linkedinUrl);
+      candidatesByKey.set(`${c.jobId}::${norm}`, { ...c, jobId: c.jobId, linkedinUrl: norm });
+    }
+
+    // ContactEvents are queried by (candidateId, type, day) — pull all
+    // existing events for these candidates in one query and bucket them
+    // by `${candidateId}::${YYYY-MM-DD}` so the planner can skip dupes.
+    const candidateIds = candidates.map((c) => c.id);
+    const existingEvents = candidateIds.length > 0
+      ? await prisma.contactEvent.findMany({
+          where: { candidateId: { in: candidateIds }, orgId: resolvedOrgId },
+          select: { candidateId: true, createdAt: true },
+        })
+      : [];
+    const contactEventDayKeys = new Set(
+      existingEvents.map((e) => `${e.candidateId}::${e.createdAt.toISOString().slice(0, 10)}`),
+    );
+
+    // 3. Plan + execute.
+    const { plans, unmatchedTabs } = planSync({
+      tabs,
+      activeJobs,
+      candidatesByKey,
+      contactEventDayKeys,
+    });
+    const { updated } = await executePlan({ plans, orgId });
+
+    const finishedAt = new Date();
+    const summary = summarisePlans(plans, unmatchedTabs, startedAt, finishedAt, updated);
+    summary.tabsProcessed = tabs.size;
+
+    console.log(
+      `[contact-sheet] sync done — tabs=${summary.tabsProcessed} rows=${summary.rowsScanned} ` +
+      `updated=${summary.rowsUpdated} skipped=${summary.rowsSkipped} ` +
+      `unmatched_tabs=${unmatchedTabs.length} duration=${summary.durationMs}ms`,
+    );
+    return NextResponse.json(summary);
+  } finally {
+    await releaseLock(SYNC_LOCK_NAME);
   }
-
-  // 2. Load active jobs + candidates in this org so the planner can
-  //    decide everything without further DB chatter.
-  const activeJobs = await prisma.job.findMany({
-    where: { orgId: resolvedOrgId, status: "active" },
-    select: { id: true, title: true, orgId: true },
-  });
-  const jobIds = activeJobs.map((j) => j.id);
-
-  const candidates = jobIds.length > 0
-    ? await prisma.candidate.findMany({
-        where: { jobId: { in: jobIds }, linkedinUrl: { not: null } },
-        select: { id: true, jobId: true, linkedinUrl: true, status: true, notes: true },
-      })
-    : [];
-
-  const candidatesByKey = new Map<string, { id: string; jobId: string; linkedinUrl: string; status: string; notes: string | null }>();
-  for (const c of candidates) {
-    if (!c.linkedinUrl || !c.jobId) continue;
-    const norm = normaliseLinkedInUrl(c.linkedinUrl);
-    candidatesByKey.set(`${c.jobId}::${norm}`, { ...c, jobId: c.jobId, linkedinUrl: norm });
-  }
-
-  // ContactEvents are queried by (candidateId, type, day) — pull all
-  // existing events for these candidates in one query and bucket them
-  // by `${candidateId}::${YYYY-MM-DD}` so the planner can skip dupes.
-  const candidateIds = candidates.map((c) => c.id);
-  const existingEvents = candidateIds.length > 0
-    ? await prisma.contactEvent.findMany({
-        where: { candidateId: { in: candidateIds }, orgId: resolvedOrgId },
-        select: { candidateId: true, createdAt: true },
-      })
-    : [];
-  const contactEventDayKeys = new Set(
-    existingEvents.map((e) => `${e.candidateId}::${e.createdAt.toISOString().slice(0, 10)}`),
-  );
-
-  // 3. Plan + execute.
-  const { plans, unmatchedTabs } = planSync({
-    tabs,
-    activeJobs,
-    candidatesByKey,
-    contactEventDayKeys,
-  });
-  const { updated } = await executePlan({ plans, orgId });
-
-  const finishedAt = new Date();
-  const summary = summarisePlans(plans, unmatchedTabs, startedAt, finishedAt, updated);
-  summary.tabsProcessed = tabs.size;
-
-  console.log(
-    `[contact-sheet] sync done — tabs=${summary.tabsProcessed} rows=${summary.rowsScanned} ` +
-    `updated=${summary.rowsUpdated} skipped=${summary.rowsSkipped} ` +
-    `unmatched_tabs=${unmatchedTabs.length} duration=${summary.durationMs}ms`,
-  );
-  return NextResponse.json(summary);
 }

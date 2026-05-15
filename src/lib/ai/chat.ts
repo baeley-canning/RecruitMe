@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
+import { recordAiCall } from "../usage";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude and OpenAI so all AI functions stay clean.
@@ -23,6 +24,15 @@ export interface ChatOptions {
    * prompt cache can de-duplicate it across calls. Only relevant for Claude.
    */
   cacheSystem?: boolean;
+  /** Org + user attribution for cost tracking. When set, a UsageEvent of
+   *  type "ai_call" is written with token counts and computed USD cost
+   *  so checkSpendCap() can enforce daily ceilings. Omit for unattributed
+   *  callers (e.g. health probes); their cost goes uncounted. */
+  orgId?: string | null;
+  userId?: string | null;
+  /** Free-form tag stored on the UsageEvent meta — useful for filtering
+   *  ("score-all", "score", "parse", "extension-match"). */
+  costTag?: string;
 }
 
 export function resolveChatProvider(override?: ChatProvider): ChatProvider {
@@ -96,6 +106,15 @@ export async function chat(
     if (response.usage) {
       const { input_tokens, output_tokens } = response.usage;
       console.log(`[ai] model=${model} input=${input_tokens} output=${output_tokens}`);
+      // Persist cost so checkSpendCap can enforce a daily ceiling.
+      void recordAiCall({
+        orgId:        options?.orgId,
+        userId:       options?.userId,
+        model,
+        inputTokens:  input_tokens,
+        outputTokens: output_tokens,
+        meta:         options?.costTag ? { tag: options.costTag } : undefined,
+      });
     }
     recordProviderSuccess("claude");
 
@@ -120,6 +139,17 @@ export async function chat(
       temperature,
       max_tokens: maxTokens,
     });
+
+    if (response.usage) {
+      void recordAiCall({
+        orgId:        options?.orgId,
+        userId:       options?.userId,
+        model,
+        inputTokens:  response.usage.prompt_tokens,
+        outputTokens: response.usage.completion_tokens,
+        meta:         options?.costTag ? { tag: options.costTag } : undefined,
+      });
+    }
 
     return response.choices[0]?.message?.content ?? "";
   }

@@ -5,7 +5,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
-import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getRecruitingContext } from "@/lib/recruiter-memory";
 import { reportError } from "@/lib/error-reporting";
@@ -35,6 +35,16 @@ export async function POST(
   if (!rateCheck.allowed) {
     const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
     return NextResponse.json({ error: `Score-all rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+
+  // Cost ceiling — the per-event rate-limit caps call *count* but not *spend*.
+  // The $10 burn that motivated this came from rescoring 30 candidates well
+  // under the 20/hr score_all cap; a daily USD cap is the real safety net.
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json({
+      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+    }, { status: 429 });
   }
 
   // Conditional cooldown stamp — only one score-all run can claim the job at

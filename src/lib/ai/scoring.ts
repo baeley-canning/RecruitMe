@@ -612,6 +612,11 @@ ${escapeXmlForPrompt(profileSlice)}
     // Cache the system block — Anthropic charges ~0.1× input cost on cache
     // hits. The static rules are identical across every scoring call.
     cacheSystem: true,
+    // Attribute the AI cost to the org so checkSpendCap can enforce a
+    // daily ceiling. orgId may be null for owner-only flows; that's fine
+    // — the spend lands on the "null org" bucket which also has a cap.
+    orgId,
+    costTag: "score",
   };
   // Track which model actually produced this score. The failover wrapper
   // handles primary-vs-secondary internally; we just unpack `source` so
@@ -889,6 +894,8 @@ ${candidatesBlock}
         ...resolveModelForDataQuality(bestQuality),
         system: systemInstructions,
         cacheSystem: true,
+        orgId,
+        costTag: "score_batch",
       };
       const batchSourceRef: { value: ChatSource } = { value: "claude" };
       const text = await withRetry(async () => {

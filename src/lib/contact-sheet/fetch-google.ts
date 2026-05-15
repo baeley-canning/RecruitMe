@@ -33,6 +33,21 @@ interface FetchOptions {
   credentials: object | string;
   /** Tabs to skip entirely (case-insensitive). Default: ["Template"]. */
   skipTabs?: string[];
+  /** Per-request timeout in ms (applies to each Sheets API call). Default 30s. */
+  timeoutMs?: number;
+}
+
+/** Promise.race-based timeout. Doesn't truly abort the request (gaxios's signal
+ *  support is version-dependent and unreliable), but guarantees the caller
+ *  doesn't hang forever — which is the actual operational requirement here. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race<T>([
+    p.finally(() => { if (timer) clearTimeout(timer); }),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
 }
 
 export async function fetchAllTabs(opts: FetchOptions): Promise<Map<string, SheetRow[]>> {
@@ -47,9 +62,14 @@ export async function fetchAllTabs(opts: FetchOptions): Promise<Map<string, Shee
   });
 
   const sheets = google.sheets({ version: "v4", auth });
+  const timeoutMs = opts.timeoutMs ?? 30_000;
 
   // List all tab names in the spreadsheet.
-  const meta = await sheets.spreadsheets.get({ spreadsheetId: opts.sheetId });
+  const meta = await withTimeout(
+    sheets.spreadsheets.get({ spreadsheetId: opts.sheetId }),
+    timeoutMs,
+    "Sheets metadata",
+  );
   const tabNames = (meta.data.sheets ?? [])
     .map((s) => s.properties?.title ?? "")
     .filter(Boolean);
@@ -60,10 +80,14 @@ export async function fetchAllTabs(opts: FetchOptions): Promise<Map<string, Shee
   for (const tabName of tabNames) {
     if (skip.has(tabName.toLowerCase())) continue;
     const range = `'${tabName}'!A1:Z`;
-    const resp = await sheets.spreadsheets.values.get({
-      spreadsheetId: opts.sheetId,
-      range,
-    });
+    const resp = await withTimeout(
+      sheets.spreadsheets.values.get({
+        spreadsheetId: opts.sheetId,
+        range,
+      }),
+      timeoutMs,
+      `Sheets values for tab "${tabName}"`,
+    );
     const values = resp.data.values ?? [];
     if (values.length < 2) continue; // header only or empty
 
