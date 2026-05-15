@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
+import { Modal } from "./ui/modal";
 
 interface OutreachMessage {
   linkedin: string;
@@ -43,14 +44,18 @@ export function OutreachModal({ jobId, candidateId, candidateName, onClose }: Ou
   useEffect(() => { generate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
-      <div className="bg-surface-overlay rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto border border-separator" onClick={(e) => e.stopPropagation()}>
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy="outreach-modal-title"
+      className="bg-surface-overlay rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto border border-separator"
+    >
         <div className="flex items-center justify-between px-6 py-4 border-b border-separator">
           <div>
-            <h3 className="text-md font-semibold text-text-primary">Outreach Message</h3>
+            <h3 id="outreach-modal-title" className="text-md font-semibold text-text-primary">Outreach Message</h3>
             <p className="text-xs text-text-secondary mt-0.5">Personalised for {candidateName}</p>
           </div>
-          <button onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors">
+          <button onClick={onClose} aria-label="Close" className="text-text-tertiary hover:text-text-primary transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -118,7 +123,6 @@ export function OutreachModal({ jobId, candidateId, candidateName, onClose }: Ou
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

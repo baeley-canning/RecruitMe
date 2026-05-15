@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { X, Loader2, Copy, Check } from "lucide-react";
+import { Modal } from "./ui/modal";
 
 interface RejectionEmailModalProps {
   jobId: string;
@@ -35,14 +36,18 @@ export function RejectionEmailModal({ jobId, candidateId, candidateName, onClose
   useEffect(() => { generate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[1210] p-4" onClick={onClose}>
-      <div className="bg-surface-overlay rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto border border-separator" onClick={(e) => e.stopPropagation()}>
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy="rejection-modal-title"
+      className="bg-surface-overlay rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto border border-separator"
+    >
         <div className="flex items-center justify-between px-6 py-4 border-b border-separator">
           <div>
-            <h3 className="text-md font-semibold text-text-primary">Rejection Email</h3>
+            <h3 id="rejection-modal-title" className="text-md font-semibold text-text-primary">Rejection Email</h3>
             <p className="text-xs text-text-secondary mt-0.5">Drafted for {candidateName}</p>
           </div>
-          <button onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors">
+          <button onClick={onClose} aria-label="Close" className="text-text-tertiary hover:text-text-primary transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -80,7 +85,6 @@ export function RejectionEmailModal({ jobId, candidateId, candidateName, onClose
             </>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

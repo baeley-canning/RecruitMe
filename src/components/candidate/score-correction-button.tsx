@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, X, Loader2 } from "lucide-react";
+import { Check, X, Loader2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ScoreCorrectionButtonProps {
@@ -67,10 +67,15 @@ export function ScoreCorrectionButton({
     return (
       <button
         onClick={() => setOpen(true)}
-        className="text-2xs text-text-tertiary hover:text-accent underline underline-offset-2"
-        title="Tell the AI this score is off"
+        aria-label="Train the AI: tell it this score is off"
+        className={cn(
+          "inline-flex items-center gap-1 h-6 px-2 rounded-sm text-xs font-medium",
+          "bg-surface-hover text-text-secondary hover:text-accent hover:bg-accent-subtle",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors",
+        )}
       >
-        Score off? Train it
+        <Pencil className="w-3 h-3" />
+        Score off?
       </button>
     );
   }

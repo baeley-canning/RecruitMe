@@ -6,6 +6,7 @@ import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmar
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
+import { Modal } from "./ui/modal";
 
 interface Job {
   id: string;
@@ -65,10 +66,14 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-surface-overlay border border-separator rounded-xl w-full max-w-md mx-4 shadow-overlay">
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy="settings-modal-title"
+      className="bg-surface-overlay border border-separator rounded-xl w-full max-w-md mx-4 shadow-overlay"
+    >
         <div className="flex items-center justify-between px-5 py-3 border-b border-separator">
-          <h2 className="text-text-primary font-semibold text-md">API Keys</h2>
+          <h2 id="settings-modal-title" className="text-text-primary font-semibold text-md">API Keys</h2>
           <button
             onClick={onClose}
             className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
@@ -143,8 +148,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             {saved ? "Saved" : saving ? "Saving…" : "Save Keys"}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

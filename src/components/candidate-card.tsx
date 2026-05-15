@@ -247,7 +247,7 @@ function AcceptanceBadge({
 }) {
   const [showDetail, setShowDetail] = useState(false);
   const [tooltipPos, setTooltipPos] = useState({ top: 0, right: 0 });
-  const badgeRef = useRef<HTMLDivElement>(null);
+  const badgeRef = useRef<HTMLButtonElement>(null);
 
   if (score == null) return null;
 
@@ -259,7 +259,7 @@ function AcceptanceBadge({
     low:    { pill: "bg-surface-hover  text-text-tertiary", label: "Hard to move", Icon: TrendingDown },
   }[level];
 
-  const handleMouseEnter = () => {
+  const openDetail = () => {
     if (!data) return;
     if (badgeRef.current) {
       const rect = badgeRef.current.getBoundingClientRect();
@@ -273,19 +273,26 @@ function AcceptanceBadge({
 
   return (
     <>
-      <div
+      <button
         ref={badgeRef}
-        onMouseEnter={handleMouseEnter}
+        type="button"
+        onMouseEnter={openDetail}
         onMouseLeave={() => setShowDetail(false)}
-        title="Offer acceptance likelihood — how likely this candidate is to accept an offer based on their career signals"
+        onFocus={openDetail}
+        onBlur={() => setShowDetail(false)}
+        onClick={() => (showDetail ? setShowDetail(false) : openDetail())}
+        aria-expanded={showDetail}
+        aria-haspopup="dialog"
+        aria-label={`Offer acceptance likelihood: ${config.label} (${score}%). Click for details.`}
         className={cn(
-          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium cursor-default select-none",
+          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium text-left",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent",
           config.pill,
         )}
       >
         <config.Icon className="w-3 h-3" />
         {config.label}
-      </div>
+      </button>
 
       {showDetail && data && (
         <div
@@ -346,7 +353,7 @@ function AcceptanceBadge({
 
 function ConfidenceBadge({ breakdown }: { breakdown: ScoreBreakdown }) {
   const [show, setShow] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState({ top: 0, right: 0 });
 
   const { confidence, data_quality } = breakdown;
@@ -364,26 +371,36 @@ function ConfidenceBadge({ breakdown }: { breakdown: ScoreBreakdown }) {
   }[data_quality];
   const captureWarning = breakdown.profile_capture_warning;
 
+  const openDetail = () => {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+    }
+    setShow(true);
+  };
+
   return (
     <>
-      <div
+      <button
         ref={ref}
-        onMouseEnter={() => {
-          if (ref.current) {
-            const rect = ref.current.getBoundingClientRect();
-            setPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
-          }
-          setShow(true);
-        }}
+        type="button"
+        onMouseEnter={openDetail}
         onMouseLeave={() => setShow(false)}
+        onFocus={openDetail}
+        onBlur={() => setShow(false)}
+        onClick={() => (show ? setShow(false) : openDetail())}
+        aria-expanded={show}
+        aria-haspopup="dialog"
+        aria-label={`Scoring confidence: ${cfg.label} (${confidence.score}%). Click for reasons.`}
         className={cn(
-          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium leading-none cursor-default select-none",
+          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium leading-none text-left",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent",
           cfg.pill,
         )}
       >
         <span className="text-[10px]">◎</span>
         <span className="data-mono">{confidence.score}%</span>
-      </div>
+      </button>
 
       {show && (
         <div
@@ -439,7 +456,7 @@ function FetchPriorityBadge({
   reason: FetchPriorityReason | null;
 }) {
   const [show, setShow] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState({ top: 0, right: 0 });
 
   if (score == null) return null;
@@ -453,26 +470,36 @@ function FetchPriorityBadge({
           ? { pill: "bg-warning-subtle text-warning",    label: "Possible lead" }
           : { pill: "bg-surface-hover text-text-tertiary", label: "Weak lead" };
 
+  const openDetail = () => {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+    }
+    setShow(true);
+  };
+
   return (
     <>
-      <div
+      <button
         ref={ref}
-        onMouseEnter={() => {
-          if (ref.current) {
-            const rect = ref.current.getBoundingClientRect();
-            setPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
-          }
-          setShow(true);
-        }}
+        type="button"
+        onMouseEnter={openDetail}
         onMouseLeave={() => setShow(false)}
+        onFocus={openDetail}
+        onBlur={() => setShow(false)}
+        onClick={() => (show ? setShow(false) : openDetail())}
+        aria-expanded={show}
+        aria-haspopup="dialog"
+        aria-label={`Fetch priority: ${cfg.label} (${score}%). Click for evidence.`}
         className={cn(
-          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium leading-none cursor-default select-none",
+          "inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium leading-none text-left",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent",
           cfg.pill,
         )}
       >
         <Gauge className="w-3 h-3" />
         <span>Fetch <span className="data-mono">{score}%</span></span>
-      </div>
+      </button>
 
       {show && (
         <div
@@ -950,7 +977,7 @@ function ProfileDrawer({
 
           {/* Reasons for / against */}
           {breakdown?.version === 2 && (breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {breakdown.reasons_for?.length > 0 && (
                 <div>
                   <p className="text-2xs font-semibold text-success uppercase tracking-wide mb-2">Reasons for</p>
@@ -1036,7 +1063,7 @@ export const CandidateCard = memo(function CandidateCard({
   const [showReasoning, setShowReasoning] = useState(false);
   const [showRadar, setShowRadar] = useState(false);
   const [radarPos, setRadarPos] = useState({ top: 0, right: 0 });
-  const scoreBadgeRef = useRef<HTMLDivElement>(null);
+  const scoreBadgeRef = useRef<HTMLButtonElement>(null);
   const [editingNotes, setEditingNotes] = useState(false);
   const [notes, setNotes] = useState(candidate.notes ?? "");
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
@@ -1248,10 +1275,11 @@ export const CandidateCard = memo(function CandidateCard({
                 {/* Model provenance pill — Claude or Llama, depending on
                     which model produced the persisted scoreBreakdown. */}
                 <ProvenancePill source={breakdown?.scoredBy} context="match" />
-                {/* Score badge with radar tooltip on hover */}
-                <div
+                {/* Score badge with radar tooltip on hover/focus */}
+                <button
                   ref={scoreBadgeRef}
-                  className="relative"
+                  type="button"
+                  className="relative inline-flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
                   onMouseEnter={() => {
                     if (scoreBadgeRef.current) {
                       const rect = scoreBadgeRef.current.getBoundingClientRect();
@@ -1260,6 +1288,18 @@ export const CandidateCard = memo(function CandidateCard({
                     setShowRadar(true);
                   }}
                   onMouseLeave={() => setShowRadar(false)}
+                  onFocus={() => {
+                    if (scoreBadgeRef.current) {
+                      const rect = scoreBadgeRef.current.getBoundingClientRect();
+                      setRadarPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+                    }
+                    setShowRadar(true);
+                  }}
+                  onBlur={() => setShowRadar(false)}
+                  onClick={() => setShowRadar((s) => !s)}
+                  aria-expanded={showRadar}
+                  aria-haspopup="dialog"
+                  aria-label={`Match score ${candidate.matchScore ?? "pending"}. Click to view score breakdown.`}
                 >
                   <ScoreBadge score={candidate.matchScore} size="sm" />
                   {/* Captured-but-not-yet-scored — Stage 1 of the capture
@@ -1289,7 +1329,7 @@ export const CandidateCard = memo(function CandidateCard({
                       className="absolute -top-1 -left-1 w-2 h-2 bg-warning rounded-full border border-surface-raised"
                     />
                   )}
-                </div>
+                </button>
                 {showRadar && radarDimensions && (
                   <div
                     style={{ position: "fixed", top: radarPos.top, right: radarPos.right, zIndex: 9999 }}
@@ -1354,7 +1394,7 @@ export const CandidateCard = memo(function CandidateCard({
           {breakdown && breakdown.version === 2 && (
             <>
               {(breakdown.reasons_for?.length > 0 || breakdown.reasons_against?.length > 0) && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {breakdown.reasons_for?.length > 0 && (
                     <div>
                       <p className="text-2xs font-semibold text-success uppercase tracking-wide mb-1">Reasons for</p>
@@ -1402,7 +1442,7 @@ export const CandidateCard = memo(function CandidateCard({
 
           {/* v1 fallback: old strengths/gaps grid when no v2 breakdown */}
           {!breakdown && matchReason && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {matchReason.strengths && matchReason.strengths.length > 0 && (
                 <div>
                   <p className="text-2xs font-semibold text-success uppercase tracking-wide mb-1">Strengths</p>
