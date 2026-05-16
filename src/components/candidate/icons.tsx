@@ -11,9 +11,11 @@ export function LinkedInIcon({ className }: { className?: string }) {
 // JobAdder "JA" badge — shows when a candidate is linked in JobAdder
 export function JobAdderBadge({ url, className }: { url: string | null; className?: string }) {
   const base = cn(
-    "inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold leading-none border transition-colors",
+    "inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold leading-none border transition-all",
     url
-      ? "bg-warning text-text-inverse border-warning"
+      // Linked: solid orange + clear hover affordances so it reads as a clickable link
+      // (previously had only the implicit anchor — recruiters couldn't tell it was clickable).
+      ? "bg-warning text-text-inverse border-warning cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-warning/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       : "bg-surface-hover text-text-tertiary border-separator hover:text-warning",
     className,
   );
