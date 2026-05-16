@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildScoreBreakdown, CATEGORY_WEIGHTS_V2 } from "@/lib/scoring";
 
 const dbMocks = vi.hoisted(() => ({
   prisma: {
@@ -37,58 +36,18 @@ const sessionMocks = vi.hoisted(() => ({
   unauthorized: vi.fn(() => new Response(null, { status: 401 })),
 }));
 
-const scoringConfigMocks = vi.hoisted(() => ({
-  customWeights: {
-    must_have: 0.5,
-    skill_fit: 0.2,
-    location_fit: 0.05,
-    seniority_fit: 0.05,
-    title_fit: 0.05,
-    domain_fit: 0.1,
-    nice_to_have_fit: 0.05,
-  },
-  getOrgScoringWeights: vi.fn(),
-  getJobScoringWeights: vi.fn(),
-}));
-
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
-vi.mock("@/lib/scoring-config", () => ({
-  getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
-  getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
-}));
 
 import { POST } from "./route";
-
-function makeBreakdown() {
-  return buildScoreBreakdown({
-    categories: {
-      skill_fit: { score: 80, weight: CATEGORY_WEIGHTS_V2.skill_fit, evidence: "Relevant stack." },
-      location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Wellington-based." },
-      seniority_fit: { score: 72, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Solid seniority fit." },
-      title_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Adjacent title." },
-      domain_fit: { score: 64, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Relevant product domain, reasonable language match." },
-      nice_to_have_fit: { score: 40, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some bonus skills." },
-    },
-    must_have_coverage: [
-      { requirement: "React", status: "confirmed", evidence: "Listed explicitly." },
-      { requirement: "Ruby on Rails", status: "likely", evidence: "Strong Rails-adjacent evidence." },
-    ],
-    nice_to_have_coverage: [],
-    reasons_for: ["Useful talent-pool overlap."],
-    reasons_against: [],
-    missing_evidence: [],
-    recruiter_summary: "Good talent-pool candidate.",
-    profileCharCount: 2400,
-  });
-}
 
 describe("talent-pool ingestion route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const job = {
       id: "job-1",
+      isRemote: false,
       parsedRole: JSON.stringify({
         title: "Software Engineer",
         location: "Wellington",
@@ -104,8 +63,6 @@ describe("talent-pool ingestion route", () => {
     };
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
-    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
-    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
     dbMocks.prisma.candidate.findMany
       .mockResolvedValueOnce([])
@@ -116,7 +73,7 @@ describe("talent-pool ingestion route", () => {
           headline: "Full-stack Engineer",
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/jordan-lee/",
-          profileText: "Jordan Lee\nFull-stack Engineer at Acme Ltd\nWellington, New Zealand\n\nAbout\nExperienced full-stack engineer with over a decade specialising in React and Ruby on Rails. Has worked across SaaS products, internal tooling, and API-driven architectures. Comfortable leading small teams and working closely with product managers to deliver robust features on schedule. Strong communication skills and a pragmatic approach to software design and delivery.\n\nExperience\nSenior Software Engineer — Acme Ltd (2019–present)\nLed frontend and backend development of a customer-facing SaaS platform. Migrated monolithic Rails app to modular services. Introduced React component library used across three products.\n\nSoftware Engineer — BetaCorp (2015–2019)\nBuilt RESTful APIs and React UIs for enterprise clients. Contributed to open-source Rails tooling.\n\nSkills\nRuby on Rails, React, PostgreSQL, AWS, Docker, GraphQL\n".repeat(3),
+          profileText: "Jordan Lee\nFull-stack Engineer at Acme Ltd\nWellington, New Zealand\n\nAbout\nExperienced full-stack engineer with over a decade specialising in React and Ruby on Rails. Has worked across SaaS products, internal tooling, and API-driven architectures.\n\nExperience\nSenior Software Engineer — Acme Ltd (2019–present)\nLed frontend and backend development of a customer-facing SaaS platform. Migrated monolithic Rails app to modular services. Introduced React component library used across three products.\n\nSkills\nRuby on Rails, React, PostgreSQL, AWS, Docker, GraphQL\n".repeat(3),
           profileCapturedAt: new Date().toISOString(),
           createdAt: new Date().toISOString(),
         },
@@ -126,16 +83,13 @@ describe("talent-pool ingestion route", () => {
       createdAt: new Date(),
       ...create,
     }));
-    aiMocks.scoreCandidatesBatch.mockImplementation(async (inputs: Array<{ candidateId: string }>) =>
-      inputs.map((i) => ({ candidateId: i.candidateId, breakdown: makeBreakdown() })),
-    );
   });
 
-  it("imports scored talent-pool profiles into the current job", async () => {
+  it("imports library profiles WITHOUT calling AI scoring (recruiter clicks Score all afterwards)", async () => {
     const req = new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxResults: 1, minScore: 0, radiusKm: 25 }),
+      body: JSON.stringify({ maxResults: 1 }),
     });
 
     const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
@@ -143,15 +97,17 @@ describe("talent-pool ingestion route", () => {
 
     expect(res.status).toBe(200);
     expect(body.count).toBe(1);
-    expect(aiMocks.scoreCandidatesBatch).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ candidateId: expect.any(String), profileText: expect.any(String) })]),
-      expect.any(Object),
-      null,
-      scoringConfigMocks.customWeights,
-      "org-1",
-    );
+    // Critical: zero AI spend on library imports.
+    expect(aiMocks.scoreCandidatesBatch).not.toHaveBeenCalled();
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
-    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("talent_pool");
+    const upsertCall = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
+    expect(upsertCall.create.source).toBe("talent_pool");
+    expect(upsertCall.create.status).toBe("new");
+    // No score fields set — score-all writes those later.
+    expect(upsertCall.create.matchScore).toBeUndefined();
+    expect(upsertCall.create.scoreBreakdown).toBeUndefined();
   });
 
   it("imports JobAdder library candidates that have CV text but no LinkedIn URL", async () => {
@@ -176,7 +132,7 @@ describe("talent-pool ingestion route", () => {
     const req = new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxResults: 1, minScore: 0, radiusKm: 25 }),
+      body: JSON.stringify({ maxResults: 1 }),
     });
 
     const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
@@ -184,6 +140,7 @@ describe("talent-pool ingestion route", () => {
 
     expect(res.status).toBe(200);
     expect(body.count).toBe(1);
+    expect(aiMocks.scoreCandidatesBatch).not.toHaveBeenCalled();
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     const upsertCall = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
     expect(upsertCall.where.jobId_linkedinUrl).toEqual({
@@ -194,112 +151,54 @@ describe("talent-pool ingestion route", () => {
     expect(upsertCall.create.jobAdderUrl).toBe("https://app.jobadder.com/candidates/123");
     expect(upsertCall.create.source).toBe("talent_pool");
   });
-});
 
-// ── Cap-bypass regression: pool candidates must use FULL-PROFILE Claude scoring
-//    even on specialist hybrid roles. The snippet-only specialist cap
-//    (SPECIALIST_SNIPPET_NO_ANCHOR_CAP=25) MUST NOT apply to pool candidates.
-//    If a future refactor accidentally wires buildProvisionalSearchScore into
-//    this path, this test catches it.
-describe("talent-pool ingestion route — full-profile Claude bypass on specialist roles", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // POWER role with distinctive must-haves (SCADA / RTU / metering). The
-    // snippet specialist cap WOULD fire if a candidate's *snippet* lacked
-    // those anchors. We're proving full-profile pool candidates dodge it.
-    const powerRole = {
-      id: "job-power",
+  it("rejects pool candidates lacking any distinctive anchor on a specialist role", async () => {
+    // ≥2 distinctive must-haves → strict specialist mode. Profile must mention
+    // at least one role-distinctive term.
+    const specialistJob = {
+      id: "job-specialist",
       isRemote: false,
       parsedRole: JSON.stringify({
-        title: "Senior POWER Systems Engineer",
-        location: "Christchurch",
-        location_rules: "Christchurch office",
-        must_haves: ["SCADA systems", "RTU configuration", "Smart metering"],
+        title: "Senior SAFe Scrum Master",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        must_haves: ["SAFe certification", "Scrum Master experience", "PI planning facilitation"],
         nice_to_haves: [],
         knockout_criteria: [],
-        skills_required: ["SCADA", "RTU", "metering"],
+        skills_required: ["SAFe", "Scrum Master", "PI Planning"],
         skills_preferred: [],
       }),
       salaryMin: null,
       salaryMax: null,
     };
-    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
-    sessionMocks.requireJobAccess.mockResolvedValue({ job: powerRole, error: null });
-    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
-    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
-    dbMocks.prisma.job.findUnique.mockResolvedValue(powerRole);
-    // Pool candidate has a SCADA-heavy full profile (passes the pre-score
-    // distinctive-term filter). The point of THIS test is the bypass: the
-    // route uses Claude full-profile scoring, not a snippet cap.
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: specialistJob, error: null });
+    dbMocks.prisma.candidate.findMany.mockReset();
     dbMocks.prisma.candidate.findMany
-      .mockResolvedValueOnce([])  // existing-by-job
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
-          id: "pool-2",
-          name: "Sam Engineer",
-          headline: "Senior SCADA Engineer at Mercury NZ",
-          location: "Christchurch, New Zealand",
-          linkedinUrl: "https://www.linkedin.com/in/sam-engineer/",
-          profileText: "Sam Engineer\nSenior SCADA Engineer\nChristchurch, New Zealand\n\nAbout\nLed SCADA migration projects across Mercury NZ generation assets. RTU configuration for substation telemetry. Smart metering rollout across the Lower South Island. ".repeat(8),
+          id: "pool-off-domain",
+          name: "Sam Off-Domain",
+          headline: "Full-stack Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/sam-fs/",
+          profileText: "Sam Off-Domain\nFull-stack Engineer\nWellington, New Zealand\n\nExperience\nBuilds web applications with React and PostgreSQL. No agile certifications, no scrum facilitation, no PI planning experience.\n".repeat(3),
           profileCapturedAt: new Date().toISOString(),
           createdAt: new Date().toISOString(),
         },
       ]);
-    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
-      id: "cand-power",
-      createdAt: new Date(),
-      ...create,
-    }));
-    // Claude returns 65 — well above the snippet cap (25). If snippet-mode
-    // scoring leaked in, the result would be 25 (or below the 30 cutoff).
-    const fullProfileBreakdown = buildScoreBreakdown({
-      categories: {
-        skill_fit: { score: 80, weight: CATEGORY_WEIGHTS_V2.skill_fit, evidence: "SCADA stack." },
-        location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Christchurch." },
-        seniority_fit: { score: 65, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Senior." },
-        title_fit: { score: 75, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "SCADA engineer." },
-        domain_fit: { score: 60, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Energy." },
-        nice_to_have_fit: { score: 50, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some bonus." },
-      },
-      must_have_coverage: [
-        { requirement: "SCADA systems", status: "confirmed", evidence: "SCADA migration." },
-        { requirement: "RTU configuration", status: "confirmed", evidence: "RTU rollout." },
-        { requirement: "Smart metering", status: "confirmed", evidence: "Metering project." },
-      ],
-      nice_to_have_coverage: [],
-      reasons_for: ["Strong SCADA spine."],
-      reasons_against: [],
-      missing_evidence: [],
-      recruiter_summary: "Strong specialist match.",
-      profileCharCount: 4000,
-      claudeOverallScore: 65,
-    });
-    aiMocks.scoreCandidatesBatch.mockImplementation(async (inputs: Array<{ candidateId: string }>) =>
-      inputs.map((i) => ({ candidateId: i.candidateId, breakdown: fullProfileBreakdown })),
-    );
-  });
 
-  it("scores a pool candidate via Claude full-profile path (NOT snippet cap) on a specialist role", async () => {
-    const req = new Request("http://localhost/api/jobs/job-power/candidates/talent-pool", {
+    const req = new Request("http://localhost/api/jobs/job-specialist/candidates/talent-pool", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxResults: 1, minScore: 0, radiusKm: 25 }),
+      body: JSON.stringify({ maxResults: 1 }),
     });
 
-    const res = await POST(req, { params: Promise.resolve({ id: "job-power" }) });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-specialist" }) });
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.count).toBe(1);
-    // Proof point #1: Claude full-profile scoring was called via batch.
-    expect(aiMocks.scoreCandidatesBatch).toHaveBeenCalledTimes(1);
-    // Proof point #2: the saved score is Claude's verdict (65), not the
-    // snippet cap (25). If buildProvisionalSearchScore leaked in, the
-    // overall would be 25 (or filtered below the 30 cutoff).
-    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
-    const upsertCall = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
-    expect(upsertCall.create.matchScore).toBe(65);
-    // Source flag still set so the UI knows this is a pool import.
-    expect(upsertCall.create.source).toBe("talent_pool");
+    expect(body.count).toBe(0);
+    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
   });
 });

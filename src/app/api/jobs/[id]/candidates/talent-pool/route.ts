@@ -3,33 +3,33 @@
  *
  * Searches the local talent pool (all Candidate rows with a full profile /
  * CV text, across every job) and adds any matching, not-yet-imported
- * candidates to this job, scored against its requirements.
+ * candidates to this job. Hard-match only — no AI scoring at import time.
  *
- * This lets the user build up a rich DB of profiles over time and instantly
- * surface relevant people for new roles without hitting LinkedIn at all.
+ * Pipeline is entirely deterministic:
+ *   1. SQL prefilter (pg_trgm GIN on profileText) → candidates mentioning a must-have
+ *   2. Dedup by LinkedIn URL / internal library key
+ *   3. Overseas reject (location / headline / profile text gate)
+ *   4. Specialist-anchor gate (≥2 distinctive role terms) OR must-have signal coverage
+ *   5. Save with matchScore = null and source = "talent_pool"
+ *
+ * Recruiter clicks "Score all" afterwards to spend AI tokens on the survivors —
+ * keeps library imports free and decouples spend from discovery.
  */
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { scoreCandidatesBatch } from "@/lib/ai";
 import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import { candidateTitleFitsRole } from "@/lib/title-family";
 import type { ParsedRole } from "@/lib/ai";
-import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
-import { getJobTargetLocation } from "@/lib/job-target-location";
-import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { shouldRejectAsOverseas } from "@/lib/location";
-import { getCityCoords, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { CAPTURED_PROFILE_MIN_CHARS, hasFullCandidateProfile } from "@/lib/candidate-profile";
-import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
-import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
-import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
 import { extractSignalsFromRequirement, signalMatchesText } from "@/lib/requirement-signals";
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 
@@ -48,14 +48,11 @@ function distinctiveTerms(parsedRole: ParsedRole): string[] {
 }
 
 const BodySchema = z.object({
-  minScore:  z.number().int().min(0).max(100).default(0),
   maxResults: z.number().int().min(1).max(200).default(50),
   radiusKm:  z.number().min(1).max(200).default(25),
   centerLat: z.number().min(-90).max(90).optional(),
   centerLng: z.number().min(-180).max(180).optional(),
 });
-
-const MAX_POOL_SCORE_CANDIDATES_PER_RUN = 40;
 
 function poolImportKey(row: { id: string; linkedinUrl?: string | null }): string {
   const raw = row.linkedinUrl?.trim();
@@ -85,35 +82,17 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  // radiusKm is accepted for back-compat with older clients but ignored —
-  // the country gate replaces the city-radius filter.
-  const { minScore, maxResults, centerLat, centerLng } = parsed.data;
+  // radiusKm + centerLat/Lng accepted in the schema for back-compat with older
+  // clients but unused — the overseas gate replaces the city-radius filter.
+  const { maxResults } = parsed.data;
 
   const { job, error } = await requireJobAccess(jobId, auth);
   if (error || !job) return error;
 
-  const rateCheck = await checkRateLimit(auth.orgId, "score_all");
-  if (!rateCheck.allowed) {
-    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
-    return NextResponse.json({ error: `Talent pool rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
-  }
-
-  // Cost ceiling — talent-pool can fire up to `maxResults * 2` Claude
-  // calls in one click (~$1-3 at Haiku). Without this guard a single
-  // mash on a 14k library could blow past the $5/day cap before the
-  // route returns. The score-all sibling has the same guard.
-  const spend = await checkSpendCap(auth.orgId);
-  if (!spend.allowed) {
-    return NextResponse.json({
-      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
-    }, { status: 429 });
-  }
-
-  // Per-job advisory lock — two recruiters clicking "Library only" on the
-  // same job at the same time would otherwise both pay for scoring the
-  // same overlapping pool. The lock holds for the route's lifetime and
-  // releases in the finally block below. Stale entries auto-clear after
-  // 15 min per the db-lock default.
+  // Per-job advisory lock — two recruiters clicking "Library" on the same
+  // job at the same time would otherwise both walk the same pool and race
+  // on upserts. Cheap to hold for a sub-second hard-match pass. Stale
+  // entries auto-clear after 15 min per the db-lock default.
   const lockName = `talent-pool:${jobId}`;
   const lockAcquired = await tryAcquireLock(lockName);
   if (!lockAcquired) {
@@ -131,22 +110,6 @@ export async function POST(
     );
   }
 
-  // Recruiter-set job locations win over parsedRole.location (AI-extracted)
-  // and feed through the multi-target branch of assessLocationFit when a
-  // second location is set.
-  const jobTargetLocation = getJobTargetLocation(job, parsedRole) ?? "";
-  const locationSource = jobTargetLocation || parsedRole.location_rules || "";
-  const salary = (job.salaryMin || job.salaryMax)
-    ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
-    : null;
-  const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
-
-  // targetLocation feeds into score-time location_fit ranking. The hard
-  // import gate is now country-only (NZ-wide), so we no longer need the
-  // pre-loop city/keyword/radius expansion that used to filter the pool.
-  const customCenterCity = centerLat != null && centerLng != null ? getNearestCity(centerLat, centerLng) : null;
-  const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
-  const targetLocation = customCenterCity?.name ?? (jobTargetLocation || canonicalJobCity || locationSource);
 
   // 1. Collect existing pool identity keys already in this job so we skip
   // duplicates. LinkedIn-backed rows use the normalised LinkedIn URL; ATS /
@@ -288,20 +251,13 @@ export async function POST(
     .map(({ row }) => row);
   console.log(`[talent-pool] ranked by JD relevance — top candidate score=${computeRelevance(candidates[0])}, bottom=${computeRelevance(candidates[candidates.length - 1])}`);
 
-  // 4. Score each pool candidate against this job's role; save those that pass.
+  // 4. Hard-match admission gate + save. No AI scoring runs here — the
+  //    recruiter clicks "Score all" afterwards to spend tokens on the
+  //    candidates they've actually imported.
   type SavedCandidate = NonNullable<Awaited<ReturnType<typeof prisma.candidate.findFirst>>>;
   const saved: SavedCandidate[] = [];
-  let scored = 0;
-  let skippedScore = 0;
+  let skippedRequirements = 0;
   let skippedOverseas = 0;
-
-  // Hard time budget. 45s — chosen to be well under the frontend's 50s pool
-  // abort so the recruiter always gets a response in time for LinkedIn search
-  // to kick off as a fallback. Without this, a slow Anthropic batch could
-  // hold the entire Find Candidates flow open for minutes, blocking the
-  // LinkedIn search the recruiter actually needs for non-specialist roles.
-  const startedAt = Date.now();
-  const TIME_BUDGET_MS = 45_000;
   let stoppedEarly = false;
 
   // For specialist roles (SAFe Scrum Master, C++/Sybase developer, etc.) the pool
@@ -310,31 +266,20 @@ export async function POST(
   // added to every specialist job — e.g. an Azure architect ends up on a Scrum
   // Master candidate list because they're both Wellington-based.
   //
-  // A SINGLE distinctive term isn't enough to gate on though — a .NET role's
-  // "must-haves" contain just "SQL Server" as the rare-anchor by chance, and
-  // gating on that alone drops every great .NET dev who happens to use Postgres
-  // or Oracle. Require ≥2 anchors before flipping into hard-anchor mode;
-  // otherwise treat the anchor as a relevance ranker (which we already did
-  // above) and use must-have-signal presence as the admission test instead.
+  // ≥2 anchors flips on strict mode; otherwise we admit on must-have signal
+  // coverage + title-family fallback so a .NET role whose only rare anchor is
+  // "SQL Server" doesn't drop every Postgres dev.
   const roleTerms = distinctiveTerms(parsedRole);
   const isSpecialistRole = roleTerms.length >= 2;
-  // Pre-compute must-have signal sets once — checked for each candidate below
-  // when we're not in strict specialist mode.
   const mustHaveSignalSets = mustHavesForRank.map((req) => extractSignalsFromRequirement(req));
 
-  // ── Pre-filter: drop overseas + non-specialist-signal candidates before scoring.
-  // Anything past this point is sent to Claude. We cap each run so a big
-  // JobAdder/CV library doesn't sit behind a 200-profile scoring burst and
-  // trip the frontend's timeout. Re-running the search picks up the next
-  // batch because already-imported identities are excluded above.
-  type PoolRow = typeof candidates[number];
-  const toScore: PoolRow[] = [];
-  const scoreLimit = Math.min(maxResults * 2, MAX_POOL_SCORE_CANDIDATES_PER_RUN);
   for (const row of candidates) {
-    if (toScore.length >= scoreLimit) {
-      stoppedEarly = candidates.length > scoreLimit;
+    if (saved.length >= maxResults) {
+      stoppedEarly = candidates.length > saved.length;
       break;
     }
+    if (!row.profileText) continue;
+
     const overseasCheck = shouldRejectAsOverseas({
       explicitLocation: row.location ?? "",
       headline: row.headline,
@@ -345,138 +290,27 @@ export async function POST(
       skippedOverseas++;
       continue;
     }
-    const haystack = (row.profileText ?? "").toLowerCase();
+
+    const haystack = row.profileText.toLowerCase();
     if (isSpecialistRole) {
-      // ≥2 distinctive anchors — strict: at least one must appear in profile.
       const hasSignal = roleTerms.some((term) => haystack.includes(term));
-      if (!hasSignal) { skippedScore++; continue; }
+      if (!hasSignal) { skippedRequirements++; continue; }
     } else {
-      // Thin / no anchors — gate on must-have signal coverage, falling back
-      // to title-family. A candidate is admitted if EITHER (a) profileText
-      // contains a signal for at least one must-have, OR (b) the headline
-      // is in the role's title family. (a) catches CV-shaped imports whose
-      // headline is generic ("Software Engineer") but whose CV mentions
-      // the actual must-haves. (b) is the original behaviour kept as a
-      // fallback so candidates with great titles but uninformative profiles
-      // still get a chance.
       const hasMustHaveSignal = mustHaveSignalSets.some(
         (signals) => signals.some((s) => signalMatchesText(haystack, s)),
       );
       if (!hasMustHaveSignal && !candidateTitleFitsRole(parsedRole.title, row.headline)) {
-        skippedScore++;
+        skippedRequirements++;
         continue;
       }
-    }
-    if (!row.profileText) continue;
-    toScore.push(row);
-  }
-
-  // ── Batch score everything that survived pre-filter.
-  // scoreCandidatesBatch chunks into groups of 5 and dispatches in parallel,
-  // so this typically returns in ~10-30s for up to 40 candidates instead of
-  // the 5-15 MINUTES sequential scoring used to take.
-  // Split into route-level batches so a single failed batch only loses its
-  // own candidates, and so each rejection surfaces via reportError with the
-  // batchIndex tag (instead of being swallowed in one big silent `.catch`).
-  const ROUTE_BATCH_SIZE = 20;
-  const scoreChunks: Array<typeof toScore> = [];
-  for (let i = 0; i < toScore.length; i += ROUTE_BATCH_SIZE) {
-    scoreChunks.push(toScore.slice(i, i + ROUTE_BATCH_SIZE));
-  }
-
-  const settled = scoreChunks.length > 0
-    ? await Promise.race([
-        Promise.allSettled(
-          scoreChunks.map((chunk) =>
-            scoreCandidatesBatch(
-              chunk.map((r) => ({ candidateId: r.id, profileText: r.profileText! })),
-              parsedRole,
-              salary,
-              weights,
-              auth.orgId,
-            ),
-          ),
-        ),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("batch score timeout")), TIME_BUDGET_MS)),
-      ]).catch((err) => {
-        // Top-level reject (only the timeout path can land here, since
-        // Promise.allSettled itself never rejects). Surface it and degrade.
-        reportError(err, { route: "talent-pool", jobId, orgId: auth.orgId });
-        stoppedEarly = true;
-        return [] as PromiseSettledResult<Awaited<ReturnType<typeof scoreCandidatesBatch>>>[];
-      })
-    : [];
-
-  const batchResults = settled.flatMap((result, batchIndex) => {
-    if (result.status === "fulfilled") return result.value;
-    reportError(result.reason, { route: "talent-pool", jobId, orgId: auth.orgId, batchIndex });
-    stoppedEarly = true;
-    return [];
-  });
-
-  scored = batchResults.length;
-
-  // ── Save loop: each batch result → upsert candidate row (or skip on minScore).
-  const breakdownById = new Map(batchResults.map((r) => [r.candidateId, r.breakdown]));
-
-  for (const row of toScore) {
-    if (saved.length >= maxResults) break;
-    if (Date.now() - startedAt > TIME_BUDGET_MS) {
-      stoppedEarly = true;
-      console.warn(`[talent-pool] time budget exceeded during save loop`);
-      break;
-    }
-
-    const profileText = row.profileText!;
-    const rawBreakdown = breakdownById.get(row.id);
-    if (!rawBreakdown) {
-      // Batch failed or timed out before this candidate scored. Skip; the
-      // recruiter can re-run to retry.
-      if (minScore > 0) skippedScore++;
-      continue;
-    }
-
-    const breakdown = applyLocationFitOverride(
-      rawBreakdown,
-      row.location,
-      targetLocation,
-      parsedRole.location_rules,
-      job.isRemote,
-      weights,
-    );
-    const matchScore = breakdown.overall;
-    const scoreData: Record<string, unknown> = {
-      ...deriveUpdateData(breakdown),
-      profileTextHash: buildScoreCacheKey({
-        profileText,
-        parsedRole,
-        salary,
-        jobLocation: job.location,
-        jobLocation2: job.location2,
-        isRemote: job.isRemote,
-        weights,
-      }),
-    };
-
-    // Score floor for specialist roles — same threshold as the search route uses
-    // for full profiles. Pool candidates have full text so the score is reliable;
-    // an Azure architect scoring 8% on a Scrum Master JD is a real "no", not a
-    // data-quality issue.
-    const effectiveMinScore = isSpecialistRole
-      ? Math.max(minScore, SCORE_CUTOFF_FULL_PROFILE)
-      : minScore;
-    if (matchScore < effectiveMinScore) {
-      skippedScore++;
-      continue;
     }
 
     try {
       const identityKey = poolImportKey(row);
-      // Upsert rather than create: the search route and this route can both
-      // fire for the same job simultaneously (Q1.3 parallel pool+LinkedIn).
-      // Using create causes a P2002 unique-constraint crash when they race
-      // on the same (jobId, linkedinUrl). Upsert merges gracefully; the
-      // score data always overwrites so the freshest result wins.
+      // Upsert because the search route and this route can both fire for
+      // the same job simultaneously; create would P2002 on (jobId, linkedinUrl).
+      // We DON'T touch matchScore / breakdown fields here — preserving any
+      // prior score if this candidate was already imported and scored.
       const candidate = await prisma.candidate.upsert({
         where: { jobId_linkedinUrl: { jobId, linkedinUrl: identityKey } },
         create: {
@@ -487,15 +321,12 @@ export async function POST(
           location: row.location || null,
           linkedinUrl: identityKey,
           jobAdderUrl: row.jobAdderUrl ?? null,
-          profileText,
+          profileText: row.profileText,
           source: "talent_pool",
           status: "new",
           ...(row.profileCapturedAt ? { profileCapturedAt: row.profileCapturedAt } : {}),
-          ...scoreData,
         },
         update: {
-          // Only update score-related fields so we don't clobber recruiter notes/status.
-          ...scoreData,
           source: "talent_pool",
           ...(row.jobAdderUrl ? { jobAdderUrl: row.jobAdderUrl } : {}),
           ...(row.profileCapturedAt ? { profileCapturedAt: row.profileCapturedAt } : {}),
@@ -507,34 +338,31 @@ export async function POST(
     }
   }
 
-  console.log(`[talent-pool] done — scored ${scored}, saved ${saved.length}, skipped ${skippedScore}, overseas ${skippedOverseas}, stoppedEarly=${stoppedEarly}`);
-  void recordUsage(auth.orgId, auth.userId, "score_all", { jobId, scored: saved.length, source: "talent_pool" });
+  console.log(`[talent-pool] done — imported ${saved.length}, skipped ${skippedRequirements} on requirements, ${skippedOverseas} overseas, stoppedEarly=${stoppedEarly}`);
 
-  // Background phone enrichment for the just-saved candidates. The existing
-  // candidates' enriched-at timestamps + 90d cache mean re-imports of the
-  // same person across jobs don't re-burn credits.
+  // Background phone enrichment for the just-saved candidates. Cached for 90d
+  // per identity so re-imports across jobs don't re-burn credits.
   for (const c of saved) enrichCandidateInBackground(c.id);
 
-  const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
   const partialNote = stoppedEarly
-    ? " (Library is large — only the first batch was scored this run; click search again to keep going.)"
+    ? ` (Library is large — imported the first ${saved.length}; click search again to pull more.)`
     : "";
 
-  if (sorted.length === 0) {
-    const reason = skippedScore > 0
-      ? `Scored ${scored} pool candidates but none cleared ${minScore}% — try lowering the minimum score.${partialNote}`
+  if (saved.length === 0) {
+    const reason = skippedRequirements > 0
+      ? `${skippedRequirements} library profile${skippedRequirements !== 1 ? "s" : ""} didn't mention this role's must-haves.${partialNote}`
       : skippedOverseas > 0
         ? `Skipped ${skippedOverseas} overseas candidate${skippedOverseas !== 1 ? "s" : ""}; no NZ-based pool candidates matched.${partialNote}`
-        : `No pool candidates matched this role's location or requirements.${partialNote}`;
+        : `No pool candidates matched this role's requirements.${partialNote}`;
     return NextResponse.json({ count: 0, candidates: [], message: reason, skippedOverseas, stoppedEarly });
   }
 
   return NextResponse.json({
-    count: sorted.length,
-    candidates: sorted,
+    count: saved.length,
+    candidates: saved,
     skippedOverseas,
     stoppedEarly,
-    ...(stoppedEarly ? { message: `Imported ${sorted.length} from the library so far.${partialNote}` } : {}),
+    message: `Imported ${saved.length} from the library — click Score all to rank against this JD.${partialNote}`,
   });
   } finally {
     await releaseLock(lockName);
