@@ -24,7 +24,10 @@ export async function POST(
 
   const body = Schema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) {
-    return NextResponse.json({ error: body.error.flatten() }, { status: 422 });
+    return NextResponse.json(
+      { error: "Invalid body", issues: body.error.issues },
+      { status: 400 }
+    );
   }
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
@@ -32,7 +35,15 @@ export async function POST(
     return NextResponse.json({ error: "Job has not been analysed yet" }, { status: 400 });
   }
 
-  const updated: ParsedRole = {
+  // Local narrowing: the two override fields are optional on ParsedRole, but
+  // we always initialize them to [] below, so they're non-nullable within this
+  // handler. Keeping the type tight removes the non-null assertions.
+  type UpdatedRole = ParsedRole & {
+    dismissed_knockout_criteria: string[];
+    promoted_visa_flags: string[];
+  };
+
+  const updated: UpdatedRole = {
     ...parsedRole,
     dismissed_knockout_criteria: [...(parsedRole.dismissed_knockout_criteria ?? [])],
     promoted_visa_flags: [...(parsedRole.promoted_visa_flags ?? [])],
@@ -49,26 +60,26 @@ export async function POST(
   const MAX_LIST = 100;
 
   if (action === "dismiss-knockout") {
-    if (!updated.dismissed_knockout_criteria!.includes(item)) {
-      if (updated.dismissed_knockout_criteria!.length >= MAX_LIST) {
+    if (!updated.dismissed_knockout_criteria.includes(item)) {
+      if (updated.dismissed_knockout_criteria.length >= MAX_LIST) {
         return NextResponse.json({ error: `dismissed_knockout_criteria capped at ${MAX_LIST} entries` }, { status: 422 });
       }
-      updated.dismissed_knockout_criteria = [...updated.dismissed_knockout_criteria!, item];
+      updated.dismissed_knockout_criteria = [...updated.dismissed_knockout_criteria, item];
     }
   }
 
   if (action === "restore-knockout") {
-    updated.dismissed_knockout_criteria = updated.dismissed_knockout_criteria!.filter(
+    updated.dismissed_knockout_criteria = updated.dismissed_knockout_criteria.filter(
       (k) => k !== item
     );
   }
 
   if (action === "promote-visa-flag") {
-    if (!updated.promoted_visa_flags!.includes(item)) {
-      if (updated.promoted_visa_flags!.length >= MAX_LIST) {
+    if (!updated.promoted_visa_flags.includes(item)) {
+      if (updated.promoted_visa_flags.length >= MAX_LIST) {
         return NextResponse.json({ error: `promoted_visa_flags capped at ${MAX_LIST} entries` }, { status: 422 });
       }
-      updated.promoted_visa_flags = [...updated.promoted_visa_flags!, item];
+      updated.promoted_visa_flags = [...updated.promoted_visa_flags, item];
     }
     // Add to must_haves and skills_required if not already present
     if (!updated.must_haves.some((m) => m.toLowerCase() === itemLower)) {
@@ -86,7 +97,7 @@ export async function POST(
   }
 
   if (action === "demote-visa-flag") {
-    updated.promoted_visa_flags = updated.promoted_visa_flags!.filter((v) => v !== item);
+    updated.promoted_visa_flags = updated.promoted_visa_flags.filter((v) => v !== item);
     // Remove from must_haves and skills_required
     updated.must_haves = updated.must_haves.filter((m) => m.toLowerCase() !== itemLower);
     updated.skills_required = updated.skills_required.filter((s) => s.toLowerCase() !== itemLower);

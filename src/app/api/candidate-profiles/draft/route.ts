@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { generateCandidateProfileSections } from "@/lib/ai";
 import { checkSpendCap, checkRateLimit } from "@/lib/usage";
 import mammoth from "mammoth";
+
+// Library mode (JSON) body. candidateId + targetRole are required; jdText is
+// optional and free-form so we only enforce a sane length cap.
+const LibraryDraftBodySchema = z.object({
+  candidateId: z.string().min(1, "candidateId is required"),
+  targetRole: z.string().trim().min(1, "targetRole is required"),
+  jdText: z.string().max(50_000).optional(),
+});
 
 export const dynamic = "force-dynamic";
 
@@ -84,16 +93,14 @@ export async function POST(req: Request) {
   }
 
   // ── Library mode (application/json) ───────────────────────────────────────
-  const body = await req.json().catch(() => ({})) as {
-    candidateId?: string;
-    targetRole?: string;
-    jdText?: string;
-  };
-
-  const { candidateId, targetRole, jdText } = body;
-
-  if (!candidateId) return NextResponse.json({ error: "candidateId is required" }, { status: 422 });
-  if (!targetRole?.trim()) return NextResponse.json({ error: "targetRole is required" }, { status: 422 });
+  const parsed = LibraryDraftBodySchema.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
+  }
+  const { candidateId, targetRole, jdText } = parsed.data;
 
   const candidate = await prisma.candidate.findUnique({
     where: { id: candidateId },

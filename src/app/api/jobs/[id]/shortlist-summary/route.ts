@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { parseJson } from "@/lib/ai/chat";
 import { chatWithMaybeFailover } from "@/lib/ai/chat-with-failover";
 import { safeParseJson } from "@/lib/utils";
@@ -6,20 +7,26 @@ import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
-export interface CandidateSummaryInput {
-  id: string;
-  name: string;
-  headline: string | null;
-  location: string | null;
-  matchScore: number | null;
-  matchReason: string | null;
-  scoreBreakdown: string | null;
-  acceptanceScore: number | null;
-  acceptanceReason: string | null;
-  notes: string | null;
-  linkedinUrl: string | null;
-  profileText: string | null;
-}
+const CandidateSummaryInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  headline: z.string().nullable(),
+  location: z.string().nullable(),
+  matchScore: z.number().nullable(),
+  matchReason: z.string().nullable(),
+  scoreBreakdown: z.string().nullable(),
+  acceptanceScore: z.number().nullable(),
+  acceptanceReason: z.string().nullable(),
+  notes: z.string().nullable(),
+  linkedinUrl: z.string().nullable(),
+  profileText: z.string().nullable(),
+});
+
+const ShortlistSummaryBodySchema = z.object({
+  candidates: z.array(CandidateSummaryInputSchema).min(1, "No candidates provided").max(100),
+});
+
+export type CandidateSummaryInput = z.infer<typeof CandidateSummaryInputSchema>;
 
 export interface CandidateSummaryResult {
   id: string;
@@ -43,12 +50,14 @@ export async function POST(
     return NextResponse.json({ error: "Job not yet analysed. Run Step 1 first." }, { status: 400 });
   }
 
-  const body = await req.json() as { candidates?: CandidateSummaryInput[] };
-  const candidates = body.candidates;
-
-  if (!candidates || candidates.length === 0) {
-    return NextResponse.json({ error: "No candidates provided" }, { status: 400 });
+  const parsed = ShortlistSummaryBodySchema.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
+  const { candidates } = parsed.data;
 
   // Build candidate blurbs for the prompt
   const candidateBlurbs = candidates.map((c, i) => {

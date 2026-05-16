@@ -61,16 +61,15 @@ describe("saved-searches list/create route", () => {
     expect(res.status).toBe(400);
   });
 
-  it("creates a saved search and trims/caps inputs", async () => {
+  it("creates a saved search and trims/dedupes inputs", async () => {
     dbMocks.prisma.savedSearch.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
       id: "s2", ...data,
     }));
-    const longName = "X".repeat(200);
     const res = await POST(new Request("http://localhost/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: `  ${longName}  `,
+        name: "  React leads  ",
         queries: ["  q1  ", "", "q2"],
         location: "  Wellington  ",
         target: 50,
@@ -78,23 +77,47 @@ describe("saved-searches list/create route", () => {
     }), { params: Promise.resolve({ id: "job-1" }) });
     expect(res.status).toBe(200);
     const call = dbMocks.prisma.savedSearch.create.mock.calls[0][0];
-    expect(call.data.name.length).toBeLessThanOrEqual(100);   // capped
-    expect(call.data.name).toBe(longName.slice(0, 100));      // trimmed then sliced
+    expect(call.data.name).toBe("React leads");                  // trimmed
     expect(JSON.parse(call.data.queries)).toEqual(["q1", "q2"]); // empties dropped
     expect(call.data.location).toBe("Wellington");
     expect(call.data.target).toBe(50);
     expect(call.data.orgId).toBe("org-1");
   });
 
-  it("clamps invalid target to default 20", async () => {
-    dbMocks.prisma.savedSearch.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "s", ...data }));
+  it("rejects name longer than 100 chars with 400", async () => {
+    // Previously the route silently sliced to 100 chars; the Zod schema now
+    // rejects oversize names so the client sees the failure explicitly.
     const res = await POST(new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "X".repeat(200),
+        queries: ["q1"],
+        location: "Wellington",
+      }),
+    }), { params: Promise.resolve({ id: "job-1" }) });
+    expect(res.status).toBe(400);
+  });
+
+  it("defaults target to 20 when omitted, and rejects out-of-range target", async () => {
+    dbMocks.prisma.savedSearch.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "s", ...data }));
+
+    // Omitted → defaults to 20.
+    const okRes = await POST(new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "n", queries: ["q"], location: "Wellington" }),
+    }), { params: Promise.resolve({ id: "job-1" }) });
+    expect(okRes.status).toBe(200);
+    expect(dbMocks.prisma.savedSearch.create.mock.calls[0][0].data.target).toBe(20);
+
+    // Out-of-range → rejected (was previously silently clamped).
+    const badRes = await POST(new Request("http://localhost/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "n", queries: ["q"], location: "Wellington", target: 9999 }),
     }), { params: Promise.resolve({ id: "job-1" }) });
-    expect(res.status).toBe(200);
-    expect(dbMocks.prisma.savedSearch.create.mock.calls[0][0].data.target).toBe(20);
+    expect(badRes.status).toBe(400);
   });
 
   it("returns 409 on duplicate name (P2002)", async () => {

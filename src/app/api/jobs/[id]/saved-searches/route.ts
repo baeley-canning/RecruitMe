@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+
+const SavedSearchBodySchema = z.object({
+  name: z.string().trim().min(1, "name is required").max(100),
+  queries: z.array(z.string()).min(1, "queries must contain at least one entry"),
+  location: z.string().trim().min(1, "location is required").max(100),
+  target: z.number().int().positive().max(100).optional(),
+});
 
 export async function GET(
   _req: Request,
@@ -42,22 +50,20 @@ export async function POST(
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
 
-  const body = await req.json().catch(() => null) as {
-    name?: string;
-    queries?: string[];
-    location?: string;
-    target?: number;
-  } | null;
-
-  if (!body || !body.name?.trim() || !Array.isArray(body.queries) || body.queries.length === 0 || !body.location?.trim()) {
-    return NextResponse.json({ error: "name, queries (non-empty array), and location are required" }, { status: 400 });
+  const parsed = SavedSearchBodySchema.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
+  const body = parsed.data;
 
-  const target = Number.isFinite(body.target) && body.target! > 0 && body.target! <= 100 ? Math.floor(body.target!) : 20;
+  const target = body.target ?? 20;
 
   // Cap queries to keep payload reasonable; trim whitespace; drop empties.
   const queries = body.queries
-    .map((q) => (typeof q === "string" ? q.trim() : ""))
+    .map((q) => q.trim())
     .filter(Boolean)
     .slice(0, 20);
 
@@ -70,9 +76,9 @@ export async function POST(
       data: {
         jobId: id,
         orgId: job.orgId ?? null,
-        name: body.name.trim().slice(0, 100),
+        name: body.name.slice(0, 100),
         queries: JSON.stringify(queries),
-        location: body.location.trim().slice(0, 100),
+        location: body.location.slice(0, 100),
         target,
       },
     });
