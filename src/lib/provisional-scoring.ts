@@ -107,7 +107,7 @@ export function buildProvisionalSearchScore(
   const mustHaves = [
     ...baseMustHaves,
     ...knockouts.filter((ko) => !baseMustHaves.some((mh) => mh.toLowerCase().includes(ko.toLowerCase().slice(0, 25)))),
-  ].slice(0, 14);
+  ].slice(0, 20);
   const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
 
   const profileText = [result.name, result.headline, candidateLocation, result.snippet].filter(Boolean).join("\n");
