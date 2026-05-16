@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     .filter(Boolean)
     .join("\n");
 
-  const parsedRole = await parseJobDescription(seedBrief);
+  const parsedRole = await parseJobDescription(seedBrief, { orgId: auth.orgId, userId: auth.userId });
   const explicitSalaryBand = formatSalary(salaryMin, salaryMax);
   const explicitLocationRules = isRemote
     ? [location || parsedRole.location, "Remote / flexible"]
@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     salary_source: explicitSalaryBand ? "explicit" : parsedRole.salary_source,
   };
 
-  const ad = await generateJobAd(hydratedRole, company || parsedRole.company, seedBrief);
+  const ad = await generateJobAd(hydratedRole, company || parsedRole.company, seedBrief, { orgId: auth.orgId, userId: auth.userId });
 
   return NextResponse.json({
     headline: ad.headline,

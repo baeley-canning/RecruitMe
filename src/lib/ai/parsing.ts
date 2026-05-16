@@ -128,7 +128,10 @@ function buildMinimalFallbackRole(jd: string): Partial<ParsedRole> {
 
 // ─── AI function ───────────────────────────────────────────────────────────────
 
-export async function parseJobDescription(jd: string): Promise<ParsedRole> {
+export async function parseJobDescription(
+  jd: string,
+  cost?: { orgId?: string | null; userId?: string | null },
+): Promise<ParsedRole> {
   const scarceBlock = buildScarceSkillsPromptBlock();
   const promptBody = `${PARSING_SYSTEM_CONTEXT}
 
@@ -149,7 +152,13 @@ ${scarceBlock}`;
   // unrecoverable JSON.
   const callOnce = async (extraNudge: string = "") => {
     const fullPrompt = `${promptBody}${extraNudge ? `\n\n${extraNudge}` : ""}`;
-    const opts = { provider: getJobParsingProvider(), model: SONNET };
+    const opts = {
+      provider: getJobParsingProvider(),
+      model: SONNET,
+      orgId: cost?.orgId,
+      userId: cost?.userId,
+      costTag: "parse_jd",
+    };
     // Routes through the Claude ↔ OpenAI failover wrapper. When both
     // providers are configured, the secondary catches Claude outages.
     const { text } = await chatWithFailover(fullPrompt, 0.1, 8192, opts);

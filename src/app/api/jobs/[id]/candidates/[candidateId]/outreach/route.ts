@@ -53,7 +53,8 @@ export async function POST(
     const message = await generateOutreachMessage(
       candidate.profileText,
       parsedRole,
-      candidate.name
+      candidate.name,
+      { orgId: auth.orgId, userId: auth.userId },
     );
 
     // Log this generation as a contact event so it shows on the candidate

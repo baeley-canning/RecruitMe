@@ -7,6 +7,13 @@ import {
 } from "../profile-excerpt";
 import type { ParsedRole } from "./parsing";
 
+/** Optional caller context for AI cost attribution. When passed through,
+ *  chat.ts records a UsageEvent with orgId so checkSpendCap counts it. */
+export interface AiCostContext {
+  orgId?: string | null;
+  userId?: string | null;
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface OutreachMessage {
@@ -29,7 +36,8 @@ export interface GeneratedOfferLetter {
 export async function generateOutreachMessage(
   profileText: string,
   parsedRole: ParsedRole,
-  candidateName: string
+  candidateName: string,
+  cost?: AiCostContext,
 ): Promise<OutreachMessage> {
   const profileSlice = buildProfileExcerpt(profileText, OUTREACH_PROFILE_EXCERPT_MAX_CHARS);
   const text = await chatWithMaybeFailover(`You are a recruitment consultant writing a personalized outreach message to a passive candidate.
@@ -51,7 +59,7 @@ Write two personalised outreach messages. Reference their ACTUAL job titles, com
 2. Email (subject line + 3 short paragraphs: hook on their background, why this role fits, clear call to action)
 
 Return ONLY valid JSON (no markdown):
-{"linkedin":"Hi [FirstName], noticed your [specific detail] — working on a [role] that looks relevant. Worth a quick chat?","email":"Subject: [Role] — [hook]\\n\\nHi [FirstName],\\n\\n[Para 1]\\n\\n[Para 2]\\n\\n[CTA]\\n\\n[Sign-off]"}`, 0.4, 2048);
+{"linkedin":"Hi [FirstName], noticed your [specific detail] — working on a [role] that looks relevant. Worth a quick chat?","email":"Subject: [Role] — [hook]\\n\\nHi [FirstName],\\n\\n[Para 1]\\n\\n[Para 2]\\n\\n[CTA]\\n\\n[Sign-off]"}`, 0.4, 2048, { orgId: cost?.orgId, userId: cost?.userId, costTag: "outreach" });
 
   const parsed = parseJson<Partial<OutreachMessage>>(text);
 
@@ -64,7 +72,8 @@ Return ONLY valid JSON (no markdown):
 export async function generateJobAd(
   parsedRole: ParsedRole,
   company: string | null,
-  rawJd: string
+  rawJd: string,
+  cost?: AiCostContext,
 ): Promise<GeneratedJobAd> {
   const mustHaves = (parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required).slice(0, 8);
   const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 5);
@@ -103,7 +112,7 @@ Keep it honest, direct, and compelling. No filler phrases like "dynamic" or "pas
 
 Return JSON: {"headline": "short compelling tagline under 10 words", "body": "full ad text with sections"}`;
 
-  const text = await chatWithMaybeFailover(prompt, 0.4, 2000);
+  const text = await chatWithMaybeFailover(prompt, 0.4, 2000, { orgId: cost?.orgId, userId: cost?.userId, costTag: "job_ad" });
   try {
     const parsed = parseJson<GeneratedJobAd>(text);
     if (parsed.headline && parsed.body) return parsed;
@@ -115,7 +124,8 @@ export async function generateRejectionEmail(
   candidateName: string,
   roleTitle: string,
   company: string | null,
-  recruiterNotes?: string
+  recruiterNotes?: string,
+  cost?: AiCostContext,
 ): Promise<string> {
   const prompt = `You are a recruiter writing a professional, warm rejection email for a candidate.
 
@@ -134,7 +144,7 @@ Write a rejection email that:
 
 Write only the email body (no subject line). No filler phrases like "we were overwhelmed with applications". Keep it real.`;
 
-  return (await chatWithMaybeFailover(prompt, 0.4, 600)).trim();
+  return (await chatWithMaybeFailover(prompt, 0.4, 600, { orgId: cost?.orgId, userId: cost?.userId, costTag: "rejection_email" })).trim();
 }
 
 export async function generateOfferLetter(
@@ -142,7 +152,8 @@ export async function generateOfferLetter(
   roleTitle: string,
   company: string | null,
   salary?: { min?: number; max?: number } | null,
-  startDate?: string
+  startDate?: string,
+  cost?: AiCostContext,
 ): Promise<GeneratedOfferLetter> {
   const salaryLine = salary?.min || salary?.max
     ? `Salary: $${((salary.min ?? salary.max ?? 0) / 1000).toFixed(0)}k–$${((salary.max ?? salary.min ?? 0) / 1000).toFixed(0)}k NZD per annum`
@@ -167,7 +178,7 @@ Write a professional offer letter that:
 Return JSON: {"subject": "email subject line", "body": "full letter text"}
 Use [PLACEHOLDER] format for anything that needs to be filled in.`;
 
-  const text = await chatWithMaybeFailover(prompt, 0.4, 800);
+  const text = await chatWithMaybeFailover(prompt, 0.4, 800, { orgId: cost?.orgId, userId: cost?.userId, costTag: "offer_letter" });
   try {
     const parsed = parseJson<GeneratedOfferLetter>(text);
     if (parsed.subject && parsed.body) return parsed;

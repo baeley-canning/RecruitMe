@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     }
 
     try {
-      const parsedRole = await parseJobDescription(text);
+      const parsedRole = await parseJobDescription(text, { orgId: auth.orgId, userId: auth.userId });
       // Pass jdText so deriveJobBriefUploadPrefill can fall back to regex
       // for any field the AI returned empty (or for all fields if Claude
       // returned a stub). Better than leaving the form blank.

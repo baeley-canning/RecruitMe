@@ -78,7 +78,7 @@ export async function POST(req: Request) {
       ? ((await extractFileText(jdFileField as File)).slice(0, 4000) || undefined)
       : ((form.get("jdText") as string | null)?.slice(0, 4000) || undefined);
 
-    const sections = await generateCandidateProfileSections(sourceText, candidateName, targetRole, jdText);
+    const sections = await generateCandidateProfileSections(sourceText, candidateName, targetRole, jdText, { orgId: auth.orgId, userId: auth.userId });
 
     return NextResponse.json({ candidateName, targetRole, sections, truncated, charCount: sourceText.length });
   }
@@ -117,7 +117,7 @@ export async function POST(req: Request) {
   const truncated = candidate.profileText.length > 16000;
   const resolvedJd = jdText?.trim() || candidate.job?.rawJd?.trim() || undefined;
 
-  const sections = await generateCandidateProfileSections(sourceText, candidate.name, targetRole, resolvedJd);
+  const sections = await generateCandidateProfileSections(sourceText, candidate.name, targetRole, resolvedJd, { orgId: auth.orgId, userId: auth.userId });
 
   return NextResponse.json({ candidateName: candidate.name, targetRole, sections, truncated, charCount: sourceText.length });
 }

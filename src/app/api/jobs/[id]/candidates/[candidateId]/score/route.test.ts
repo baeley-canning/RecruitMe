@@ -8,6 +8,11 @@ const dbMocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    usageEvent: {
+      count: vi.fn().mockResolvedValue(0),
+      findFirst: vi.fn().mockResolvedValue(null),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { costUsd: 0 } }),
+    },
   },
 }));
 

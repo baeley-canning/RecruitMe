@@ -8,6 +8,7 @@ import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { shouldRejectAsOverseas } from "@/lib/location";
+import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 
 export async function POST(
   _req: Request,
@@ -23,6 +24,22 @@ export async function POST(
   }
   if (!candidate.profileText) {
     return NextResponse.json({ error: "Candidate has no profile text to score against." }, { status: 400 });
+  }
+
+  // Per-event rate-limit + daily spend cap. Single-candidate score was
+  // previously unguarded — a recruiter could mash the button repeatedly
+  // and bypass score-all's caps. This route fires 2 Claude calls per
+  // request (structured score + acceptance prediction).
+  const rate = await checkRateLimit(auth.orgId, "score");
+  if (!rate.allowed) {
+    const waitMin = Math.ceil((rate.retryAfterMs ?? 60_000) / 60_000);
+    return NextResponse.json({ error: `Score rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json({
+      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+    }, { status: 429 });
   }
 
   try {

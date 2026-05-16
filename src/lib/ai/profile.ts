@@ -120,7 +120,8 @@ export async function generateCandidateProfileSections(
   profileText: string,
   candidateName: string,
   targetRole: string,
-  jdText?: string
+  jdText?: string,
+  cost?: { orgId?: string | null; userId?: string | null },
 ): Promise<ProfileDocSections> {
   const source = profileText.slice(0, 16000);
   const sourceNormalised = normaliseForEvidence(source);
@@ -190,7 +191,7 @@ Return ONLY valid JSON of this exact shape:
   };
 
   try {
-    const raw = await withRetry(() => chatWithMaybeFailover(extractionPrompt, 0.1, 2500, { model: SONNET }));
+    const raw = await withRetry(() => chatWithMaybeFailover(extractionPrompt, 0.1, 2500, { model: SONNET, orgId: cost?.orgId, userId: cost?.userId, costTag: "profile_extract" }));
     const parsed = parseJson<EvidenceExtractedFacts>(raw);
     let discarded = 0;
     const onDiscard = () => { discarded += 1; };
@@ -293,7 +294,7 @@ Return ONLY the summary text. No JSON. No headings. No labels.`;
 
   let executiveSummary = "";
   try {
-    executiveSummary = (await withRetry(() => chatWithMaybeFailover(summaryPrompt, 0.2, 1000, { model: SONNET }))).trim();
+    executiveSummary = (await withRetry(() => chatWithMaybeFailover(summaryPrompt, 0.2, 1000, { model: SONNET, orgId: cost?.orgId, userId: cost?.userId, costTag: "profile_summary" }))).trim();
   } catch (err) {
     reportError(err, { where: "generateCandidateProfileSections.summary", candidateName });
     executiveSummary = "";

@@ -31,7 +31,9 @@ export async function POST(
     candidate.name,
     candidate.job.title,
     candidate.job.company,
-    salary
+    salary,
+    undefined, // startDate
+    { orgId: auth.orgId, userId: auth.userId },
   );
 
   return NextResponse.json(letter);
