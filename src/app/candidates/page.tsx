@@ -10,6 +10,11 @@ export const dynamic = "force-dynamic";
 export default async function CandidatesPage() {
   const auth = await getAuth();
   if (!auth) redirect("/login");
+  // Belt-and-braces: a non-owner with no orgId would otherwise have the
+  // OR-clauses below collapse to `{ orgId: null }`, leaking every
+  // orphaned/null-org candidate in the platform. The sibling API guards
+  // this case; this page must too.
+  if (!auth.isOwner && !auth.orgId) redirect("/login");
 
   const [rows, orgs] = await Promise.all([
     prisma.candidate.findMany({
@@ -28,6 +33,8 @@ export default async function CandidatesPage() {
               { job: { orgId: auth.orgId } },
               { jobId: null, orgId: auth.orgId },
             ],
+            // Never surface orphan rows where both jobId AND orgId are null.
+            NOT: { orgId: null, jobId: null },
           },
         }),
       },

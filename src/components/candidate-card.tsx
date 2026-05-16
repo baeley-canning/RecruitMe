@@ -1573,7 +1573,7 @@ export const CandidateCard = memo(function CandidateCard({
                 </div>
                 {jobAdderSaveError && <p className="text-xs text-danger mt-1">{jobAdderSaveError}</p>}
               </div>
-            ) : candidate.jobAdderUrl ? (
+            ) : candidate.jobAdderUrl && /^https?:\/\//i.test(candidate.jobAdderUrl) ? (
               <a href={candidate.jobAdderUrl} target="_blank" rel="noopener noreferrer"
                 className="text-xs text-warning hover:underline truncate block max-w-full">{candidate.jobAdderUrl}</a>
             ) : (

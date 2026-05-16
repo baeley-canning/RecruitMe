@@ -127,7 +127,7 @@ function CandidateBrief({
                 {candidate.linkedinUrl && (
                   <span className="hidden print:inline text-xs text-text-tertiary">{candidate.linkedinUrl}</span>
                 )}
-                {candidate.jobAdderUrl && (
+                {candidate.jobAdderUrl && /^https?:\/\//i.test(candidate.jobAdderUrl) && (
                   <a
                     href={candidate.jobAdderUrl}
                     target="_blank"

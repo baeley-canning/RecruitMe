@@ -9,20 +9,29 @@ export function LinkedInIcon({ className }: { className?: string }) {
 }
 
 // JobAdder "JA" badge — shows when a candidate is linked in JobAdder
+// Only render as a link if the URL is http(s). Anything else (javascript:,
+// data:, vbscript:, etc.) would execute on click — those get the muted
+// placeholder badge instead. The PATCH endpoint also rejects non-http(s)
+// URLs, but this guard protects against any historical bad rows.
+function isSafeHref(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
 export function JobAdderBadge({ url, className }: { url: string | null; className?: string }) {
+  const safeUrl = url && isSafeHref(url) ? url : null;
   const base = cn(
     "inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold leading-none border transition-all",
-    url
+    safeUrl
       // Linked: solid orange + clear hover affordances so it reads as a clickable link
       // (previously had only the implicit anchor — recruiters couldn't tell it was clickable).
       ? "bg-warning text-text-inverse border-warning cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-warning/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       : "bg-surface-hover text-text-tertiary border-separator hover:text-warning",
     className,
   );
-  if (url) {
+  if (safeUrl) {
     return (
       <a
-        href={url}
+        href={safeUrl}
         target="_blank"
         rel="noopener noreferrer"
         className={base}
