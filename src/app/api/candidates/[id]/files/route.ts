@@ -144,29 +144,56 @@ export async function POST(
   const fileHash = createHash("sha256").update(buffer).digest("hex").slice(0, 32);
 
   // Detect duplicate uploads — same byte-for-byte content already on this
-  // candidate. Without this guard the recruiter could re-upload the same CV
-  // and silently clobber any field-level extraction the previous upload made.
-  // Honoured via ?force=1 in case the recruiter actually wants to re-trigger
-  // scoring on the same file (rare).
+  // candidate. Now done via the `dataHash` column + `(candidateId, dataHash)`
+  // index — a sub-millisecond lookup vs. loading every existing file's
+  // ~270KB base64 blob and hashing in JS (the old loop scaled to ~13MB
+  // read per upload for a candidate with 50 CVs).
+  // For pre-fix rows that have `dataHash IS NULL`, we fall through to the
+  // old slow path as a backwards-compat safety net.
   const url = new URL(req.url);
   const force = url.searchParams.get("force") === "1";
   if (!force) {
-    const existingFiles = await prisma.candidateFile.findMany({
-      where: { candidateId: id },
-      select: { id: true, filename: true, data: true, createdAt: true },
+    const fastDup = await prisma.candidateFile.findFirst({
+      where: { candidateId: id, dataHash: fileHash },
+      select: { id: true, filename: true, createdAt: true },
     });
-    const duplicate = existingFiles.find((f) =>
-      createHash("sha256").update(Buffer.from(f.data, "base64")).digest("hex").slice(0, 32) === fileHash
-    );
-    if (duplicate) {
+    if (fastDup) {
       return NextResponse.json(
         {
           error: "duplicate",
-          message: `This file is identical to an existing upload (${duplicate.filename}, ${new Date(duplicate.createdAt).toLocaleDateString()}). Re-upload with ?force=1 to override.`,
-          duplicateOf: { id: duplicate.id, filename: duplicate.filename, createdAt: duplicate.createdAt },
+          message: `This file is identical to an existing upload (${fastDup.filename}, ${new Date(fastDup.createdAt).toLocaleDateString()}). Re-upload with ?force=1 to override.`,
+          duplicateOf: { id: fastDup.id, filename: fastDup.filename, createdAt: fastDup.createdAt },
         },
         { status: 409 }
       );
+    }
+    // Slow-path fallback: only for candidates that have files without a
+    // dataHash (legacy uploads). We still load `data` for those, but the
+    // expected count is small and shrinks as files get hashed on access.
+    const legacyFiles = await prisma.candidateFile.findMany({
+      where: { candidateId: id, dataHash: null },
+      select: { id: true, filename: true, data: true, createdAt: true },
+    });
+    if (legacyFiles.length > 0) {
+      const duplicate = legacyFiles.find((f) =>
+        createHash("sha256").update(Buffer.from(f.data, "base64")).digest("hex").slice(0, 32) === fileHash
+      );
+      if (duplicate) {
+        // Backfill the hash so this file's dup-check goes through the fast
+        // path next time.
+        await prisma.candidateFile.update({
+          where: { id: duplicate.id },
+          data: { dataHash: fileHash },
+        }).catch(() => { /* best-effort */ });
+        return NextResponse.json(
+          {
+            error: "duplicate",
+            message: `This file is identical to an existing upload (${duplicate.filename}, ${new Date(duplicate.createdAt).toLocaleDateString()}). Re-upload with ?force=1 to override.`,
+            duplicateOf: { id: duplicate.id, filename: duplicate.filename, createdAt: duplicate.createdAt },
+          },
+          { status: 409 }
+        );
+      }
     }
   }
 
@@ -177,6 +204,7 @@ export async function POST(
       filename: upload.name,
       mimeType: upload.type || "application/octet-stream",
       data: base64,
+      dataHash: fileHash,
       size: upload.size,
     },
     select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },

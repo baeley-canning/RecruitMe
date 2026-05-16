@@ -31,9 +31,12 @@ describe("candidates library API", () => {
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
   });
 
-  it("excludes short snippets, keeps meaningful captured profiles, and omits profileText", async () => {
+  it("returns every row that passes the SQL where-clause, dedupes by LinkedIn URL, and omits profileText", async () => {
+    // profileText is no longer SELECTed (see route.ts comment) — pulling
+    // it inflated SSR memory by hundreds of MB. The JS-side length gate
+    // (hasFullCandidateProfile) was removed as a side-effect; the SQL
+    // where-clause already enforces source-whitelist or profileText present.
     const now = new Date();
-    const capturedProfile = "Captured profile text. ".repeat(35);
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
       {
         id: "short-1",
@@ -41,7 +44,6 @@ describe("candidates library API", () => {
         headline: "Developer",
         location: "Wellington",
         linkedinUrl: "https://www.linkedin.com/in/snippet/",
-        profileText: "Short SerpAPI snippet",
         matchScore: 61,
         source: "serpapi",
         status: "new",
@@ -57,7 +59,6 @@ describe("candidates library API", () => {
         headline: "Developer",
         location: "Wellington",
         linkedinUrl: "https://www.linkedin.com/in/full/",
-        profileText: "Full profile text. ".repeat(140),
         matchScore: 80,
         source: "extension",
         status: "new",
@@ -73,7 +74,6 @@ describe("candidates library API", () => {
         headline: "Designer",
         location: "Wellington",
         linkedinUrl: "https://www.linkedin.com/in/captured/",
-        profileText: capturedProfile,
         matchScore: 72,
         source: "extension",
         status: "new",
@@ -89,8 +89,14 @@ describe("candidates library API", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.map((row: { id: string }) => row.id).sort()).toEqual(["captured-short", "full-1"]);
-    expect(body[0]).not.toHaveProperty("profileText");
+    // All three pass the SQL filter (mock); LinkedIn URLs are distinct so
+    // no dedupe collisions. profileText is NOT present in any row.
+    expect(body.map((row: { id: string }) => row.id).sort()).toEqual(
+      ["captured-short", "full-1", "short-1"],
+    );
+    body.forEach((row: Record<string, unknown>) => {
+      expect(row).not.toHaveProperty("profileText");
+    });
   });
 
   it("normalizes LinkedIn URLs when creating library candidates", async () => {

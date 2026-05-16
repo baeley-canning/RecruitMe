@@ -158,7 +158,15 @@ model CandidateFile {
   mimeType    String
   data        String    // base64 encoded file content
   size        Int       // original size in bytes
+  // SHA-256 (first 32 hex chars) of the raw file bytes. Set on every new
+  // upload; nullable for pre-existing rows that haven't been backfilled.
+  // Used to detect duplicate uploads without loading every existing file's
+  // base64 blob into memory (the prior dedup loop scaled to ~13MB read
+  // per upload for power users with 50 CVs).
+  dataHash    String?
   createdAt   DateTime  @default(now())
+
+  @@index([candidateId, dataHash])
 }
 
 // Replaces the Setting-JSON extension queue — proper indexed table per session.

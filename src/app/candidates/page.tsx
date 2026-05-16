@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getAuth } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { CandidatesLibraryClient } from "@/components/candidates-library-client";
 
 export const dynamic = "force-dynamic";
@@ -38,14 +37,22 @@ export default async function CandidatesPage() {
           },
         }),
       },
-      orderBy: { createdAt: "desc" },
+      // Secondary `id desc` tiebreaker so a bulk insert (where every
+      // row shares one createdAt timestamp) doesn't make the head of
+      // the result deterministically Z-named by Postgres's internal
+      // ordering. Even without a relevance pre-rank, this at least
+      // keeps the "head" of the page stable + meaningful.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: {
         id: true,
         name: true,
         headline: true,
         location: true,
         linkedinUrl: true,
-        profileText: true,
+        // profileText INTENTIONALLY NOT SELECTED — see /api/candidates/route.ts
+        // for full reasoning. With 14k+ rows × ~10KB profileText, including
+        // it inflated SSR memory by hundreds of MB for a field that gets
+        // stripped before serialisation anyway.
         matchScore: true,
         source: true,
         status: true,
@@ -70,11 +77,14 @@ export default async function CandidatesPage() {
 
   const orgMap = new Map(orgs.map((o) => [o.id, o.name]));
 
-  // Manual + JobAdder-imported candidates bypass captured-profile thresholds — their CVs/metadata
-  // are the source of truth, not a scraped LinkedIn blob.
-  const withProfile = rows.filter(
-    (row) => row.source === "manual" || row.source === "jobadder_import" || hasFullCandidateProfile(row),
-  );
+  // SQL where-clause already enforces `profileText IS NOT NULL OR
+  // source IN ("manual","jobadder_import")` — every row here is valid.
+  // The previous JS-side hasFullCandidateProfile length gate was a
+  // quality filter that required profileText to be selected; dropping
+  // the select moves us to a slightly more inclusive library view
+  // (some thin captures may now appear), which the recruiter can
+  // address per-candidate.
+  const withProfile = rows;
 
   // Deduplicate by LinkedIn URL, keep freshest profile per person.
   type Row = typeof withProfile[number];
@@ -99,20 +109,17 @@ export default async function CandidatesPage() {
     return bDate > aDate ? 1 : -1;
   });
 
-  const serializedCandidates = candidates.map((candidate) => {
-    const rest: Omit<typeof candidate, "profileText"> & { profileText?: string | null } = { ...candidate };
-    delete rest.profileText;
-    return {
-      ...rest,
-      orgName: candidate.orgId ? (orgMap.get(candidate.orgId) ?? null) : null,
-      profileCapturedAt: candidate.profileCapturedAt?.toISOString() ?? null,
-      createdAt: candidate.createdAt.toISOString(),
-      files: candidate.files.map((file) => ({
-        ...file,
-        createdAt: file.createdAt.toISOString(),
-      })),
-    };
-  });
+  // profileText is no longer selected, so no strip needed.
+  const serializedCandidates = candidates.map((candidate) => ({
+    ...candidate,
+    orgName: candidate.orgId ? (orgMap.get(candidate.orgId) ?? null) : null,
+    profileCapturedAt: candidate.profileCapturedAt?.toISOString() ?? null,
+    createdAt: candidate.createdAt.toISOString(),
+    files: candidate.files.map((file) => ({
+      ...file,
+      createdAt: file.createdAt.toISOString(),
+    })),
+  }));
 
   return <CandidatesLibraryClient candidates={serializedCandidates} />;
 }

@@ -14,6 +14,7 @@ const dbMocks = vi.hoisted(() => ({
       count:  vi.fn().mockResolvedValue(0),
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { costUsd: 0 } }),
     },
     orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
   },

@@ -13,6 +13,8 @@ const dbMocks = vi.hoisted(() => ({
     candidateFile: {
       create: vi.fn(),
       findMany: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockResolvedValue({}),
     },
   },
 }));

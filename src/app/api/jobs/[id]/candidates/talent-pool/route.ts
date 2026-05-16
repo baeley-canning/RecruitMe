@@ -26,7 +26,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
-import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
 import { extractSignalsFromRequirement, signalMatchesText } from "@/lib/requirement-signals";
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
@@ -76,6 +76,17 @@ export async function POST(
   if (!rateCheck.allowed) {
     const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
     return NextResponse.json({ error: `Talent pool rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+
+  // Cost ceiling — talent-pool can fire up to `maxResults * 2` Claude
+  // calls in one click (~$1-3 at Haiku). Without this guard a single
+  // mash on a 14k library could blow past the $5/day cap before the
+  // route returns. The score-all sibling has the same guard.
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json({
+      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+    }, { status: 429 });
   }
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
@@ -142,6 +153,13 @@ export async function POST(
     // library: 13k rows shared a single timestamp and were name-sorted
     // within it, so the first batch we scored was dominated by Z-named
     // imports rather than .NET-relevant candidates.
+    //
+    // Safety cap: at 14k × ~10KB profileText we're already pulling ~140MB
+    // into Node memory; 20k would breach Railway's 512MB worker. Beyond
+    // this, a Postgres full-text / pg_trgm index on profileText is the
+    // right architecture, allowing us to pre-filter by JD anchors in SQL
+    // (planned for Phase 3 in the scaling audit).
+    take: 12000,
   });
 
   // 3. Deduplicate by normalised LinkedIn URL, keep the freshest profile per URL.

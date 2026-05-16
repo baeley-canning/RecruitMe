@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { generateCandidateProfileSections } from "@/lib/ai";
+import { checkSpendCap, checkRateLimit } from "@/lib/usage";
 import mammoth from "mammoth";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,25 @@ async function extractFileText(file: File): Promise<string> {
 export async function POST(req: Request) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+
+  // Cost ceiling — this route fires up to 2 Claude calls per request
+  // (extract + summary). Without this guard, a user could mash the
+  // "Generate profile" button and silently bypass the daily $5 cap
+  // because the underlying helpers don't thread orgId into the cost
+  // recorder (separate Phase 4 fix). At-start check is enough; only
+  // 2 calls per click means we can't blow past mid-loop.
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json({
+      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+    }, { status: 429 });
+  }
+  // Per-event rate-limit reuses the parse bucket (also 2 Claude calls).
+  const rateCheck = await checkRateLimit(auth.orgId, "parse");
+  if (!rateCheck.allowed) {
+    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60_000) / 60_000);
+    return NextResponse.json({ error: `Profile drafting rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
 
   const contentType = req.headers.get("content-type") ?? "";
 

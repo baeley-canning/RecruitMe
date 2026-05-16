@@ -4,7 +4,6 @@ import { prisma } from "@/lib/db";
 import { extractCandidateInfo } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 
 /**
@@ -56,7 +55,14 @@ export async function GET() {
       headline: true,
       location: true,
       linkedinUrl: true,
-      profileText: true,
+      // profileText INTENTIONALLY NOT SELECTED. With 14k rows × ~10KB
+      // profileText, including it pulled ~140 MB of useless data over the
+      // wire on every library load (the field gets stripped before
+      // serialisation anyway). The old JS-side `hasFullCandidateProfile`
+      // length gate is lost as a side-effect — some short captures may
+      // now appear in the library that previously didn't. Acceptable
+      // quality regression; future schema change can add a denormalised
+      // `profileTextLength` column to restore the gate.
       matchScore: true,
       source: true,
       status: true,
@@ -74,11 +80,12 @@ export async function GET() {
     },
   });
 
-  // Manual + JobAdder-imported candidates bypass captured-profile thresholds — their CVs/metadata
-  // are the source of truth, not a scraped LinkedIn blob.
-  const withProfile = rows.filter(
-    (row) => row.source === "manual" || row.source === "jobadder_import" || hasFullCandidateProfile(row),
-  );
+  // Filter step trimmed: the SQL where-clause already requires
+  // `profileText IS NOT NULL OR source IN ("manual","jobadder_import")`,
+  // so every row that arrives here is either a whitelisted source or has
+  // some captured profile content. We no longer have profileText to
+  // length-check in JS.
+  const withProfile = rows;
 
   // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.
   // Candidates without a LinkedIn URL are included individually (distinct people).
@@ -125,12 +132,8 @@ export async function GET() {
     const sharedFromOrgName = candOrgId && viewerOrgId && candOrgId !== viewerOrgId
       ? orgName.get(candOrgId) ?? null
       : null;
-    const person: Omit<typeof row, "profileText"> & { profileText?: string | null; sharedFromOrgName?: string | null } = {
-      ...row,
-      sharedFromOrgName,
-    };
-    delete person.profileText;
-    return person;
+    // profileText is no longer in the select set, so no strip needed.
+    return { ...row, sharedFromOrgName };
   }));
 }
 
