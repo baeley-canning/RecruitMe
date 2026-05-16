@@ -113,7 +113,10 @@ async function runWithConcurrency(items, n, worker) {
 async function main() {
   console.log(`[extract] mode: ${DRY_RUN ? "DRY RUN (no writes)" : "live"} concurrency=${CONCURRENCY}${LIMIT ? ` limit=${LIMIT}` : ""}${ORG_FILTER ? ` org=${ORG_FILTER}` : ""}`);
 
-  // Pull candidates needing extraction + their most-recent CV in one go.
+  // Pull candidate IDs + file metadata only — NOT the file bytes. Loading
+  // 12k × ~270KB base64 strings in one query crashes Prisma's Rust→JS
+  // serialiser ("Failed to convert rust String into napi string"). Each
+  // worker fetches the bytes for its own row via a second query.
   console.log("[extract] querying candidates needing extraction…");
   const targets = await prisma.candidate.findMany({
     where: {
@@ -128,7 +131,7 @@ async function main() {
         where: { type: "cv" },
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true, filename: true, mimeType: true, data: true, size: true },
+        select: { id: true, filename: true, mimeType: true, size: true },
       },
     },
     ...(LIMIT ? { take: LIMIT } : {}),
@@ -150,16 +153,28 @@ async function main() {
   let lastTick = -1;
 
   await runWithConcurrency(targets, CONCURRENCY, async (row, idx) => {
-    const file = row.files[0];
-    if (!file) { stats.errored++; failures.push({ candidateId: row.id, reason: "no cv file (race?)" }); return; }
+    const meta = row.files[0];
+    if (!meta) { stats.errored++; failures.push({ candidateId: row.id, reason: "no cv file (race?)" }); return; }
 
-    const kind = detectKind(file.filename, file.mimeType);
+    const kind = detectKind(meta.filename, meta.mimeType);
     stats.byKind[kind] = (stats.byKind[kind] ?? 0) + 1;
     if (kind === "doc_legacy" || kind === "unknown") {
       stats.skippedUnsupportedKind++;
-      failures.push({ candidateId: row.id, fileId: file.id, filename: file.filename, mimeType: file.mimeType, reason: kind });
+      failures.push({ candidateId: row.id, fileId: meta.id, filename: meta.filename, mimeType: meta.mimeType, reason: kind });
       return;
     }
+
+    // Fetch just THIS file's bytes — keeps peak memory ≈ CONCURRENCY × 1 CV.
+    const fileWithData = await prisma.candidateFile.findUnique({
+      where: { id: meta.id },
+      select: { data: true },
+    });
+    if (!fileWithData?.data) {
+      stats.errored++;
+      failures.push({ candidateId: row.id, fileId: meta.id, reason: "file data missing" });
+      return;
+    }
+    const file = { ...meta, data: fileWithData.data };
 
     let text = "";
     try {
