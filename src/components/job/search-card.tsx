@@ -42,6 +42,18 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [maxResults, setMaxResults] = useState(20);
   const [locationOverride, setLocationOverride] = useState<string | null>(null);
   const [relaxClearance, setRelaxClearance] = useState(false);
+  // Library-only mode — when ON, the main button searches only the talent
+  // pool and never falls through to SERP/LinkedIn. Persisted in localStorage
+  // so the recruiter's preference survives navigation between job pages.
+  const [libraryOnly, setLibraryOnly] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { setLibraryOnly(localStorage.getItem("recruitme:libraryOnlySearch") === "1"); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { localStorage.setItem("recruitme:libraryOnlySearch", libraryOnly ? "1" : "0"); } catch { /* ignore */ }
+  }, [libraryOnly]);
 
   const searchResultDisplay = searchResult ? getSearchResultDisplay(searchResult) : null;
 
@@ -149,6 +161,23 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     setSearchError("");
     setSearchResult(null);
     setSearchTimedOut(false);
+
+    // Library-only mode: short-circuit to the talent-pool path and skip
+    // LinkedIn/SERP entirely. The recruiter explicitly opted out of paid
+    // sources via the toggle; respect it.
+    if (libraryOnly) {
+      const pool = await runTalentPoolSearch({ limit: maxResults, refreshOnlyWhenAdded: false });
+      setSearchResult({
+        status: pool.ok ? "complete" : "rate_limited",
+        count: pool.count,
+        fromPool: pool.count,
+        message: pool.count > 0
+          ? `Found ${pool.count} from your library — LinkedIn search skipped (library-only mode).`
+          : "No library matches for this role. Switch off library-only to search LinkedIn.",
+      });
+      setSearching(false);
+      return;
+    }
 
     // Pool-first only when the role has distinctive technical anchors
     // (SCADA, C++, Sybase, ISMS, etc). For non-specialist roles like a
@@ -369,17 +398,25 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
             <div className="flex flex-col gap-2 flex-shrink-0 items-end">
               <Button onClick={handleSearch} loading={searching} disabled={searching || searchingPool || jobStatus === "closed"} size="lg">
                 <Search className="w-3.5 h-3.5" />
-                {searching ? "Searching..." : searchResult ? "Search Again" : "Find Candidates"}
+                {searching
+                  ? "Searching..."
+                  : libraryOnly
+                    ? (searchResult ? "Search Library Again" : "Search Library")
+                    : (searchResult ? "Search Again" : "Find Candidates")}
               </Button>
               <p className="text-2xs text-text-tertiary max-w-[180px] text-right">
-                Searches LinkedIn and your talent pool together.
-                <button
-                  onClick={handleSearchPool}
-                  disabled={searching || searchingPool || jobStatus === "closed"}
-                  className="ml-1 underline underline-offset-2 hover:text-text-secondary disabled:opacity-50 disabled:no-underline"
-                >
-                  {searchingPool ? "Searching pool…" : "Pool only"}
-                </button>
+                {libraryOnly
+                  ? "Library-only mode is on — LinkedIn / SERP fetch is skipped."
+                  : <>
+                      Searches LinkedIn and your talent pool together.
+                      <button
+                        onClick={handleSearchPool}
+                        disabled={searching || searchingPool || jobStatus === "closed"}
+                        className="ml-1 underline underline-offset-2 hover:text-text-secondary disabled:opacity-50 disabled:no-underline"
+                      >
+                        {searchingPool ? "Searching pool…" : "Pool only"}
+                      </button>
+                    </>}
               </p>
             </div>
           </div>
@@ -426,6 +463,35 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   <span className="text-xs text-text-secondary">Ignore clearance for this search</span>
                 </label>
               )}
+              {/* Library-only toggle — when ON, "Find Candidates" only searches
+                  the local talent pool and never falls through to LinkedIn /
+                  SERP. Mirrors the iOS-Settings pill style. Persisted to
+                  localStorage so the preference sticks across job pages. */}
+              <label
+                className="flex items-center gap-2 cursor-pointer select-none"
+                title="Search only your candidate library — no LinkedIn or external sources, $0 cost"
+              >
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={libraryOnly}
+                  aria-label="Toggle library-only search"
+                  onClick={() => !searching && setLibraryOnly((v) => !v)}
+                  disabled={searching}
+                  className={cn(
+                    "relative w-8 h-4 rounded-full transition-colors flex-shrink-0",
+                    libraryOnly ? "bg-accent" : "bg-surface-hover",
+                    searching ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                  )}
+                >
+                  <span className={cn(
+                    "absolute top-0.5 w-3 h-3 bg-text-primary rounded-full shadow transition-transform",
+                    libraryOnly ? "translate-x-4" : "translate-x-0.5"
+                  )} />
+                </button>
+                <span className="text-xs text-text-secondary">Library only (skip LinkedIn)</span>
+              </label>
             </div>
           </div>
         </div>
