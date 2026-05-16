@@ -140,17 +140,41 @@ export async function POST(
   // 2. Pull all candidates with a full profile from any org the caller can
   // read (own org + cross-org library_read grants). Owners see all.
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
+
+  // SQL-side pre-filter: when the JD has enough must-have signals, push
+  // a substring-OR clause into Postgres. The pg_trgm GIN index on
+  // profileText (apply-schema-changes step 11) makes ILIKE %term% an
+  // index-backed scan rather than a sequential table scan. This cuts
+  // 14k rows down to typically ~500-2000 (candidates who mention any
+  // must-have term) before we hydrate profileText into Node memory.
+  //
+  // When the JD has <3 must-have signals (parse failure, generic role)
+  // we fall back to the old "pull everything, rank in JS" path so a
+  // thin JD doesn't surface nothing.
+  const earlyMustHaves = parsedRole.must_haves?.length ? parsedRole.must_haves : (parsedRole.skills_required ?? []);
+  const prefilterTerms = earlyMustHaves
+    .flatMap((req) => extractSignalsFromRequirement(req))
+    .filter((s) => s.length >= 3 && !/^\d+$/.test(s))
+    .slice(0, 12); // cap to keep the WHERE clause sane
+  const usePrefilter = prefilterTerms.length >= 3;
+  const prefilterClause = usePrefilter
+    ? { OR: prefilterTerms.map((t) => ({ profileText: { contains: t, mode: "insensitive" as const } })) }
+    : {};
+
   const poolRows = await prisma.candidate.findMany({
     where: {
       jobId: { not: jobId },
       profileText: { not: null },
+      ...prefilterClause,
       ...(accessibleOrgIds === null
         ? {}
         : {
-            OR: [
-              { job: { orgId: { in: accessibleOrgIds } } },
-              { jobId: null, orgId: { in: accessibleOrgIds } },
-            ],
+            AND: {
+              OR: [
+                { job: { orgId: { in: accessibleOrgIds } } },
+                { jobId: null, orgId: { in: accessibleOrgIds } },
+              ],
+            },
           }),
     },
     select: {
@@ -163,19 +187,13 @@ export async function POST(
       profileCapturedAt: true,
       createdAt: true,
     },
-    // No DB-side ordering — we rank by relevance to the JD in JS below.
-    // Ordering by createdAt was actively harmful with a bulk-imported
-    // library: 13k rows shared a single timestamp and were name-sorted
-    // within it, so the first batch we scored was dominated by Z-named
-    // imports rather than .NET-relevant candidates.
-    //
-    // Safety cap: at 14k × ~10KB profileText we're already pulling ~140MB
-    // into Node memory; 20k would breach Railway's 512MB worker. Beyond
-    // this, a Postgres full-text / pg_trgm index on profileText is the
-    // right architecture, allowing us to pre-filter by JD anchors in SQL
-    // (planned for Phase 3 in the scaling audit).
+    // id-desc tiebreaker prevents bulk-import timestamp-ties from biasing
+    // the head when many rows share one createdAt. Cap of 12k stays as a
+    // safety net for the no-prefilter fallback path.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 12000,
   });
+  console.log(`[talent-pool] pre-filter terms=${prefilterTerms.length} usePrefilter=${usePrefilter} → ${poolRows.length} rows`);
 
   // 3. Deduplicate by normalised LinkedIn URL, keep the freshest profile per URL.
   const bestByUrl = new Map<string, typeof poolRows[number]>();

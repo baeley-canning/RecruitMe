@@ -217,6 +217,32 @@ await step("JobParseHistory table", async () => {
   `;
 });
 
+// 11. pg_trgm extension + GIN index on Candidate.profileText.
+//     Lets the talent-pool route push must-have keyword pre-filtering
+//     down to SQL (was loading 12k profiles into JS to substring-match).
+//     CREATE EXTENSION needs superuser on stock Postgres; Railway grants
+//     it. CREATE INDEX IF NOT EXISTS is idempotent.
+await step("pg_trgm + Candidate.profileText GIN index", async () => {
+  await prisma.$executeRaw`CREATE EXTENSION IF NOT EXISTS pg_trgm`;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_profileText_trgm_idx"
+    ON "Candidate" USING gin ("profileText" gin_trgm_ops)
+  `;
+});
+
+// 12. CandidateFile.dataHash column + index (paired with the duplicate-
+//     detection fix in /api/candidates/[id]/files/route.ts and the
+//     scripts/backfill-cv-hashes.mjs backfill).
+await step("CandidateFile.dataHash column + index", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "CandidateFile" ADD COLUMN IF NOT EXISTS "dataHash" TEXT
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateFile_candidateId_dataHash_idx"
+    ON "CandidateFile"("candidateId", "dataHash")
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {
