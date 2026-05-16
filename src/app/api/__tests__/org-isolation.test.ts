@@ -293,16 +293,16 @@ describe("org isolation — candidates library", () => {
 
     await getCandidatesLibrary();
 
-    expect(dbMocks.prisma.candidate.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          OR: expect.arrayContaining([
-            expect.objectContaining({ job: expect.objectContaining({ orgId: { in: ["org-b"] } }) }),
-            expect.objectContaining({ jobId: null, orgId: { in: ["org-b"] } }),
-          ]),
-        }),
-      })
-    );
+    // The route was refactored to wrap org-scoping in an AND so it composes
+    // with the new top-level source-whitelist OR. The org constraint must
+    // still be present — just nested one level deeper.
+    const callArgs = dbMocks.prisma.candidate.findMany.mock.calls[0][0] as { where: Record<string, unknown> };
+    const andClause = callArgs.where.AND as { OR: unknown[] } | undefined;
+    expect(andClause).toBeDefined();
+    expect(andClause!.OR).toEqual(expect.arrayContaining([
+      expect.objectContaining({ job: expect.objectContaining({ orgId: { in: ["org-b"] } }) }),
+      expect.objectContaining({ jobId: null, orgId: { in: ["org-b"] } }),
+    ]));
   });
 
   it("GET /api/candidates — owner sees all orgs (no orgId filter)", async () => {
@@ -313,7 +313,8 @@ describe("org isolation — candidates library", () => {
     await getCandidatesLibrary();
 
     const callArgs = dbMocks.prisma.candidate.findMany.mock.calls[0][0] as { where: Record<string, unknown> };
-    // Owner query should NOT include a job.orgId filter
+    // Owner query should NOT include the AND-wrapped org scoping or any job filter
+    expect(callArgs.where).not.toHaveProperty("AND");
     expect(callArgs.where).not.toHaveProperty("job");
   });
 });
