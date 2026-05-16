@@ -18,7 +18,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { writeFile, unlink, readFile, mkdtemp } from "node:fs/promises";
+import { writeFile, unlink, readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -47,7 +47,10 @@ const CONCURRENCY = args.concurrency ? Number(args.concurrency) : 5;
 const DRY_RUN     = args["dry-run"] === true;
 const ORG_FILTER  = args.org ?? null;
 
-const MIN_USABLE_CHARS = 100;  // below this we assume image-only PDF / extraction failure
+// Bumped from 100 → 200 — the prior threshold let through two near-empty
+// CVs (173- and 441-char garbage from heavily-templated docs). 200 still
+// keeps a 1-page CV in, but kills genuine OCR noise.
+const MIN_USABLE_CHARS = 200;
 const FAILURES_FILE = path.join(process.cwd(), "extract-cv-failures.json");
 
 function parseArgs(argv) {
@@ -106,8 +109,9 @@ async function extractDocViaTextutil(buffer) {
     });
     return await readFile(txtPath, "utf-8");
   } finally {
-    await unlink(docPath).catch(() => {});
-    await unlink(txtPath).catch(() => {});
+    // rm -rf the whole temp dir — `unlink` left the directory itself behind,
+    // and on SIGKILL the temp files would have leaked CV bytes onto /tmp.
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -151,12 +155,15 @@ async function runWithConcurrency(items, n, worker) {
   }));
 }
 
-// Railway's Postgres public proxy aggressively closes idle / long-lived
-// connections (P1017, P1001, "Server has closed the connection"). Prisma
-// doesn't auto-recover — the next call on that pool slot fails until
-// $connect() is forced. Retry transient errors a few times with backoff.
+// Railway's Postgres public proxy closes idle / long-lived connections.
+// Retry transient errors a few times with backoff. The transient set was
+// broadened after a code review: P2024 (pool timeout) and EAI_AGAIN (DNS
+// hiccup) used to slip through. We no longer force $disconnect/$connect —
+// at high concurrency that aborted in-flight peer queries and caused
+// retry storms. Prisma's pool will replace the poisoned socket on the
+// next call by itself.
 async function withDbRetry(fn, label) {
-  const transient = /P1017|P1001|P1002|Server has closed the connection|connection.*closed|ECONNRESET|ETIMEDOUT/i;
+  const transient = /P1017|P1001|P1002|P1008|P1011|P2024|Server has closed the connection|connection (?:terminated|closed)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up/i;
   let last;
   for (let attempt = 1; attempt <= 5; attempt++) {
     try {
@@ -169,8 +176,6 @@ async function withDbRetry(fn, label) {
       const wait = 250 * attempt * attempt; // 250, 1000, 2250, 4000, 6250 ms
       console.warn(`[extract] ${label} dropped (${code || "transient"}) — retrying in ${wait}ms`);
       await new Promise((r) => setTimeout(r, wait));
-      try { await prisma.$disconnect(); } catch { /* ignore */ }
-      try { await prisma.$connect(); } catch { /* ignore */ }
     }
   }
   throw last;
@@ -254,12 +259,18 @@ async function main() {
     let text = "";
     try {
       const out = await extractFromFile(file);
-      // Strip null bytes + low control chars that pdf-parse sometimes emits
-      // for malformed PDFs. Postgres TEXT rejects 0x00 ("invalid byte
-      // sequence for encoding UTF8"); the other control chars are just
-      // garbage that pollutes prompts. Keep \t (0x09) and \n (0x0A).
-      // eslint-disable-next-line no-control-regex
-      text = (out.text ?? "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").trim();
+      // Strip:
+      //   - C0 control bytes that pdf-parse sometimes emits for malformed
+      //     PDFs (Postgres TEXT rejects 0x00 outright; the others are noise)
+      //   - lone UTF-16 surrogates (0xD800-0xDFFF unpaired) — pdfjs's text
+      //     extractor occasionally leaks one mid-string and Postgres'
+      //     UTF-8 validator chokes on them
+      // Keep \t (0x09) and \n (0x0A).
+      text = (out.text ?? "")
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+        .replace(/[\uD800-\uDFFF]/g, "")
+        .trim();
     } catch (err) {
       stats.errored++;
       failures.push({
@@ -279,9 +290,13 @@ async function main() {
     }
 
     if (!DRY_RUN) {
-      await withDbRetry(
-        () => prisma.candidate.update({
-          where: { id: row.id },
+      // Race-safe: only write if the row STILL has profileText IS NULL.
+      // If a recruiter (or LinkedIn capture) populated it between our
+      // initial findMany and now, we don't clobber their content.
+      // updateMany returns count=0 in that case → bucket as "raced", skip.
+      const upd = await withDbRetry(
+        () => prisma.candidate.updateMany({
+          where: { id: row.id, profileText: null },
           data: {
             profileText:       text,
             profileCapturedAt: new Date(),
@@ -293,6 +308,10 @@ async function main() {
         }),
         `update (cid=${row.id})`,
       );
+      if (upd.count === 0) {
+        stats.racedSkipped = (stats.racedSkipped ?? 0) + 1;
+        return;
+      }
     }
     stats.extracted++;
     stats.charsWritten += text.length;
@@ -318,10 +337,26 @@ async function main() {
   console.log(`Chars written:            ${stats.charsWritten.toLocaleString()}`);
   console.log(`Skipped — too short:      ${stats.skippedShortText.toLocaleString()}  (likely image-only / scanned PDFs)`);
   console.log(`Skipped — unsupported:    ${stats.skippedUnsupportedKind.toLocaleString()}  (legacy .doc or unknown mime)`);
+  console.log(`Skipped — raced:          ${(stats.racedSkipped ?? 0).toLocaleString()}  (another writer populated profileText first)`);
   console.log(`Errored:                  ${stats.errored.toLocaleString()}`);
   console.log(`By kind:                  pdf=${stats.byKind.pdf} docx=${stats.byKind.docx} txt=${stats.byKind.txt} doc_legacy=${stats.byKind.doc_legacy} unknown=${stats.byKind.unknown}`);
   if (failures.length > 0 && !DRY_RUN) console.log(`Failures logged to:       ${FAILURES_FILE}`);
 }
+
+// Graceful shutdown — close Prisma + write a partial failures file so the
+// next re-run starts from a clean state and any /tmp/cv-doc-* dirs created
+// inside extractDocViaTextutil have already been rm'd by their finally
+// blocks. Without this handler a Ctrl-C would leak DB connections.
+let shuttingDown = false;
+async function gracefulExit(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.warn(`\n[extract] received ${signal} — shutting down cleanly`);
+  try { await prisma.$disconnect(); } catch { /* ignore */ }
+  process.exit(130);
+}
+process.on("SIGINT",  () => gracefulExit("SIGINT"));
+process.on("SIGTERM", () => gracefulExit("SIGTERM"));
 
 main()
   .catch((e) => { console.error(e); process.exit(1); })

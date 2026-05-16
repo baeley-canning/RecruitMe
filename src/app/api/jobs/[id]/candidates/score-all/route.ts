@@ -119,7 +119,16 @@ export async function POST(
       // Send total upfront so the client can show "0 of N" immediately.
       send({ scored: 0, total });
 
+      // Mid-loop spend-cap re-check cadence. The cap was checked once before
+      // we started — but with 11k+ candidates now scoreable in any org's
+      // library, a single bad run could blow past the cap before completing.
+      // Re-check every N candidates and abort the stream cleanly when tripped.
+      let cappedHit = false;
+      const SPEND_CHECK_EVERY = 25;
+      let sinceLastCapCheck = 0;
+
       for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+        if (cappedHit) break;
         const chunk = candidates.slice(i, i + CONCURRENCY);
         await Promise.all(
           chunk.map(async (candidate) => {
@@ -191,10 +200,29 @@ export async function POST(
             }
           })
         );
+
+        // Periodically re-verify the spend cap. The chunk that just ran
+        // could have pushed today's spend past the ceiling.
+        sinceLastCapCheck += chunk.length;
+        if (sinceLastCapCheck >= SPEND_CHECK_EVERY) {
+          sinceLastCapCheck = 0;
+          const midSpend = await checkSpendCap(auth.orgId);
+          if (!midSpend.allowed) {
+            cappedHit = true;
+            send({
+              scored, cached, total,
+              capped: true,
+              spentUsd: midSpend.spentUsd,
+              capUsd: midSpend.capUsd,
+              error: `Daily AI spend cap reached mid-run ($${midSpend.spentUsd.toFixed(2)} / $${midSpend.capUsd.toFixed(2)}). Run again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+            });
+            // break out of the outer for-loop via the cappedHit guard
+          }
+        }
       }
 
       // Final message signals completion to the client, including any failures.
-      send({ scored, cached, total, done: true, ...(failed.length > 0 && { failedIds: failed }) });
+      send({ scored, cached, total, done: true, ...(cappedHit && { capped: true }), ...(failed.length > 0 && { failedIds: failed }) });
       controller.close();
 
       console.log(`[score-all] scored=${scored} cached=${cached} of ${total}`);
