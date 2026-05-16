@@ -27,17 +27,29 @@ export async function GET() {
 
   const rows = await prisma.candidate.findMany({
     where: {
-      profileText: { not: null },
+      // Library used to require a captured profileText, but manual + ATS-
+      // imported candidates legitimately enter without one (their data is
+      // in a CV file + metadata). Whitelist those sources so they show up.
+      OR: [
+        { profileText: { not: null } },
+        { source: { in: ["manual", "jobadder_import"] } },
+      ],
       ...(accessibleOrgIds === null ? {} : {
-        OR: [
-          { job: { orgId: { in: accessibleOrgIds } } },     // via active jobs
-          { jobId: null, orgId: { in: accessibleOrgIds } }, // preserved after job deletion
-        ],
-        NOT: { orgId: null, jobId: null },                  // never return orphaned null-org candidates
+        AND: {
+          OR: [
+            { job: { orgId: { in: accessibleOrgIds } } },     // via active jobs
+            { jobId: null, orgId: { in: accessibleOrgIds } }, // preserved after job deletion
+          ],
+          NOT: { orgId: null, jobId: null },                  // never return orphaned null-org candidates
+        },
       }),
     },
     orderBy: { createdAt: "desc" },
-    take: 2000, // safety cap — prevents OOM on large orgs; pagination can be added when needed
+    // Cap raised from 2000 to 20000 after the JobAdder bulk import pushed
+    // a typical org past 13k candidates. Proper cursor pagination is the
+    // right long-term fix (flagged in the architecture audit); this cap
+    // keeps the page functional in the interim.
+    take: 20000,
     select: {
       id: true,
       name: true,
@@ -62,8 +74,11 @@ export async function GET() {
     },
   });
 
-  // Manual candidates (CV upload) bypass captured-profile thresholds because their CVs are often shorter.
-  const withProfile = rows.filter((row) => row.source === "manual" || hasFullCandidateProfile(row));
+  // Manual + JobAdder-imported candidates bypass captured-profile thresholds — their CVs/metadata
+  // are the source of truth, not a scraped LinkedIn blob.
+  const withProfile = rows.filter(
+    (row) => row.source === "manual" || row.source === "jobadder_import" || hasFullCandidateProfile(row),
+  );
 
   // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.
   // Candidates without a LinkedIn URL are included individually (distinct people).
