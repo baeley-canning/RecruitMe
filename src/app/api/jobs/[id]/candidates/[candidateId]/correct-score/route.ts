@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
+
+const CorrectScoreBodySchema = z.object({
+  recruiterScore: z.number().int().min(0).max(100),
+  reason: z.string().trim().max(500).optional(),
+});
 
 export async function POST(
   req: Request,
@@ -15,15 +21,15 @@ export async function POST(
   const { job, candidate, error } = await requireCandidateAccess(id, candidateId, auth);
   if (error || !job || !candidate) return error;
 
-  const body = await req.json().catch(() => null) as {
-    recruiterScore?: number;
-    reason?: string;
-  } | null;
-
-  if (!body || typeof body.recruiterScore !== "number") {
-    return NextResponse.json({ error: "recruiterScore (0-100) is required" }, { status: 400 });
+  const parsed = CorrectScoreBodySchema.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
-  const recruiterScore = Math.max(0, Math.min(100, Math.round(body.recruiterScore)));
+  const { recruiterScore: rawScore, reason } = parsed.data;
+  const recruiterScore = Math.round(rawScore);
 
   // Capture the role title at correction time so future scoring runs can
   // match by role similarity (matches recruiter-memory's title-similarity logic).
@@ -37,7 +43,7 @@ export async function POST(
       orgId: candidate.orgId ?? job.orgId ?? null,
       originalScore: candidate.matchScore ?? 0,
       recruiterScore,
-      reason: body.reason?.toString().trim().slice(0, 500) || null,
+      reason: reason && reason.length > 0 ? reason : null,
       roleTitle,
     },
   });

@@ -22,6 +22,7 @@ import { ScoreBadge } from "@/components/score-badge";
 import { ShareShortlistButton } from "@/components/job/share-shortlist-button";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { cn, safeParseJson } from "@/lib/utils";
+import { scoreTier } from "@/lib/score-utils";
 import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
 
@@ -72,12 +73,17 @@ interface Job {
 
 function AcceptancePill({ score }: { score: number | null }) {
   if (score == null) return null;
-  const level = score >= 70 ? "high" : score >= 40 ? "medium" : "low";
+  // Bucketing via canonical helper (70/40 for "acceptance"). Colours and
+  // labels are bespoke to the shortlist context — recruiter is deciding
+  // whether to ping, so "low" warrants a stronger visual than the neutral
+  // grey AcceptanceBadge uses in the candidate-card.
+  const tier = scoreTier(score, "acceptance");
   const config = {
-    high:   { cls: "bg-success-subtle text-success", label: "Likely open",  Icon: TrendingUp },
-    medium: { cls: "bg-warning-subtle text-warning", label: "May consider", Icon: Minus },
-    low:    { cls: "bg-danger-subtle text-danger",   label: "Hard to move", Icon: TrendingDown },
-  }[level];
+    strong: { cls: "bg-success-subtle text-success", label: "Likely open",  Icon: TrendingUp },
+    fair:   { cls: "bg-warning-subtle text-warning", label: "May consider", Icon: Minus },
+    weak:   { cls: "bg-danger-subtle text-danger",   label: "Hard to move", Icon: TrendingDown },
+    poor:   { cls: "bg-danger-subtle text-danger",   label: "Hard to move", Icon: TrendingDown },
+  }[tier];
   return (
     <span className={cn("inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm font-medium", config.cls)}>
       <config.Icon className="w-3 h-3" />
@@ -302,7 +308,7 @@ export default function ShortlistPage({
     ? Math.round(shortlisted.reduce((s, c) => s + (c.matchScore ?? 0), 0) / shortlisted.length)
     : null;
 
-  const highAcceptance = shortlisted.filter((c) => (c.acceptanceScore ?? 0) >= 70).length;
+  const highAcceptance = shortlisted.filter((c) => scoreTier(c.acceptanceScore ?? 0, "acceptance") === "strong").length;
 
   return (
     <div className="bg-surface-base min-h-screen">

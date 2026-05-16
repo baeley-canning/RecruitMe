@@ -169,9 +169,13 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
         status: pool.ok ? "complete" : "rate_limited",
         count: pool.count,
         fromPool: pool.count,
-        message: pool.count > 0
-          ? `Found ${pool.count} from your library — LinkedIn search skipped (library-only mode).`
-          : pool.message ?? "No library matches for this role. Switch off library-only to search LinkedIn.",
+        // Library import is hard-match only — no AI scoring runs here.
+        // Surface the server's "click Re-score all" CTA so the recruiter
+        // knows the imported candidates aren't yet ranked.
+        message: pool.message
+          ?? (pool.count > 0
+            ? `Imported ${pool.count} from your library — click "Re-score all" to rank them against this JD.`
+            : "No library matches for this role. Switch off library-only to search LinkedIn."),
       });
       setSearching(false);
       return;

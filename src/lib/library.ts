@@ -180,20 +180,16 @@ export async function getLibraryCandidates(
     return bDate > aDate ? 1 : -1;
   });
 
-  // Attach sharedFromOrgName: when the candidate's effective orgId
-  // (job.orgId || row.orgId) differs from the viewer's orgId, look up the
-  // providing org's name so the candidate-card can show a "Shared from X"
-  // badge. Owners see ALL orgs as "external" (orgId=null), so we resolve
-  // every distinct orgId we encounter.
+  // Attach sharedFromOrgName ONLY for non-owner viewers seeing a candidate
+  // from a different org (cross-org grant). Owners had this badge suppressed
+  // in the pre-refactor route; preserve that behaviour — owners already see
+  // every org so the badge would fire on every cross-org row and add noise.
   const viewerOrgId = auth.orgId ?? null;
   const externalOrgIds = new Set<string>();
-  for (const p of people) {
-    const candOrgId = p.job?.orgId ?? p.orgId ?? null;
-    if (!candOrgId) continue;
-    if (auth.isOwner) {
-      externalOrgIds.add(candOrgId);
-    } else if (viewerOrgId && candOrgId !== viewerOrgId) {
-      externalOrgIds.add(candOrgId);
+  if (!auth.isOwner && viewerOrgId) {
+    for (const p of people) {
+      const candOrgId = p.job?.orgId ?? p.orgId ?? null;
+      if (candOrgId && candOrgId !== viewerOrgId) externalOrgIds.add(candOrgId);
     }
   }
 
@@ -207,14 +203,10 @@ export async function getLibraryCandidates(
 
   const candidates: LibraryCandidateRow[] = people.map((row) => {
     const candOrgId = row.job?.orgId ?? row.orgId ?? null;
-    let sharedFromOrgName: string | null = null;
-    if (candOrgId) {
-      if (auth.isOwner) {
-        sharedFromOrgName = orgNameById.get(candOrgId) ?? null;
-      } else if (viewerOrgId && candOrgId !== viewerOrgId) {
-        sharedFromOrgName = orgNameById.get(candOrgId) ?? null;
-      }
-    }
+    const sharedFromOrgName =
+      !auth.isOwner && viewerOrgId && candOrgId && candOrgId !== viewerOrgId
+        ? orgNameById.get(candOrgId) ?? null
+        : null;
     return { ...row, sharedFromOrgName };
   });
 

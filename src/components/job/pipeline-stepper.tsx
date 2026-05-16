@@ -9,9 +9,8 @@ import { cn } from "@/lib/utils";
  * component is purely presentational; counts come in via props, and stage
  * selection is owned by the parent.
  *
- * Stage IDs match the conceptual flow (NOT 1:1 with Candidate.status — see
- * pipeline-card.tsx for the raw enum). The parent is responsible for mapping
- * Candidate.status rows into these buckets:
+ * Stage IDs match the conceptual flow (NOT 1:1 with Candidate.status). The
+ * parent is responsible for mapping Candidate.status rows into these buckets:
  *
  *   fetched     — "new" / any pre-shortlist status (imported, not yet sorted)
  *   scored      — has matchScore > 0 but still in "new" or "reviewing"

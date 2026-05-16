@@ -6,10 +6,10 @@ import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 
 const Schema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("dismiss-knockout"),  item: z.string().min(1).max(500) }),
-  z.object({ action: z.literal("restore-knockout"),  item: z.string().min(1).max(500) }),
-  z.object({ action: z.literal("promote-visa-flag"), item: z.string().min(1).max(500) }),
-  z.object({ action: z.literal("demote-visa-flag"),  item: z.string().min(1).max(500) }),
+  z.object({ action: z.literal("dismiss-knockout"),  item: z.string().trim().min(1, "item is required").max(500) }),
+  z.object({ action: z.literal("restore-knockout"),  item: z.string().trim().min(1, "item is required").max(500) }),
+  z.object({ action: z.literal("promote-visa-flag"), item: z.string().trim().min(1, "item is required").max(500) }),
+  z.object({ action: z.literal("demote-visa-flag"),  item: z.string().trim().min(1, "item is required").max(500) }),
 ]);
 
 export async function POST(

@@ -5,6 +5,7 @@ import { Bookmark, Plus, Play, Loader2, Trash2, MapPin, Clock } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { confirm } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
+import { formatApiError } from "@/lib/format";
 
 interface SavedSearch {
   id: string;
@@ -97,7 +98,7 @@ export function SavedSearchesCard({
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Failed to save.");
+        setError(formatApiError(data, "Failed to save."));
         return;
       }
       setShowAdd(false);

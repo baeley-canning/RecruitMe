@@ -7,19 +7,23 @@ import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
+// String caps below bound the payload at ~50KB/candidate × 100 candidates =
+// 5MB max — the route trims profileText to 600 chars internally, but the
+// caps stop a client (buggy or hostile) from POSTing a 10MB body that ends
+// up sitting in memory before truncation.
 const CandidateSummaryInputSchema = z.object({
-  id: z.string().min(1),
-  name: z.string(),
-  headline: z.string().nullable(),
-  location: z.string().nullable(),
+  id: z.string().min(1).max(200),
+  name: z.string().max(300),
+  headline: z.string().max(500).nullable(),
+  location: z.string().max(300).nullable(),
   matchScore: z.number().nullable(),
-  matchReason: z.string().nullable(),
-  scoreBreakdown: z.string().nullable(),
+  matchReason: z.string().max(5_000).nullable(),
+  scoreBreakdown: z.string().max(20_000).nullable(),
   acceptanceScore: z.number().nullable(),
-  acceptanceReason: z.string().nullable(),
-  notes: z.string().nullable(),
-  linkedinUrl: z.string().nullable(),
-  profileText: z.string().nullable(),
+  acceptanceReason: z.string().max(5_000).nullable(),
+  notes: z.string().max(10_000).nullable(),
+  linkedinUrl: z.string().max(500).nullable(),
+  profileText: z.string().max(50_000).nullable(),
 });
 
 const ShortlistSummaryBodySchema = z.object({

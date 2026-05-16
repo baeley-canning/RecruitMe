@@ -30,7 +30,7 @@ interface LibraryCandidate {
   source: string;
   status: string;
   notes: string | null;
-  orgName: string | null;
+  sharedFromOrgName: string | null;
   profileCapturedAt: string | null;
   createdAt: string;
   job: { id: string; title: string; company: string | null } | null;
@@ -98,9 +98,9 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
           {/* Badges */}
           <div className="flex items-center gap-1.5 mt-2 flex-wrap">
             {/* Org name — only shown to owner, identifies cross-org candidates */}
-            {c.orgName && (
+            {c.sharedFromOrgName && (
               <Badge className="bg-accent-subtle text-accent" >
-                <span title={`Organisation: ${c.orgName}`}>{c.orgName}</span>
+                <span title={`Organisation: ${c.sharedFromOrgName}`}>{c.sharedFromOrgName}</span>
               </Badge>
             )}
             {/* Job context */}

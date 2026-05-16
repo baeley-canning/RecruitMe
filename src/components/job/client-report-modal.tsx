@@ -5,13 +5,25 @@ import { Loader2, AlertCircle, X, Copy, Check } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
+import { formatApiError } from "@/lib/format";
 
+// Must match CandidateSummaryInputSchema in /api/jobs/[id]/shortlist-summary/route.ts
+// (plus `status` for the shortlisted filter below). Tightened so TS catches
+// any caller that doesn't pass the full shape the server requires.
 interface Candidate {
   id: string;
   name: string;
   status: string;
-  profileText: string | null;
+  headline: string | null;
+  location: string | null;
   matchScore: number | null;
+  matchReason: string | null;
+  scoreBreakdown: string | null;
+  acceptanceScore: number | null;
+  acceptanceReason: string | null;
+  notes: string | null;
+  linkedinUrl: string | null;
+  profileText: string | null;
 }
 
 interface ClientReportModalProps {
@@ -39,10 +51,14 @@ export function ClientReportModal({ jobId, jobTitle, jobParsedRole, candidates, 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ candidates: shortlisted }),
     })
-      .then((r) => r.json())
-      .then((data: { summaries?: { id: string; name: string; paragraph: string }[]; error?: string }) => {
-        if (data.error) setError(data.error);
-        else setSummaries(data.summaries ?? []);
+      .then(async (r) => ({ ok: r.ok, body: await r.json() }))
+      .then(({ ok, body }) => {
+        if (!ok) {
+          setError(formatApiError(body, "Failed to generate summaries."));
+          return;
+        }
+        const data = body as { summaries?: { id: string; name: string; paragraph: string }[] };
+        setSummaries(data.summaries ?? []);
       })
       .catch(() => setError("Network error. Try again."))
       .finally(() => setLoading(false));

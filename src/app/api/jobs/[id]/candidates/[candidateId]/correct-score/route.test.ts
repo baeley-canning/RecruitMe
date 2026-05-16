@@ -36,38 +36,53 @@ describe("score correction route", () => {
     sessionMocks.requireCandidateAccess.mockResolvedValue({ job, candidate, error: null });
   });
 
-  it("POST creates a correction with clamped score + role title snapshot", async () => {
+  it("POST creates a correction with role title snapshot for valid input", async () => {
     dbMocks.prisma.scoreCorrection.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
       id: "c1", ...data,
     }));
     const res = await POST(new Request("http://localhost/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recruiterScore: 150, reason: "  Too senior  " }),
+      body: JSON.stringify({ recruiterScore: 65, reason: "  Too senior  " }),
     }), { params: Promise.resolve({ id: "job-1", candidateId: "cand-1" }) });
 
     expect(res.status).toBe(200);
     const call = dbMocks.prisma.scoreCorrection.create.mock.calls[0][0];
-    expect(call.data.recruiterScore).toBe(100);     // clamped down from 150
-    expect(call.data.originalScore).toBe(78);       // snapshot of current score
-    expect(call.data.roleTitle).toBe("Software Engineer"); // snapshot from parsedRole
+    expect(call.data.recruiterScore).toBe(65);
+    expect(call.data.originalScore).toBe(78);
+    expect(call.data.roleTitle).toBe("Software Engineer");
     expect(call.data.candidateId).toBe("cand-1");
     expect(call.data.jobId).toBe("job-1");
-    expect(call.data.reason).toBe("Too senior");    // trimmed
+    expect(call.data.reason).toBe("Too senior"); // zod trim()
   });
 
-  it("POST clamps negative scores to 0 and trims long reasons", async () => {
-    dbMocks.prisma.scoreCorrection.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "c1", ...data }));
+  it("POST rejects out-of-range scores (was silently clamping pre-Zod-hardening)", async () => {
+    const tooHigh = await POST(new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recruiterScore: 150 }),
+    }), { params: Promise.resolve({ id: "job-1", candidateId: "cand-1" }) });
+    expect(tooHigh.status).toBe(400);
+
+    const tooLow = await POST(new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recruiterScore: -10 }),
+    }), { params: Promise.resolve({ id: "job-1", candidateId: "cand-1" }) });
+    expect(tooLow.status).toBe(400);
+
+    expect(dbMocks.prisma.scoreCorrection.create).not.toHaveBeenCalled();
+  });
+
+  it("POST rejects oversized reason (was silently truncating)", async () => {
     const longReason = "x".repeat(1000);
     const res = await POST(new Request("http://localhost/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recruiterScore: -10, reason: longReason }),
+      body: JSON.stringify({ recruiterScore: 50, reason: longReason }),
     }), { params: Promise.resolve({ id: "job-1", candidateId: "cand-1" }) });
-    expect(res.status).toBe(200);
-    const call = dbMocks.prisma.scoreCorrection.create.mock.calls[0][0];
-    expect(call.data.recruiterScore).toBe(0);
-    expect((call.data.reason as string).length).toBe(500);
+    expect(res.status).toBe(400);
+    expect(dbMocks.prisma.scoreCorrection.create).not.toHaveBeenCalled();
   });
 
   it("POST rejects missing recruiterScore", async () => {

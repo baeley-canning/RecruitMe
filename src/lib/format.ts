@@ -32,3 +32,34 @@ export function formatSalaryRange(min?: number | null, max?: number | null): str
   if (max) return `Up to $${Math.round(max / 1000)}k NZD`;
   return "";
 }
+
+/**
+ * Flatten an API error payload into a user-readable string.
+ *
+ * Server routes that fail Zod validation return `{ error: "Invalid body",
+ * issues: [{path, message}, ...] }`. Without this helper UI surfaces
+ * collapse to the useless top-level "Invalid body" string and discard the
+ * field-level detail. Use this wherever a JSON error response feeds an
+ * `error` setter.
+ */
+export function formatApiError(
+  data: unknown,
+  fallback = "Something went wrong",
+): string {
+  if (!data || typeof data !== "object") return fallback;
+  const d = data as { error?: unknown; issues?: unknown };
+  if (Array.isArray(d.issues) && d.issues.length > 0) {
+    return d.issues
+      .map((issue) => {
+        if (!issue || typeof issue !== "object") return null;
+        const i = issue as { path?: unknown; message?: unknown };
+        const path = Array.isArray(i.path) ? i.path.join(".") : "";
+        const msg = typeof i.message === "string" ? i.message : "invalid";
+        return path ? `${path}: ${msg}` : msg;
+      })
+      .filter((s): s is string => Boolean(s))
+      .join("; ");
+  }
+  if (typeof d.error === "string") return d.error;
+  return fallback;
+}

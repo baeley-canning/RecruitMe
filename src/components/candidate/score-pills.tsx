@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { MapPin, TrendingUp, Minus, TrendingDown, CheckCircle2, XCircle, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ScoreBreakdown } from "@/lib/scoring";
-import { scoreTier, scoreTierColor } from "@/lib/score-utils";
+import { scoreTier } from "@/lib/score-utils";
 import { locationFitBadge } from "./helpers";
 import { provenancePillProps } from "../provenance-pill-props";
 import { isPlausibleLocation } from "@/lib/location";

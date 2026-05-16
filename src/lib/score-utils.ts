@@ -118,21 +118,24 @@ export function applyLocationFitOverride(
 
 // ─── Canonical score-tier bucketing ───────────────────────────────────────
 //
-// Before this consolidation the codebase had six different breakpoint sets
-// disagreeing on where "strong" stopped and "weak" began (75/45, 80/65/50,
-// 80/60/40, 70/40). Picked 80/65/50 for "match" because that's what
-// ScoreBadge (used by candidate-card.tsx) was already rendering — and the
-// candidate-card is the call site the recruiter looks at most, so its tiers
-// are the ones they consider "right". The library card was using 80/60/40;
-// a 60-64 match becomes "weak" (warning) instead of "fair" (accent), which
-// is a slightly stricter mid-tier shift — no candidate moves strong→weak.
+// Before this consolidation the codebase had several breakpoint sets:
+// 75/45 (location), 80/65/50 (ScoreBadge), 80/60/40 (library card +
+// candidate-card per-category bars + detail page), 70/40 (acceptance).
 //
-// "match" and "fetchPriority" share 80/65/50 (already aligned in fetch-priority.ts
-// and FetchPriorityBadge). "acceptance" uses 70/40 (only call site is
-// AcceptanceBadge, which has three semantic levels).
+// Picked 80/60/40 for "match" because that's what the recruiter saw on most
+// surfaces pre-refactor — library list, detail page, per-category bars. The
+// ScoreBadge variant (80/65/50) used to be stricter, but standardising on
+// the stricter set demoted 60-64 from "fair" (accent blue) to "weak"
+// (warning yellow) in the library, and 60-64 is the densest cohort. Picking
+// 80/60/40 instead keeps that band reading as "fair" everywhere and slightly
+// loosens ScoreBadge (62 was "weak" → now "fair"). Net effect: more
+// candidates visually classified as fair, more consistent across views.
 //
-// Location fit (75/45) is intentionally NOT a ScoreKind — it's bespoke per the
-// task scope and stays in locationFitBadge.
+// "match" and "fetchPriority" share 80/60/40. "acceptance" uses 70/40
+// (only call site is AcceptanceBadge / AcceptancePill).
+//
+// Location fit (75/45) is intentionally NOT a ScoreKind — it stays in
+// locationFitBadge (bespoke 4-bucket scheme).
 
 export type ScoreTier = "strong" | "fair" | "weak" | "poor";
 export type ScoreKind = "match" | "acceptance" | "fetchPriority";
@@ -145,10 +148,10 @@ export function scoreTier(score: number, kind: ScoreKind = "match"): ScoreTier {
     if (score >= 40) return "fair";
     return "weak";
   }
-  // match + fetchPriority share the same canonical 80/65/50 breakpoints.
+  // match + fetchPriority share the same canonical 80/60/40 breakpoints.
   if (score >= 80) return "strong";
-  if (score >= 65) return "fair";
-  if (score >= 50) return "weak";
+  if (score >= 60) return "fair";
+  if (score >= 40) return "weak";
   return "poor";
 }
 

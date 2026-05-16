@@ -27,10 +27,7 @@ export default async function CandidatesPage() {
     source: candidate.source,
     status: candidate.status,
     notes: candidate.notes,
-    // The client component still calls the field `orgName`; the helper
-    // exposes it as `sharedFromOrgName` (more accurate — it's only set
-    // when the row's org differs from the viewer's). Map the name here.
-    orgName: candidate.sharedFromOrgName,
+    sharedFromOrgName: candidate.sharedFromOrgName,
     profileCapturedAt: candidate.profileCapturedAt?.toISOString() ?? null,
     createdAt: candidate.createdAt.toISOString(),
     job: candidate.job
