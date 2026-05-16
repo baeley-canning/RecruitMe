@@ -465,31 +465,30 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
               )}
               {/* Library-only toggle — when ON, "Find Candidates" only searches
                   the local talent pool and never falls through to LinkedIn /
-                  SERP. Mirrors the iOS-Settings pill style. Persisted to
-                  localStorage so the preference sticks across job pages. */}
+                  SERP. Matches the sibling "Ignore clearance" toggle's exact
+                  div-based pattern so the OFF state reads clearly as grey
+                  (a <button> kept its focus ring after click, blending with
+                  the grey track and making both states look blue). */}
               <label
                 className="flex items-center gap-2 cursor-pointer select-none"
                 title="Search only your candidate library — no LinkedIn or external sources, $0 cost"
               >
-                <button
-                  type="button"
+                <div
                   role="switch"
                   aria-checked={libraryOnly}
                   aria-label="Toggle library-only search"
                   onClick={() => !searching && setLibraryOnly((v) => !v)}
-                  disabled={searching}
                   className={cn(
                     "relative w-8 h-4 rounded-full transition-colors flex-shrink-0",
                     libraryOnly ? "bg-accent" : "bg-surface-hover",
                     searching ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent",
                   )}
                 >
                   <span className={cn(
                     "absolute top-0.5 w-3 h-3 bg-text-primary rounded-full shadow transition-transform",
                     libraryOnly ? "translate-x-4" : "translate-x-0.5"
                   )} />
-                </button>
+                </div>
                 <span className="text-xs text-text-secondary">Library only (skip LinkedIn)</span>
               </label>
             </div>
