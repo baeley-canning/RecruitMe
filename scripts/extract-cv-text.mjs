@@ -179,7 +179,12 @@ async function main() {
     let text = "";
     try {
       const out = await extractFromFile(file);
-      text = (out.text ?? "").trim();
+      // Strip null bytes + low control chars that pdf-parse sometimes emits
+      // for malformed PDFs. Postgres TEXT rejects 0x00 ("invalid byte
+      // sequence for encoding UTF8"); the other control chars are just
+      // garbage that pollutes prompts. Keep \t (0x09) and \n (0x0A).
+      // eslint-disable-next-line no-control-regex
+      text = (out.text ?? "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").trim();
     } catch (err) {
       stats.errored++;
       failures.push({
