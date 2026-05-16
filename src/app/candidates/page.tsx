@@ -14,12 +14,21 @@ export default async function CandidatesPage() {
   const [rows, orgs] = await Promise.all([
     prisma.candidate.findMany({
       where: {
-        profileText: { not: null },
+        // Library used to require a captured profileText, but manual + ATS-
+        // imported candidates legitimately enter without one (their data is
+        // in a CV file + metadata). Whitelist those sources so they show up.
+        // Mirrors the same change in src/app/api/candidates/route.ts.
+        OR: [
+          { profileText: { not: null } },
+          { source: { in: ["manual", "jobadder_import"] } },
+        ],
         ...(auth.isOwner ? {} : {
-          OR: [
-            { job: { orgId: auth.orgId } },
-            { jobId: null, orgId: auth.orgId },
-          ],
+          AND: {
+            OR: [
+              { job: { orgId: auth.orgId } },
+              { jobId: null, orgId: auth.orgId },
+            ],
+          },
         }),
       },
       orderBy: { createdAt: "desc" },
@@ -54,8 +63,11 @@ export default async function CandidatesPage() {
 
   const orgMap = new Map(orgs.map((o) => [o.id, o.name]));
 
-  // Manual candidates (CV upload) bypass captured-profile thresholds because their CVs are often shorter.
-  const withProfile = rows.filter((row) => row.source === "manual" || hasFullCandidateProfile(row));
+  // Manual + JobAdder-imported candidates bypass captured-profile thresholds — their CVs/metadata
+  // are the source of truth, not a scraped LinkedIn blob.
+  const withProfile = rows.filter(
+    (row) => row.source === "manual" || row.source === "jobadder_import" || hasFullCandidateProfile(row),
+  );
 
   // Deduplicate by LinkedIn URL, keep freshest profile per person.
   type Row = typeof withProfile[number];
