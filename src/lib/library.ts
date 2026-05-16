@@ -45,7 +45,7 @@ export interface LibraryCandidateRow {
   orgId: string | null;
   archivedJobTitle: string | null;
   archivedJobCompany: string | null;
-  job: { id: string; title: string; company: string | null; orgId: string } | null;
+  job: { id: string; title: string; company: string | null; orgId: string | null } | null;
   files: { id: string; type: string; filename: string; size: number; createdAt: Date }[];
   /** orgId different from viewer → name of the providing org, else null. */
   sharedFromOrgName: string | null;

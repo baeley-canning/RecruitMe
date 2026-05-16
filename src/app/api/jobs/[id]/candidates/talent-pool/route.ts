@@ -64,9 +64,9 @@ function poolImportKey(row: { id: string; linkedinUrl?: string | null }): string
 }
 
 function hasReusablePoolProfile(row: {
-  source?: string | null;
-  profileCapturedAt?: Date | string | null;
-  profileText?: string | null;
+  source: string | null;
+  profileCapturedAt: Date | string | null;
+  profileText: string | null;
 }): boolean {
   const charCount = row.profileText?.trim().length ?? 0;
   if (row.source === "jobadder_import" && charCount >= CAPTURED_PROFILE_MIN_CHARS) return true;
