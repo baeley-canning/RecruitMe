@@ -168,7 +168,8 @@ export async function buildTalentPoolMap(
       profileCapturedAt: true,
       createdAt: true,
     },
-    orderBy: { createdAt: "desc" },
+    // id-desc secondary sort prevents bulk-insert timestamp-tie bias.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   });
 
   const now = Date.now();
@@ -357,7 +358,11 @@ export async function searchTalentPoolForRole(args: {
       profileCapturedAt: true,
       createdAt: true,
     },
-    orderBy: { createdAt: "desc" },
+    // id-desc tiebreaker: a bulk insert (13.5k JobAdder rows sharing one
+    // createdAt) was making the head of this query deterministically
+    // name-sorted Z's, dominating the 2000-row slice. The secondary sort
+    // gives a stable id-based head when timestamps collide.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     // Hard ceiling matches the candidates library cap. Pools larger than
     // this need a different strategy (full-text index / vector search).
     take: 2000,

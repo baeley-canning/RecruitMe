@@ -43,7 +43,10 @@ export async function GET() {
         },
       }),
     },
-    orderBy: { createdAt: "desc" },
+    // id-desc tiebreaker for bulk-insert timestamp-ties (13.5k JobAdder
+    // rows shared one createdAt). Without it, the head of the page was
+    // deterministically name-sorted Z's instead of "newest captures".
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     // Cap raised from 2000 to 20000 after the JobAdder bulk import pushed
     // a typical org past 13k candidates. Proper cursor pagination is the
     // right long-term fix (flagged in the architecture audit); this cap

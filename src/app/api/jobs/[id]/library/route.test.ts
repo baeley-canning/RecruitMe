@@ -108,18 +108,29 @@ describe("library browse / add route", () => {
     expect(body.candidates[0].id).toBe("lib-2");
   });
 
-  it("GET applies q= text filter", async () => {
+  it("GET pushes q= into the SQL where clause", async () => {
+    // The route now applies q at SQL (OR contains across name/headline/location)
+    // instead of post-filtering in JS, so older candidates aren't hidden by
+    // a recent bulk import filling the 500-row cap. We assert the where
+    // clause was built correctly and that returned rows pass through.
     dbMocks.prisma.candidate.findMany
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         { id: "lib-1", name: "Alice React",  headline: null, location: null, linkedinUrl: "https://www.linkedin.com/in/a/", matchScore: 60, createdAt: new Date(), job: null, archivedJobTitle: null },
-        { id: "lib-2", name: "Bob Sales",    headline: null, location: null, linkedinUrl: "https://www.linkedin.com/in/b/", matchScore: 40, createdAt: new Date(), job: null, archivedJobTitle: null },
       ]);
     const res = await GET(new Request("http://localhost/api/jobs/job-1/library?q=react"), {
       params: Promise.resolve({ id: "job-1" }),
     });
     const body = await res.json();
     expect(body.candidates.map((c: { id: string }) => c.id)).toEqual(["lib-1"]);
+
+    const libraryCall = dbMocks.prisma.candidate.findMany.mock.calls[1][0] as { where: Record<string, unknown> };
+    const orClause = libraryCall.where.OR as Array<Record<string, unknown>>;
+    expect(orClause).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name:     { contains: "react", mode: "insensitive" } }),
+      expect.objectContaining({ headline: { contains: "react", mode: "insensitive" } }),
+      expect.objectContaining({ location: { contains: "react", mode: "insensitive" } }),
+    ]));
   });
 
   it("POST scores + upserts each selected candidate as talent_pool", async () => {

@@ -204,7 +204,10 @@ export async function getRecruitingContext(
   try {
     const corrections = await prisma.scoreCorrection.findMany({
       where: { orgId },
-      orderBy: { createdAt: "desc" },
+      // id-desc tiebreaker — unlikely to bite for corrections (they're
+      // written interactively, not bulk-imported), but the cost of a
+      // stable secondary sort is zero so worth applying defensively.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: MAX_CORRECTIONS_PULLED,
       select: {
         originalScore: true,

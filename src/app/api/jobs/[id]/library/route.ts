@@ -54,8 +54,22 @@ export async function GET(
     where: {
       profileText: { not: null },
       ...candidateOrgFilter(accessibleOrgIds),
+      // Push the search query to SQL. Without this, the previous JS-side
+      // filter only saw the 500 newest rows — after the JobAdder bulk
+      // import all 500 collapsed to today's imports, so any query for a
+      // candidate created earlier than the import returned 0 hits even
+      // though they were in the library. Doing it in Postgres means
+      // "Library is large" no longer hides older relevant people.
+      ...(q ? {
+        OR: [
+          { name:     { contains: q, mode: "insensitive" } },
+          { headline: { contains: q, mode: "insensitive" } },
+          { location: { contains: q, mode: "insensitive" } },
+        ],
+      } : {}),
     },
-    orderBy: { createdAt: "desc" },
+    // id-desc tiebreaker against bulk-insert timestamp collisions.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 500, // generous upper bound; client filters down further
     select: {
       id: true,
@@ -71,7 +85,8 @@ export async function GET(
   });
 
   // De-duplicate by linkedinUrl — the same person across multiple jobs only
-  // shows once (the most recent row wins).
+  // shows once (the most recent row wins). Query string `q` is now applied
+  // at SQL above so the JS filter no longer re-checks it.
   const seenUrls = new Set<string>();
   const filtered = candidates.filter((c) => {
     if (c.linkedinUrl && existingUrls.has(c.linkedinUrl.toLowerCase())) return false;
@@ -79,10 +94,6 @@ export async function GET(
       const key = c.linkedinUrl.toLowerCase();
       if (seenUrls.has(key)) return false;
       seenUrls.add(key);
-    }
-    if (q) {
-      const hay = [c.name, c.headline, c.location].filter(Boolean).join(" ").toLowerCase();
-      if (!hay.includes(q)) return false;
     }
     return true;
   }).slice(0, limit);
