@@ -108,6 +108,31 @@ async function runWithConcurrency(items, n, worker) {
   }));
 }
 
+// Railway's Postgres public proxy aggressively closes idle / long-lived
+// connections (P1017, P1001, "Server has closed the connection"). Prisma
+// doesn't auto-recover — the next call on that pool slot fails until
+// $connect() is forced. Retry transient errors a few times with backoff.
+async function withDbRetry(fn, label) {
+  const transient = /P1017|P1001|P1002|Server has closed the connection|connection.*closed|ECONNRESET|ETIMEDOUT/i;
+  let last;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      last = err;
+      const msg = err?.message ?? String(err);
+      const code = err?.code ?? "";
+      if (!transient.test(msg) && !transient.test(code)) throw err;
+      const wait = 250 * attempt * attempt; // 250, 1000, 2250, 4000, 6250 ms
+      console.warn(`[extract] ${label} dropped (${code || "transient"}) — retrying in ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+      try { await prisma.$disconnect(); } catch { /* ignore */ }
+      try { await prisma.$connect(); } catch { /* ignore */ }
+    }
+  }
+  throw last;
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -165,10 +190,13 @@ async function main() {
     }
 
     // Fetch just THIS file's bytes — keeps peak memory ≈ CONCURRENCY × 1 CV.
-    const fileWithData = await prisma.candidateFile.findUnique({
-      where: { id: meta.id },
-      select: { data: true },
-    });
+    const fileWithData = await withDbRetry(
+      () => prisma.candidateFile.findUnique({
+        where: { id: meta.id },
+        select: { data: true },
+      }),
+      `file fetch (cid=${row.id})`,
+    );
     if (!fileWithData?.data) {
       stats.errored++;
       failures.push({ candidateId: row.id, fileId: meta.id, reason: "file data missing" });
@@ -204,17 +232,20 @@ async function main() {
     }
 
     if (!DRY_RUN) {
-      await prisma.candidate.update({
-        where: { id: row.id },
-        data: {
-          profileText:       text,
-          profileCapturedAt: new Date(),
-          // Clear stale score-cache markers so any next score-all re-runs
-          // these candidates against the new full content rather than
-          // hitting a stub from the import time.
-          profileTextHash:   null,
-        },
-      });
+      await withDbRetry(
+        () => prisma.candidate.update({
+          where: { id: row.id },
+          data: {
+            profileText:       text,
+            profileCapturedAt: new Date(),
+            // Clear stale score-cache markers so any next score-all re-runs
+            // these candidates against the new full content rather than
+            // hitting a stub from the import time.
+            profileTextHash:   null,
+          },
+        }),
+        `update (cid=${row.id})`,
+      );
     }
     stats.extracted++;
     stats.charsWritten += text.length;
