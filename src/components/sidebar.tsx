@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, SlidersHorizontal, Github, Menu } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, Github, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
@@ -165,7 +165,6 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/candidate-profiles",  icon: ClipboardList,      label: "Candidate Profiles", match: (p) => p === "/candidate-profiles" },
   { href: "/github-search",       icon: Github,             label: "GitHub Search",      match: (p) => p.startsWith("/github-search") },
   { href: "/linkedin-setup",      icon: Bookmark,           label: "LinkedIn Setup",     match: (p) => p === "/linkedin-setup" },
-  { href: "/settings",            icon: SlidersHorizontal,  label: "Scoring Settings",   match: (p) => p === "/settings" },
 ];
 
 export function Sidebar({ jobs }: SidebarProps) {
