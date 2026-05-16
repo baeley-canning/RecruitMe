@@ -1,9 +1,10 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MapPin, Search, Users, FileText, Briefcase, Star, UserPlus } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn, timeAgo } from "@/lib/utils";
 import { AddLibraryCandidateModal } from "@/components/add-library-candidate-modal";
 import { Card } from "@/components/ui/card";
@@ -183,9 +184,40 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
     );
   }, [candidates, deferred]);
 
-  const withCV = candidates.filter((c) => c.files.some((f) => f.type === "cv")).length;
-  const withProfile = candidates.length;
-  const strongMatches = candidates.filter((c) => c.matchScore !== null && c.matchScore >= 70).length;
+  // Single-pass reducer for stats — was 3 separate full-array scans (every
+  // keystroke triggered ~42k iterations through 14k candidates). Now ~14k.
+  const { withCV, withProfile, strongMatches } = useMemo(() => {
+    let cv = 0, strong = 0;
+    for (const c of candidates) {
+      if (c.files.some((f) => f.type === "cv")) cv++;
+      if (c.matchScore !== null && c.matchScore >= 70) strong++;
+    }
+    return { withCV: cv, withProfile: candidates.length, strongMatches: strong };
+  }, [candidates]);
+
+  // ── Virtualization ──
+  // Track viewport width to pick a column count that matches the Tailwind
+  // breakpoints used in the grid (1 col mobile / 2 col sm / 3 col lg).
+  // Without this we'd render all 14k cards as DOM nodes on initial mount
+  // and freeze the tab.
+  const [columns, setColumns] = useState(3);
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth;
+      setColumns(w >= 1024 ? 3 : w >= 640 ? 2 : 1);
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  const rowCount = Math.ceil(filtered.length / columns);
+  const scrollParentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: () => 156, // card height incl. gap; resized dynamically
+    overscan: 4,
+  });
 
   return (
     <div className="px-4 py-6 sm:px-6 md:p-8 max-w-6xl mx-auto">
@@ -275,10 +307,40 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
           No candidates match &ldquo;{search}&rdquo;
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map((c) => (
-            <CandidateCard key={c.id} c={c} />
-          ))}
+        // Virtualized row scroller: only the rows in view (+ overscan)
+        // are mounted, so a 14k library no longer freezes the tab on
+        // initial render. Height is capped to the viewport; the scroll
+        // container scrolls internally.
+        <div
+          ref={scrollParentRef}
+          className="overflow-auto"
+          style={{ height: "calc(100vh - 340px)", minHeight: 400 }}
+        >
+          <div
+            style={{ height: rowVirtualizer.getTotalSize(), position: "relative", width: "100%" }}
+          >
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const start = virtualRow.index * columns;
+              const rowCands = filtered.slice(start, start + columns);
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pb-3"
+                >
+                  {rowCands.map((c) => <CandidateCard key={c.id} c={c} />)}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
