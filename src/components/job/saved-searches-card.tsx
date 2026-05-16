@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Bookmark, Plus, Play, Loader2, Trash2, MapPin, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { confirm } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
 
 interface SavedSearch {
@@ -147,7 +148,7 @@ export function SavedSearchesCard({
   };
 
   const handleDelete = async (search: SavedSearch) => {
-    if (!confirm(`Delete saved search "${search.name}"?`)) return;
+    if (!await confirm({ message: `Delete saved search "${search.name}"?`, danger: true, confirmLabel: "Delete" })) return;
     const res = await fetch(`/api/jobs/${jobId}/saved-searches/${search.id}`, { method: "DELETE" });
     if (res.ok) await refresh();
   };

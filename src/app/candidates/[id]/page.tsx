@@ -22,6 +22,7 @@ import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 interface CandidateFile {
   id: string;
@@ -114,7 +115,7 @@ function FileRow({
   const [deleting, setDeleting] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${file.filename}"?`)) return;
+    if (!await confirm({ message: `Delete "${file.filename}"?`, danger: true, confirmLabel: "Delete" })) return;
     setDeleting(true);
     await fetch(`/api/candidates/${candidateId}/files/${file.id}`, { method: "DELETE" });
     onDeleted(file.id);

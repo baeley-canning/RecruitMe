@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Share2, Copy, Check, X, Trash2, Loader2 } from "lucide-react";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 // "Share with client" affordance for the shortlist page. Generates an opaque
 // token, returns the public URL, lets the recruiter copy or revoke. The token
@@ -51,7 +52,7 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
   };
 
   const revoke = async () => {
-    if (!confirm("Revoke this link? Anyone holding it will lose access.")) return;
+    if (!await confirm({ title: "Revoke share link?", message: "Revoke this link? Anyone holding it will lose access.", danger: true, confirmLabel: "Revoke" })) return;
     setLoading(true);
     try {
       const res = await fetch(`/api/jobs/${jobId}/shortlist/share`, { method: "DELETE" });

@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 interface UserRow {
   id: string;
@@ -129,9 +130,9 @@ export default function AdminPage() {
   const [wiping, setWiping] = useState<string | null>(null);
   const handleWipeCandidates = async (jobId?: string) => {
     const label = jobId ? "all candidates for this job" : "ALL candidates in your organisation";
-    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    if (!await confirm({ title: "Delete candidates?", message: `Delete ${label}? This cannot be undone.`, danger: true, confirmLabel: "Delete" })) return;
     // Second confirmation for the org-wide wipe
-    if (!jobId && !confirm("Are you absolutely sure? Type OK to confirm.")) return;
+    if (!jobId && !await confirm({ title: "Final confirmation", message: "This wipes EVERY candidate in your organisation. There is no undo.", danger: true, confirmLabel: "Wipe everything" })) return;
     setWiping(jobId ?? "all");
     if (jobId) {
       await fetch(`/api/jobs/${jobId}/candidates/wipe`, { method: "DELETE" }).catch(() => {});
@@ -237,7 +238,7 @@ export default function AdminPage() {
   };
 
   const handleDelete = async (id: string, username: string) => {
-    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    if (!await confirm({ title: "Delete user?", message: `Delete user "${username}"? This cannot be undone.`, danger: true, confirmLabel: "Delete" })) return;
     setDeletingId(id);
     await fetch("/api/admin/users", {
       method: "DELETE",
@@ -269,7 +270,7 @@ export default function AdminPage() {
   };
 
   const handleDeleteOrg = async (id: string, name: string) => {
-    if (!confirm(`Delete organisation "${name}"? Users and jobs will become unassigned.`)) return;
+    if (!await confirm({ title: "Delete organisation?", message: `Delete organisation "${name}"? Users and jobs will become unassigned.`, danger: true, confirmLabel: "Delete" })) return;
     setDeletingOrgId(id);
     await fetch("/api/admin/orgs", {
       method: "DELETE",

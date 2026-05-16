@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, Sliders, BookmarkPlus, Trash2 } from "lucide-react";
 import { ScoringWeightsEditor } from "@/components/scoring-weights-editor";
 import type { ScoringWeights } from "@/lib/scoring-config";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 interface JobScoringResponse {
   weights: ScoringWeights;
@@ -92,7 +93,7 @@ export function JobWeightsCard({ jobId }: { jobId: string }) {
   };
 
   const deletePreset = async (presetId: string) => {
-    if (!confirm("Delete this preset?")) return;
+    if (!await confirm({ message: "Delete this preset?", danger: true, confirmLabel: "Delete" })) return;
     await fetch(`/api/settings/scoring/presets/${presetId}`, { method: "DELETE" });
     await refreshPresets();
   };

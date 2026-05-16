@@ -55,6 +55,7 @@ import { CopyButton } from "./copy-button";
 import { OutreachModal } from "./outreach-modal";
 import { RejectionEmailModal } from "./rejection-email-modal";
 import { OfferLetterModal } from "./offer-letter-modal";
+import { confirm } from "./ui/confirm-dialog";
 import { isPlausibleLocation } from "@/lib/location";
 import { ScoreBreakdownPanel } from "./candidate/ScoreBreakdownPanel";
 import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
@@ -1633,7 +1634,7 @@ export const CandidateCard = memo(function CandidateCard({
           })()}
           {/* offer_sent has two forward options */}
           {candidate.status === "offer_sent" && (<>
-            <Button size="sm" variant="ghost" onClick={() => { if (confirm(`Mark ${candidate.name} as Hired?`)) onStatusChange(candidate.id, "hired"); }} className="text-success hover:text-success hover:bg-success-subtle">Hired</Button>
+            <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: "Mark as Hired?", message: `Mark ${candidate.name} as Hired? This is the final pipeline stage.`, confirmLabel: "Mark hired" })) onStatusChange(candidate.id, "hired"); }} className="text-success hover:text-success hover:bg-success-subtle">Hired</Button>
             <Button size="sm" variant="ghost" onClick={() => onStatusChange(candidate.id, "declined")} className="text-text-tertiary hover:text-text-primary hover:bg-surface-hover">Declined</Button>
           </>)}
           {/* Quick "Messaged" — logs a contact event tagged to THIS job without

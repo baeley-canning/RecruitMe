@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Download, Loader2, Trash2, Upload } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 export interface DrawerFile {
   id: string;
@@ -36,7 +37,7 @@ function drawerTypeColor(type: string) {
 function DrawerFileRow({ file, candidateId, onDeleted }: { file: DrawerFile; candidateId: string; onDeleted: (id: string) => void }) {
   const [deleting, setDeleting] = useState(false);
   const handleDelete = async () => {
-    if (!confirm(`Delete "${file.filename}"?`)) return;
+    if (!await confirm({ message: `Delete "${file.filename}"?`, danger: true, confirmLabel: "Delete" })) return;
     setDeleting(true);
     await fetch(`/api/candidates/${candidateId}/files/${file.id}`, { method: "DELETE" });
     onDeleted(file.id);

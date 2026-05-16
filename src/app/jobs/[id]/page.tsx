@@ -27,6 +27,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { showToast } from "@/components/ui/toast";
+import { confirm } from "@/components/ui/confirm-dialog";
 import { CandidateCard } from "@/components/candidate-card";
 import { orchestrateFetchProfile, cleanupAbortedAfterSuccess, buildBlankTabAdapter } from "@/lib/fetch-profile-orchestrator";
 import { AiStatusBanner } from "@/components/ai-status-banner";
@@ -1029,7 +1030,7 @@ export default function JobDetailPage({
   };
 
   const handleDelete = useCallback(async (candidateId: string) => {
-    if (!confirm("Remove this candidate?")) return;
+    if (!await confirm({ message: "Remove this candidate?", danger: true, confirmLabel: "Remove" })) return;
     const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}`, { method: "DELETE" });
     if (!res.ok) { alert("Delete failed — please try again."); return; }
     setSelectedIds((prev) => { const next = new Set(prev); next.delete(candidateId); return next; });
@@ -1038,7 +1039,7 @@ export default function JobDetailPage({
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Delete ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!await confirm({ title: "Bulk delete?", message: `Delete ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""}? This cannot be undone.`, danger: true, confirmLabel: "Delete all" })) return;
     setBulkDeleting(true);
     const res = await fetch(`/api/jobs/${id}/candidates/bulk-delete`, {
       method: "POST",
@@ -1055,7 +1056,7 @@ export default function JobDetailPage({
 
   const handleBulkStatusChange = async (status: string) => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Move ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""} to "${statusLabel(status)}"?`)) return;
+    if (!await confirm({ message: `Move ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""} to "${statusLabel(status)}"?`, confirmLabel: "Move" })) return;
     setBulkStatusChanging(true);
     const results = await Promise.allSettled(
       [...selectedIds].map((candidateId) =>
@@ -1657,8 +1658,8 @@ ${toHtml(job.rawJd)}
                   />
                   <div className="flex items-center justify-end gap-2">
                     <button
-                      onClick={() => {
-                        if (jdDraft !== job.rawJd && !confirm("Discard unsaved changes to the job description?")) return;
+                      onClick={async () => {
+                        if (jdDraft !== job.rawJd && !await confirm({ message: "Discard unsaved changes to the job description?", confirmLabel: "Discard" })) return;
                         setEditingJd(false);
                       }}
                       className="h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md border border-separator transition-colors"

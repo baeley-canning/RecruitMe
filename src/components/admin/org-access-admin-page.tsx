@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { ArrowLeft, Share2, Trash2, AlertCircle, Loader2 } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 interface Grant {
   id: string;
@@ -89,7 +90,7 @@ export function OrgAccessAdminPage() {
   };
 
   const handleDelete = async (id: string, viewer: string, provider: string) => {
-    if (!confirm(`Revoke ${viewer}'s access to ${provider}'s library?`)) return;
+    if (!await confirm({ title: "Revoke access?", message: `Revoke ${viewer}'s access to ${provider}'s library?`, danger: true, confirmLabel: "Revoke" })) return;
     setDeletingId(id);
     try {
       const res = await fetch(`/api/admin/org-access/${id}`, { method: "DELETE", credentials: "include" });

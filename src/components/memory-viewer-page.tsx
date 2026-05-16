@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { ArrowLeft, Brain, Trash2, AlertCircle, Loader2 } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 interface ScoreCorrection {
   id: string;
@@ -37,7 +38,7 @@ export function MemoryViewerPage() {
   useEffect(() => { void load(); }, [load]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Remove this correction from the recruiter memory? It will no longer influence future scoring.")) return;
+    if (!await confirm({ title: "Remove correction?", message: "Remove this correction from the recruiter memory? It will no longer influence future scoring.", danger: true, confirmLabel: "Remove" })) return;
     setDeletingId(id);
     try {
       const res = await fetch(`/api/settings/score-corrections/${id}`, { method: "DELETE", credentials: "include" });

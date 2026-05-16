@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { Modal } from "./ui/modal";
+import { confirm } from "./ui/confirm-dialog";
 
 interface Job {
   id: string;
@@ -182,7 +183,7 @@ export function Sidebar({ jobs }: SidebarProps) {
   const handleDelete = async (e: React.MouseEvent, jobId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm("Delete this job and all its candidates? This cannot be undone.")) return;
+    if (!await confirm({ title: "Delete job?", message: "Delete this job and all its candidates? This cannot be undone.", danger: true, confirmLabel: "Delete" })) return;
     await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
     if (pathname.startsWith(`/jobs/${jobId}`)) {
       router.push("/jobs");
