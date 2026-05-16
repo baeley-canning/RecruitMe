@@ -28,6 +28,7 @@ import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
+import { extractSignalsFromRequirement, signalMatchesText } from "@/lib/requirement-signals";
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 
 // Re-derive distinctive terms from a parsedRole — role-aware so hybrid IT-ops
@@ -136,7 +137,11 @@ export async function POST(
       profileCapturedAt: true,
       createdAt: true,
     },
-    orderBy: { createdAt: "desc" },
+    // No DB-side ordering — we rank by relevance to the JD in JS below.
+    // Ordering by createdAt was actively harmful with a bulk-imported
+    // library: 13k rows shared a single timestamp and were name-sorted
+    // within it, so the first batch we scored was dominated by Z-named
+    // imports rather than .NET-relevant candidates.
   });
 
   // 3. Deduplicate by normalised LinkedIn URL, keep the freshest profile per URL.
@@ -154,15 +159,50 @@ export async function POST(
     if (rowDate > existDate) bestByUrl.set(normUrl, row);
   }
 
-  const candidates = [...bestByUrl.values()];
-  console.log(`[talent-pool] ${candidates.length} unique profiles in pool (excluding this job)`);
+  const candidatesBeforeRank = [...bestByUrl.values()];
+  console.log(`[talent-pool] ${candidatesBeforeRank.length} unique profiles in pool (excluding this job)`);
 
-  if (candidates.length === 0) {
+  if (candidatesBeforeRank.length === 0) {
     return NextResponse.json({
       count: 0, candidates: [],
       message: "No talent pool profiles available yet. Capture LinkedIn profiles for other jobs first.",
     });
   }
+
+  // Pre-rank by relevance to the JD's must-haves + nice-to-haves. This is
+  // a cheap keyword-density pass that costs zero AI tokens — we just want
+  // the 100 most-relevant candidates at the top of the queue so Claude
+  // batch scoring spends its budget on the right people.
+  //
+  // Previously: candidates were ordered by createdAt desc, which after a
+  // bulk import meant the first 100 the route saw were name-sorted ties
+  // from the import (~3 of 25 actually matched the role).
+  const mustHavesForRank   = parsedRole.must_haves?.length ? parsedRole.must_haves : (parsedRole.skills_required ?? []);
+  const niceToHavesForRank = parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : (parsedRole.skills_preferred ?? []);
+  const computeRelevance = (row: typeof candidatesBeforeRank[number]): number => {
+    const haystack = (row.profileText ?? "").toLowerCase();
+    if (!haystack) return -Infinity;
+    let score = 0;
+    for (const req of mustHavesForRank) {
+      const signals = extractSignalsFromRequirement(req);
+      if (signals.some((s) => signalMatchesText(haystack, s))) score += 3;
+    }
+    for (const req of niceToHavesForRank.slice(0, 8)) {
+      const signals = extractSignalsFromRequirement(req);
+      if (signals.some((s) => signalMatchesText(haystack, s))) score += 1;
+    }
+    // Tie-break: prefer recently-captured (more current profile content).
+    // Coerce — tests pass createdAt as strings; runtime Prisma passes Dates.
+    const raw = row.profileCapturedAt ?? row.createdAt;
+    const t = raw instanceof Date ? raw.getTime() : new Date(raw as unknown as string).getTime();
+    score += (Number.isFinite(t) ? t : 0) / 1e15; // tiny additive — only breaks ties
+    return score;
+  };
+  const candidates = candidatesBeforeRank
+    .map((row) => ({ row, relevance: computeRelevance(row) }))
+    .sort((a, b) => b.relevance - a.relevance)
+    .map(({ row }) => row);
+  console.log(`[talent-pool] ranked by JD relevance — top candidate score=${computeRelevance(candidates[0])}, bottom=${computeRelevance(candidates[candidates.length - 1])}`);
 
   // 4. Score each pool candidate against this job's role; save those that pass.
   type SavedCandidate = NonNullable<Awaited<ReturnType<typeof prisma.candidate.findFirst>>>;
@@ -185,8 +225,18 @@ export async function POST(
   // full profile. Without this gate, every Wellington developer in the pool gets
   // added to every specialist job — e.g. an Azure architect ends up on a Scrum
   // Master candidate list because they're both Wellington-based.
+  //
+  // A SINGLE distinctive term isn't enough to gate on though — a .NET role's
+  // "must-haves" contain just "SQL Server" as the rare-anchor by chance, and
+  // gating on that alone drops every great .NET dev who happens to use Postgres
+  // or Oracle. Require ≥2 anchors before flipping into hard-anchor mode;
+  // otherwise treat the anchor as a relevance ranker (which we already did
+  // above) and use must-have-signal presence as the admission test instead.
   const roleTerms = distinctiveTerms(parsedRole);
-  const isSpecialistRole = roleTerms.length > 0;
+  const isSpecialistRole = roleTerms.length >= 2;
+  // Pre-compute must-have signal sets once — checked for each candidate below
+  // when we're not in strict specialist mode.
+  const mustHaveSignalSets = mustHavesForRank.map((req) => extractSignalsFromRequirement(req));
 
   // ── Pre-filter: drop overseas + non-specialist-signal candidates before scoring.
   // Anything past this point is sent to Claude. We cap at maxResults * 2 so a
@@ -206,15 +256,24 @@ export async function POST(
       skippedOverseas++;
       continue;
     }
+    const haystack = (row.profileText ?? "").toLowerCase();
     if (isSpecialistRole) {
-      const haystack = (row.profileText ?? "").toLowerCase();
+      // ≥2 distinctive anchors — strict: at least one must appear in profile.
       const hasSignal = roleTerms.some((term) => haystack.includes(term));
       if (!hasSignal) { skippedScore++; continue; }
     } else {
-      // No distinctive anchors → fall back to title-family fit so a PM role
-      // doesn't pull C++ Devs / Account Execs / Designers from the pool.
-      // Ambiguous candidate titles still pass (we don't reject on unknown).
-      if (!candidateTitleFitsRole(parsedRole.title, row.headline)) {
+      // Thin / no anchors — gate on must-have signal coverage, falling back
+      // to title-family. A candidate is admitted if EITHER (a) profileText
+      // contains a signal for at least one must-have, OR (b) the headline
+      // is in the role's title family. (a) catches CV-shaped imports whose
+      // headline is generic ("Software Engineer") but whose CV mentions
+      // the actual must-haves. (b) is the original behaviour kept as a
+      // fallback so candidates with great titles but uninformative profiles
+      // still get a chance.
+      const hasMustHaveSignal = mustHaveSignalSets.some(
+        (signals) => signals.some((s) => signalMatchesText(haystack, s)),
+      );
+      if (!hasMustHaveSignal && !candidateTitleFitsRole(parsedRole.title, row.headline)) {
         skippedScore++;
         continue;
       }
