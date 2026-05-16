@@ -159,13 +159,18 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   [/\bdynamodb\b/i,                                 ["dynamodb", "aws"]],
   // ── Languages ──────────────────────────────────────────────────────────────
   [/\bc\+\+/i,                                      ["c++", "cpp"]],
-  [/\.net\b|asp\.net/i,                             [".net", "asp.net", "dotnet"]],
-  [/\bc#/i,                                         ["c#", ".net"]],
+  // .NET written as ".NET", ".NET 8", ".NET8" (PDF-glued, no space),
+  // "ASP.NET", "ASP.NET Core", or the prose form "dotnet"/"dotnet8".
+  // The previous regex used \b after .net, which doesn't match
+  // when the next char is also a word char (e.g. ".NET8").
+  [/\.net(?:\s*core)?(?:\s*\d+(?:\.\d+)?)?\b|\basp\.net\b|\bdotnet\d*\b/i, [".net", "asp.net", "dotnet"]],
+  // C# variants: "C#", "Csharp", "C-Sharp", "C Sharp"
+  [/\bc#|\bcsharp\b|\bc[-\s]sharp\b/i,              ["c#", "csharp", ".net"]],
   [/\bjava\b/i,                                     ["java"]],
   [/\bpython\b/i,                                   ["python"]],
   [/\bruby\b|\brails\b|\bror\b/i,                   ["ruby", "rails", "ruby on rails"]],
   [/\bphp\b/i,                                      ["php"]],
-  [/\btypescript\b/i,                               ["typescript"]],
+  [/\btypescript\b|\btype-?script\b/i,              ["typescript"]],
   [/\bjavascript\b|\bjs\b/i,                        ["javascript", "js"]],
   [/\bswift\b/i,                                    ["swift", "ios"]],
   [/\bkotlin\b/i,                                   ["kotlin", "android"]],
@@ -179,7 +184,8 @@ export const TECH_REQUIREMENT_ALIASES: AliasEntry[] = [
   // ── Web frameworks ─────────────────────────────────────────────────────────
   [/\breact\b/i,                                    ["react", "react.js"]],
   [/\bangular\b/i,                                  ["angular"]],
-  [/\bvue\b/i,                                      ["vue", "vue.js"]],
+  // Vue variants: "Vue", "Vue.js", "VueJS" (single-token), "Vue 3"
+  [/\bvue(?:\.?js)?\b|\bvuejs\b/i,                  ["vue", "vue.js", "vuejs"]],
   [/\bnext\.?js\b/i,                                ["next.js", "nextjs", "react"]],
   [/\bnode\.?js\b/i,                                ["node.js", "nodejs", "node"]],
   [/\bdjango\b/i,                                   ["django", "python"]],

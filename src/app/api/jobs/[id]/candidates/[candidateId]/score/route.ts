@@ -121,18 +121,36 @@ export async function POST(
       nextStatus = "new";
     }
 
-    const updated = await prisma.candidate.update({
-      where: { id: candidateId },
-      data: {
-        ...deriveUpdateData(breakdown),
-        profileTextHash: scoreCacheKey,
-        ...(acceptanceData && {
-          acceptanceScore: acceptanceData.score,
-          acceptanceReason: JSON.stringify(acceptanceData),
-        }),
-        ...(nextStatus ? { status: nextStatus } : {}),
-      },
-    });
+    // Main score+cache write, plus optional status flip. The status flip
+    // includes a guard so we don't clobber a recruiter's manual move
+    // (shortlisted/contacted/etc.) that landed between this route's
+    // initial candidate read and the write. We attempt updateMany with
+    // the guard first; if the row no longer qualifies, fall back to a
+    // plain update that writes everything EXCEPT status.
+    const baseData = {
+      ...deriveUpdateData(breakdown),
+      profileTextHash: scoreCacheKey,
+      ...(acceptanceData && {
+        acceptanceScore: acceptanceData.score,
+        acceptanceReason: JSON.stringify(acceptanceData),
+      }),
+    };
+    let updated;
+    if (nextStatus) {
+      const allowed = nextStatus === "rejected" ? ["new", "reviewing"] : ["rejected"];
+      const guarded = await prisma.candidate.updateMany({
+        where: { id: candidateId, status: { in: allowed } },
+        data: { ...baseData, status: nextStatus },
+      });
+      if (guarded.count === 0) {
+        // Recruiter moved them in the meantime — write score, leave status.
+        updated = await prisma.candidate.update({ where: { id: candidateId }, data: baseData });
+      } else {
+        updated = await prisma.candidate.findUnique({ where: { id: candidateId } });
+      }
+    } else {
+      updated = await prisma.candidate.update({ where: { id: candidateId }, data: baseData });
+    }
 
     return NextResponse.json(updated);
   } catch (err) {

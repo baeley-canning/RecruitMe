@@ -27,6 +27,7 @@ import { getAccessibleOrgIds } from "@/lib/org-access";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
+import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
 import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
 import { extractSignalsFromRequirement, signalMatchesText } from "@/lib/requirement-signals";
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
@@ -88,6 +89,20 @@ export async function POST(
       error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
     }, { status: 429 });
   }
+
+  // Per-job advisory lock — two recruiters clicking "Library only" on the
+  // same job at the same time would otherwise both pay for scoring the
+  // same overlapping pool. The lock holds for the route's lifetime and
+  // releases in the finally block below. Stale entries auto-clear after
+  // 15 min per the db-lock default.
+  const lockName = `talent-pool:${jobId}`;
+  const lockAcquired = await tryAcquireLock(lockName);
+  if (!lockAcquired) {
+    return NextResponse.json({
+      error: "A library search is already running for this job. Wait a minute and try again.",
+    }, { status: 429 });
+  }
+  try {
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) {
@@ -441,4 +456,7 @@ export async function POST(
     stoppedEarly,
     ...(stoppedEarly ? { message: `Imported ${sorted.length} from the library so far.${partialNote}` } : {}),
   });
+  } finally {
+    await releaseLock(lockName);
+  }
 }

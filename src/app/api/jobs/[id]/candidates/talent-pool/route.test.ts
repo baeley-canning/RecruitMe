@@ -17,6 +17,12 @@ const dbMocks = vi.hoisted(() => ({
       aggregate: vi.fn().mockResolvedValue({ _sum: { costUsd: 0 } }),
     },
     orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
+    // tryAcquireLock / releaseLock target the Setting table via db-lock.ts
+    setting: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claims the lock
+      create: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 
