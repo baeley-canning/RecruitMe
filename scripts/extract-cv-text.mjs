@@ -18,12 +18,28 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { writeFile } from "node:fs/promises";
+import { writeFile, unlink, readFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
 const prisma = new PrismaClient();
+
+// Detect macOS textutil at startup — handles legacy .doc files for free.
+// On Linux / Windows this resolves to null and .doc files stay bucketed
+// as unsupported (their current behaviour).
+const TEXTUTIL_PATH = await detectBin("textutil");
+async function detectBin(name) {
+  return new Promise((resolve) => {
+    const p = spawn("which", [name]);
+    let out = "";
+    p.stdout.on("data", (d) => { out += d.toString(); });
+    p.on("close", (code) => resolve(code === 0 ? out.trim() : null));
+    p.on("error", () => resolve(null));
+  });
+}
 
 const args = parseArgs(process.argv.slice(2));
 const LIMIT       = args.limit ? Number(args.limit) : null;
@@ -70,6 +86,31 @@ async function extractDocx(buffer) {
   return result.value ?? "";
 }
 
+// Legacy .doc (pre-2007 binary format). mammoth + pdf-parse both refuse;
+// macOS textutil reads it natively. We spawn one short-lived process per
+// file, with a temp-file round-trip because textutil's -stdin path is
+// flaky on binary input.
+async function extractDocViaTextutil(buffer) {
+  if (!TEXTUTIL_PATH) throw new Error("textutil not available (macOS only)");
+  const dir  = await mkdtemp(path.join(tmpdir(), "cv-doc-"));
+  const docPath = path.join(dir, "in.doc");
+  const txtPath = path.join(dir, "in.txt");
+  try {
+    await writeFile(docPath, buffer);
+    await new Promise((resolve, reject) => {
+      const p = spawn(TEXTUTIL_PATH, ["-convert", "txt", docPath, "-output", txtPath]);
+      let stderr = "";
+      p.stderr.on("data", (d) => { stderr += d.toString(); });
+      p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`textutil exit ${code}: ${stderr.trim()}`)));
+      p.on("error", reject);
+    });
+    return await readFile(txtPath, "utf-8");
+  } finally {
+    await unlink(docPath).catch(() => {});
+    await unlink(txtPath).catch(() => {});
+  }
+}
+
 // ─── Per-file dispatch ─────────────────────────────────────────────────────
 
 function detectKind(filename, mimeType) {
@@ -90,7 +131,9 @@ async function extractFromFile(file) {
     case "pdf":        return { text: await extractPdf(buf),  kind };
     case "docx":       return { text: await extractDocx(buf), kind };
     case "txt":        return { text: buf.toString("utf-8"),  kind };
-    case "doc_legacy": throw new Error("legacy .doc not supported (mammoth only handles .docx)");
+    case "doc_legacy":
+      if (!TEXTUTIL_PATH) throw new Error("legacy .doc needs textutil (macOS) — run this on macOS");
+      return { text: await extractDocViaTextutil(buf), kind };
     default:           throw new Error(`unsupported file type — mimeType="${file.mimeType}" filename="${file.filename}"`);
   }
 }
@@ -137,6 +180,7 @@ async function withDbRetry(fn, label) {
 
 async function main() {
   console.log(`[extract] mode: ${DRY_RUN ? "DRY RUN (no writes)" : "live"} concurrency=${CONCURRENCY}${LIMIT ? ` limit=${LIMIT}` : ""}${ORG_FILTER ? ` org=${ORG_FILTER}` : ""}`);
+  console.log(`[extract] legacy .doc support: ${TEXTUTIL_PATH ? `enabled via ${TEXTUTIL_PATH}` : "DISABLED (textutil not found — .doc files will be skipped)"}`);
 
   // Pull candidate IDs + file metadata only — NOT the file bytes. Loading
   // 12k × ~270KB base64 strings in one query crashes Prisma's Rust→JS
@@ -183,7 +227,10 @@ async function main() {
 
     const kind = detectKind(meta.filename, meta.mimeType);
     stats.byKind[kind] = (stats.byKind[kind] ?? 0) + 1;
-    if (kind === "doc_legacy" || kind === "unknown") {
+    // unknown mime + .doc-when-textutil-missing: skip up-front. .doc with
+    // textutil present falls through to the normal extraction path.
+    const isUnsupportedHere = kind === "unknown" || (kind === "doc_legacy" && !TEXTUTIL_PATH);
+    if (isUnsupportedHere) {
       stats.skippedUnsupportedKind++;
       failures.push({ candidateId: row.id, fileId: meta.id, filename: meta.filename, mimeType: meta.mimeType, reason: kind });
       return;
