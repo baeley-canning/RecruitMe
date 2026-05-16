@@ -115,3 +115,58 @@ export function applyLocationFitOverride(
     overall,
   };
 }
+
+// ─── Canonical score-tier bucketing ───────────────────────────────────────
+//
+// Before this consolidation the codebase had six different breakpoint sets
+// disagreeing on where "strong" stopped and "weak" began (75/45, 80/65/50,
+// 80/60/40, 70/40). Picked 80/65/50 for "match" because that's what
+// ScoreBadge (used by candidate-card.tsx) was already rendering — and the
+// candidate-card is the call site the recruiter looks at most, so its tiers
+// are the ones they consider "right". The library card was using 80/60/40;
+// a 60-64 match becomes "weak" (warning) instead of "fair" (accent), which
+// is a slightly stricter mid-tier shift — no candidate moves strong→weak.
+//
+// "match" and "fetchPriority" share 80/65/50 (already aligned in fetch-priority.ts
+// and FetchPriorityBadge). "acceptance" uses 70/40 (only call site is
+// AcceptanceBadge, which has three semantic levels).
+//
+// Location fit (75/45) is intentionally NOT a ScoreKind — it's bespoke per the
+// task scope and stays in locationFitBadge.
+
+export type ScoreTier = "strong" | "fair" | "weak" | "poor";
+export type ScoreKind = "match" | "acceptance" | "fetchPriority";
+
+export function scoreTier(score: number, kind: ScoreKind = "match"): ScoreTier {
+  if (kind === "acceptance") {
+    // AcceptanceBadge has three semantic levels (high/medium/low). Map them
+    // into the 4-tier vocabulary by leaving "poor" unused.
+    if (score >= 70) return "strong";
+    if (score >= 40) return "fair";
+    return "weak";
+  }
+  // match + fetchPriority share the same canonical 80/65/50 breakpoints.
+  if (score >= 80) return "strong";
+  if (score >= 65) return "fair";
+  if (score >= 50) return "weak";
+  return "poor";
+}
+
+export function scoreTierColor(tier: ScoreTier): string {
+  // Tailwind classes mirror the ScoreBadge (canonical) tier colours.
+  switch (tier) {
+    case "strong": return "bg-success-subtle text-success";
+    case "fair":   return "bg-accent-subtle text-accent";
+    case "weak":   return "bg-warning-subtle text-warning";
+    case "poor":   return "bg-surface-hover text-text-secondary";
+  }
+}
+
+export function scoreTierLabel(tier: ScoreTier): string {
+  switch (tier) {
+    case "strong": return "Strong";
+    case "fair":   return "Fair";
+    case "weak":   return "Weak";
+    case "poor":   return "Poor";
+  }
+}

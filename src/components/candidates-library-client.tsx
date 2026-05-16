@@ -6,6 +6,7 @@ import Link from "next/link";
 import { MapPin, Search, Users, FileText, Briefcase, Star, UserPlus } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn, timeAgo } from "@/lib/utils";
+import { scoreTier, scoreTierColor } from "@/lib/score-utils";
 import { AddLibraryCandidateModal } from "@/components/add-library-candidate-modal";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,13 +50,6 @@ function sourceLabel(s: string) {
   return map[s] ?? s;
 }
 
-function scoreTier(score: number) {
-  if (score >= 80) return "bg-success-subtle text-success";
-  if (score >= 60) return "bg-accent-subtle text-accent";
-  if (score >= 40) return "bg-warning-subtle text-warning";
-  return "bg-surface-hover text-text-secondary";
-}
-
 function CandidateCard({ c }: { c: LibraryCandidate }) {
   const hasCV = c.files.some((f) => f.type === "cv");
   const hasCoverLetter = c.files.some((f) => f.type === "cover_letter");
@@ -86,7 +80,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
               <span
                 className={cn(
                   "text-xs font-medium px-1.5 py-0.5 rounded-sm flex-shrink-0 data-mono",
-                  scoreTier(c.matchScore)
+                  scoreTierColor(scoreTier(c.matchScore, "match"))
                 )}
               >
                 {c.matchScore}%

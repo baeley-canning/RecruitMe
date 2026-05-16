@@ -33,6 +33,20 @@ import {
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn, statusLabel, safeParseJson } from "@/lib/utils";
+import { scoreTier, type ScoreTier } from "@/lib/score-utils";
+
+// Solid-fill progress-bar colour per match-score tier. This panel renders the
+// per-category sub-scores (skill_fit, location_fit, …) which use the same
+// 0-100 scale as the overall match score, so bucketing is delegated to the
+// canonical scoreTier helper. The "poor" tier uses bg-danger here (and not
+// the canonical neutral colour) because this is the deep score-breakdown
+// debug view where the recruiter is looking for problem categories.
+const CATEGORY_BAR_FILL: Record<ScoreTier, string> = {
+  strong: "bg-success",
+  fair:   "bg-accent",
+  weak:   "bg-warning",
+  poor:   "bg-danger",
+};
 import {
   CATEGORY_WEIGHTS_V2,
   MUST_HAVE_WEIGHT_V2,
@@ -583,9 +597,7 @@ function ProfileDrawer({
                       <div
                         className={cn(
                           "h-full rounded-sm",
-                          cat.score >= 80 ? "bg-success" :
-                          cat.score >= 60 ? "bg-accent" :
-                          cat.score >= 40 ? "bg-warning" : "bg-danger",
+                          CATEGORY_BAR_FILL[scoreTier(cat.score, "match")],
                         )}
                         style={{ width: `${cat.score}%` }}
                       />

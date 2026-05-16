@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
+import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -61,13 +62,21 @@ interface CandidateDetail {
   otherJobs: OtherJob[];
 }
 
-// Score tier mapping — token-only. Used for the score number color, the
-// progress-bar fill, and the small label next to the score.
+// Score tier styling for the detail page — token-only.
+// Bucketing is delegated to the canonical scoreTier helper (80/65/50 for
+// match scores). This page needs both a text-colour AND a progress-bar fill
+// colour per tier, so we keep a small mapping here rather than routing
+// through scoreTierColor (which returns combined bg+text classes for badges).
+const TIER_STYLE: Record<ScoreTier, { text: string; fill: string; label: string }> = {
+  strong: { text: "text-success",        fill: "bg-success",        label: "Strong" },
+  fair:   { text: "text-accent",         fill: "bg-accent",         label: "Good" },
+  weak:   { text: "text-warning",        fill: "bg-warning",        label: "Moderate" },
+  poor:   { text: "text-text-tertiary",  fill: "bg-text-tertiary",  label: "Weak" },
+};
+
+
 function scoreTier(score: number) {
-  if (score >= 80) return { text: "text-success", fill: "bg-success", label: "Strong" };
-  if (score >= 60) return { text: "text-accent",  fill: "bg-accent",  label: "Good" };
-  if (score >= 40) return { text: "text-warning", fill: "bg-warning", label: "Moderate" };
-  return            { text: "text-text-tertiary", fill: "bg-text-tertiary", label: "Weak" };
+  return TIER_STYLE[canonicalScoreTier(score, "match")];
 }
 
 function parseSkills(headline: string | null): { skills: string[]; rest: string } {

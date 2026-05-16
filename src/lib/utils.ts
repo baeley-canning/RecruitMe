@@ -66,19 +66,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function scoreColor(score: number | null | undefined): string {
-  if (score == null) return "text-text-tertiary";
-  if (score >= 75) return "text-success";
-  if (score >= 50) return "text-warning";
-  return "text-text-secondary";
-}
-
-export function scoreBg(score: number | null | undefined): string {
-  if (score == null) return "bg-surface-hover text-text-tertiary";
-  if (score >= 75) return "bg-success-subtle text-success";
-  if (score >= 50) return "bg-warning-subtle text-warning";
-  return "bg-surface-hover text-text-secondary";
-}
+// scoreColor/scoreBg were removed — see src/lib/score-utils.ts for the
+// canonical scoreTier / scoreTierColor / scoreTierLabel helpers used by the
+// match-score UI (the old helpers used a different 75/50 breakpoint that
+// disagreed with everywhere else in the app and had no remaining call sites).
 
 export function statusLabel(status: string): string {
   const map: Record<string, string> = {

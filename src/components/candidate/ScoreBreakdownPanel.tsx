@@ -2,11 +2,24 @@
 
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { scoreTier } from "@/lib/score-utils";
 import {
   type ScoreBreakdown,
   type MustHaveCoverageStatus,
   type NiceToHaveCoverageStatus,
 } from "@/lib/scoring";
+
+// Solid-fill progress-bar colour per tier (the canonical scoreTierColor
+// returns subtle bg + matching text colour for badges; the inline progress
+// bars in this panel want a single solid background colour). Bucketing is
+// driven by scoreTier so breakpoints stay in lock-step with the rest of the
+// app — only the colour mapping is bespoke.
+const TIER_FILL: Record<ReturnType<typeof scoreTier>, string> = {
+  strong: "bg-success",
+  fair:   "bg-accent",
+  weak:   "bg-warning",
+  poor:   "bg-surface-hover",
+};
 
 // ─── Coverage chip configs ────────────────────────────────────────────────────
 
@@ -154,9 +167,7 @@ export function ScoreBreakdownPanel({
                         <div
                           className={cn(
                             "h-full rounded-full",
-                            cat.score >= 80 ? "bg-success" :
-                            cat.score >= 60 ? "bg-accent" :
-                            cat.score >= 40 ? "bg-warning" : "bg-surface-hover"
+                            TIER_FILL[scoreTier(cat.score, "match")],
                           )}
                           style={{ width: `${cat.score}%` }}
                         />

@@ -6,6 +6,7 @@ import {
   normalizeSignalText,
 } from "./requirement-signals";
 import { textHasTerm } from "./format";
+import { scoreTier } from "./score-utils";
 
 export interface FetchPriorityReason {
   label: "Strong lead" | "Worth fetching" | "Possible lead" | "Weak lead";
@@ -81,10 +82,15 @@ function sourceLabel(source: SearchResult["source"]) {
 }
 
 function labelFor(score: number): FetchPriorityReason["label"] {
-  if (score >= 80) return "Strong lead";
-  if (score >= 65) return "Worth fetching";
-  if (score >= 50) return "Possible lead";
-  return "Weak lead";
+  // Tier from the canonical helper (80/65/50). Labels are bespoke to lead
+  // quality semantics, so a small inline map stays here rather than going
+  // through scoreTierLabel.
+  switch (scoreTier(score, "fetchPriority")) {
+    case "strong": return "Strong lead";
+    case "fair":   return "Worth fetching";
+    case "weak":   return "Possible lead";
+    case "poor":   return "Weak lead";
+  }
 }
 
 export function computeFetchPriority(args: {

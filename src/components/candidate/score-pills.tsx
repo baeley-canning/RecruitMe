@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { MapPin, TrendingUp, Minus, TrendingDown, CheckCircle2, XCircle, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ScoreBreakdown } from "@/lib/scoring";
+import { scoreTier, scoreTierColor } from "@/lib/score-utils";
 import { locationFitBadge } from "./helpers";
 import { provenancePillProps } from "../provenance-pill-props";
 import { isPlausibleLocation } from "@/lib/location";
@@ -113,7 +114,15 @@ export function AcceptanceBadge({
   const badgeRef = useRef<HTMLButtonElement>(null);
 
   if (score == null) return null;
-  const level = score >= 70 ? "high" : score >= 40 ? "medium" : "low";
+  // Tier comes from the canonical scoreTier helper ("acceptance" uses 70/40
+  // breakpoints). Labels + icons stay bespoke because AcceptanceBadge needs
+  // the "Likely open / May consider / Hard to move" wording, not the generic
+  // Strong/Fair/Weak labels. Colour for "medium" uses warning instead of the
+  // canonical accent because that's the recruiter-visible look this badge
+  // shipped with — keeping it stable per the no-regression constraint.
+  const tier = scoreTier(score, "acceptance"); // "strong" | "fair" | "weak"
+  const level: "high" | "medium" | "low" =
+    tier === "strong" ? "high" : tier === "fair" ? "medium" : "low";
   const config = {
     high:   { pill: "bg-success-subtle text-success", label: "Likely open",  Icon: TrendingUp },
     medium: { pill: "bg-warning-subtle text-warning", label: "May consider", Icon: Minus },
@@ -304,14 +313,18 @@ export function FetchPriorityBadge({
   const [pos, setPos] = useState({ top: 0, right: 0 });
 
   if (score == null) return null;
-  const cfg =
-    score >= 80
-      ? { pill: "bg-success-subtle text-success",        label: "Strong lead" }
-      : score >= 65
-        ? { pill: "bg-accent-subtle text-accent",        label: "Worth fetching" }
-        : score >= 50
-          ? { pill: "bg-warning-subtle text-warning",    label: "Possible lead" }
-          : { pill: "bg-surface-hover text-text-tertiary", label: "Weak lead" };
+  // Tier + colour from the canonical helper (80/65/50). Labels are bespoke
+  // ("Strong lead / Worth fetching / Possible lead / Weak lead") because
+  // fetch priority talks about lead quality, not match quality. The "poor"
+  // tier uses a tertiary-text colour rather than the canonical warning palette
+  // so that a weak lead doesn't visually shout — kept the original styling.
+  const tier = scoreTier(score, "fetchPriority");
+  const cfg = {
+    strong: { pill: "bg-success-subtle text-success",        label: "Strong lead" },
+    fair:   { pill: "bg-accent-subtle text-accent",          label: "Worth fetching" },
+    weak:   { pill: "bg-warning-subtle text-warning",        label: "Possible lead" },
+    poor:   { pill: "bg-surface-hover text-text-tertiary",   label: "Weak lead" },
+  }[tier];
 
   const openDetail = () => {
     if (ref.current) {

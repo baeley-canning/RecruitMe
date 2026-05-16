@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { scoreTier, scoreTierColor } from "@/lib/score-utils";
 
 interface ScoreBadgeProps {
   score: number | null | undefined;
@@ -6,20 +7,10 @@ interface ScoreBadgeProps {
   className?: string;
 }
 
-/**
- * Score tier colors — Logic Pro / Pro App palette.
- *
- *   80+   strong match     → success (green)
- *   65-79 promising        → accent  (blue)
- *   50-64 needs review     → warning (amber)
- *   <50   weak             → neutral (no red — failure is the recruiter's call)
- */
-function tierClasses(score: number): string {
-  if (score >= 80) return "bg-success-subtle text-success";
-  if (score >= 65) return "bg-accent-subtle text-accent";
-  if (score >= 50) return "bg-warning-subtle text-warning";
-  return "bg-surface-hover text-text-secondary";
-}
+// Score tier colours are now driven by the canonical scoreTier / scoreTierColor
+// helpers in src/lib/score-utils.ts. ScoreBadge was the de-facto source of
+// truth (80/65/50) before consolidation — those breakpoints are the ones
+// score-utils.ts adopted, so this component's visuals are unchanged.
 
 export function ScoreBadge({ score, size = "md", className }: ScoreBadgeProps) {
   // Sizing — kept dense per design system. Numbers always use mono +
@@ -48,7 +39,7 @@ export function ScoreBadge({ score, size = "md", className }: ScoreBadgeProps) {
     <span
       className={cn(
         "inline-flex items-baseline gap-0.5 font-medium",
-        tierClasses(score),
+        scoreTierColor(scoreTier(score, "match")),
         sizeClasses[size],
         className
       )}
