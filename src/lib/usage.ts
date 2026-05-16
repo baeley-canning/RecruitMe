@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { randomUUID } from "crypto";
 import { computeCostUsd } from "./ai-pricing";
+import { reportError } from "./error-reporting";
 
 /** Event types that go through the count-based rate limiter. */
 export type RateLimitedType = "search" | "score" | "score_all" | "capture" | "parse";
@@ -77,7 +78,7 @@ export async function recordUsage(
     },
   }).catch((err) => {
     // Non-fatal — never block the happy path for logging failures.
-    console.error("[usage] failed to record event:", err);
+    reportError(err, { fn: "recordUsage", type, orgId: orgId ?? null, userId });
   });
 }
 
@@ -111,7 +112,7 @@ export async function recordAiCall(args: {
       costUsd:      costUsd ?? undefined,
     },
   }).catch((err) => {
-    console.error("[usage] failed to record ai_call:", err);
+    reportError(err, { fn: "recordAiCall", model: args.model, orgId: args.orgId ?? null, userId: args.userId ?? undefined });
   });
 }
 

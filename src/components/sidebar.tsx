@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, Github, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isOwner as sessionIsOwner } from "@/lib/access";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { Modal } from "./ui/modal";
@@ -175,7 +176,7 @@ export function Sidebar({ jobs }: SidebarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const username = session?.user?.name ?? "";
-  const isOwner = (session?.user as { role?: string })?.role === "owner";
+  const isOwner = sessionIsOwner(session);
 
   // Close mobile drawer whenever the route changes
   useEffect(() => { setMobileOpen(false); }, [pathname]);

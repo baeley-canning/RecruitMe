@@ -1,4 +1,4 @@
-import { chat, parseJson } from "./chat";
+import { parseJson } from "./chat";
 import { chatWithMaybeFailover } from "./chat-with-failover";
 import { escapeXmlForPrompt } from "../profile-excerpt";
 

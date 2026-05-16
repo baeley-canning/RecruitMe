@@ -4,12 +4,9 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { isOwner } from "@/lib/access";
 
 type AnySession = { user?: { role?: string; id?: string; name?: string | null } } | null;
-
-function isOwner(session: AnySession) {
-  return session?.user?.role === "owner";
-}
 
 export async function GET() {
   const session = await getServerSession(authOptions) as AnySession;

@@ -2,7 +2,6 @@
 
 import { memo, useMemo, useRef, useState, useCallback } from "react";
 import {
-  MapPin,
   ChevronDown,
   ChevronUp,
   Star,
@@ -10,29 +9,19 @@ import {
   Loader2,
   MessageSquare,
   MessageCircle,
-  TrendingUp,
-  Minus,
-  TrendingDown,
-  CheckCircle2,
-  XCircle,
   Send,
   RefreshCw,
   FileText,
   Mail,
-  Gauge,
-  AlertTriangle,
 } from "lucide-react";
 
 import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
 import type { FetchState } from "./fetch-queue-panel";
 import {
   candidateSourceLabel,
-  profileSourceSummary,
   getRadarDimensions,
-  locationFitBadge,
   displayableLinkedinUrl,
 } from "./candidate/helpers";
-import { provenancePillProps } from "./provenance-pill-props";
 import { ScoreBadge } from "./score-badge";
 import { ScoreRadar } from "./score-radar";
 import type { RadarDimensions } from "./score-radar";
@@ -61,11 +50,9 @@ import { OutreachModal } from "./outreach-modal";
 import { RejectionEmailModal } from "./rejection-email-modal";
 import { OfferLetterModal } from "./offer-letter-modal";
 import { confirm } from "./ui/confirm-dialog";
-import { isPlausibleLocation } from "@/lib/location";
 import { ScoreBreakdownPanel } from "./candidate/ScoreBreakdownPanel";
 import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
 import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
-import { UploadCvButton } from "./candidate/UploadCvButton";
 import { ProfileTextSection } from "./candidate/ProfileTextSection";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
 import { ScoreCorrectionButton } from "./candidate/score-correction-button";

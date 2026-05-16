@@ -10,6 +10,7 @@ import {
   type ParsedRole,
 } from "./ai";
 import { buildScoreCacheKey, safeParseJson } from "./utils";
+import { reportError } from "./error-reporting";
 import { normaliseLinkedInUrl } from "./linkedin";
 import {
   isConfirmedOutOfAreaForLocalRole,
@@ -276,7 +277,13 @@ export async function updateSessionInQueue(
 
 /** Remove a session from the queue by sessionId. */
 export async function removeSessionFromQueue(sessionId: string): Promise<void> {
-  await prisma.fetchSession.delete({ where: { id: sessionId } }).catch(() => {});
+  await prisma.fetchSession.delete({ where: { id: sessionId } }).catch((err) => {
+    // P2025 (record-not-found) is expected when the session has already been
+    // cleaned up; ignore it. Surface every other failure so we notice if
+    // we're leaking rows.
+    if (err && typeof err === "object" && (err as { code?: string }).code === "P2025") return;
+    reportError(err, { fn: "removeSessionFromQueue", sessionId });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -470,13 +477,23 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
     return null;
   }
 
+  const enrichContext = { fn: "runAiEnrichment", jobId: job.id, orgId: job.orgId ?? null, linkedinUrl: identity.linkedinUrl };
   const [info, rawBreakdown, acceptance] = await Promise.all([
-    extractCandidateInfo(cleanedProfileText).catch(() => null),
+    extractCandidateInfo(cleanedProfileText).catch((err) => {
+      reportError(err, { ...enrichContext, phase: "extractCandidateInfo" });
+      return null;
+    }),
     parsedRole
-      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch(() => null)
+      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch((err) => {
+          reportError(err, { ...enrichContext, phase: "scoreCandidateStructured" });
+          return null;
+        })
       : Promise.resolve(null),
     cleanedProfileText.length >= 250 && parsedRole
-      ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch(() => null)
+      ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch((err) => {
+          reportError(err, { ...enrichContext, phase: "predictAcceptance" });
+          return null;
+        })
       : Promise.resolve(null),
   ]);
 
@@ -586,26 +603,6 @@ async function applyAiEnrichment(
   return result.count > 0;
 }
 
-// Backwards-compat wrapper — runs stage 1 + stage 2 sequentially and returns
-// the final candidate row. Kept for tests and any caller that expects
-// "save everything in one go". The hot path (the /complete route) calls
-// the two stages explicitly so it can return 202 between them.
-async function buildCapturedCandidateData(args: {
-  jobId: string;
-  currentName: string;
-  currentHeadline: string | null;
-  currentLocation: string | null;
-  currentStatus: string;
-  currentProfileTextHash: string | null;
-  profileText: string;
-  linkedinUrl: string;
-}) {
-  const identity = await buildIdentityData(args);
-  const stage1 = identityToCandidateUpdate(identity);
-  const stage2 = await runAiEnrichment(identity);
-  return { ...stage1, ...(stage2 ?? {}) };
-}
-
 // Stage 1 of saveCapturedProfileToCandidate — does the fast persist (no AI).
 // Returns the candidate row + profileTextHash so the caller can pass that to
 // applyAiEnrichmentInBackground as the concurrency token for stage 2.
@@ -691,7 +688,10 @@ export async function saveCapturedProfileToCandidate(args: {
   captureMeta?: unknown;
 }) {
   const { candidate, identity } = await saveCapturedProfileFast(args);
-  await applyAiEnrichmentInBackground(args.candidateId, identity).catch(() => ({ applied: false }));
+  await applyAiEnrichmentInBackground(args.candidateId, identity).catch((err) => {
+    reportError(err, { fn: "applyAiEnrichmentInBackground", candidateId: args.candidateId });
+    return { applied: false };
+  });
   // Return the latest candidate state so the caller sees scores if they landed.
   return prisma.candidate.findUnique({ where: { id: args.candidateId } }) ?? candidate;
 }
@@ -765,6 +765,9 @@ export async function importCapturedLinkedInProfile(args: {
   captureMeta?: unknown;
 }) {
   const { candidate, identity } = await importCapturedLinkedInProfileFast(args);
-  await applyAiEnrichmentInBackground(candidate.id, identity).catch(() => ({ applied: false }));
+  await applyAiEnrichmentInBackground(candidate.id, identity).catch((err) => {
+    reportError(err, { fn: "applyAiEnrichmentInBackground", candidateId: candidate.id });
+    return { applied: false };
+  });
   return prisma.candidate.findUnique({ where: { id: candidate.id } }) ?? candidate;
 }

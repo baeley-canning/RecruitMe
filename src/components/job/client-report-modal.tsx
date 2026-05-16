@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Loader2, AlertCircle, X, Copy, Check, FileText } from "lucide-react";
+import { Loader2, AlertCircle, X, Copy, Check } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";

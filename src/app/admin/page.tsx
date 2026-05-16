@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import { confirm } from "@/components/ui/confirm-dialog";
+import { isOwner as sessionIsOwner } from "@/lib/access";
 
 interface UserRow {
   id: string;
@@ -147,7 +148,7 @@ export default function AdminPage() {
     setStats(s => s ? { ...s, candidates: 0 } : s);
   };
 
-  const isOwner = (session?.user as { role?: string })?.role === "owner";
+  const isOwner = sessionIsOwner(session);
 
   useEffect(() => {
     if (status === "loading") return;

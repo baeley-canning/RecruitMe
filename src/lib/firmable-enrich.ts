@@ -10,6 +10,7 @@
  */
 
 import { prisma } from "./db";
+import { reportError } from "./error-reporting";
 import { enrichByLinkedIn, isEnrichmentFresh, isFirmableConfigured } from "./firmable";
 
 export interface EnrichOutcome {
@@ -63,7 +64,9 @@ export async function enrichCandidate(
       await prisma.candidate.update({
         where: { id: row.id },
         data: { firmableEnrichedAt: new Date() },
-      }).catch((err) => console.warn("[firmable-enrich] stamp-on-no-match failed:", err));
+      }).catch((err) => {
+        reportError(err, { fn: "enrichCandidate", phase: "stamp_on_no_match", candidateId: row.id });
+      });
       return { candidateId, status: "no_match" };
     }
 
@@ -77,7 +80,7 @@ export async function enrichCandidate(
     });
     return { candidateId, status: "enriched", phone: result.primaryPhone };
   } catch (err) {
-    console.warn(`[firmable-enrich] failed for candidate ${row.id}:`, err instanceof Error ? err.message : err);
+    reportError(err, { fn: "enrichCandidate", candidateId: row.id });
     return { candidateId, status: "error" };
   }
 }
@@ -93,7 +96,7 @@ export function enrichCandidateInBackground(
 ): void {
   if (!isFirmableConfigured()) return;
   void enrichCandidate(candidateId, options).catch((err) => {
-    console.warn(`[firmable-enrich] background enrich failed for ${candidateId}:`, err);
+    reportError(err, { fn: "enrichCandidateInBackground", candidateId });
   });
 }
 

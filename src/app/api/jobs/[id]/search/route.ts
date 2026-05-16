@@ -12,11 +12,7 @@ import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import {
-  buildScoreBreakdown,
-  CATEGORY_WEIGHTS_V2,
   classifyDataQuality,
-  type MustHaveStatus,
-  type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
 import {
@@ -25,11 +21,11 @@ import {
   inferCandidateLocation,
   isExplicitlyOverseasLocation,
   isOverseasForNzRole,
-  isNzLocation,
   normalizeLocationText,
 } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { textHasTerm } from "@/lib/format";
 import {
   buildTalentPoolMap,
   searchTalentPoolForRole,
@@ -86,7 +82,7 @@ const SearchSchema = z.object({
 // Regex matching requirements that should be excluded when relaxClearance is set.
 const CLEARANCE_WORK_RIGHTS_RE = /security clearance|secret vetting|confidential vetting|nzsis|nz clearance|clearance eligib|work rights|right to work|nz citizen|nz resident|\bvisa\b|work in new zealand/i;
 
-import { looksReal, looksLikePersonName, cleanQuery, dedupeQueries } from "@/lib/search-query-helpers";
+import { looksLikePersonName, cleanQuery, dedupeQueries } from "@/lib/search-query-helpers";
 import { candidateTitleFitsRole } from "@/lib/title-family";
 
 function normaliseText(value: string): string {
@@ -99,10 +95,6 @@ function requirementSignals(requirement: string): string[] {
 
 function hasSignal(text: string, signal: string): boolean {
   return signalMatchesText(text, signal);
-}
-
-function textHasTerm(value: string, term: string): boolean {
-  return signalMatchesText(value, term);
 }
 
 function candidateSearchText(result: SearchResult, profileText?: string | null, candidateLocation?: string | null) {

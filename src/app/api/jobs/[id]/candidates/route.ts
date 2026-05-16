@@ -150,7 +150,7 @@ export async function POST(
         rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined,
       }, { status: 201 });
     } catch (err) {
-      console.error("Auto-score failed:", err);
+      reportError(err, { route: "candidates:post:auto-score", jobId: id, candidateId: candidate.id, orgId: auth.orgId });
     }
   }
 

@@ -3,12 +3,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
+import { isOwner } from "@/lib/access";
 
 type AnySession = { user?: { role?: string } } | null;
-
-function isOwner(session: AnySession) {
-  return session?.user?.role === "owner";
-}
 
 export async function GET() {
   const session = await getServerSession(authOptions) as AnySession;

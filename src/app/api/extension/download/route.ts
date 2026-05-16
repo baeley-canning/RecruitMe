@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import fs from "fs";
 import path from "path";
 import { getAuth, unauthorized } from "@/lib/session";
+import { reportError } from "@/lib/error-reporting";
 
 const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-opera-linkedin-capture");
 
@@ -60,7 +61,7 @@ export async function GET() {
       },
     });
   } catch (err) {
-    console.error("Extension download error:", err);
+    reportError(err, { route: "extension/download" });
     return NextResponse.json({ error: "Failed to build extension zip" }, { status: 500 });
   }
 }

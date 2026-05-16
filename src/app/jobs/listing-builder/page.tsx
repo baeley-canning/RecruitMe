@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, FileText, X, Loader2, DollarSign, Wifi, Sparkles, Copy, Check, ChevronRight, Download, Eye, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fmtSalary } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 
@@ -19,10 +20,6 @@ const AUTOSAVE_DEBOUNCE_MS = 800;
 
 // Shared input/select recipe for the page.
 const INPUT = "w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all";
-
-function fmtSalary(n: number) {
-  return n >= 1000 ? `$${(n / 1000).toFixed(0)}k` : `$${n}`;
-}
 
 // Rendered markdown for the body preview. Mirrors the toHtml logic used by the
 // PDF export so what you see on screen matches what gets exported. Kept inline

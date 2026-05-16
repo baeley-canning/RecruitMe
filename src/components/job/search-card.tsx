@@ -28,7 +28,6 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [poolResult, setPoolResult] = useState<{ count: number; message?: string } | null>(null);
   const [poolError, setPoolError] = useState("");
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
-  const [sources, setSources] = useState<{ serpapi: boolean | "configured"; pdl: boolean | "configured" } | null>(null);
   // Live per-provider health (Claude / Llama / SerpAPI / PDL / Firmable /
   // GitHub) for the green/amber/red badges. Polled every 30s so a failed
   // call flips the badge before the recruiter notices via output quality.
@@ -74,9 +73,8 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   useEffect(() => {
     fetch("/api/search/status")
       .then((r) => r.json())
-      .then((d: { available: boolean; sources: { serpapi: boolean | "configured"; pdl: boolean | "configured" }; ai?: { provider: string; claude: "ok" | "invalid" | "error" | "unconfigured" } }) => {
+      .then((d: { available: boolean; ai?: { provider: string; claude: "ok" | "invalid" | "error" | "unconfigured" } }) => {
         setHasSerpApi(d.available);
-        setSources(d.sources ?? null);
       })
       .catch(() => setHasSerpApi(false));
   }, []);
@@ -114,7 +112,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   }: {
     limit?: number;
     refreshOnlyWhenAdded: boolean;
-  }): Promise<{ count: number; ok: boolean; aborted?: boolean }> => {
+  }): Promise<{ count: number; ok: boolean; aborted?: boolean; message?: string }> => {
     setSearchingPool(true);
     setPoolError("");
     setPoolResult(null);
@@ -139,14 +137,14 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       const count = data.count ?? 0;
       setPoolResult({ count, message: data.message });
       if (count > 0 || !refreshOnlyWhenAdded) onComplete();
-      return { count, ok: true };
+      return { count, ok: true, message: data.message };
     } catch (err) {
       // AbortError: budget exceeded — treat as "skipped, not failed" so the
       // main search flow proceeds straight to LinkedIn instead of bailing
       // with a generic error banner.
       if ((err as { name?: string })?.name === "AbortError") {
         setPoolResult({ count: 0, message: "Library search took too long — continuing with LinkedIn search." });
-        return { count: 0, ok: true, aborted: true };
+        return { count: 0, ok: true, aborted: true, message: "Library search took too long — try a smaller max candidate count or search again." };
       }
       setPoolError("Talent pool search failed. Check your connection.");
       return { count: 0, ok: false };
@@ -173,7 +171,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
         fromPool: pool.count,
         message: pool.count > 0
           ? `Found ${pool.count} from your library — LinkedIn search skipped (library-only mode).`
-          : "No library matches for this role. Switch off library-only to search LinkedIn.",
+          : pool.message ?? "No library matches for this role. Switch off library-only to search LinkedIn.",
       });
       setSearching(false);
       return;

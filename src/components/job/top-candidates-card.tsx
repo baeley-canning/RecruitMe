@@ -1,7 +1,6 @@
 "use client";
 
 import { Star, ChevronRight, TrendingDown } from "lucide-react";
-import { cn, statusBadge, statusLabel } from "@/lib/utils";
 import { ScoreBadge } from "@/components/score-badge";
 
 interface Candidate {

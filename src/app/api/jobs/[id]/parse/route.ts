@@ -5,6 +5,7 @@ import type { ParsedRole } from "@/lib/ai";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { safeParseJson } from "@/lib/utils";
+import { reportError } from "@/lib/error-reporting";
 
 // Compliance/framework terms narrow enough to be dangerous as sole anchor terms
 const NARROW_CERT_RE = /\b(iso\s*\d{4,5}|isms|gdpr|pci\b|pci[-\s]?dss|sox|nist|hipaa|cissp|cism|crisc|cisa|ccsp|togaf)\b/i;
@@ -168,7 +169,7 @@ export async function POST(
         changes:       JSON.stringify(changes),
         evaluation,
       },
-    }).catch((err) => console.error("[parse] history write failed:", err));
+    }).catch((err) => reportError(err, { route: "jobs/[id]/parse:history", jobId: id }));
 
     void recordUsage(auth.orgId, auth.userId, "parse", { jobId: id });
     // Surface the regex-fallback path so the UI can show a "review and fill
@@ -185,7 +186,7 @@ export async function POST(
       ...(fellBackToRegex ? { warning: "AI parse returned no requirements — title saved from regex fallback. Edit fields manually or re-analyse." } : {}),
     });
   } catch (err) {
-    console.error("JD parse error:", err);
+    reportError(err, { route: "jobs/[id]/parse", jobId: id, orgId: auth.orgId });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "AI parsing failed" },
       { status: 500 }

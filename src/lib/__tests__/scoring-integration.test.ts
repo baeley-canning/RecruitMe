@@ -17,7 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { scoreCandidateStructured } from "../ai/scoring";
-import { buildScoreBreakdown, computeMustHavePct } from "../scoring";
+import { computeMustHavePct } from "../scoring";
 import { applyLocationFitOverride } from "../score-utils";
 
 // ─── Mock chat() only — all pure functions run for real ───────────────────────

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateJobAd, parseJobDescription } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
+import { formatSalaryRange } from "@/lib/format";
 
 const DraftSchema = z.object({
   title: z.string().trim().min(1, "Job title is required"),
@@ -12,13 +13,6 @@ const DraftSchema = z.object({
   salaryMax: z.number().nullable().optional(),
   brief: z.string().trim().min(40, "Add a rough brief first so AI has enough context"),
 });
-
-function formatSalary(min?: number | null, max?: number | null) {
-  if (min && max) return `$${Math.round(min / 1000)}k-$${Math.round(max / 1000)}k NZD`;
-  if (min) return `From $${Math.round(min / 1000)}k NZD`;
-  if (max) return `Up to $${Math.round(max / 1000)}k NZD`;
-  return "";
-}
 
 export async function POST(req: Request) {
   const auth = await getAuth();
@@ -37,7 +31,7 @@ export async function POST(req: Request) {
     company ? `Company: ${company}` : "",
     location ? `Location: ${location}` : "",
     isRemote ? "Remote policy: Remote role or flexible remote arrangement" : "",
-    formatSalary(salaryMin, salaryMax) ? `Salary: ${formatSalary(salaryMin, salaryMax)}` : "",
+    formatSalaryRange(salaryMin, salaryMax) ? `Salary: ${formatSalaryRange(salaryMin, salaryMax)}` : "",
     "",
     "Hiring brief / notes:",
     brief,
@@ -46,7 +40,7 @@ export async function POST(req: Request) {
     .join("\n");
 
   const parsedRole = await parseJobDescription(seedBrief, { orgId: auth.orgId, userId: auth.userId });
-  const explicitSalaryBand = formatSalary(salaryMin, salaryMax);
+  const explicitSalaryBand = formatSalaryRange(salaryMin, salaryMax);
   const explicitLocationRules = isRemote
     ? [location || parsedRole.location, "Remote / flexible"]
         .filter(Boolean)

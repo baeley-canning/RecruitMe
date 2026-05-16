@@ -7,7 +7,6 @@ import {
   Sparkles,
   Search,
   UserPlus,
-  ChevronRight,
   MapPin,
   Briefcase,
   Loader2,
@@ -46,7 +45,7 @@ import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
 import { ClientReportModal } from "@/components/job/client-report-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
-import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
+import { cn, statusLabel, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 
 

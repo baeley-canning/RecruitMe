@@ -1,9 +1,9 @@
 /**
  * POST /api/jobs/[id]/candidates/talent-pool
  *
- * Searches the local talent pool (all Candidate rows with a full profile,
- * across every job) and adds any matching, not-yet-imported candidates to
- * this job, scored against its requirements.
+ * Searches the local talent pool (all Candidate rows with a full profile /
+ * CV text, across every job) and adds any matching, not-yet-imported
+ * candidates to this job, scored against its requirements.
  *
  * This lets the user build up a rich DB of profiles over time and instantly
  * surface relevant people for new roles without hitting LinkedIn at all.
@@ -24,8 +24,9 @@ import { shouldRejectAsOverseas } from "@/lib/location";
 import { getCityCoords, getNearestCity } from "@/lib/nz-cities";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
-import { hasFullCandidateProfile } from "@/lib/candidate-profile";
+import { CAPTURED_PROFILE_MIN_CHARS, hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { reportError } from "@/lib/error-reporting";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
 import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
@@ -53,6 +54,24 @@ const BodySchema = z.object({
   centerLat: z.number().min(-90).max(90).optional(),
   centerLng: z.number().min(-180).max(180).optional(),
 });
+
+const MAX_POOL_SCORE_CANDIDATES_PER_RUN = 40;
+
+function poolImportKey(row: { id: string; linkedinUrl?: string | null }): string {
+  const raw = row.linkedinUrl?.trim();
+  if (!raw) return `library:${row.id}`;
+  return /^https?:\/\//i.test(raw) ? normaliseLinkedInUrl(raw) : raw;
+}
+
+function hasReusablePoolProfile(row: {
+  source?: string | null;
+  profileCapturedAt?: Date | string | null;
+  profileText?: string | null;
+}): boolean {
+  const charCount = row.profileText?.trim().length ?? 0;
+  if (row.source === "jobadder_import" && charCount >= CAPTURED_PROFILE_MIN_CHARS) return true;
+  return hasFullCandidateProfile(row);
+}
 
 export async function POST(
   req: Request,
@@ -129,12 +148,22 @@ export async function POST(
   const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
   const targetLocation = customCenterCity?.name ?? (jobTargetLocation || canonicalJobCity || locationSource);
 
-  // 1. Collect the LinkedIn URLs already in this job so we skip duplicates.
+  // 1. Collect existing pool identity keys already in this job so we skip
+  // duplicates. LinkedIn-backed rows use the normalised LinkedIn URL; ATS /
+  // JobAdder-only library rows use an internal `library:<sourceCandidateId>`
+  // key stored in linkedinUrl purely to satisfy the (jobId, linkedinUrl)
+  // uniqueness constraint. displayableLinkedinUrl hides non-http keys in UI.
   const existingUrls = new Set(
     (await prisma.candidate.findMany({
       where: { jobId },
       select: { linkedinUrl: true },
-    })).map((c) => c.linkedinUrl).filter(Boolean)
+    }))
+      .map((c) => {
+        const raw = c.linkedinUrl?.trim();
+        if (!raw) return null;
+        return /^https?:\/\//i.test(raw) ? normaliseLinkedInUrl(raw) : raw;
+      })
+      .filter(Boolean)
   );
 
   // 2. Pull all candidates with a full profile from any org the caller can
@@ -183,6 +212,8 @@ export async function POST(
       headline: true,
       location: true,
       linkedinUrl: true,
+      jobAdderUrl: true,
+      source: true,
       profileText: true,
       profileCapturedAt: true,
       createdAt: true,
@@ -195,28 +226,30 @@ export async function POST(
   });
   console.log(`[talent-pool] pre-filter terms=${prefilterTerms.length} usePrefilter=${usePrefilter} → ${poolRows.length} rows`);
 
-  // 3. Deduplicate by normalised LinkedIn URL, keep the freshest profile per URL.
-  const bestByUrl = new Map<string, typeof poolRows[number]>();
+  // 3. Deduplicate by reusable pool identity, keep the freshest profile per
+  // identity. JobAdder/CV imports may not have LinkedIn URLs, so they get a
+  // stable internal key instead of being silently thrown away.
+  const bestByIdentity = new Map<string, typeof poolRows[number]>();
   for (const row of poolRows) {
-    if (!row.linkedinUrl || !hasFullCandidateProfile(row)) continue;
-    let normUrl: string;
-    try { normUrl = normaliseLinkedInUrl(row.linkedinUrl); } catch { continue; }
-    if (existingUrls.has(normUrl) || existingUrls.has(row.linkedinUrl)) continue;
+    if (!hasReusablePoolProfile(row)) continue;
+    let identityKey: string;
+    try { identityKey = poolImportKey(row); } catch { continue; }
+    if (existingUrls.has(identityKey)) continue;
 
-    const existing = bestByUrl.get(normUrl);
-    if (!existing) { bestByUrl.set(normUrl, row); continue; }
+    const existing = bestByIdentity.get(identityKey);
+    if (!existing) { bestByIdentity.set(identityKey, row); continue; }
     const rowDate = row.profileCapturedAt ?? row.createdAt;
     const existDate = existing.profileCapturedAt ?? existing.createdAt;
-    if (rowDate > existDate) bestByUrl.set(normUrl, row);
+    if (rowDate > existDate) bestByIdentity.set(identityKey, row);
   }
 
-  const candidatesBeforeRank = [...bestByUrl.values()];
+  const candidatesBeforeRank = [...bestByIdentity.values()];
   console.log(`[talent-pool] ${candidatesBeforeRank.length} unique profiles in pool (excluding this job)`);
 
   if (candidatesBeforeRank.length === 0) {
     return NextResponse.json({
       count: 0, candidates: [],
-      message: "No talent pool profiles available yet. Capture LinkedIn profiles for other jobs first.",
+      message: "No reusable library profiles available yet. Capture LinkedIn profiles or import CV/JobAdder candidates first.",
     });
   }
 
@@ -290,13 +323,18 @@ export async function POST(
   const mustHaveSignalSets = mustHavesForRank.map((req) => extractSignalsFromRequirement(req));
 
   // ── Pre-filter: drop overseas + non-specialist-signal candidates before scoring.
-  // Anything past this point is sent to Claude. We cap at maxResults * 2 so a
-  // big library doesn't blow the token budget — the over-pull covers the case
-  // where some candidates fail the post-score minScore filter.
+  // Anything past this point is sent to Claude. We cap each run so a big
+  // JobAdder/CV library doesn't sit behind a 200-profile scoring burst and
+  // trip the frontend's timeout. Re-running the search picks up the next
+  // batch because already-imported identities are excluded above.
   type PoolRow = typeof candidates[number];
   const toScore: PoolRow[] = [];
+  const scoreLimit = Math.min(maxResults * 2, MAX_POOL_SCORE_CANDIDATES_PER_RUN);
   for (const row of candidates) {
-    if (toScore.length >= maxResults * 2) break;
+    if (toScore.length >= scoreLimit) {
+      stoppedEarly = candidates.length > scoreLimit;
+      break;
+    }
     const overseasCheck = shouldRejectAsOverseas({
       explicitLocation: row.location ?? "",
       headline: row.headline,
@@ -337,22 +375,44 @@ export async function POST(
   // scoreCandidatesBatch chunks into groups of 5 and dispatches in parallel,
   // so this typically returns in ~10-30s for up to 40 candidates instead of
   // the 5-15 MINUTES sequential scoring used to take.
-  const batchResults = toScore.length > 0
+  // Split into route-level batches so a single failed batch only loses its
+  // own candidates, and so each rejection surfaces via reportError with the
+  // batchIndex tag (instead of being swallowed in one big silent `.catch`).
+  const ROUTE_BATCH_SIZE = 20;
+  const scoreChunks: Array<typeof toScore> = [];
+  for (let i = 0; i < toScore.length; i += ROUTE_BATCH_SIZE) {
+    scoreChunks.push(toScore.slice(i, i + ROUTE_BATCH_SIZE));
+  }
+
+  const settled = scoreChunks.length > 0
     ? await Promise.race([
-        scoreCandidatesBatch(
-          toScore.map((r) => ({ candidateId: r.id, profileText: r.profileText! })),
-          parsedRole,
-          salary,
-          weights,
-          auth.orgId,
+        Promise.allSettled(
+          scoreChunks.map((chunk) =>
+            scoreCandidatesBatch(
+              chunk.map((r) => ({ candidateId: r.id, profileText: r.profileText! })),
+              parsedRole,
+              salary,
+              weights,
+              auth.orgId,
+            ),
+          ),
         ),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("batch score timeout")), TIME_BUDGET_MS)),
       ]).catch((err) => {
-        console.warn("[talent-pool] batch scoring failed or timed out:", err);
+        // Top-level reject (only the timeout path can land here, since
+        // Promise.allSettled itself never rejects). Surface it and degrade.
+        reportError(err, { route: "talent-pool", jobId, orgId: auth.orgId });
         stoppedEarly = true;
-        return [];
+        return [] as PromiseSettledResult<Awaited<ReturnType<typeof scoreCandidatesBatch>>>[];
       })
     : [];
+
+  const batchResults = settled.flatMap((result, batchIndex) => {
+    if (result.status === "fulfilled") return result.value;
+    reportError(result.reason, { route: "talent-pool", jobId, orgId: auth.orgId, batchIndex });
+    stoppedEarly = true;
+    return [];
+  });
 
   scored = batchResults.length;
 
@@ -411,21 +471,22 @@ export async function POST(
     }
 
     try {
-      const normUrl = normaliseLinkedInUrl(row.linkedinUrl!);
+      const identityKey = poolImportKey(row);
       // Upsert rather than create: the search route and this route can both
       // fire for the same job simultaneously (Q1.3 parallel pool+LinkedIn).
       // Using create causes a P2002 unique-constraint crash when they race
       // on the same (jobId, linkedinUrl). Upsert merges gracefully; the
       // score data always overwrites so the freshest result wins.
       const candidate = await prisma.candidate.upsert({
-        where: { jobId_linkedinUrl: { jobId, linkedinUrl: normUrl } },
+        where: { jobId_linkedinUrl: { jobId, linkedinUrl: identityKey } },
         create: {
           jobId,
           orgId: job.orgId ?? null,
           name: row.name,
           headline: row.headline,
           location: row.location || null,
-          linkedinUrl: normUrl,
+          linkedinUrl: identityKey,
+          jobAdderUrl: row.jobAdderUrl ?? null,
           profileText,
           source: "talent_pool",
           status: "new",
@@ -436,12 +497,13 @@ export async function POST(
           // Only update score-related fields so we don't clobber recruiter notes/status.
           ...scoreData,
           source: "talent_pool",
+          ...(row.jobAdderUrl ? { jobAdderUrl: row.jobAdderUrl } : {}),
           ...(row.profileCapturedAt ? { profileCapturedAt: row.profileCapturedAt } : {}),
         },
       });
       saved.push(candidate as SavedCandidate);
     } catch (err) {
-      console.error("[talent-pool] candidate save failed:", err);
+      reportError(err, { route: "talent-pool:save", jobId, orgId: auth.orgId, candidateId: row.id });
     }
   }
 

@@ -6,6 +6,7 @@ import { Upload, FileText, X, ChevronRight, Loader2, DollarSign, Wifi } from "lu
 import { Button } from "@/components/ui/button";
 import type { JobBriefUploadPrefill } from "@/lib/job-brief-prefill";
 import { cn } from "@/lib/utils";
+import { fmtSalary } from "@/lib/format";
 
 const SALARY_OPTIONS = [
   40000, 50000, 60000, 70000, 80000, 90000, 100000, 110000, 120000,
@@ -14,10 +15,6 @@ const SALARY_OPTIONS = [
 ];
 
 const LISTING_SEED_KEY = "recruitme:new-job-from-listing";
-
-function fmtSalary(n: number) {
-  return n >= 1000 ? `$${(n / 1000).toFixed(0)}k` : `$${n}`;
-}
 
 function snapSalaryFloor(value: number) {
   const match = [...SALARY_OPTIONS].reverse().find((option) => option <= value);

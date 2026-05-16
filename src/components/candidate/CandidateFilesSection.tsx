@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Download, Loader2, Trash2, Upload } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import { formatBytes } from "@/lib/format";
 import { confirm } from "@/components/ui/confirm-dialog";
 
 export interface DrawerFile {
@@ -14,12 +15,6 @@ export interface DrawerFile {
   createdAt: string;
   scored?: boolean;
   processingError?: string;
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function drawerTypeLabel(type: string) {

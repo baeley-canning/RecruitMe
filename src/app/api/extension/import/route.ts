@@ -6,6 +6,7 @@ import { isLinkedInProfileUrl } from "@/lib/linkedin";
 import { prisma } from "@/lib/db";
 import { verifyExtensionAuth } from "@/lib/session";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { reportError } from "@/lib/error-reporting";
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
     // Stage 2 — fire-and-forget AI scoring. Logged on failure but never
     // blocks the response.
     applyAiEnrichmentInBackground(candidate.id, identity).catch((err) => {
-      console.error("[extension/import] background scoring crashed:", err);
+      reportError(err, { route: "extension/import", candidateId: candidate.id, jobId: parsed.data.jobId, orgId: auth.orgId });
     });
     return NextResponse.json(candidate, { headers: extensionCorsHeaders(req) });
   } catch (err) {

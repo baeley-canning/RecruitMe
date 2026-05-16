@@ -24,6 +24,7 @@ import {
   escapeXmlForPrompt,
 } from "../profile-excerpt";
 import { inferSecurityClearanceContext } from "../security-clearance";
+import { reportError } from "../error-reporting";
 import type { ScoringWeights } from "../scoring-config";
 import type { ParsedRole } from "./parsing";
 import {
@@ -470,8 +471,6 @@ export async function scoreCandidateStructured(
   if (!resolvedRecruiterContext && orgId && dataQualityForContext === "full_profile") {
     resolvedRecruiterContext = await getRecruitingContext(parsedRole, orgId).catch(() => "");
   }
-  const clamp = (v: unknown, fallback = 50) =>
-    typeof v === "number" ? Math.min(100, Math.max(0, Math.round(v))) : fallback;
 
   const dismissedKnockouts = new Set((parsedRole.dismissed_knockout_criteria ?? []).map((k) => k.toLowerCase()));
   const rawMustHaves   = parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required;
@@ -918,6 +917,7 @@ ${candidatesBlock}
         if (!Array.isArray(rawArr)) throw new Error("Batch response was not an array");
       } catch (err) {
         console.warn(`[batch-scoring] JSON parse failed for batch of ${chunk.length}; falling back to stubs.`, err, `head=${text.slice(0, 200)}`);
+        reportError(err, { fn: "scoreCandidate", phase: "batch_json_parse", batchSize: chunk.length, orgId });
         return chunk.map((c) => ({
           candidateId: c.prep.candidateId,
           index: c.index,
@@ -941,6 +941,10 @@ ${candidatesBlock}
         const raw = byId.get(c.prep.candidateId);
         if (!raw) {
           console.warn(`[batch-scoring] Claude didn't return a result for ${c.prep.candidateId} — using stub`);
+          reportError(
+            new Error(`Model omitted candidate ${c.prep.candidateId} from batch result`),
+            { fn: "scoreCandidate", phase: "batch_missing_candidate", candidateId: c.prep.candidateId, orgId },
+          );
           return {
             candidateId: c.prep.candidateId,
             index: c.index,
@@ -970,6 +974,7 @@ ${candidatesBlock}
       // withRetry exhausted — batch failed hard. Fall through to stubs so
       // each candidate still gets a deterministic ranking number.
       console.warn(`[batch-scoring] batch of ${chunk.length} failed after retries — using stubs`, err);
+      reportError(err, { fn: "scoreCandidate", phase: "batch_retries_exhausted", batchSize: chunk.length, orgId });
       return chunk.map((c) => ({
         candidateId: c.prep.candidateId,
         index: c.index,

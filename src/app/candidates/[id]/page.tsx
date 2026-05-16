@@ -18,10 +18,10 @@ import {
   StickyNote,
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
+import { formatBytes } from "@/lib/format";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { confirm } from "@/components/ui/confirm-dialog";
 
 interface CandidateFile {
@@ -59,12 +59,6 @@ interface CandidateDetail {
   archivedJobCompany: string | null;
   files: CandidateFile[];
   otherJobs: OtherJob[];
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // Score tier mapping — token-only. Used for the score number color, the

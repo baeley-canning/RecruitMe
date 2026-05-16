@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuth, unauthorized } from "@/lib/session";
 import { generateProfileDocx } from "@/lib/generate-candidate-profile-doc";
+import { reportError } from "@/lib/error-reporting";
 
 export const dynamic = "force-dynamic";
 
@@ -91,7 +92,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (err) {
-    console.error("[candidate-profiles/generate]", err);
+    reportError(err, { route: "candidate-profiles/generate" });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Document generation failed" },
       { status: 500 }

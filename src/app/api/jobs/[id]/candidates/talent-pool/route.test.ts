@@ -153,6 +153,47 @@ describe("talent-pool ingestion route", () => {
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("talent_pool");
   });
+
+  it("imports JobAdder library candidates that have CV text but no LinkedIn URL", async () => {
+    dbMocks.prisma.candidate.findMany.mockReset();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "pool-jobadder-1",
+          name: "Ari Patel",
+          headline: "Senior Full-stack Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/123",
+          source: "jobadder_import",
+          profileText: "Ari Patel\nSenior Full-stack Engineer\nWellington, New Zealand\n\nExperience\nBuilt React and Ruby on Rails products, APIs, PostgreSQL integrations, and cloud deployments for product teams. ".repeat(5),
+          profileCapturedAt: null,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+    const req = new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 1, minScore: 0, radiusKm: 25 }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.count).toBe(1);
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
+    const upsertCall = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
+    expect(upsertCall.where.jobId_linkedinUrl).toEqual({
+      jobId: "job-1",
+      linkedinUrl: "library:pool-jobadder-1",
+    });
+    expect(upsertCall.create.linkedinUrl).toBe("library:pool-jobadder-1");
+    expect(upsertCall.create.jobAdderUrl).toBe("https://app.jobadder.com/candidates/123");
+    expect(upsertCall.create.source).toBe("talent_pool");
+  });
 });
 
 // ── Cap-bypass regression: pool candidates must use FULL-PROFILE Claude scoring

@@ -4,6 +4,7 @@ import { generateOutreachMessage } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { reportError } from "@/lib/error-reporting";
 
 // If outreach was already drafted within this window, the response includes
 // `previouslyDrafted: true` so the UI can warn the recruiter before they
@@ -77,7 +78,7 @@ export async function POST(
       previousDraft: recent ? { at: recent.createdAt.toISOString(), by: recent.userName } : undefined,
     });
   } catch (err) {
-    console.error("Outreach generation error:", err);
+    reportError(err, { route: "outreach:generate", jobId: id, candidateId, orgId: auth.orgId });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Generation failed" },
       { status: 500 }

@@ -31,6 +31,7 @@ import { fetchAllTabs } from "@/lib/contact-sheet/fetch-google";
 import { executePlan, planSync, summarisePlans } from "@/lib/contact-sheet/sync";
 import type { SyncSummary } from "@/lib/contact-sheet/types";
 import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
+import { reportError } from "@/lib/error-reporting";
 
 const SYNC_LOCK_NAME = "contact-sheet-sync";
 
@@ -102,7 +103,7 @@ export async function POST(req: Request): Promise<NextResponse<SyncSummary | { e
       tabs = await fetchAllTabs({ sheetId, credentials: creds });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[contact-sheet] fetch failed: ${msg}`);
+      reportError(err, { route: "sync-contact-sheet:fetch", orgId: resolvedOrgId });
       return NextResponse.json({ error: `Sheet fetch failed: ${msg}` }, { status: 502 });
     }
 

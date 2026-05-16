@@ -10,6 +10,7 @@ import {
 } from "@/lib/linkedin-capture";
 import { isLinkedInProfileUrl } from "@/lib/linkedin";
 import { verifyExtensionAuth } from "@/lib/session";
+import { reportError } from "@/lib/error-reporting";
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
@@ -138,7 +139,7 @@ export async function POST(req: Request) {
   // the candidate stays captured-but-unscored and the session is marked
   // errored so the recruiter can re-score manually.
   processBackgroundScoring({ sessionId, candidateId: session.candidateId, identity }).catch((err) => {
-    console.error("[fetch-session/complete] background scoring crashed:", err);
+    reportError(err, { route: "extension/fetch-session/complete", sessionId, candidateId: session.candidateId });
   });
 
   return NextResponse.json(

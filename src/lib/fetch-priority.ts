@@ -4,8 +4,8 @@ import { isExplicitlyOverseasLocation, isNzLocation } from "./location";
 import {
   extractSignalsFromRequirement,
   normalizeSignalText,
-  signalMatchesText,
 } from "./requirement-signals";
+import { textHasTerm } from "./format";
 
 export interface FetchPriorityReason {
   label: "Strong lead" | "Worth fetching" | "Possible lead" | "Weak lead";
@@ -32,10 +32,6 @@ function clamp(value: number) {
 
 function norm(value: string) {
   return normalizeSignalText(value);
-}
-
-function textHasTerm(value: string, term: string) {
-  return signalMatchesText(value, term);
 }
 
 function compactTerms(values: string[]) {

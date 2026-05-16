@@ -2,11 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, jobsWhere } from "@/lib/session";
 
-export async function GET(req: Request) {
+export async function GET() {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
-  const url = new URL(req.url);
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // last 7 days
 
   const [jobs, recentCaptures, recentSearches] = await Promise.all([

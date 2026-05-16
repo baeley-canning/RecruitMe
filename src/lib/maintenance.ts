@@ -3,6 +3,7 @@
  * Called from a Next.js API route on a schedule (or at startup with a cooldown).
  */
 import { prisma } from "./db";
+import { reportError } from "./error-reporting";
 
 const USAGE_EVENT_RETENTION_DAYS    = 90;
 const LOGIN_ATTEMPT_CLEANUP_DAYS    = 1;
@@ -78,6 +79,6 @@ export async function runMaintenance(): Promise<void> {
       `${parseHistory.deleted} parse history rows`
     );
   } catch (err) {
-    console.error("[maintenance] failed:", err);
+    reportError(err, { fn: "runMaintenance" });
   }
 }
