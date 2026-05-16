@@ -233,8 +233,15 @@ const YEAR_RANGE_RE = new RegExp(
   `\\b(?:${MONTH_RE}\\s+)?(?:19|20)\\d{2}\\s*(?:[-–—]|to)\\s*(?:(?:${MONTH_RE}\\s+)?(?:19|20)\\d{2}|present|current|now)\\b`,
   "gi",
 );
-const EXPERIENCE_HEADING_RE = /(?:^|\n)\s*(experience|work history|employment history|career history)\s*(?:\n|$)/i;
-const PROFILE_SECTION_HEADING_RE = /(?:^|\n)\s*(about|experience|work history|employment history|career history|education|skills|top skills|licenses|certifications|licenses & certifications)\s*(?:\n|$)/i;
+// Section headings as written in LinkedIn captures AND in CV exports.
+// CV variants (WORK EXPERIENCE, PROFESSIONAL EXPERIENCE, EMPLOYMENT
+// HISTORY, etc.) added after the JobAdder bulk import revealed the gate
+// was routing CV-shaped imports to buildStubBreakdown (cap at 50)
+// because they don't use LinkedIn's mixed-case single-word headings.
+// Trailing terminator broadened from `(?:\n|$)` to `[:\n]` so inline
+// "Skills:" / "Education:" patterns common in CVs are also recognised.
+const EXPERIENCE_HEADING_RE = /(?:^|\n)\s*(experience|work\s+experience|professional\s+experience|employment\s+history|employment|work\s+history|career\s+history|career\s+summary)\s*[:\n]/i;
+const PROFILE_SECTION_HEADING_RE = /(?:^|\n)\s*(about|profile|summary|objective|experience|work\s+experience|professional\s+experience|employment|employment\s+history|work\s+history|career\s+history|career\s+summary|education|qualifications|skills|technical\s+skills|key\s+skills|top\s+skills|core\s+competencies|licenses|certifications|licenses\s+&\s+certifications|references|projects|achievements|languages)\s*[:\n]/i;
 // Tier 1 deterministic marker: the scoring prompt instructs Claude to prefix
 // recruiter_summary with [CAPTURE_PARTIAL] on partial captures. Detecting the
 // marker is robust to all phrasing drift. The legacy phrase patterns below

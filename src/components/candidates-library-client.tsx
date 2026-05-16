@@ -112,7 +112,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
             <Badge>
               <Briefcase className="w-2.5 h-2.5" />
               <span className="line-clamp-1 max-w-[100px] ml-1">
-                {c.job?.title ?? c.archivedJobTitle ?? (c.source === "manual" ? "Library" : "Archived role")}
+                {c.job?.title ?? c.archivedJobTitle ?? (c.source === "manual" || c.source === "jobadder_import" ? "Library" : "Archived role")}
               </span>
             </Badge>
 

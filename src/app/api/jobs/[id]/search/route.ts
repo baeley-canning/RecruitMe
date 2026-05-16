@@ -1123,6 +1123,9 @@ async function runSearchBackground(args: {
         linkedinUrl: true,
         profileText: true,
         profileCapturedAt: true,
+        // Used downstream to preserve `jobadder_import` provenance when
+        // the same person is re-discovered via SerpAPI.
+        source: true,
       },
     });
     const existingByUrl = new Map<string, typeof existingCandidates[number]>();
@@ -1457,6 +1460,12 @@ async function runSearchBackground(args: {
 
         try {
           if (existingCandidate) {
+            // Preserve provenance: don't relabel a jobadder_import row as
+            // "serpapi" just because it was re-found via search. The
+            // import is the actual source of truth for these candidates.
+            const preservedSource = existingCandidate.source === "jobadder_import"
+              ? "jobadder_import"
+              : (isFromPool ? "talent_pool" : r.source);
             const candidate = await prisma.candidate.update({
               where: { id: existingCandidate.id },
               data: {
@@ -1468,7 +1477,7 @@ async function runSearchBackground(args: {
                 profileTextHash: null,
                 fetchPriorityScore,
                 fetchPriorityReason,
-                source: isFromPool ? "talent_pool" : r.source,
+                source: preservedSource,
                 ...(isFromPool && poolEntry?.profileCapturedAt
                   ? { profileCapturedAt: poolEntry.profileCapturedAt }
                   : {}),

@@ -19,6 +19,7 @@ export function candidateSourceLabel(candidate: CandidateLike) {
   if (candidate.source === "bookmarklet") return "LinkedIn capture";
   if (candidate.source === "pdl") return "People Data Labs";
   if (candidate.source === "serpapi") return "SerpAPI snippet";
+  if (candidate.source === "jobadder_import") return "JobAdder import";
   return candidate.source ? candidate.source.replace(/_/g, " ") : "Manual";
 }
 

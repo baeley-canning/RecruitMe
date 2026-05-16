@@ -19,9 +19,25 @@ export function escapeXmlForPrompt(text: string): string {
 
 const PROFILE_SECTION_ALIASES = new Map<string, string>([
   ["about", "About"],
+  ["profile", "About"],
+  ["summary", "Summary"],
+  ["objective", "Summary"],
+  // CV variants — keep first to preserve the "Experience" output key the
+  // priority + limits maps below already understand.
   ["experience", "Experience"],
+  ["work experience", "Experience"],
+  ["professional experience", "Experience"],
+  ["employment history", "Experience"],
+  ["employment", "Experience"],
+  ["work history", "Experience"],
+  ["career history", "Experience"],
+  ["career summary", "Experience"],
   ["education", "Education"],
+  ["qualifications", "Education"],
   ["skills", "Skills"],
+  ["technical skills", "Skills"],
+  ["key skills", "Skills"],
+  ["core competencies", "Skills"],
   ["top skills", "Top skills"],
   ["licenses certifications", "Licenses & certifications"],
   ["certifications", "Certifications"],
@@ -30,7 +46,9 @@ const PROFILE_SECTION_ALIASES = new Map<string, string>([
   ["publications", "Publications"],
   ["volunteering", "Volunteering"],
   ["honors awards", "Honors & awards"],
-  ["summary", "Summary"],
+  ["references", "References"],
+  ["achievements", "Achievements"],
+  ["languages", "Languages"],
 ]);
 
 const PROFILE_SECTION_PRIORITY = [

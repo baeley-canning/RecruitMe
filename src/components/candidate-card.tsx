@@ -726,7 +726,14 @@ function ProfileDrawer({
   const capturedAt = candidate.profileCapturedAt ? new Date(candidate.profileCapturedAt) : null;
   const locationFitScore = breakdown?.categories.location_fit.score ?? null;
   const profileChars = candidate.profileText?.trim().length ?? 0;
-  const hasFetchedProfile = Boolean(candidate.profileCapturedAt || (candidate.source === "extension" && profileChars > 0));
+  // jobadder_import has profileText from the CV extraction; treat that as
+  // "fetched" so the "Fetch profile" CTA doesn't render (and can't clobber
+  // the imported text with a fresh LinkedIn capture).
+  const hasFetchedProfile = Boolean(
+    candidate.profileCapturedAt ||
+    (candidate.source === "extension" && profileChars > 0) ||
+    (candidate.source === "jobadder_import" && profileChars > 0)
+  );
 
   const [editingLinkedIn, setEditingLinkedIn] = useState(false);
   const [linkedInInput, setLinkedInInput] = useState(candidate.linkedinUrl ?? "");
@@ -1121,7 +1128,13 @@ export const CandidateCard = memo(function CandidateCard({
     [candidate.fetchPriorityReason]
   );
   const captureLabel = candidateSourceLabel(candidate);
-  const hasExtensionCapture = candidate.source === "extension" && !!candidate.profileText;
+  // hasExtensionCapture also covers JobAdder imports — both carry full
+  // profile text (extension via LinkedIn scrape, jobadder_import via CV
+  // extraction). Without this, the card shows a misleading "fetch
+  // profile" CTA and "incomplete capture" warning for imported records.
+  const hasExtensionCapture =
+    (candidate.source === "extension" || candidate.source === "jobadder_import") &&
+    !!candidate.profileText;
   // When the LinkedIn capture is incomplete, the score and "reasons against"
   // are NOT trustworthy — the work history (which would prove the must-haves)
   // is missing from the captured text. Suppress the misleading 12%-style score
