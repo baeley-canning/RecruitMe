@@ -121,12 +121,26 @@ export async function POST(
       nextStatus = "new";
     }
 
-    // Main score+cache write, plus optional status flip. The status flip
-    // includes a guard so we don't clobber a recruiter's manual move
-    // (shortlisted/contacted/etc.) that landed between this route's
-    // initial candidate read and the write. We attempt updateMany with
-    // the guard first; if the row no longer qualifies, fall back to a
-    // plain update that writes everything EXCEPT status.
+    // Main score+cache write, plus optional status flip. Two concurrency
+    // guards stack here:
+    //
+    //   (a) profileTextHash gate: only write if the row still carries the
+    //       hash it had when we read it. A concurrent scorer (extension
+    //       capture stage 2, score-all run, another re-score click) that
+    //       landed first will have advanced the hash to its own
+    //       scoreCacheKey — our older score must NOT overwrite it.
+    //
+    //   (b) status gate (only when we want to flip status): only write
+    //       the status flip if the row is still in the right pre-flip
+    //       status. If the recruiter moved them to shortlisted/contacted/
+    //       etc. between read and write, we keep their manual choice and
+    //       write the score without the status change.
+    //
+    // `count === 0` from the hash-gated write means another writer won.
+    // We log and return the row as-is rather than erroring — the user's
+    // re-score click effectively no-ops because a fresher score is
+    // already in place.
+    const oldHash = candidate.profileTextHash ?? null;
     const baseData = {
       ...deriveUpdateData(breakdown),
       profileTextHash: scoreCacheKey,
@@ -139,17 +153,32 @@ export async function POST(
     if (nextStatus) {
       const allowed = nextStatus === "rejected" ? ["new", "reviewing"] : ["rejected"];
       const guarded = await prisma.candidate.updateMany({
-        where: { id: candidateId, status: { in: allowed } },
+        where: { id: candidateId, profileTextHash: oldHash, status: { in: allowed } },
         data: { ...baseData, status: nextStatus },
       });
       if (guarded.count === 0) {
-        // Recruiter moved them in the meantime — write score, leave status.
-        updated = await prisma.candidate.update({ where: { id: candidateId }, data: baseData });
+        // Either the recruiter moved them OR a concurrent score landed.
+        // Try again with just the hash gate (write score, leave status).
+        const scoreOnly = await prisma.candidate.updateMany({
+          where: { id: candidateId, profileTextHash: oldHash },
+          data: baseData,
+        });
+        if (scoreOnly.count === 0) {
+          console.log(`[score] concurrent writer won for candidate=${candidateId} — skipping stale score`);
+        }
+        updated = await prisma.candidate.findUnique({ where: { id: candidateId } });
       } else {
         updated = await prisma.candidate.findUnique({ where: { id: candidateId } });
       }
     } else {
-      updated = await prisma.candidate.update({ where: { id: candidateId }, data: baseData });
+      const guarded = await prisma.candidate.updateMany({
+        where: { id: candidateId, profileTextHash: oldHash },
+        data: baseData,
+      });
+      if (guarded.count === 0) {
+        console.log(`[score] concurrent writer won for candidate=${candidateId} — skipping stale score`);
+      }
+      updated = await prisma.candidate.findUnique({ where: { id: candidateId } });
     }
 
     return NextResponse.json(updated);

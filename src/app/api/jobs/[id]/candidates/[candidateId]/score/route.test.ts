@@ -7,6 +7,7 @@ const dbMocks = vi.hoisted(() => ({
     candidate: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     usageEvent: {
       count: vi.fn().mockResolvedValue(0),
@@ -102,16 +103,26 @@ describe("candidate re-score route", () => {
       jobId: "job-1",
       location: "Wellington, New Zealand",
       profileText: "Candidate profile text",
+      profileTextHash: null,
+      status: "new",
     };
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     sessionMocks.requireCandidateAccess.mockResolvedValue({ job, candidate, error: null });
     scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
-    dbMocks.prisma.candidate.findUnique.mockResolvedValue(candidate);
-    dbMocks.prisma.candidate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
-      id: "cand-5",
-      ...data,
+    // Track the last updateMany data so tests can assert on the score that
+    // was written, then return it from findUnique to simulate the post-write
+    // re-read. Default: updateMany succeeds (count: 1) so the hash gate
+    // doesn't trip in the happy path.
+    let lastWrite: Record<string, unknown> | null = null;
+    dbMocks.prisma.candidate.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      lastWrite = data;
+      return { count: 1 };
+    });
+    dbMocks.prisma.candidate.findUnique.mockImplementation(async () => ({
+      ...candidate,
+      ...(lastWrite ?? {}),
     }));
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
   });
@@ -125,7 +136,12 @@ describe("candidate re-score route", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
+    expect(dbMocks.prisma.candidate.updateMany).toHaveBeenCalledTimes(1);
+    // Hash gate: write should be conditioned on profileTextHash === oldHash.
+    expect(dbMocks.prisma.candidate.updateMany.mock.calls[0][0].where).toMatchObject({
+      id: "cand-5",
+      profileTextHash: null,
+    });
     expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
       "Candidate profile text",
       expect.any(Object),
@@ -134,6 +150,28 @@ describe("candidate re-score route", () => {
       "org-1"
     );
     expect(body.scoreBreakdown).toContain("\"version\":2");
+  });
+
+  it("skips the write when another scorer landed first (hash mismatch)", async () => {
+    // Simulate the row's profileTextHash having advanced between our read
+    // and our write. updateMany returns count: 0 — the route should log
+    // and surface the existing row, NOT 500.
+    dbMocks.prisma.candidate.updateMany.mockResolvedValueOnce({ count: 0 });
+    dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({
+      id: "cand-5",
+      profileTextHash: "newer-hash-from-concurrent-write",
+      matchScore: 88,
+    });
+
+    const res = await POST(
+      new Request("http://localhost/api/jobs/job-1/candidates/cand-5/score", { method: "POST" }),
+      { params: Promise.resolve({ id: "job-1", candidateId: "cand-5" }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // We return the row as-is (the concurrent writer's score), not an error.
+    expect(body.matchScore).toBe(88);
   });
 
   it("returns 400 for invalid stored job parse data", async () => {

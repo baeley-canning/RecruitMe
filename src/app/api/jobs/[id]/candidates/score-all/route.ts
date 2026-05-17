@@ -9,6 +9,7 @@ import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getRecruitingContext } from "@/lib/recruiter-memory";
 import { reportError } from "@/lib/error-reporting";
+import { mergeScoringError } from "@/lib/linkedin-capture";
 import { NextResponse } from "next/server";
 
 // Allow up to 5 minutes for large scoring runs. Without this, Vercel (and some
@@ -132,13 +133,45 @@ export async function POST(
       // Mid-loop spend-cap re-check cadence. The cap was checked once before
       // we started — but with 11k+ candidates now scoreable in any org's
       // library, a single bad run could blow past the cap before completing.
-      // Re-check every N candidates and abort the stream cleanly when tripped.
+      //
+      // The check runs at TWO cadences:
+      //   (1) Before every CONCURRENCY-wide chunk fires (concurrency boundary).
+      //       This is the precise gate: when the cap is tripped we abort
+      //       BEFORE the chunk's API calls are dispatched, so at most
+      //       CONCURRENCY (currently 3) calls land over the cap, not 25.
+      //   (2) Every SPEND_CHECK_EVERY candidates as a coarser backstop —
+      //       same logging cadence as before, kept so the abort message
+      //       still surfaces with a known periodic count if the per-chunk
+      //       check were ever bypassed (e.g. when CONCURRENCY === 1 and an
+      //       individual call is unusually expensive).
       let cappedHit = false;
       const SPEND_CHECK_EVERY = 25;
       let sinceLastCapCheck = 0;
 
+      const evaluateSpendCap = async (): Promise<boolean> => {
+        const midSpend = await checkSpendCap(auth.orgId);
+        if (!midSpend.allowed) {
+          cappedHit = true;
+          send({
+            scored, cached, total,
+            capped: true,
+            spentUsd: midSpend.spentUsd,
+            capUsd: midSpend.capUsd,
+            error: `Daily AI spend cap reached mid-run ($${midSpend.spentUsd.toFixed(2)} / $${midSpend.capUsd.toFixed(2)}). Run again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+          });
+          return true;
+        }
+        return false;
+      };
+
       for (let i = 0; i < candidates.length; i += CONCURRENCY) {
         if (cappedHit) break;
+        // Per-chunk pre-flight cap check. The previous code only checked
+        // every 25 candidates AFTER the chunk completed, so a chunk of
+        // CONCURRENCY API calls straddling the cap could be billed in full
+        // before cappedHit flipped. The 25-wide post-chunk check below
+        // stays in as a coarser backstop / logging cadence.
+        if (i > 0 && await evaluateSpendCap()) break;
         const chunk = candidates.slice(i, i + CONCURRENCY);
         await Promise.all(
           chunk.map(async (candidate) => {
@@ -207,32 +240,46 @@ export async function POST(
             } catch (err) {
               reportError(err, { route: "score-all", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
               failed.push(candidate.id);
+              // Surface the failure on the candidate row so the recruiter
+              // sees "scoring blew up" on each failed card rather than
+              // "Scored 0" with no per-candidate trail. updateMany scoped
+              // to this candidate id keeps the write non-destructive even
+              // if the row was deleted mid-run; read existing screeningData
+              // first so we merge instead of clobbering recruiter notes.
+              const reason = err instanceof Error ? err.message : String(err);
+              const current = await prisma.candidate.findUnique({
+                where: { id: candidate.id },
+                select: { screeningData: true },
+              }).catch(() => null);
+              await prisma.candidate.updateMany({
+                where: { id: candidate.id },
+                data: {
+                  matchScore: null,
+                  screeningData: mergeScoringError(current?.screeningData ?? null, reason),
+                },
+              }).catch((flagErr) => {
+                reportError(flagErr, { route: "score-all:flag-failure", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
+              });
             }
           })
         );
 
-        // Periodically re-verify the spend cap. The chunk that just ran
-        // could have pushed today's spend past the ceiling.
+        // Periodically re-verify the spend cap. The pre-chunk check above
+        // catches most cases; this 25-wide post-chunk check is the coarser
+        // backstop kept for log cadence and as a safety net.
         sinceLastCapCheck += chunk.length;
         if (sinceLastCapCheck >= SPEND_CHECK_EVERY) {
           sinceLastCapCheck = 0;
-          const midSpend = await checkSpendCap(auth.orgId);
-          if (!midSpend.allowed) {
-            cappedHit = true;
-            send({
-              scored, cached, total,
-              capped: true,
-              spentUsd: midSpend.spentUsd,
-              capUsd: midSpend.capUsd,
-              error: `Daily AI spend cap reached mid-run ($${midSpend.spentUsd.toFixed(2)} / $${midSpend.capUsd.toFixed(2)}). Run again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
-            });
-            // break out of the outer for-loop via the cappedHit guard
-          }
+          await evaluateSpendCap();
+          // break out of the outer for-loop via the cappedHit guard
         }
       }
 
       // Final message signals completion to the client, including any failures.
-      send({ scored, cached, total, done: true, ...(cappedHit && { capped: true }), ...(failed.length > 0 && { failedIds: failed }) });
+      const finalMsg: Record<string, unknown> = { scored, cached, total, done: true };
+      if (cappedHit) finalMsg.capped = true;
+      if (failed.length > 0) finalMsg.failedIds = failed;
+      send(finalMsg);
       controller.close();
 
       console.log(`[score-all] scored=${scored} cached=${cached} of ${total}`);

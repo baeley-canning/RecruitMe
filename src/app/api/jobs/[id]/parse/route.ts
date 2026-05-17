@@ -7,6 +7,13 @@ import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { safeParseJson } from "@/lib/utils";
 import { reportError } from "@/lib/error-reporting";
 
+// Re-analyse runs up to 2 Sonnet calls + a follow-up updateMany over every
+// candidate on the job — for a job with 500+ candidates the orphan-clear
+// can take a while. Default Vercel cap is 10s, which gives the parse no
+// margin once the candidate sweep lands. 60s matches the underlying
+// parse + sweep budget.
+export const maxDuration = 60;
+
 // Compliance/framework terms narrow enough to be dangerous as sole anchor terms
 const NARROW_CERT_RE = /\b(iso\s*\d{4,5}|isms|gdpr|pci\b|pci[-\s]?dss|sox|nist|hipaa|cissp|cism|crisc|cisa|ccsp|togaf)\b/i;
 
@@ -155,6 +162,22 @@ export async function POST(
     await prisma.job.update({
       where: { id },
       data: { parsedRole: JSON.stringify(parsedRole), lastParsedAt: new Date() },
+    });
+
+    // Orphan-clear: previously-scored candidates on this job still carry a
+    // scoreBreakdown computed against the OLD must-haves. Leaving those in
+    // place means recruiter cards keep showing "Confirmed: <old skill>" or
+    // "Missing: <removed must-have>" until the recruiter re-runs score-all.
+    // Wipe scoreBreakdown + profileTextHash so:
+    //   - the breakdown stops showing stale evidence
+    //   - the cache key no longer matches, so the next score-all / re-score
+    //     forces a fresh API call instead of replaying the old cache.
+    // matchScore stays — the existing stale-score banner relies on
+    // "matchScore present + scoreBreakdown absent" (or matchScore present +
+    // profileTextHash mismatch) to nudge the recruiter to re-score.
+    await prisma.candidate.updateMany({
+      where: { jobId: id, scoreBreakdown: { not: null } },
+      data: { scoreBreakdown: null, profileTextHash: null },
     });
 
     const changes = diffParsedRole(existing, parsedRole);
