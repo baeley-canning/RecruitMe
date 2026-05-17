@@ -147,9 +147,12 @@ export async function searchGitHubDevelopers(opts: {
 
   let searchRes: Response;
   try {
+    // 15s ceiling so a stuck GitHub search request can't block the route
+    // for its full 60s gateway budget. Mirrors the SerpAPI / PDL timeouts.
     searchRes = await fetch(searchUrl, {
       headers: authHeaders(),
       next: { revalidate: 300 }, // 5-min cache on search results
+      signal: AbortSignal.timeout(15_000),
     });
   } catch (err) {
     recordProviderFailure("github", err instanceof Error ? err.message : String(err));

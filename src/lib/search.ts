@@ -1,3 +1,4 @@
+import { reportError } from "./error-reporting";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isPlausibleLocation } from "./location";
 import { getCityCoords, NZ_CITIES } from "./nz-cities";
@@ -231,11 +232,20 @@ export async function searchLinkedInProfiles(
     gl: "nz",
   });
 
+  const url = `https://serpapi.com/search.json?${params}`;
   let res: Response;
   try {
-    res = await fetch(`https://serpapi.com/search.json?${params}`);
+    // 15s ceiling mirrors the PDL fetch below — a stalled SerpAPI shouldn't
+    // be able to consume the entire search worker budget. On AbortError we
+    // log + return [] so the search batch can still proceed with PDL/pool
+    // results rather than 500-ing the whole run.
+    res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   } catch (err) {
     recordProviderFailure("serpapi", err instanceof Error ? err.message : String(err));
+    reportError(err, { provider: "serpapi", url });
+    if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
+      return [];
+    }
     throw err;
   }
   if (!res.ok) {
