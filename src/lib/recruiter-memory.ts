@@ -19,9 +19,11 @@ import type { ScoreBreakdown } from "./scoring";
 const POSITIVE_STATUSES = new Set(["shortlisted", "contacted", "interviewing", "offer_sent", "hired"]);
 const NEGATIVE_STATUSES = new Set(["rejected", "declined"]);
 
-// Minimum chars of profile text to use as an example — short profiles
-// don't provide enough signal for meaningful examples.
-const MIN_EXAMPLE_PROFILE_CHARS = 500;
+// How many recent decided candidates to pull per scoring call. Lowered from
+// 200 → 50: we rank by similarity and only keep the top ~5, so the extra 150
+// rows just inflated Node memory (and previously dragged profileText too,
+// ~2MB per call). 50 still gives ample headroom for similarity ranking.
+const MAX_DECISION_CANDIDATES = 50;
 
 // Bound on how many corrections we pull and inject. Each correction line is ~180
 // chars; with reason-truncation that's <2k chars in the prompt — well inside
@@ -89,17 +91,21 @@ export async function getRecruitingContext(
       status: { in: [...POSITIVE_STATUSES, ...NEGATIVE_STATUSES] },
       scoreBreakdown: { not: null },
     },
+    // profileText intentionally NOT selected — it was only used as a length
+    // gate before; the scoreBreakdown-not-null filter already guarantees the
+    // candidate had enough content to be scored, and we don't feed profile
+    // text into the prompt (only the score breakdown + headline + job title).
+    // Dropping ~10-40KB per row × 50 rows = ~1-2MB saved per scoring call.
     select: {
       name: true,
       headline: true,
       status: true,
       scoreBreakdown: true,
-      profileText: true,
       updatedAt: true,
       job: { select: { parsedRole: true, title: true, company: true } },
     },
     orderBy: { updatedAt: "desc" },
-    take: 200, // look at the last 200 decisions, then rank by similarity
+    take: MAX_DECISION_CANDIDATES,
   });
   } catch (err) {
     console.warn("[recruiter-memory] DB query failed:", err instanceof Error ? err.message : err);
@@ -116,7 +122,6 @@ export async function getRecruitingContext(
   // don't lock in company or domain preferences from old roles.
   const mustHaves = parsedRole.must_haves ?? [];
   const scored = candidates
-    .filter((c) => (c.profileText?.length ?? 0) >= MIN_EXAMPLE_PROFILE_CHARS)
     .map((c) => {
       const jobParsed  = safeParseJson<ParsedRole | null>(c.job?.parsedRole ?? null, null);
       const titleSim   = titleSimilarity(parsedRole.title, c.job?.title ?? "");
