@@ -5,7 +5,9 @@ const dbMocks = vi.hoisted(() => ({
   prisma: {
     candidate: {
       findMany: vi.fn(),
+      findUnique: vi.fn().mockResolvedValue({ screeningData: null }),
       update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     job: {
       update: vi.fn().mockResolvedValue({}),
@@ -198,6 +200,39 @@ describe("score-all route", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  it("flags scoringError on screeningData when scoring rejects (per-candidate failure trail)", async () => {
+    // Before the fix: a failed candidate was only pushed into `failed: []`
+    // and the row was untouched — so "Imported 30 / Scored 0" left no
+    // per-candidate trail. After the fix the row gets {matchScore: null,
+    // screeningData.scoringError} written via updateMany so the card shows
+    // why each candidate didn't score.
+    const job = makeJob("job-score-failure");
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-fail", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+    ]);
+    aiMocks.scoreCandidateStructured.mockRejectedValueOnce(new Error("OpenAI 502 fallback also failed"));
+    dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({ screeningData: null });
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-score-failure" }),
+    });
+
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 0, total: 1, done: true, failedIds: ["cand-fail"] });
+
+    // Find the updateMany call that wrote the failure flag (NOT the cooldown
+    // claim on job.updateMany).
+    const flagWrite = dbMocks.prisma.candidate.updateMany.mock.calls.find(
+      (call) => (call[0].data as Record<string, unknown>)?.matchScore === null,
+    );
+    expect(flagWrite).toBeTruthy();
+    const flagData = (flagWrite![0].data) as Record<string, unknown>;
+    expect(flagData.matchScore).toBeNull();
+    const screening = JSON.parse(flagData.screeningData as string);
+    expect(screening.scoringError).toContain("OpenAI 502");
   });
 
   it("returns 400 when stored parsedRole JSON is invalid", async () => {
