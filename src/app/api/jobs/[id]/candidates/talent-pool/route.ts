@@ -29,7 +29,6 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { CAPTURED_PROFILE_MIN_CHARS, hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { reportError } from "@/lib/error-reporting";
-import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
 import { extractSignalsFromRequirement, signalMatchesText } from "@/lib/requirement-signals";
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 
@@ -94,18 +93,13 @@ export async function POST(
   const { job, error } = await requireJobAccess(jobId, auth);
   if (error || !job) return error;
 
-  // Per-job advisory lock — two recruiters clicking "Library" on the same
-  // job at the same time would otherwise both walk the same pool and race
-  // on upserts. Cheap to hold for a sub-second hard-match pass. Stale
-  // entries auto-clear after 15 min per the db-lock default.
-  const lockName = `talent-pool:${jobId}`;
-  const lockAcquired = await tryAcquireLock(lockName);
-  if (!lockAcquired) {
-    return NextResponse.json({
-      error: "A library search is already running for this job. Wait a minute and try again.",
-    }, { status: 429 });
-  }
-  try {
+  // Removed the per-job advisory lock that used to wrap this route. It made
+  // sense when each click fired ~$1-3 in Claude scoring, but since the
+  // route is hard-match-only the only race protection we need is the
+  // (jobId, linkedinUrl) unique constraint — which the upsert below
+  // already handles. The lock was actively biting recruiters: a crashed
+  // run or client-aborted fetch would leave the Setting row stuck for 15
+  // minutes, returning 429 on every subsequent click until TTL.
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) {
@@ -189,7 +183,18 @@ export async function POST(
 
   const poolRows = await prisma.candidate.findMany({
     where: {
-      jobId: { not: jobId },
+      // "Not in this job" means jobId IS NULL (orphaned JobAdder/library
+      // candidate) OR jobId points at a different job. Plain
+      // `jobId: { not: jobId }` translates to SQL `jobId != X` which
+      // EXCLUDES NULLs by three-valued logic — silently hiding every
+      // JobAdder-imported candidate whose original job was deleted (so
+      // jobId is null and they live only in the library). This was the
+      // root cause of the user-reported "library search never finds
+      // JobAdder candidates" bug. Explicit OR to include NULLs.
+      OR: [
+        { jobId: null },
+        { jobId: { not: jobId } },
+      ],
       profileText: { not: null },
       ...prefilterClause,
       ...(accessibleOrgIds === null
@@ -409,7 +414,4 @@ export async function POST(
     stoppedEarly,
     message: `Imported ${saved.length} from the library — click Score all to rank against this JD.${partialNote}`,
   });
-  } finally {
-    await releaseLock(lockName);
-  }
 }

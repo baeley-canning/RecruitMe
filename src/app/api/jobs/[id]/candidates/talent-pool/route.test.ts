@@ -155,6 +155,36 @@ describe("talent-pool ingestion route", () => {
     expect(upsertCall.create.source).toBe("talent_pool");
   });
 
+  it("REGRESSION: the SQL WHERE clause includes jobId:null so JobAdder orphans (jobId IS NULL) surface", async () => {
+    // Pre-fix the route filtered with `jobId: { not: jobId }`. Prisma compiles
+    // that to `jobId != X`, which is FALSE for NULL values in SQL three-valued
+    // logic — silently hiding every JobAdder-imported library candidate whose
+    // original job was deleted. The user reported "library search never finds
+    // JobAdder candidates" and this assertion pins the fix: the WHERE clause
+    // must explicitly include `{ jobId: null }` so orphans are visible.
+    dbMocks.prisma.candidate.findMany.mockReset();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const req = new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 1 }),
+    });
+    await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+
+    // The second findMany call is the pool query. Its WHERE clause must
+    // surface jobId:null as one of the acceptable jobId values.
+    const calls = dbMocks.prisma.candidate.findMany.mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const poolWhere = calls[1][0].where as Record<string, unknown>;
+    const serialised = JSON.stringify(poolWhere);
+    // The OR must contain { jobId: null } — otherwise orphan candidates are
+    // silently excluded.
+    expect(serialised).toContain('"jobId":null');
+  });
+
   it("returns 401 when not authed (no AI calls fired)", async () => {
     sessionMocks.getAuth.mockResolvedValue(null);
     const res = await POST(new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
@@ -166,21 +196,10 @@ describe("talent-pool ingestion route", () => {
     expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
   });
 
-  it("returns 429 when the per-job lock is held by another concurrent run", async () => {
-    // db-lock.tryAcquireLock does updateMany (path 1) then setting.create
-    // (path 2) — only returns false when BOTH fail. updateMany count=0 means
-    // no free/stale row to claim; create rejection means the row already
-    // exists (another worker holds the lock).
-    dbMocks.prisma.setting.updateMany.mockResolvedValueOnce({ count: 0 });
-    dbMocks.prisma.setting.create.mockRejectedValueOnce(new Error("P2002: unique constraint"));
-    const res = await POST(new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxResults: 10 }),
-    }), { params: Promise.resolve({ id: "job-1" }) });
-    expect(res.status).toBe(429);
-    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
-  });
+  // Lock removed in the JobAdder-NULL fix commit — talent-pool no longer
+  // burns AI tokens so the race protection it provided isn't worth the
+  // 15-min-stale-TTL 429 it inflicted on real users after any crashed run.
+  // The (jobId, linkedinUrl) unique constraint still race-protects upserts.
 
   it("rejects pool candidates lacking any distinctive anchor on a specialist role", async () => {
     // ≥2 distinctive must-haves → strict specialist mode. Profile must mention
