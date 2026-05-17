@@ -95,9 +95,8 @@ export async function chat(
       // Record into provider-health so the Claude badge flips amber/red the
       // moment a real scoring call fails — including credit-exhausted 429s
       // that the /v1/models key-validation probe cannot detect. Recorded
-      // here (not only inside chatWithFailover) because some callers —
-      // e.g. scoring when ENABLE_LOCAL_MODEL_FINAL_SCORING is off — call
-      // chat() directly.
+      // here (not only inside chatWithFailover) because some callers bypass
+      // the failover wrapper and hit chat() directly.
       recordProviderFailure("claude", err instanceof Error ? err.message : String(err));
       throw err;
     }

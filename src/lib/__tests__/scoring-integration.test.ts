@@ -446,15 +446,15 @@ describe("Deterministic evidence repair for exact stored profile signals", () =>
   });
 });
 
-describe("AcceptancePrediction — scoredBy round-trip (server → DB → UI contract)", () => {
-  // This guards the new acceptance-score Llama badge in candidate-card.tsx.
-  // The UI parses Candidate.acceptanceReason (JSON-encoded
-  // AcceptancePrediction) and reads `.scoredBy` to render the Llama pill
-  // next to the acceptance badge. If the field is dropped during
-  // serialisation or rename, the UI silently shows Llama predictions as
-  // if Claude produced them — exactly the "don't pretend Llama is Claude"
-  // rule the codebase is built around.
-  it("preserves scoredBy='ollama' through JSON.stringify + JSON.parse", () => {
+describe("AcceptancePrediction — scoredBy legacy round-trip (DB → UI contract)", () => {
+  // Legacy-data guard: older Candidate.acceptanceReason rows were written
+  // with `scoredBy: "ollama"` back when there was a local-model code path.
+  // Llama scoring is gone from the live write path (Claude → OpenAI only),
+  // but historic rows still exist in production, so the UI must keep
+  // surfacing them honestly rather than silently rebadging them as Claude.
+  // These tests only assert the JSON round-trip — they are NOT exercising
+  // a live Llama scoring code path.
+  it("preserves legacy scoredBy='ollama' through JSON.stringify + JSON.parse", () => {
     const original = {
       score: 75,
       likelihood: "high" as const,
