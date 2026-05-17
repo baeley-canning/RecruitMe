@@ -7,7 +7,12 @@ import { withJobAuth } from "@/lib/session";
 // Fetched/scored/shortlisted/declined come from the live Candidate table.
 export const GET = withJobAuth(async ({ params }) => {
   const id = params.id;
-  const [sessionAgg, candidateBuckets] = await Promise.all([
+  // "fetched" used to scan every candidate's profileText (multi-KB column)
+  // just to bool-check non-null. Push it to a count() so Postgres returns
+  // an integer and we don't drag profile bodies across the wire on every
+  // funnel render. The remaining buckets still need the per-row select for
+  // status + matchScore aggregation.
+  const [sessionAgg, candidateBuckets, fetched] = await Promise.all([
     prisma.searchSession.aggregate({
       where: { jobId: id, status: { not: "running" } },
       _sum: { totalExamined: true, candidatesRejected: true, collected: true },
@@ -15,7 +20,10 @@ export const GET = withJobAuth(async ({ params }) => {
     }),
     prisma.candidate.findMany({
       where: { jobId: id },
-      select: { status: true, profileText: true, matchScore: true },
+      select: { status: true, matchScore: true },
+    }),
+    prisma.candidate.count({
+      where: { jobId: id, profileText: { not: null } },
     }),
   ]);
 
@@ -24,14 +32,12 @@ export const GET = withJobAuth(async ({ params }) => {
   const imported = sessionAgg._sum.collected ?? 0;
   const searchRuns = sessionAgg._count.id;
 
-  let fetched = 0;
   let scored = 0;
   let shortlisted = 0;
   let rejectedByRecruiter = 0;
   let scoreSum = 0;
 
   for (const c of candidateBuckets) {
-    if (c.profileText) fetched++;
     if (c.matchScore !== null) {
       scored++;
       scoreSum += c.matchScore;

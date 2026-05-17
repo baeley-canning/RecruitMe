@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const dbMocks = vi.hoisted(() => ({
   prisma: {
     searchSession: { aggregate: vi.fn() },
-    candidate:     { findMany: vi.fn() },
+    candidate:     { findMany: vi.fn(), count: vi.fn() },
   },
 }));
 
@@ -42,12 +42,15 @@ describe("search-funnel route", () => {
       _count: { id: 3 },
     });
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
-      { status: "shortlisted", profileText: "x".repeat(2000), matchScore: 80 },
-      { status: "shortlisted", profileText: "x".repeat(2000), matchScore: 70 },
-      { status: "rejected",    profileText: "x".repeat(2000), matchScore: 25 },
-      { status: "new",         profileText: null,             matchScore: null },
-      { status: "new",         profileText: "x".repeat(500),  matchScore: 60 },
+      { status: "shortlisted", matchScore: 80 },
+      { status: "shortlisted", matchScore: 70 },
+      { status: "rejected",    matchScore: 25 },
+      { status: "new",         matchScore: null },
+      { status: "new",         matchScore: 60 },
     ]);
+    // 4 of 5 rows have profileText; the route now derives this from a
+    // dedicated count() query rather than scanning the result set.
+    dbMocks.prisma.candidate.count.mockResolvedValue(4);
 
     const res = await GET(new Request("http://localhost/"), {
       params: Promise.resolve({ id: "job-1" }),
@@ -72,6 +75,7 @@ describe("search-funnel route", () => {
       _count: { id: 0 },
     });
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
+    dbMocks.prisma.candidate.count.mockResolvedValue(0);
     const res = await GET(new Request("http://localhost/"), {
       params: Promise.resolve({ id: "job-1" }),
     });

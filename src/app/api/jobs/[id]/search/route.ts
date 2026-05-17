@@ -548,14 +548,22 @@ export async function GET(
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
-  // Mark stale sessions (running > 10 min) as failed — handles Railway restarts
-  // that kill the background promise mid-search.
+  // Mark stale sessions (running > 10 min) as crashed — handles Railway
+  // restarts that kill the background promise mid-search. We deliberately
+  // do NOT use "rate_limited" here: that label is for actual provider
+  // throttling and used to mask real crashes, sending recruiters into
+  // pointless retry loops. The frontend treats unknown statuses as
+  // "not running" and falls through to display.
   if (session.status === "running") {
     const ageMs = Date.now() - session.createdAt.getTime();
     if (ageMs > 10 * 60 * 1000) {
       session = await prisma.searchSession.update({
         where: { id: sessionId },
-        data: { status: "rate_limited", message: "Search timed out — try again." },
+        data: {
+          status: "crashed",
+          message: "Search worker died — try again.",
+          evaluation: "Search worker died — try again",
+        },
       });
     }
   }

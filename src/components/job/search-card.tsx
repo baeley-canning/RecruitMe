@@ -116,9 +116,10 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     setSearchingPool(true);
     setPoolError("");
     setPoolResult(null);
-    // 50s client-side abort: the server's TIME_BUDGET_MS is 45s, so this
-    // leaves a 5s buffer for HTTP round-trip. If the pool still hasn't
-    // answered by then we bail rather than blocking the LinkedIn fallback.
+    // 50s client-side abort. The route declares maxDuration = 300, but if
+    // we waited that long for the pool we'd starve the LinkedIn fallback;
+    // aborting at 50s frees the UI to proceed to LinkedIn while the
+    // server-side worker continues in the background.
     const controller = new AbortController();
     const abortTimer = setTimeout(() => controller.abort(), 50_000);
     try {
@@ -249,10 +250,16 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
         }
         try {
           const pollRes = await fetch(`/api/jobs/${jobId}/search?sessionId=${sessionId}`);
-          const pollData = await pollRes.json() as { status?: "running" | "complete" | "rate_limited"; count?: number; message?: string; fromPool?: number };
+          // "crashed" is returned when the server detects a session stuck in
+          // "running" beyond the 10-min worker lifetime (Railway restart,
+          // unhandled crash, etc). We map it to "rate_limited" before
+          // handing it to the display layer so the recruiter gets the
+          // standard warning treatment + retry affordance.
+          const pollData = await pollRes.json() as { status?: "running" | "complete" | "rate_limited" | "crashed"; count?: number; message?: string; fromPool?: number };
           if (pollData.status === "running") { setTimeout(poll, 3000); }
           else {
-            setSearchResult({ status: pollData.status, count: pollData.count ?? 0, message: pollData.message, fromPool: pollData.fromPool });
+            const displayStatus = pollData.status === "crashed" ? "rate_limited" : pollData.status;
+            setSearchResult({ status: displayStatus, count: pollData.count ?? 0, message: pollData.message, fromPool: pollData.fromPool });
             onComplete();
             setSearching(false);
           }
@@ -371,7 +378,9 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                             ? s.collected === 0
                               ? `0 found in ${s.location || "search area"}`
                               : `${s.collected} found`
-                            : s.status === "rate_limited" ? "Rate limited — wait a few minutes and search again" : s.status}
+                            : s.status === "rate_limited" ? "Rate limited — wait a few minutes and search again"
+                            : s.status === "crashed" ? "Search worker died — try again"
+                            : s.status}
                           {s.collected > 0 && s.location ? ` in ${s.location}` : ""}
                           {s.message && s.message.includes("broadening") ? ` · ${s.message}` : ""}
                         </p>
