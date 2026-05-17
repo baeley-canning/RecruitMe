@@ -69,6 +69,14 @@ export interface LibraryQueryResult {
 /**
  * Build the WHERE clause for the candidate library, applying cross-org grants.
  * Exported for the rare callsite that needs the raw filter (none today).
+ *
+ * Note: the profileText length-gate is NOT expressed here — Prisma's query
+ * builder can't do `char_length(profileText) >= N`. It's applied as a
+ * separate pre-fetch via $queryRaw in getLibraryCandidates below, and the
+ * result is fed to findMany via `id: { in: ... }`. The OR fallback below
+ * still permits source-whitelisted rows (manual / jobadder_import) so that
+ * rows with non-empty profileText pass even when the source is null, but
+ * the SQL length pre-filter independently rejects empty-string rows.
  */
 function buildLibraryWhere(accessibleOrgIds: string[] | null) {
   const orgFilter = candidateOrgFilter(accessibleOrgIds);
@@ -95,6 +103,11 @@ function buildLibraryWhere(accessibleOrgIds: string[] | null) {
   };
 }
 
+// Mirrors LIBRARY_PROFILE_MIN_CHARS in the job-library route. Library rows
+// with < this many chars of profileText are treated as "no real profile"
+// (the JobAdder-imported, CV-less Bede case) and excluded from the listing.
+const LIBRARY_PROFILE_MIN_CHARS = 500;
+
 /**
  * Fetch the candidate library for the given caller.
  *
@@ -117,17 +130,70 @@ export async function getLibraryCandidates(
   // Owners get null which means "no filter".
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
 
-  const rows = await prisma.candidate.findMany({
-    where: buildLibraryWhere(accessibleOrgIds),
-    // id-desc tiebreaker for bulk-insert timestamp-ties (13.5k JobAdder rows
-    // shared one createdAt). Without it the page head was deterministically
-    // name-sorted Z's instead of "newest captures".
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    // Cursor pagination — Prisma's `cursor` + `skip:1` semantics mean the
-    // cursor row itself is excluded from the next page. The orderBy above
-    // is stable (id is unique) so the cursor walks deterministically.
-    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    take,
+  // Non-owner with zero accessible orgs short-circuits — candidateOrgFilter
+  // would map this to `orgId: "__none__"` and the SQL prefilter would join
+  // for no reason.
+  if (accessibleOrgIds !== null && accessibleOrgIds.length === 0) {
+    return { candidates: [], total: 0, nextCursor: null };
+  }
+
+  // ── SQL length-gate (the "Bede problem") ───────────────────────────────
+  // Prisma can't express `char_length(profileText) >= N`, but without it
+  // the library lists JobAdder-imported rows whose CV extraction produced
+  // profileText="" — they render as normal cards. Pre-fetch eligible IDs
+  // via $queryRaw (just IDs, no profileText payload) and feed them into
+  // the existing findMany. The raw query mirrors buildLibraryWhere's org
+  // scoping + the source whitelist + the createdAt/id orderBy + cursor
+  // pagination semantics ("after the cursor row").
+  const orgIdsParam = accessibleOrgIds ?? [];
+  const useOrgFilter = accessibleOrgIds !== null;
+
+  // The cursor row's (createdAt, id) tuple defines the lower bound for the
+  // next page. We resolve it to concrete values so the SQL WHERE clause
+  // can apply the keyset condition.
+  let cursorCreatedAt: Date | null = null;
+  let cursorId: string | null = null;
+  if (opts.cursor) {
+    const cursorRow = await prisma.candidate.findUnique({
+      where: { id: opts.cursor },
+      select: { createdAt: true, id: true },
+    });
+    if (cursorRow) {
+      cursorCreatedAt = cursorRow.createdAt;
+      cursorId = cursorRow.id;
+    }
+  }
+
+  const eligibleRows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT c.id
+    FROM "Candidate" c
+    LEFT JOIN "Job" j ON j.id = c."jobId"
+    WHERE c."profileText" IS NOT NULL
+      AND char_length(c."profileText") >= ${LIBRARY_PROFILE_MIN_CHARS}
+      AND (
+        ${!useOrgFilter}::boolean
+        OR j."orgId" = ANY(${orgIdsParam}::text[])
+        OR (c."jobId" IS NULL AND c."orgId" = ANY(${orgIdsParam}::text[]))
+      )
+      AND (
+        c."jobId" IS NOT NULL
+        OR c."orgId" IS NOT NULL
+      )
+      AND (
+        ${cursorCreatedAt === null}::boolean
+        OR c."createdAt" < ${cursorCreatedAt}
+        OR (c."createdAt" = ${cursorCreatedAt} AND c."id" < ${cursorId})
+      )
+    ORDER BY c."createdAt" DESC, c."id" DESC
+    LIMIT ${take}
+  `;
+  const eligibleIds = eligibleRows.map((r) => r.id);
+  if (eligibleIds.length === 0) {
+    return { candidates: [], total: 0, nextCursor: null };
+  }
+
+  const rowsUnordered = await prisma.candidate.findMany({
+    where: { id: { in: eligibleIds }, ...buildLibraryWhere(accessibleOrgIds) },
     select: {
       id: true,
       name: true,
@@ -138,8 +204,7 @@ export async function getLibraryCandidates(
       // profileText, including it pulled ~140 MB of useless data over the
       // wire on every library load (the field gets stripped before
       // serialisation anyway). The old JS-side `hasFullCandidateProfile`
-      // length gate is lost as a side-effect — some short captures may
-      // now appear in the library that previously didn't.
+      // length gate now lives in the $queryRaw pre-filter above.
       matchScore: true,
       source: true,
       status: true,
@@ -157,6 +222,12 @@ export async function getLibraryCandidates(
       },
     },
   });
+  // Preserve the raw query's keyset ordering — Prisma's `in:` returns rows
+  // in arbitrary order so we re-index by ID and replay the eligibleIds list.
+  const byId = new Map(rowsUnordered.map((r) => [r.id, r]));
+  const rows = eligibleIds
+    .map((id) => byId.get(id))
+    .filter((r): r is NonNullable<typeof r> => r !== undefined);
 
   // Deduplicate by normalised LinkedIn URL; keep the freshest capture per
   // person. Rows without a LinkedIn URL (or whose URL fails normalisation)

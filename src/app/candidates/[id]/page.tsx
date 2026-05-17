@@ -16,6 +16,7 @@ import {
   Check,
   X,
   StickyNote,
+  AlertTriangle,
 } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
@@ -394,6 +395,42 @@ export default function CandidateDetailPage({
                 </div>
               </CardBody>
             </Card>
+
+            {/* "Bede problem" empty-state panel — the candidate was imported
+                (typically from JobAdder) with no CV PDF and no LinkedIn
+                capture, so there's nothing for scoring or screening to read.
+                The panel sits below the header so it's the first thing the
+                recruiter sees, and spells out the two concrete remediation
+                actions. */}
+            {!candidate.profileText?.trim() && candidate.files.length === 0 && (
+              <Card>
+                <CardBody>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-md bg-warning-subtle flex items-center justify-center flex-shrink-0">
+                      <AlertTriangle className="w-4 h-4 text-warning" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h2 className="text-md font-semibold text-text-primary">
+                        No CV or profile text yet
+                      </h2>
+                      <p className="text-base text-text-secondary mt-1 leading-relaxed">
+                        This candidate has no CV or profile text yet. Two options:
+                      </p>
+                      <ul className="mt-2 space-y-1 text-base text-text-secondary leading-relaxed">
+                        <li className="flex items-start gap-2">
+                          <span className="text-warning font-semibold flex-shrink-0">(a)</span>
+                          <span>upload a CV file below, or</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-warning font-semibold flex-shrink-0">(b)</span>
+                          <span>paste profile text via &ldquo;Add / edit&rdquo; in the LinkedIn Capture section.</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+            )}
 
             {/* Score breakdown */}
             {tier && score !== null && (

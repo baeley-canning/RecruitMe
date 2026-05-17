@@ -4,6 +4,7 @@ const dbMocks = vi.hoisted(() => ({
   prisma: {
     candidate: {
       findMany: vi.fn(),
+      findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn(),
     },
     org: {
@@ -12,6 +13,11 @@ const dbMocks = vi.hoisted(() => ({
     orgAccessGrant: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    // $queryRaw is the length-gate pre-filter introduced for the "Bede
+    // problem" — returns the IDs of library rows with profileText >= 500
+    // chars. Tests that don't care about filtering just echo back every
+    // ID from the findMany mock so the existing assertions still see them.
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -36,6 +42,11 @@ describe("candidates library API", () => {
     // it inflated SSR memory by hundreds of MB. The JS-side length gate
     // (hasFullCandidateProfile) was removed as a side-effect; the SQL
     // where-clause already enforces source-whitelist or profileText present.
+    // The new $queryRaw pre-filter (Bede fix) echoes the IDs we expect to
+    // pass the 500-char gate — for this test, all three.
+    dbMocks.prisma.$queryRaw.mockResolvedValueOnce([
+      { id: "short-1" }, { id: "full-1" }, { id: "captured-short" },
+    ]);
     const now = new Date();
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
       {
@@ -114,6 +125,8 @@ describe("candidates library API", () => {
     dbMocks.prisma.org.findMany.mockResolvedValueOnce([
       { id: "org-provider", name: "Provider Inc" },
     ]);
+    // $queryRaw pre-filter returns both IDs — they both pass the 500-char gate.
+    dbMocks.prisma.$queryRaw.mockResolvedValueOnce([{ id: "own-1" }, { id: "shared-1" }]);
     const now = new Date();
     dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
       {

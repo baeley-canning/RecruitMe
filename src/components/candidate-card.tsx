@@ -1189,6 +1189,26 @@ export const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
+      {/* "Bede problem" banner — surfaces JobAdder / talent-pool imports
+          that landed with no CV PDF and no captured profile text. Without
+          this the card looks normal and the recruiter only discovers the
+          empty profile after clicking through. Click → open ProfileDrawer
+          (which exposes the Upload CV / paste-profile-text actions). */}
+      {(candidate.source === "talent_pool" || candidate.source === "jobadder_import")
+        && profileChars === 0 && (
+        <button
+          type="button"
+          onClick={() => setShowProfile(true)}
+          className="w-full text-left px-3 py-2 mx-4 mb-2 bg-warning-subtle border border-warning/30 rounded-md flex items-start gap-2 hover:bg-warning/20 transition-colors"
+          title="Open candidate profile to upload a CV or paste profile text"
+        >
+          <AlertTriangle className="w-3.5 h-3.5 text-warning flex-shrink-0 mt-0.5" />
+          <span className="text-xs text-warning font-medium leading-snug">
+            No CV or profile text — click to upload or paste.
+          </span>
+        </button>
+      )}
+
       {/* AI summary + reasoning. `canLoadBreakdown` keeps the "Why?" toggle
           visible when the breakdown hasn't been lazy-loaded yet (the list
           payload doesn't ship it — see loadBreakdown above). Loading + error
