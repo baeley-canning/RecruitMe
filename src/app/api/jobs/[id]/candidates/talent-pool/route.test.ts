@@ -152,6 +152,33 @@ describe("talent-pool ingestion route", () => {
     expect(upsertCall.create.source).toBe("talent_pool");
   });
 
+  it("returns 401 when not authed (no AI calls fired)", async () => {
+    sessionMocks.getAuth.mockResolvedValue(null);
+    const res = await POST(new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
+      method: "POST",
+      body: "{}",
+    }), { params: Promise.resolve({ id: "job-1" }) });
+    expect(res.status).toBe(401);
+    expect(aiMocks.scoreCandidatesBatch).not.toHaveBeenCalled();
+    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 when the per-job lock is held by another concurrent run", async () => {
+    // db-lock.tryAcquireLock does updateMany (path 1) then setting.create
+    // (path 2) — only returns false when BOTH fail. updateMany count=0 means
+    // no free/stale row to claim; create rejection means the row already
+    // exists (another worker holds the lock).
+    dbMocks.prisma.setting.updateMany.mockResolvedValueOnce({ count: 0 });
+    dbMocks.prisma.setting.create.mockRejectedValueOnce(new Error("P2002: unique constraint"));
+    const res = await POST(new Request("http://localhost/api/jobs/job-1/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 10 }),
+    }), { params: Promise.resolve({ id: "job-1" }) });
+    expect(res.status).toBe(429);
+    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
+  });
+
   it("rejects pool candidates lacking any distinctive anchor on a specialist role", async () => {
     // ≥2 distinctive must-haves → strict specialist mode. Profile must mention
     // at least one role-distinctive term.

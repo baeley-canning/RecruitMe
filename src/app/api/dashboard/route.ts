@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, jobsWhere } from "@/lib/session";
+import { scoreTier } from "@/lib/score-utils";
 
 export async function GET() {
   const auth = await getAuth();
@@ -87,8 +88,11 @@ export async function GET() {
     const avgScore   = scored.length
       ? Math.round(scored.reduce((s, c) => s + (c.matchScore ?? 0), 0) / scored.length)
       : null;
+    // "Top candidates" = anything not in the "poor" tier (40+) and not yet
+    // actioned. Tier definition lives in lib/score-utils so threshold stays
+    // aligned with the recruiter-visible tier labels.
     const topCandidates = scored
-      .filter((c) => (c.matchScore ?? 0) >= 40 && !["shortlisted","contacted","interviewing","offer_sent","hired","declined","rejected"].includes(c.status))
+      .filter((c) => scoreTier(c.matchScore ?? 0, "match") !== "poor" && !["shortlisted","contacted","interviewing","offer_sent","hired","declined","rejected"].includes(c.status))
       .sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0))
       .slice(0, 3)
       .map(({ id, name, headline, location, matchScore }) => ({ id, name, headline, location, matchScore }));

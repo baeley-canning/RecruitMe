@@ -49,10 +49,7 @@ function distinctiveTerms(parsedRole: ParsedRole): string[] {
 
 const BodySchema = z.object({
   maxResults: z.number().int().min(1).max(200).default(50),
-  radiusKm:  z.number().min(1).max(200).default(25),
-  centerLat: z.number().min(-90).max(90).optional(),
-  centerLng: z.number().min(-180).max(180).optional(),
-});
+}).passthrough(); // accept legacy radiusKm/centerLat/Lng without rejecting older clients
 
 function poolImportKey(row: { id: string; linkedinUrl?: string | null }): string {
   const raw = row.linkedinUrl?.trim();
@@ -80,10 +77,11 @@ export async function POST(
 
   const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
-  // radiusKm + centerLat/Lng accepted in the schema for back-compat with older
-  // clients but unused — the overseas gate replaces the city-radius filter.
   const { maxResults } = parsed.data;
 
   const { job, error } = await requireJobAccess(jobId, auth);

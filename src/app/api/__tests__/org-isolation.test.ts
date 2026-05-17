@@ -291,7 +291,7 @@ describe("org isolation — candidates library", () => {
     // No cross-org grants for this test — accessibleOrgIds = ["org-b"] only.
     dbMocks.prisma.orgAccessGrant.findMany.mockResolvedValue([]);
 
-    await getCandidatesLibrary();
+    await getCandidatesLibrary(new Request("http://localhost/api/candidates"));
 
     // The route was refactored to wrap org-scoping in an AND so it composes
     // with the new top-level source-whitelist OR. The org constraint must
@@ -310,7 +310,7 @@ describe("org isolation — candidates library", () => {
     sessionMocks.getAuth.mockResolvedValue({ ...ORG_A, isOwner: true });
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
 
-    await getCandidatesLibrary();
+    await getCandidatesLibrary(new Request("http://localhost/api/candidates"));
 
     const callArgs = dbMocks.prisma.candidate.findMany.mock.calls[0][0] as { where: Record<string, unknown> };
     // Owner query should NOT include the AND-wrapped org scoping or any job filter

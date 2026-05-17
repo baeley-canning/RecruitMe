@@ -18,12 +18,18 @@ export const maxDuration = 300;
 const CONCURRENCY = 3;
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
+
+  // ?onlyUnscored=1 — scope the score-all run to candidates that haven't been
+  // AI-scored yet. Library-import callers pass this so freshly-imported pool
+  // candidates get scored without re-rescoring the LinkedIn cohort.
+  const url = new URL(req.url);
+  const onlyUnscored = url.searchParams.get("onlyUnscored") === "1";
 
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
@@ -74,7 +80,11 @@ export async function POST(
   // turning a 500-candidate score-all into a 25MB+ memory hit even before
   // any scoring fires.
   const candidates = await prisma.candidate.findMany({
-    where: { jobId: id, profileText: { not: null } },
+    where: {
+      jobId: id,
+      profileText: { not: null },
+      ...(onlyUnscored ? { matchScore: null } : {}),
+    },
     select: {
       id: true,
       profileText: true,

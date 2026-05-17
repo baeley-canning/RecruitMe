@@ -137,6 +137,19 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       const count = data.count ?? 0;
       setPoolResult({ count, message: data.message });
       if (count > 0 || !refreshOnlyWhenAdded) onComplete();
+
+      // Fire-and-forget score-all with onlyUnscored=1 so the freshly imported
+      // candidates pick up AI scores without re-rescoring the LinkedIn cohort.
+      // We don't block the response on this — recruiter sees the imports land
+      // immediately and scores trickle in via the existing candidate-list
+      // polling/refresh path. If the daily AI spend cap is hit the score-all
+      // returns 429; the imports already exist so the recruiter can manually
+      // re-score later.
+      if (count > 0) {
+        void fetch(`/api/jobs/${jobId}/candidates/score-all?onlyUnscored=1`, { method: "POST" })
+          .then(() => onComplete())
+          .catch(() => { /* surfaced via candidate row "Score" buttons if needed */ });
+      }
       return { count, ok: true, message: data.message };
     } catch (err) {
       // AbortError: budget exceeded — treat as "skipped, not failed" so the
@@ -169,13 +182,12 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
         status: pool.ok ? "complete" : "rate_limited",
         count: pool.count,
         fromPool: pool.count,
-        // Library import is hard-match only — no AI scoring runs here.
-        // Surface the server's "click Re-score all" CTA so the recruiter
-        // knows the imported candidates aren't yet ranked.
-        message: pool.message
-          ?? (pool.count > 0
-            ? `Imported ${pool.count} from your library — click "Re-score all" to rank them against this JD.`
-            : "No library matches for this role. Switch off library-only to search LinkedIn."),
+        // Library import is hard-match (instant); AI scoring auto-fires in the
+        // background via score-all?onlyUnscored=1. If the AI spend cap is hit
+        // the recruiter can still manually re-score with the existing button.
+        message: pool.count > 0
+          ? `Imported ${pool.count} from your library — scoring in the background…`
+          : pool.message ?? "No library matches for this role. Switch off library-only to search LinkedIn.",
       });
       setSearching(false);
       return;

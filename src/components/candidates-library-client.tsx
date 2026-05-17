@@ -160,11 +160,44 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
   );
 }
 
-export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCandidate[] }) {
+interface CandidatesLibraryClientProps {
+  candidates: LibraryCandidate[];
+  /** Pagination cursor from SSR. Non-null when more rows exist past the take cap. */
+  initialNextCursor?: string | null;
+}
+
+export function CandidatesLibraryClient({ candidates: initialCandidates, initialNextCursor }: CandidatesLibraryClientProps) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const deferred = useDeferredValue(search);
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // Cursor pagination state. `candidates` starts with the SSR page and grows
+  // as the user clicks "Load more". `nextCursor` tracks where to resume.
+  const [candidates, setCandidates] = useState<LibraryCandidate[]>(initialCandidates);
+  const [nextCursor, setNextCursor] = useState<string | null>(initialNextCursor ?? null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
+
+  const handleLoadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setLoadMoreError("");
+    try {
+      const res = await fetch(`/api/candidates?cursor=${encodeURIComponent(nextCursor)}`);
+      if (!res.ok) {
+        setLoadMoreError("Failed to load more — try again.");
+        return;
+      }
+      const data = await res.json() as { candidates: LibraryCandidate[]; nextCursor: string | null };
+      setCandidates((prev) => [...prev, ...data.candidates]);
+      setNextCursor(data.nextCursor);
+    } catch {
+      setLoadMoreError("Failed to load more — check your connection.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     const q = deferred.toLowerCase().trim();
@@ -180,11 +213,13 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
 
   // Single-pass reducer for stats — was 3 separate full-array scans (every
   // keystroke triggered ~42k iterations through 14k candidates). Now ~14k.
+  // strongMatches counts via canonical scoreTier so the "Strong" label here
+  // matches every other tier display in the app (>= 80 = strong).
   const { withCV, withProfile, strongMatches } = useMemo(() => {
     let cv = 0, strong = 0;
     for (const c of candidates) {
       if (c.files.some((f) => f.type === "cv")) cv++;
-      if (c.matchScore !== null && c.matchScore >= 70) strong++;
+      if (c.matchScore !== null && scoreTier(c.matchScore, "match") === "strong") strong++;
     }
     return { withCV: cv, withProfile: candidates.length, strongMatches: strong };
   }, [candidates]);
@@ -246,7 +281,7 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
           </div>
           <div>
             <p className="text-lg font-semibold text-text-primary data-mono">{strongMatches}</p>
-            <p className="text-xs text-text-secondary">Strong matches (70%+)</p>
+            <p className="text-xs text-text-secondary">Strong matches (80%+)</p>
           </div>
         </Card>
         <Card className="p-4 flex items-center gap-3">
@@ -335,6 +370,23 @@ export function CandidatesLibraryClient({ candidates }: { candidates: LibraryCan
               );
             })}
           </div>
+          {nextCursor && (
+            <div className="mt-4 flex flex-col items-center gap-2">
+              {loadMoreError && (
+                <p className="text-xs text-danger">{loadMoreError}</p>
+              )}
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="px-4 py-2 rounded-md border border-separator bg-surface-raised hover:bg-surface-hover text-text-primary text-md disabled:opacity-50"
+              >
+                {loadingMore ? "Loading…" : "Load more candidates"}
+              </button>
+              <p className="text-xs text-text-tertiary">
+                Showing {candidates.length} — your library has more.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

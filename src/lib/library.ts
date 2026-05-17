@@ -15,15 +15,18 @@ import { normaliseLinkedInUrl } from "./linkedin";
 import { getAccessibleOrgIds, candidateOrgFilter } from "./org-access";
 import type { AuthResult } from "./session";
 
-// Hard cap retained from the API route (lifted from 2000 → 20000 after the
-// JobAdder bulk import pushed typical orgs past 13k candidates). Cursor
-// pagination is the long-term fix; this keeps the page functional.
+// Per-request cap. 20k is the safety ceiling for SSR memory; typical orgs
+// at 13.5k JobAdder-imported rows fit in one page today. Cursor pagination
+// is wired below — callers paginate via the returned `nextCursor`.
 const DEFAULT_TAKE = 20000;
 
 export interface LibraryQueryOptions {
-  /** Free-text query (currently unused server-side; kept for future cursor pagination). */
+  /** Free-text query (currently unused server-side; reserved). */
   query?: string;
-  /** Pagination cursor — Candidate id. Not yet wired through (future-proofing). */
+  /**
+   * Pagination cursor — pass the previous result's `nextCursor` to fetch the
+   * next page. Undefined means "first page".
+   */
   cursor?: string;
   /** Result cap. Defaults to DEFAULT_TAKE. */
   take?: number;
@@ -53,7 +56,14 @@ export interface LibraryCandidateRow {
 
 export interface LibraryQueryResult {
   candidates: LibraryCandidateRow[];
+  /** Count of rows returned (post-dedupe). */
   total: number;
+  /**
+   * When the DB query was capped by `take`, returns the last seen Candidate
+   * id so the caller can re-query with `cursor: nextCursor` to load more.
+   * Null when there's no more data.
+   */
+  nextCursor: string | null;
 }
 
 /**
@@ -113,6 +123,10 @@ export async function getLibraryCandidates(
     // shared one createdAt). Without it the page head was deterministically
     // name-sorted Z's instead of "newest captures".
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    // Cursor pagination — Prisma's `cursor` + `skip:1` semantics mean the
+    // cursor row itself is excluded from the next page. The orderBy above
+    // is stable (id is unique) so the cursor walks deterministically.
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     take,
     select: {
       id: true,
@@ -210,5 +224,12 @@ export async function getLibraryCandidates(
     return { ...row, sharedFromOrgName };
   });
 
-  return { candidates, total: candidates.length };
+  // If the raw query was capped at `take`, there may be more rows. Return
+  // the last raw row's id as the next cursor (NOT the deduped candidates'
+  // last id — the cursor walks the raw orderBy, not the post-dedupe view).
+  const nextCursor = rows.length === take && rows.length > 0
+    ? rows[rows.length - 1].id
+    : null;
+
+  return { candidates, total: candidates.length, nextCursor };
 }

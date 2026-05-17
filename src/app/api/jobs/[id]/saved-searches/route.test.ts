@@ -84,7 +84,7 @@ describe("saved-searches list/create route", () => {
     expect(call.data.orgId).toBe("org-1");
   });
 
-  it("rejects name longer than 100 chars with 400", async () => {
+  it("rejects name longer than 100 chars with 400 and surfaces the issue path", async () => {
     // Previously the route silently sliced to 100 chars; the Zod schema now
     // rejects oversize names so the client sees the failure explicitly.
     const res = await POST(new Request("http://localhost/", {
@@ -97,6 +97,14 @@ describe("saved-searches list/create route", () => {
       }),
     }), { params: Promise.resolve({ id: "job-1" }) });
     expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("Invalid body");
+    // Pinning the issue path catches accidental schema regressions — if
+    // someone removes the .max(100) constraint the test will fail because
+    // the issue path becomes empty.
+    expect(Array.isArray(body.issues)).toBe(true);
+    const paths = body.issues.map((i: { path: unknown[] }) => i.path.join("."));
+    expect(paths).toContain("name");
   });
 
   it("defaults target to 20 when omitted, and rejects out-of-range target", async () => {

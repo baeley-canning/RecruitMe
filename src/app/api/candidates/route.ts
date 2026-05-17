@@ -17,12 +17,28 @@ import { getLibraryCandidates } from "@/lib/library";
  * the page-level SSR loader (app/candidates/page.tsx) can share the same
  * code path — they used to drift, with the page missing cross-org grants.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
-  const { candidates } = await getLibraryCandidates(auth);
-  return NextResponse.json(candidates);
+  // Cursor pagination — passed via ?cursor=<candidateId>. The helper returns
+  // `nextCursor` when more rows exist beyond the take cap.
+  const url = new URL(req.url);
+  const cursor = url.searchParams.get("cursor") ?? undefined;
+
+  const { candidates, nextCursor } = await getLibraryCandidates(auth, { cursor });
+
+  // Existing consumers (candidates-library-client) expect the array shape on
+  // first-page calls. Preserve that for the no-cursor request; expose the
+  // paginated shape only when an explicit cursor is requested.
+  if (cursor !== undefined) {
+    return NextResponse.json({ candidates, nextCursor });
+  }
+  // Set a header so paginated clients can pick up the cursor without changing
+  // the body shape. NextRequest doesn't expose set; using the response.
+  const response = NextResponse.json(candidates);
+  if (nextCursor) response.headers.set("X-Next-Cursor", nextCursor);
+  return response;
 }
 
 const CreateLibraryCandidateSchema = z.object({

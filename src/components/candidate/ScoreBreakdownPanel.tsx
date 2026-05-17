@@ -14,11 +14,14 @@ import {
 // bars in this panel want a single solid background colour). Bucketing is
 // driven by scoreTier so breakpoints stay in lock-step with the rest of the
 // app — only the colour mapping is bespoke.
+// Per-category bar fills. The "poor" tier uses bg-danger (red) to flag a
+// problem category, matching CATEGORY_BAR_FILL in candidate-card.tsx — same
+// underlying data, kept visually consistent.
 const TIER_FILL: Record<ReturnType<typeof scoreTier>, string> = {
   strong: "bg-success",
   fair:   "bg-accent",
   weak:   "bg-warning",
-  poor:   "bg-surface-hover",
+  poor:   "bg-danger",
 };
 
 // ─── Coverage chip configs ────────────────────────────────────────────────────

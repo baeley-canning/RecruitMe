@@ -15,7 +15,7 @@ export default async function CandidatesPage() {
 
   // Cross-org grant expansion + dedupe + shared-org enrichment lives in
   // src/lib/library.ts so this loader and /api/candidates can't drift.
-  const { candidates } = await getLibraryCandidates(auth);
+  const { candidates, nextCursor } = await getLibraryCandidates(auth);
 
   const serializedCandidates = candidates.map((candidate) => ({
     id: candidate.id,
@@ -41,5 +41,5 @@ export default async function CandidatesPage() {
     })),
   }));
 
-  return <CandidatesLibraryClient candidates={serializedCandidates} />;
+  return <CandidatesLibraryClient candidates={serializedCandidates} initialNextCursor={nextCursor} />;
 }

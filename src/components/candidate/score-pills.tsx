@@ -50,11 +50,11 @@ export function LocationFitPill({
 }) {
   if (!location || !isPlausibleLocation(location)) return null;
   const cfg = locationFitBadge(score);
-  const tone =
-    score == null      ? "bg-surface-hover text-text-tertiary"
-    : score >= 75      ? "bg-success-subtle text-success"
-    : score >= 45      ? "bg-accent-subtle  text-accent"
-    :                    "bg-danger-subtle  text-danger";
+  // Use the canonical palette returned by locationFitBadge (single source
+  // of truth) instead of inlining a parallel 4-bucket ternary. The border
+  // class from cfg.pill is stripped — the pill renders without a border in
+  // this layout.
+  const tone = cfg.pill.replace(/\bborder-separator\b/g, "").trim();
 
   return (
     <div
