@@ -26,12 +26,18 @@ const scoringConfigMocks = vi.hoisted(() => ({
   getJobScoringWeights: vi.fn(),
 }));
 
+const usageMocks = vi.hoisted(() => ({
+  checkRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  checkSpendCap: vi.fn().mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 }),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
+vi.mock("@/lib/usage", () => usageMocks);
 
 import { GET, POST } from "./route";
 import { invalidateAccessCache } from "@/lib/org-access";
@@ -59,6 +65,11 @@ function makeBreakdown() {
 describe("library browse / add route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // vi.clearAllMocks() wipes the implementations on every mock — re-apply
+    // the "allowed" defaults so the POST guard added in the maxDuration fix
+    // doesn't 429 every test that doesn't explicitly opt into a denial.
+    usageMocks.checkRateLimit.mockResolvedValue({ allowed: true });
+    usageMocks.checkSpendCap.mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 });
     // The org-access cache is module-level and persists across tests; clear
     // it so each test sees the orgAccessGrant.findMany mock it sets up.
     invalidateAccessCache("org-1");
@@ -188,6 +199,50 @@ describe("library browse / add route", () => {
       body: JSON.stringify({ candidateIds: [] }),
     }), { params: Promise.resolve({ id: "job-1" }) });
     expect(res.status).toBe(422);
+  });
+
+  it("POST short-circuits with 429 when the score rate limit is exhausted", async () => {
+    // Mirrors the score-all guard — without this, a single click on Browse
+    // Library could fire 50 paid Claude calls past the per-org cap.
+    usageMocks.checkRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterMs: 60_000 });
+
+    const res = await POST(new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidateIds: ["src-1"] }),
+    }), { params: Promise.resolve({ id: "job-1" }) });
+
+    expect(res.status).toBe(429);
+    // Pool/source fetch must NOT have run — the guard fires before we hit Prisma.
+    expect(dbMocks.prisma.candidate.findMany).not.toHaveBeenCalled();
+  });
+
+  it("POST short-circuits with 429 when the daily AI spend cap is tripped", async () => {
+    usageMocks.checkSpendCap.mockResolvedValueOnce({ allowed: false, spentUsd: 5.12, capUsd: 5.0 });
+
+    const res = await POST(new Request("http://localhost/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidateIds: ["src-1"] }),
+    }), { params: Promise.resolve({ id: "job-1" }) });
+
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.error).toContain("AI spend cap");
+  });
+
+  it("GET honours the ?limit= query param via the Prisma take field", async () => {
+    // Old behaviour: Prisma always pulled 500 rows regardless of limit.
+    // New behaviour: take = max(limit * 4, limit), capped at 500.
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([]) // existing URLs in this job
+      .mockResolvedValueOnce([]); // library candidates
+
+    await GET(new Request("http://localhost/api/jobs/job-1/library?limit=25"), {
+      params: Promise.resolve({ id: "job-1" }),
+    });
+    const libraryCall = dbMocks.prisma.candidate.findMany.mock.calls[1][0] as { take: number };
+    expect(libraryCall.take).toBe(100); // 25 * 4
   });
 
   it("POST still imports when scoring fails (retry both attempts), surfaces unscoredIds", async () => {
