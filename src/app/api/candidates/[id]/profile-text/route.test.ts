@@ -23,10 +23,16 @@ const scoringConfigMocks = vi.hoisted(() => ({
   getJobScoringWeights: vi.fn().mockResolvedValue({}),
 }));
 
+const usageMocks = vi.hoisted(() => ({
+  checkRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  checkSpendCap: vi.fn().mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 }),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/scoring-config", () => scoringConfigMocks);
+vi.mock("@/lib/usage", () => usageMocks);
 
 import { PATCH } from "./route";
 import { buildScoreBreakdown, CATEGORY_WEIGHTS_V2 } from "@/lib/scoring";
@@ -76,6 +82,10 @@ const baseCandidate = {
 describe("PATCH /api/candidates/[id]/profile-text", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Re-apply the usage mock defaults (clearAllMocks wipes implementations);
+    // the new spend gate would otherwise 429 every test that doesn't set them.
+    usageMocks.checkRateLimit.mockResolvedValue({ allowed: true });
+    usageMocks.checkSpendCap.mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 });
     sessionMocks.getAuth.mockResolvedValue({ userId: "u-1", orgId: "org-1", isOwner: false });
     dbMocks.prisma.candidate.findUnique.mockResolvedValue(baseCandidate);
     dbMocks.prisma.$transaction.mockImplementation(async (fn: (tx: typeof dbMocks.prisma) => Promise<unknown>) =>
@@ -178,6 +188,19 @@ describe("PATCH /api/candidates/[id]/profile-text", () => {
     expect(body.scored).toBe(false);
     // scoreCandidateStructured should not have been called
     expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits with 429 when the daily AI spend cap is exhausted", async () => {
+    usageMocks.checkSpendCap.mockResolvedValueOnce({ allowed: false, spentUsd: 5.12, capUsd: 5.0 });
+    const req = new Request("http://localhost/api/candidates/cand-1/profile-text", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Some new history", mode: "append" }),
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "cand-1" }) });
+    expect(res.status).toBe(429);
+    // No DB write — the guard fires before the candidate lookup.
+    expect(dbMocks.prisma.candidate.findUnique).not.toHaveBeenCalled();
   });
 
   it("owner bypasses org check", async () => {

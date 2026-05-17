@@ -33,6 +33,13 @@ import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
 import { extractSignalsFromRequirement, signalMatchesText } from "@/lib/requirement-signals";
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 
+// Frontend aborts at 50s and a 45s internal TIME_BUDGET_MS gates the batch
+// score, but the route itself can run a hair longer (Firmable enrichment
+// kicks off after the batch, saves run sequentially). 60s gives the platform
+// proxy headroom over Vercel/Railway's default 10-15s function timeout
+// without uncapping it.
+export const maxDuration = 60;
+
 // Re-derive distinctive terms from a parsedRole — role-aware so hybrid IT-ops
 // roles ("Technology Support Manager") don't gate the pool on ISMS/ISO 27001
 // when the role's secondary compliance requirement would otherwise reject

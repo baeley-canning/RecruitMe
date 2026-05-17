@@ -8,7 +8,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => dbMocks);
 
-import { getAccessibleOrgIds, candidateOrgFilter, invalidateAccessCache } from "../org-access";
+import { getAccessibleOrgIds, candidateOrgFilter, invalidateAccessCache, getGrantScopes, LIBRARY_FULL_SENSITIVE_FIELDS } from "../org-access";
 
 const baseAuth = { userId: "u1", orgId: "org-A", isOwner: false };
 
@@ -96,6 +96,50 @@ describe("getAccessibleOrgIds", () => {
     const ids = await getAccessibleOrgIds({ userId: "u1", orgId: null, isOwner: false });
     expect(ids).toEqual([]);
     expect(dbMocks.prisma.orgAccessGrant.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("getGrantScopes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invalidateAccessCache("org-A");
+  });
+
+  it("returns every known scope for owners (synthetic — no DB hit)", async () => {
+    const scopes = await getGrantScopes({ ...baseAuth, isOwner: true });
+    expect(scopes.has("library_read")).toBe(true);
+    expect(scopes.has("library_full")).toBe(true);
+    expect(dbMocks.prisma.orgAccessGrant.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty set when caller has no orgId", async () => {
+    const scopes = await getGrantScopes({ userId: "u1", orgId: null, isOwner: false });
+    expect(scopes.size).toBe(0);
+    expect(dbMocks.prisma.orgAccessGrant.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns the union of scopes across all grants", async () => {
+    dbMocks.prisma.orgAccessGrant.findMany.mockResolvedValue([
+      { scope: "library_read" },
+      { scope: "library_read" }, // duplicates are de-duped by the Set
+      { scope: "library_full" },
+    ]);
+    const scopes = await getGrantScopes(baseAuth);
+    expect([...scopes].sort()).toEqual(["library_full", "library_read"]);
+  });
+
+  it("returns an empty set when no grants exist", async () => {
+    dbMocks.prisma.orgAccessGrant.findMany.mockResolvedValue([]);
+    const scopes = await getGrantScopes(baseAuth);
+    expect(scopes.size).toBe(0);
+  });
+});
+
+describe("LIBRARY_FULL_SENSITIVE_FIELDS", () => {
+  it("lists every field the cross-org library_read viewer must NOT see", () => {
+    // Tightening this list later requires updating both the caller-side null
+    // logic and this assertion deliberately — it's a privacy gate.
+    expect(LIBRARY_FULL_SENSITIVE_FIELDS).toEqual(["notes", "screeningData", "interviewNotes"]);
   });
 });
 

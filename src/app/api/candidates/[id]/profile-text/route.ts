@@ -25,7 +25,13 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 import type { ParsedRole } from "@/lib/ai";
+
+// PATCH re-scores the candidate synchronously after a manual profile-text
+// paste — scoreCandidateStructured can take 10-30s under load. 60s gives the
+// chain enough room while still failing fast on a stuck Claude provider.
+export const maxDuration = 60;
 
 const PatchSchema = z.object({
   text: z
@@ -45,6 +51,23 @@ export async function PATCH(
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id } = await params;
+
+  // Profile-text re-paste fires one scoreCandidateStructured call per PATCH.
+  // Cheap on its own, but a recruiter pasting into 20 candidates in a row
+  // bypasses the per-call cost gate everywhere else. Same per-org rate
+  // limit + daily USD cap as score-all so the field can't be turned into
+  // a no-limit re-scoring loop.
+  const rateCheck = await checkRateLimit(auth.orgId, "score");
+  if (!rateCheck.allowed) {
+    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
+    return NextResponse.json({ error: `Scoring rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json({
+      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+    }, { status: 429 });
+  }
 
   const candidate = await prisma.candidate.findUnique({
     where: { id },

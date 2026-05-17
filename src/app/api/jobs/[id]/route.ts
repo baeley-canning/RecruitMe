@@ -13,9 +13,15 @@ export async function GET(
   const { error } = await requireJobAccess(id, auth);
   if (error) return error;
 
-  // Exclude large text fields from the candidate list — profileText, scoreBreakdown,
+  // Exclude large text fields from the candidate list — profileText,
   // matchReason etc. can be 10-50KB each. At 500 candidates that's 25MB+ per page load.
   // The full candidate detail is fetched separately when a card is expanded.
+  //
+  // scoreBreakdown is intentionally KEPT in the select set despite being
+  // ~5KB per candidate: candidate-card.tsx reads it at render time (via
+  // safeParseJson in the useMemo at L339 + L749) to compute the category
+  // dots / overall summary that show before the "Why?" panel opens. If a
+  // card-level lazy fetch lands later, drop it here too.
   const full = await prisma.job.findUnique({
     where: { id },
     include: {
@@ -74,6 +80,11 @@ export async function GET(
         linkedinUrl: true, matchScore: true,
         job: { select: { id: true, title: true, company: true } },
       },
+      // Hard cap on the cross-job fan-out. Without this an org with 50
+      // active jobs that all share a handful of repeat URLs could surface
+      // thousands of rows here just to render the "Also on … + 2 others"
+      // pill. 500 is generous — typical jobs have <20 cross-presence rows.
+      take: 500,
     });
     otherJobsByUrl = crossJobRows.reduce((map, row) => {
       if (!row.linkedinUrl || !row.job) return map;

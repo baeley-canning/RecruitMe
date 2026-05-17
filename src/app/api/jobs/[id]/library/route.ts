@@ -22,6 +22,15 @@ import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getAccessibleOrgIds, candidateOrgFilter } from "@/lib/org-access";
 import { shouldRejectAsOverseas } from "@/lib/location";
+import { checkRateLimit, checkSpendCap } from "@/lib/usage";
+
+// Library POST scores N candidates × 2 (score + acceptance) with retry. At the
+// 50-candidate Zod cap and ~3-5s per Claude call, a sequential run could
+// linger near 5 minutes. The new CONCURRENCY=3 pattern brings worst-case to
+// ~90s — comfortably under the 120s budget below.
+export const maxDuration = 120;
+
+const POST_CONCURRENCY = 3;
 
 export async function GET(
   req: Request,
@@ -37,6 +46,12 @@ export async function GET(
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
   const limit = Math.min(200, Math.max(10, Number(url.searchParams.get("limit") ?? 50)));
+  // SQL `take` previously hard-coded 500 regardless of ?limit=. For small
+  // limit= requests this dragged the whole 500-row dedupe loop through Node
+  // memory just to slice down to (say) 25 rows. Honour the caller's cap
+  // here, but stay generous (4× requested) so post-filter dedupe + the
+  // already-imported exclusion still has a buffer of rows to work from.
+  const prismaTake = Math.min(500, Math.max(limit * 4, limit));
 
   // URLs already imported into this job — used as a filter to exclude duplicates.
   const existing = await prisma.candidate.findMany({
@@ -70,7 +85,7 @@ export async function GET(
     },
     // id-desc tiebreaker against bulk-insert timestamp collisions.
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 500, // generous upper bound; client filters down further
+    take: prismaTake, // honours ?limit= with a 4× buffer for dedupe
     select: {
       id: true,
       name: true,
@@ -116,6 +131,22 @@ export async function POST(
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
 
+  // Library import does scoring + (optional) Firmable enrichment per row, up
+  // to the 50-candidate Zod cap below. Same per-org rate limit + daily USD
+  // cap as score-all so a single click can't blow past the $5/day budget.
+  // Mirrors the guard pattern in score-all/route.ts:34-48.
+  const rateCheck = await checkRateLimit(auth.orgId, "score");
+  if (!rateCheck.allowed) {
+    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
+    return NextResponse.json({ error: `Scoring rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json({
+      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+    }, { status: 429 });
+  }
+
   const parsed = PostSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
@@ -147,8 +178,14 @@ export async function POST(
   const unscoredIds: string[] = []; // imported but scoring failed after retry
   const skippedOverseas: string[] = [];
 
-  for (const source of sourceCandidates) {
-    if (!source.profileText) continue;
+  // Process each candidate in parallel chunks of POST_CONCURRENCY. Previously
+  // sequential — at the 50-candidate Zod cap that meant 50 × ~5s = ~4 min,
+  // routinely blowing past Vercel's response budget and leaving the
+  // recruiter staring at a hung modal. CONCURRENCY=3 (the same value
+  // score-all uses) keeps wall time under the 120s maxDuration ceiling
+  // without saturating the Anthropic rate limiter.
+  const processOne = async (source: typeof sourceCandidates[number]) => {
+    if (!source.profileText) return;
     // Country gate: never import a confirmed-overseas candidate onto a
     // non-remote NZ role. shouldRejectAsOverseas combines explicit-location
     // check with profile-text inference (Present-role location, "based in"
@@ -163,7 +200,7 @@ export async function POST(
     });
     if (overseas.reject) {
       skippedOverseas.push(source.id);
-      continue;
+      return;
     }
 
     // Try scoring twice — transient API failures (timeouts, 503s) are common
@@ -218,6 +255,11 @@ export async function POST(
     } catch {
       failed.push(source.id);
     }
+  };
+
+  for (let i = 0; i < sourceCandidates.length; i += POST_CONCURRENCY) {
+    const chunk = sourceCandidates.slice(i, i + POST_CONCURRENCY);
+    await Promise.all(chunk.map(processOne));
   }
 
   return NextResponse.json({

@@ -54,6 +54,11 @@ const scoringConfigMocks = vi.hoisted(() => ({
   getJobScoringWeights: vi.fn(),
 }));
 
+const usageMocks = vi.hoisted(() => ({
+  checkRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  checkSpendCap: vi.fn().mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 }),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/ai", () => aiMocks);
@@ -64,6 +69,7 @@ vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
 vi.mock("@/lib/pdf", () => ({
   extractTextFromPdf: vi.fn().mockResolvedValue(""),
 }));
+vi.mock("@/lib/usage", () => usageMocks);
 
 import { POST } from "./route";
 
@@ -127,6 +133,11 @@ function makeRequest() {
 describe("candidate file CV upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // vi.clearAllMocks() wipes the resolved values on the usage mocks too —
+    // re-apply the "allowed" defaults so the new spend/rate gates don't 429
+    // every test by accident.
+    usageMocks.checkRateLimit.mockResolvedValue({ allowed: true });
+    usageMocks.checkSpendCap.mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 });
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
     scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.candidate.findUnique.mockResolvedValue(makeCandidate());
@@ -200,6 +211,18 @@ describe("candidate file CV upload", () => {
         scoreBreakdown: expect.stringContaining("\"version\":2"),
       }),
     }));
+  });
+
+  it("short-circuits with 429 when the daily AI spend cap is exhausted", async () => {
+    // Before the gate landed, a scripted CV-upload loop could keep firing
+    // three Claude calls per upload (extract + score + acceptance) past the
+    // cap. The guard runs before the multipart parse so no DB write fires.
+    usageMocks.checkSpendCap.mockResolvedValueOnce({ allowed: false, spentUsd: 5.12, capUsd: 5.0 });
+
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
+
+    expect(res.status).toBe(429);
+    expect(dbMocks.prisma.candidateFile.create).not.toHaveBeenCalled();
   });
 
   it("still returns the saved file when CV post-processing fails after upload", async () => {
