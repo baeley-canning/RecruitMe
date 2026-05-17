@@ -16,6 +16,88 @@ import { escapeXmlForPrompt } from "./profile-excerpt";
 import type { ParsedRole } from "./ai";
 import type { ScoreBreakdown } from "./scoring";
 
+// ── Corrections version (audit SC4) ──────────────────────────────────────────
+// Per-org counter stored in the Setting table under `cv.corrections.version.<orgId>`.
+// Threaded through buildScoreCacheKey so a freshly-saved ScoreCorrection
+// invalidates the cache for that org's candidates. Without this, a recruiter
+// can save a correction and the next re-score will keep returning the stale
+// cached value because the cache key didn't move.
+const CORRECTIONS_VERSION_PREFIX = "cv.corrections.version.";
+const CORRECTIONS_CACHE_TTL_MS = 60_000;
+const correctionsVersionCache = new Map<string, { value: number; expires: number }>();
+
+function correctionsVersionKey(orgId: string): string {
+  return `${CORRECTIONS_VERSION_PREFIX}${orgId}`;
+}
+
+/**
+ * Returns the per-org corrections-version counter. Cached in-process for 60s
+ * (same pattern as org-access scope cache) so we don't hit the DB on every
+ * score request inside a score-all loop. Defaults to 0 when no row exists
+ * (org has never recorded a correction).
+ *
+ * Pass null/empty orgId to get 0 — talent-pool and a few other paths can run
+ * for an auth without an active org.
+ */
+export async function getCorrectionsVersion(orgId: string | null | undefined): Promise<number> {
+  if (!orgId) return 0;
+
+  const cached = correctionsVersionCache.get(orgId);
+  if (cached && cached.expires > Date.now()) return cached.value;
+
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: correctionsVersionKey(orgId) } });
+    const value = row ? parseInt(row.value, 10) || 0 : 0;
+    correctionsVersionCache.set(orgId, { value, expires: Date.now() + CORRECTIONS_CACHE_TTL_MS });
+    return value;
+  } catch (err) {
+    // DB blip — return 0 rather than failing the score request. Worst case
+    // is that this round of scoring keeps using the cached value; the next
+    // run will pick up the bumped version once the DB recovers.
+    console.warn("[recruiter-memory] getCorrectionsVersion failed:", err instanceof Error ? err.message : err);
+    return 0;
+  }
+}
+
+/**
+ * Atomically increments the per-org corrections-version counter. Called from
+ * correct-score POST after persisting a ScoreCorrection so subsequent score
+ * requests bust the cache for that org.
+ *
+ * Uses an upsert with a read-then-write rather than a single SQL increment
+ * because the value column is a string — slightly racy under heavy concurrent
+ * correction-saves, but corrections are interactive (one recruiter clicks
+ * "save correction"), so the worst case is two simultaneous bumps producing
+ * the same final value (still > the previous value → cache busts correctly).
+ */
+export async function bumpCorrectionsVersion(orgId: string | null | undefined): Promise<number> {
+  if (!orgId) return 0;
+
+  const key = correctionsVersionKey(orgId);
+  let next = 1;
+  try {
+    const existing = await prisma.setting.findUnique({ where: { key } });
+    const current = existing ? parseInt(existing.value, 10) || 0 : 0;
+    next = current + 1;
+    await prisma.setting.upsert({
+      where: { key },
+      update: { value: String(next) },
+      create: { key, value: String(next) },
+    });
+  } catch (err) {
+    console.warn("[recruiter-memory] bumpCorrectionsVersion failed:", err instanceof Error ? err.message : err);
+  }
+  // Invalidate the local cache so this process's next read sees the new value
+  // immediately (other Node processes will pick it up after their 60s TTL).
+  correctionsVersionCache.delete(orgId);
+  return next;
+}
+
+/** Test-only helper to reset the in-process cache between tests. */
+export function __resetCorrectionsVersionCache(): void {
+  correctionsVersionCache.clear();
+}
+
 const POSITIVE_STATUSES = new Set(["shortlisted", "contacted", "interviewing", "offer_sent", "hired"]);
 const NEGATIVE_STATUSES = new Set(["rejected", "declined"]);
 

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
+import { bumpCorrectionsVersion } from "@/lib/recruiter-memory";
 
 const CorrectScoreBodySchema = z.object({
   recruiterScore: z.number().int().min(0).max(100),
@@ -47,6 +48,19 @@ export async function POST(
       roleTitle,
     },
   });
+
+  // Audit SC4: bump the per-org corrections-version so the next score request
+  // for any candidate in this org rebuilds a fresh cache key and bypasses the
+  // stale cached score. Without this, a recruiter saves a correction and the
+  // recruiter-memory context that the correction adds gets silently ignored on
+  // subsequent re-pulls of cached candidates.
+  const bumpOrgId = candidate.orgId ?? job.orgId ?? auth.orgId ?? null;
+  if (bumpOrgId) {
+    // Fire-and-forget — a DB blip here shouldn't fail the correction save.
+    // Worst case the cache stays valid for one more re-score; the next
+    // correction (or a 60s TTL on the in-process cache) recovers.
+    void bumpCorrectionsVersion(bumpOrgId);
+  }
 
   return NextResponse.json(correction);
 }

@@ -14,7 +14,10 @@ export function hashProfileText(text: string): string {
 // suspect (stub captures got 12% with fabricated reasons); bumping the
 // version invalidates cached scores so the next re-score path runs through
 // the new gate.
-const SCORE_CACHE_VERSION = "score-context-v6-deterministic-gate";
+// v6 → v7: per-org corrections version threaded into the key so a fresh
+// recruiter correction (audit SC4) actually invalidates the affected
+// cached scores instead of being silently ignored on cache-hit re-pulls.
+const SCORE_CACHE_VERSION = "score-context-v7-corrections";
 
 type ScoreCacheKeyInput = {
   profileText: string;
@@ -29,6 +32,14 @@ type ScoreCacheKeyInput = {
   // resulting score changes, so the key has to include them or stale cached
   // scores will keep showing through after a weights edit.
   weights?: unknown;
+  // Audit SC4: per-org corrections version. Every recruiter correction bumps
+  // this counter (see recruiter-memory.getCorrectionsVersion / bumpCorrectionsVersion).
+  // Including it here means a freshly-saved correction invalidates the cache
+  // for the affected org's candidates — the next score request bypasses the
+  // cached value and re-runs scoring with the new correction context.
+  // Optional for back-compat with old callers; defaults to 0 (no corrections
+  // ever recorded) which preserves existing hashes for orgs with no history.
+  correctionsVersion?: number;
 };
 
 function stableStringify(value: unknown): string {
@@ -57,6 +68,10 @@ export function buildScoreCacheKey(input: ScoreCacheKeyInput): string {
     ...(input.jobLocation2 != null ? { jobLocation2: input.jobLocation2 } : {}),
     isRemote: input.isRemote ?? false,
     weights: input.weights ?? null,
+    // 0 → no corrections recorded for this org. We always include the field
+    // (rather than omitting on 0) so the v7 version bump uniformly invalidates
+    // all pre-v7 cached scores once and never has to be touched again.
+    correctionsVersion: input.correctionsVersion ?? 0,
   });
 
   return createHash("sha256").update(payload).digest("hex").slice(0, 24);

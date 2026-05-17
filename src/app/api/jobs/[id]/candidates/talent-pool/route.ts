@@ -149,11 +149,40 @@ export async function POST(
   // we fall back to the old "pull everything, rank in JS" path so a
   // thin JD doesn't surface nothing.
   const earlyMustHaves = parsedRole.must_haves?.length ? parsedRole.must_haves : (parsedRole.skills_required ?? []);
-  const prefilterTerms = earlyMustHaves
+  const mustHaveSignalTerms = earlyMustHaves
     .flatMap((req) => extractSignalsFromRequirement(req))
-    .filter((s) => s.length >= 3 && !/^\d+$/.test(s))
-    .slice(0, 12); // cap to keep the WHERE clause sane
-  const usePrefilter = prefilterTerms.length >= 3;
+    .filter((s) => s.length >= 3 && !/^\d+$/.test(s));
+  // Critic A extra #1: when the must-have signal list is thin (3-5 terms),
+  // the OR-prefilter combined with the 12k take cap can mathematically miss
+  // candidates who match only ONE of the must-haves but otherwise have a
+  // strong nice-to-have spine. Widen the OR-set with nice-to-have signals
+  // so the prefilter behaves like a relevance gate, not a hard exclusion,
+  // when the JD's must-haves are sparse. ≥6 must-have terms already gives
+  // the index plenty to work with so we leave those JDs alone.
+  const PREFILTER_TERMS_THIN_THRESHOLD = 6;
+  const PREFILTER_TERMS_HARD_CAP = 12;
+  const PREFILTER_TERMS_MIN = 3;
+  const widenWithNiceToHaves = mustHaveSignalTerms.length >= PREFILTER_TERMS_MIN
+    && mustHaveSignalTerms.length < PREFILTER_TERMS_THIN_THRESHOLD;
+  const niceToHavesForPrefilter = widenWithNiceToHaves
+    ? (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : (parsedRole.skills_preferred ?? []))
+    : [];
+  const niceToHaveSignalTerms = niceToHavesForPrefilter
+    .flatMap((req) => extractSignalsFromRequirement(req))
+    .filter((s) => s.length >= 3 && !/^\d+$/.test(s));
+  // Dedup against the must-have terms (case-insensitive) so we don't burn
+  // OR slots on duplicates that the index would already match.
+  const seenLower = new Set(mustHaveSignalTerms.map((t) => t.toLowerCase()));
+  const widenedNiceToHaves: string[] = [];
+  for (const t of niceToHaveSignalTerms) {
+    const k = t.toLowerCase();
+    if (seenLower.has(k)) continue;
+    seenLower.add(k);
+    widenedNiceToHaves.push(t);
+  }
+  const prefilterTerms = [...mustHaveSignalTerms, ...widenedNiceToHaves]
+    .slice(0, PREFILTER_TERMS_HARD_CAP);
+  const usePrefilter = mustHaveSignalTerms.length >= PREFILTER_TERMS_MIN;
   const prefilterClause = usePrefilter
     ? { OR: prefilterTerms.map((t) => ({ profileText: { contains: t, mode: "insensitive" as const } })) }
     : {};
@@ -194,7 +223,7 @@ export async function POST(
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 12000,
   });
-  console.log(`[talent-pool] pre-filter terms=${prefilterTerms.length} usePrefilter=${usePrefilter} → ${poolRows.length} rows`);
+  console.log(`[talent-pool] pre-filter terms=${prefilterTerms.length} (must=${mustHaveSignalTerms.length}, widened-with-nice-to-haves=${widenedNiceToHaves.length}) usePrefilter=${usePrefilter} → ${poolRows.length} rows`);
 
   // 3. Deduplicate by reusable pool identity, keep the freshest profile per
   // identity. JobAdder/CV imports may not have LinkedIn URLs, so they get a

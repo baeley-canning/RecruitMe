@@ -47,4 +47,48 @@ describe("buildScoreCacheKey", () => {
 
     expect(second).toBe(first);
   });
+
+  // Audit SC4: a recruiter saving a score correction must invalidate the
+  // cache for the affected org's candidates. The corrections version is
+  // threaded through buildScoreCacheKey to make that invalidation work.
+  it("produces a different key when correctionsVersion changes", () => {
+    const profileText = "React engineer based in Wellington.";
+    const v1 = buildScoreCacheKey({
+      profileText,
+      parsedRole,
+      salary: null,
+      jobLocation: "Wellington",
+      isRemote: false,
+      correctionsVersion: 1,
+    });
+    const v2 = buildScoreCacheKey({
+      profileText,
+      parsedRole,
+      salary: null,
+      jobLocation: "Wellington",
+      isRemote: false,
+      correctionsVersion: 2,
+    });
+    expect(v2).not.toBe(v1);
+  });
+
+  it("treats missing correctionsVersion as 0 (back-compat with legacy callers)", () => {
+    const profileText = "React engineer based in Wellington.";
+    const withoutVersion = buildScoreCacheKey({
+      profileText,
+      parsedRole,
+      salary: null,
+      jobLocation: "Wellington",
+      isRemote: false,
+    });
+    const withZero = buildScoreCacheKey({
+      profileText,
+      parsedRole,
+      salary: null,
+      jobLocation: "Wellington",
+      isRemote: false,
+      correctionsVersion: 0,
+    });
+    expect(withZero).toBe(withoutVersion);
+  });
 });

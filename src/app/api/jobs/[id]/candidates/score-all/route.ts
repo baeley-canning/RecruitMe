@@ -7,7 +7,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { getJobScoringWeights } from "@/lib/scoring-config";
-import { getRecruitingContext } from "@/lib/recruiter-memory";
+import { getRecruitingContext, getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { reportError } from "@/lib/error-reporting";
 import { mergeScoringError } from "@/lib/linkedin-capture";
 import { NextResponse } from "next/server";
@@ -114,6 +114,11 @@ export async function POST(
 
   // Pre-fetch recruiter memory once per job — avoids one DB query per candidate.
   const recruiterContext = await getRecruitingContext(parsedRole, auth.orgId).catch(() => "");
+  // Pre-fetch the per-org corrections version once so every candidate's cache
+  // key in this run uses the same version snapshot. A correction saved
+  // mid-run will bust the cache on the NEXT score-all (its bumpCorrectionsVersion
+  // happens in the correct-score route, not here).
+  const correctionsVersion = await getCorrectionsVersion(auth.orgId);
 
   const total = candidates.length;
   let scored = 0;
@@ -185,6 +190,7 @@ export async function POST(
               jobLocation2: job.location2,
               isRemote: job.isRemote,
               weights,
+              correctionsVersion,
             });
 
             // Cache hit: profile text + role + salary + location + weights
