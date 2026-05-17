@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import { buildScoreBreakdown, CATEGORY_WEIGHTS_V2 } from "@/lib/scoring";
 import { buildScoreCacheKey } from "@/lib/utils";
 
@@ -70,6 +71,15 @@ vi.mock("@/lib/pdf", () => ({
   extractTextFromPdf: vi.fn().mockResolvedValue(""),
 }));
 vi.mock("@/lib/usage", () => usageMocks);
+// Encryption is unit-tested in src/lib/__tests__/cv-encryption.test.ts; here we
+// stub it so the route test focuses on the upload flow and doesn't need a key
+// or DB-backed Setting bootstrap.
+vi.mock("@/lib/cv-encryption", () => ({
+  encryptCv: vi.fn(async (plain: string) => `v1:enc(${plain.slice(0, 12)})`),
+  decryptCv: vi.fn(async (stored: string) => stored),
+  isEncrypted: (s: string) => s.startsWith("v1:"),
+  maybeMigrateLegacy: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { POST } from "./route";
 
@@ -223,6 +233,37 @@ describe("candidate file CV upload", () => {
 
     expect(res.status).toBe(429);
     expect(dbMocks.prisma.candidateFile.create).not.toHaveBeenCalled();
+  });
+
+  it("returns the existing row instead of 500 when a concurrent uploader wins the race on the unique (candidateId, dataHash) index", async () => {
+    aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
+    const existingRow = {
+      id: "file-existing",
+      type: "cv",
+      filename: "cv.txt",
+      mimeType: "text/plain",
+      size: cvText.length,
+      createdAt: new Date(),
+    };
+    // First findFirst is the fast-path dup check (returns null — race not yet
+    // visible). After the unique-constraint violation we look up the winner.
+    dbMocks.prisma.candidateFile.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existingRow);
+    const p2002 = new Prisma.PrismaClientKnownRequestError(
+      "Unique constraint failed on the fields: (`candidateId`,`dataHash`)",
+      { code: "P2002", clientVersion: "5.0.0" },
+    );
+    dbMocks.prisma.candidateFile.create.mockRejectedValueOnce(p2002);
+
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual(expect.objectContaining({
+      id: "file-existing",
+      duplicate: true,
+    }));
   });
 
   it("still returns the saved file when CV post-processing fails after upload", async () => {

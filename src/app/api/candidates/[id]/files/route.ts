@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
@@ -13,6 +14,7 @@ import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
+import { encryptCv } from "@/lib/cv-encryption";
 
 // CV uploads kick off PDF extract → cleanCvText → extractCandidateInfo →
 // scoreCandidateStructured + predictAcceptance all synchronously before the
@@ -222,18 +224,53 @@ export async function POST(
     }
   }
 
-  const created = await prisma.candidateFile.create({
-    data: {
-      candidateId: id,
-      type,
-      filename: upload.name,
-      mimeType: upload.type || "application/octet-stream",
-      data: base64,
-      dataHash: fileHash,
-      size: upload.size,
-    },
-    select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },
-  });
+  // Encrypt before persisting — audit P2 HIGH (NZ Privacy Act). Every byte
+  // we write to `data` after this point is AES-256-GCM ciphertext, so Railway
+  // backups no longer contain plaintext-equivalent CVs.
+  const encryptedData = await encryptCv(base64);
+
+  let created;
+  try {
+    created = await prisma.candidateFile.create({
+      data: {
+        candidateId: id,
+        type,
+        filename: upload.name,
+        mimeType: upload.type || "application/octet-stream",
+        data: encryptedData,
+        dataHash: fileHash,
+        size: upload.size,
+      },
+      select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },
+    });
+  } catch (err) {
+    // Race-safety belt for the (candidateId, dataHash) unique constraint.
+    // The fast-path dup check above is best-effort; two simultaneous uploads
+    // of the same file from different tabs can both pass it and then collide
+    // on insert. Look up the winner and return it with a `duplicate: true`
+    // flag so the UI can show "already uploaded" without seeing a 500.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      const existing = await prisma.candidateFile.findFirst({
+        where: { candidateId: id, dataHash: fileHash },
+        select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },
+      });
+      if (existing) {
+        return NextResponse.json(
+          {
+            ...existing,
+            duplicate: true,
+            scored: false,
+            message: `This file is identical to an existing upload (${existing.filename}). Returning the existing record.`,
+          },
+          { status: 200 },
+        );
+      }
+    }
+    throw err;
+  }
 
   // For CV uploads: extract text, clean it, merge with any existing LinkedIn capture,
   // then update profileText and auto-score.
