@@ -185,6 +185,8 @@ export async function POST(
       profileText: true,
       profileCapturedAt: true,
       createdAt: true,
+      orgId: true,
+      job: { select: { orgId: true } },
     },
     // id-desc tiebreaker prevents bulk-import timestamp-ties from biasing
     // the head when many rows share one createdAt. Cap of 12k stays as a
@@ -312,6 +314,15 @@ export async function POST(
 
     try {
       const identityKey = poolImportKey(row);
+      // Privacy: strip jobAdderUrl when importing from another org's library.
+      // The ATS URL points at the provider org's JobAdder record; copying it
+      // into the viewer org's candidate row would let the viewer hit the
+      // provider's ATS (assuming they have JobAdder credentials). Same-org
+      // imports keep the URL.
+      const sourceOrgId = row.job?.orgId ?? row.orgId ?? null;
+      const isCrossOrgImport = sourceOrgId !== null && sourceOrgId !== (job.orgId ?? null);
+      const portableJobAdderUrl = isCrossOrgImport ? null : (row.jobAdderUrl ?? null);
+
       // Upsert because the search route and this route can both fire for
       // the same job simultaneously; create would P2002 on (jobId, linkedinUrl).
       // We DON'T touch matchScore / breakdown fields here — preserving any
@@ -325,7 +336,7 @@ export async function POST(
           headline: row.headline,
           location: row.location || null,
           linkedinUrl: identityKey,
-          jobAdderUrl: row.jobAdderUrl ?? null,
+          jobAdderUrl: portableJobAdderUrl,
           profileText: row.profileText,
           source: "talent_pool",
           status: "new",
@@ -333,7 +344,7 @@ export async function POST(
         },
         update: {
           source: "talent_pool",
-          ...(row.jobAdderUrl ? { jobAdderUrl: row.jobAdderUrl } : {}),
+          ...(portableJobAdderUrl ? { jobAdderUrl: portableJobAdderUrl } : {}),
           ...(row.profileCapturedAt ? { profileCapturedAt: row.profileCapturedAt } : {}),
         },
       });

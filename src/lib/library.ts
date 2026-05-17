@@ -12,7 +12,7 @@
 
 import { prisma } from "./db";
 import { normaliseLinkedInUrl } from "./linkedin";
-import { getAccessibleOrgIds, candidateOrgFilter } from "./org-access";
+import { getAccessibleOrgIds, candidateOrgFilter, getGrantScopes } from "./org-access";
 import type { AuthResult } from "./session";
 
 // Per-request cap. 20k is the safety ceiling for SSR memory; typical orgs
@@ -215,13 +215,27 @@ export async function getLibraryCandidates(
       });
   const orgNameById = new Map(externalOrgs.map((o) => [o.id, o.name]));
 
+  // Privacy gate for cross-org sensitive fields (currently just `notes`).
+  // The schema (prisma/schema.prisma OrgAccessGrant.scope) reserves
+  // `library_full` for "notes, screening, interview data" but until now
+  // only `library_read` was checked — meaning a cross-org viewer with just
+  // library_read was seeing partner-org recruiter notes (potentially
+  // "candidate disclosed pregnancy" / health info). Block by default;
+  // permit only when the viewer holds `library_full`.
+  const scopes = await getGrantScopes(auth);
+  const canSeeCrossOrgSensitive = scopes.has("library_full");
+
   const candidates: LibraryCandidateRow[] = people.map((row) => {
     const candOrgId = row.job?.orgId ?? row.orgId ?? null;
-    const sharedFromOrgName =
-      !auth.isOwner && viewerOrgId && candOrgId && candOrgId !== viewerOrgId
-        ? orgNameById.get(candOrgId) ?? null
-        : null;
-    return { ...row, sharedFromOrgName };
+    const isCrossOrg = !auth.isOwner && viewerOrgId && candOrgId && candOrgId !== viewerOrgId;
+    const sharedFromOrgName = isCrossOrg ? orgNameById.get(candOrgId!) ?? null : null;
+    return {
+      ...row,
+      // Redact notes on cross-org rows unless the viewer has library_full.
+      // Owners always see notes (they bypass org filtering entirely).
+      notes: isCrossOrg && !canSeeCrossOrgSensitive ? null : row.notes,
+      sharedFromOrgName,
+    };
   });
 
   // If the raw query was capped at `take`, there may be more rows. Return

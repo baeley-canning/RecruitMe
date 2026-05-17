@@ -127,7 +127,12 @@ describe("talent-pool — empty library", () => {
   });
 });
 
-describe("talent-pool — scoring batch times out / throws", () => {
+// OBSOLETE after commit 14a619c — the talent-pool route is now hard-match
+// only and never calls Claude/scoreCandidatesBatch during import. The
+// "scoring batch times out" path it pinned no longer exists. Keeping the
+// describe block for narrative + future re-use if scoring is ever wired
+// back into the import path, but the cases inside are skipped.
+describe.skip("talent-pool — scoring batch times out / throws (obsolete: hard-match only)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     arm();
