@@ -243,6 +243,32 @@ await step("CandidateFile.dataHash column + index", async () => {
   `;
 });
 
+// 13. Promote (candidateId, dataHash) to a UNIQUE index so race-condition
+//     double-uploads collide instead of silently doubling up.
+//     Two-step pattern (same shape as the candidate dedupe at step 1):
+//     (a) collapse existing duplicate hashes per candidate, keeping the
+//         newest row, then (b) create the unique index. CREATE UNIQUE INDEX
+//         IF NOT EXISTS is idempotent; ALTER TABLE ADD CONSTRAINT is not.
+//     The POST route catches the resulting P2002 from concurrent writes and
+//     returns the existing row.
+await step("CandidateFile (candidateId, dataHash) unique constraint", async () => {
+  const deleted = await prisma.$executeRaw`
+    DELETE FROM "CandidateFile"
+    WHERE "dataHash" IS NOT NULL
+      AND id NOT IN (
+        SELECT DISTINCT ON ("candidateId", "dataHash") id
+        FROM "CandidateFile"
+        WHERE "dataHash" IS NOT NULL
+        ORDER BY "candidateId", "dataHash", "createdAt" DESC
+      )
+  `;
+  console.log(`  removed ${deleted} duplicate CandidateFile row(s)`);
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateFile_candidateId_dataHash_key"
+    ON "CandidateFile"("candidateId", "dataHash")
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

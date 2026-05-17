@@ -166,7 +166,15 @@ model CandidateFile {
   dataHash    String?
   createdAt   DateTime  @default(now())
 
-  @@index([candidateId, dataHash])
+  // Uniqueness on (candidateId, dataHash) is now enforced at the DB level —
+  // POST in src/app/api/candidates/[id]/files/route.ts has a fast-path dup
+  // check, but two concurrent uploads from different tabs can both pass that
+  // check and race to insert. The unique constraint plus a P2002 catch in
+  // the route turns the second one into a 200 "duplicate" response instead
+  // of a 500. NULL-valued dataHash rows (legacy pre-hash uploads) are NOT
+  // covered — Postgres treats NULLs as distinct in unique indexes, which is
+  // the behaviour we want for those rows.
+  @@unique([candidateId, dataHash])
 }
 
 // Replaces the Setting-JSON extension queue — proper indexed table per session.
