@@ -99,6 +99,15 @@ interface ScoreBreakdownPanelProps {
   showReasoning: boolean;
   setShowReasoning: (v: boolean | ((prev: boolean) => boolean)) => void;
   displaySummary: string | null;
+  // Lazy-load support: the parent fetches scoreBreakdown on demand (see
+  // candidate-card.tsx). Setting `canLoadBreakdown` keeps the "Why?" toggle
+  // visible even when `breakdown` is still null so the user can trigger the
+  // fetch; `breakdownLoading` and `breakdownError` drive in-panel state for
+  // the fetch lifecycle, with `onRetryBreakdown` rerunning the fetch on error.
+  canLoadBreakdown?: boolean;
+  breakdownLoading?: boolean;
+  breakdownError?: boolean;
+  onRetryBreakdown?: () => void;
 }
 
 export function ScoreBreakdownPanel({
@@ -107,8 +116,17 @@ export function ScoreBreakdownPanel({
   showReasoning,
   setShowReasoning,
   displaySummary,
+  canLoadBreakdown = false,
+  breakdownLoading = false,
+  breakdownError = false,
+  onRetryBreakdown,
 }: ScoreBreakdownPanelProps) {
   if (!displaySummary) return null;
+
+  // Show the toggle if the parsed breakdown has any coverage (the v1 case)
+  // OR the parent has signaled it can lazy-load the breakdown on demand
+  // (the v2 case, where the list payload doesn't carry the breakdown).
+  const showToggle = (breakdown?.must_have_coverage?.length ?? 0) > 0 || canLoadBreakdown;
 
   return (
     <div className="px-4 pb-2">
@@ -116,7 +134,7 @@ export function ScoreBreakdownPanel({
         <p className="text-xs text-text-secondary leading-relaxed italic flex-1">
           &ldquo;{displaySummary}&rdquo;
         </p>
-        {(breakdown?.must_have_coverage?.length ?? 0) > 0 && (
+        {showToggle && (
           <button
             onClick={() => setShowReasoning((v) => !v)}
             className="text-xs text-accent hover:text-accent-hover whitespace-nowrap flex items-center gap-0.5 flex-shrink-0 mt-0.5 font-medium transition-colors"
@@ -128,7 +146,22 @@ export function ScoreBreakdownPanel({
       </div>
       {showReasoning && (
         <div className="mt-2">
-          {breakdown ? (
+          {breakdownLoading && !breakdown ? (
+            <p className="text-xs text-text-tertiary italic">Loading reasoning…</p>
+          ) : breakdownError && !breakdown ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-danger">Couldn&rsquo;t load reasoning.</span>
+              {onRetryBreakdown && (
+                <button
+                  type="button"
+                  onClick={onRetryBreakdown}
+                  className="text-accent hover:text-accent-hover font-medium underline underline-offset-2"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          ) : breakdown ? (
             <div className="space-y-3">
               {/* Coverage chips: must-haves + nice-to-haves */}
               <div className="space-y-2">

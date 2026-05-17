@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useRef, useState, useCallback } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -326,6 +326,7 @@ function ProfileDrawer({
   onFetchProfile,
   fetchingProfile = false,
   fetchQueueState,
+  scoreBreakdownRaw,
 }: {
   candidate: Candidate;
   jobId: string;
@@ -335,10 +336,14 @@ function ProfileDrawer({
   onFetchProfile?: (id: string) => void;
   fetchingProfile?: boolean;
   fetchQueueState?: FetchState;
+  /** Lazy-loaded scoreBreakdown JSON string from the parent card. The list
+   * payload no longer ships this field; the parent fetches it once on demand
+   * (Why? panel open OR drawer open) and forwards the loaded string here. */
+  scoreBreakdownRaw?: string | null;
 }) {
   const breakdown = useMemo(
-    () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
-    [candidate.scoreBreakdown]
+    () => safeParseJson<ScoreBreakdown | null>(scoreBreakdownRaw ?? candidate.scoreBreakdown, null),
+    [scoreBreakdownRaw, candidate.scoreBreakdown]
   );
   const matchReason = useMemo(
     () => safeParseJson<{ summary?: string; reasoning?: string } | null>(candidate.matchReason, null),
@@ -754,9 +759,52 @@ export const CandidateCard = memo(function CandidateCard({
     [candidate.matchReason]
   );
 
+  // Lazy-loaded scoreBreakdown. The job-list payload no longer ships this
+  // field (it's ~5KB per candidate = 2-5MB on a 500-candidate page) — see
+  // /api/jobs/:id and the dedicated /api/jobs/:id/candidates/:cid/
+  // score-breakdown route. We seed local state from whatever the candidate
+  // arrived with (still null in the current world, but kept as the source
+  // of truth so a future server-side prefetch would Just Work) and fetch
+  // on demand when the "Why?" panel opens.
+  const [breakdownRaw, setBreakdownRaw] = useState<string | null>(candidate.scoreBreakdown);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
+  const [breakdownError, setBreakdownError] = useState(false);
+
+  const loadBreakdown = useCallback(async () => {
+    setBreakdownLoading(true);
+    setBreakdownError(false);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/candidates/${candidate.id}/score-breakdown`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { scoreBreakdown: string | null };
+      setBreakdownRaw(body.scoreBreakdown);
+    } catch {
+      setBreakdownError(true);
+    } finally {
+      setBreakdownLoading(false);
+    }
+  }, [jobId, candidate.id]);
+
+  // Auto-trigger the fetch the first time the "Why?" panel — or the
+  // ProfileDrawer, which renders the ScoringDebugPanel built from the
+  // same breakdown — opens for an unloaded candidate. Subsequent toggles
+  // re-use the cached state. Retry is wired through the panel's error UI.
+  useEffect(() => {
+    if ((showReasoning || showProfile) && breakdownRaw === null && !breakdownLoading && !breakdownError) {
+      void loadBreakdown();
+    }
+  }, [showReasoning, showProfile, breakdownRaw, breakdownLoading, breakdownError, loadBreakdown]);
+
+  // If a parent re-fetches the candidate (e.g. after a re-score) and the
+  // server now ships a breakdown, sync it down — otherwise the local state
+  // would shadow the fresh value.
+  useEffect(() => {
+    if (candidate.scoreBreakdown !== null) setBreakdownRaw(candidate.scoreBreakdown);
+  }, [candidate.scoreBreakdown]);
+
   const breakdown = useMemo(
-    () => safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null),
-    [candidate.scoreBreakdown]
+    () => safeParseJson<ScoreBreakdown | null>(breakdownRaw, null),
+    [breakdownRaw]
   );
   const acceptanceData = useMemo(
     () => safeParseJson<AcceptanceData | null>(candidate.acceptanceReason, null),
@@ -1030,13 +1078,20 @@ export const CandidateCard = memo(function CandidateCard({
         </div>
       </div>
 
-      {/* AI summary + reasoning */}
+      {/* AI summary + reasoning. `canLoadBreakdown` keeps the "Why?" toggle
+          visible when the breakdown hasn't been lazy-loaded yet (the list
+          payload doesn't ship it — see loadBreakdown above). Loading + error
+          + retry are surfaced inside the panel. */}
       <ScoreBreakdownPanel
         breakdown={breakdown}
         matchReason={matchReason}
         showReasoning={showReasoning}
         setShowReasoning={setShowReasoning}
         displaySummary={displaySummary}
+        canLoadBreakdown={breakdownRaw === null && candidate.matchScore != null}
+        breakdownLoading={breakdownLoading}
+        breakdownError={breakdownError}
+        onRetryBreakdown={loadBreakdown}
       />
 
       {/* Expanded details — sunken inset against the raised card surface. */}
@@ -1442,6 +1497,7 @@ export const CandidateCard = memo(function CandidateCard({
           onFetchProfile={onFetchProfile}
           fetchingProfile={fetchingProfile}
           fetchQueueState={fetchQueueState}
+          scoreBreakdownRaw={breakdownRaw}
         />
       )}
     </div>
