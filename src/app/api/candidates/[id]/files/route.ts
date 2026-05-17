@@ -12,6 +12,7 @@ import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
+import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 
 // CV uploads kick off PDF extract → cleanCvText → extractCandidateInfo →
 // scoreCandidateStructured + predictAcceptance all synchronously before the
@@ -111,6 +112,23 @@ export async function POST(
   try {
   const candidate = await requireAccess(id, auth);
   if (!candidate) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // CV uploads trigger extractCandidateInfo + scoreCandidateStructured +
+  // predictAcceptance synchronously — three paid Claude calls per upload.
+  // Without the same per-org rate-limit + daily USD cap that gates score-all
+  // and talent-pool, a scripted upload loop could quietly blow past the
+  // $5/day cap. Mirrors score-all/route.ts:34-48.
+  const rateCheck = await checkRateLimit(auth.orgId, "score");
+  if (!rateCheck.allowed) {
+    const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
+    return NextResponse.json({ error: `Scoring rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
+  }
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json({
+      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
+    }, { status: 429 });
+  }
 
   let formData: FormData;
   try {
