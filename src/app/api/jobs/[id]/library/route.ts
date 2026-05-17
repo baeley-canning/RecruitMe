@@ -164,14 +164,30 @@ export async function POST(
 
   // Pull source candidates with full profile text — same library scope as
   // GET (own org + granted-access orgs). Owner bypasses.
+  //
+  // CHARS_MIN gate: Prisma's `profileText: { not: null }` matches the empty
+  // string too, so library rows that were JobAdder-imported but never had a
+  // CV extracted (no CandidateFile → extract-cv-text couldn't run) would
+  // land here with profileText="" and import with zero content. The strict
+  // talent-pool route uses hasReusablePoolProfile / hasFullCandidateProfile
+  // for this; mirror it at the SQL level with a length predicate so the
+  // modal-driven path can't smuggle in empty-profile candidates either.
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
-  const sourceCandidates = await prisma.candidate.findMany({
+  const PROFILE_MIN_CHARS = 500; // matches CAPTURED_PROFILE_MIN_CHARS in candidate-profile.ts
+  const sourceCandidatesRaw = await prisma.candidate.findMany({
     where: {
       id: { in: parsed.data.candidateIds },
       profileText: { not: null },
       ...candidateOrgFilter(accessibleOrgIds),
     },
   });
+  const sourceCandidates = sourceCandidatesRaw.filter(
+    (c) => (c.profileText?.trim().length ?? 0) >= PROFILE_MIN_CHARS,
+  );
+  const skippedEmpty = sourceCandidatesRaw.length - sourceCandidates.length;
+  if (skippedEmpty > 0) {
+    console.log(`[library-import] skipped ${skippedEmpty} library row(s) with profileText < ${PROFILE_MIN_CHARS} chars`);
+  }
 
   let added = 0;
   const failed: string[] = [];
@@ -268,5 +284,9 @@ export async function POST(
     // Let the UI warn the recruiter when candidates imported without scores.
     unscoredIds: unscoredIds.length > 0 ? unscoredIds : undefined,
     skippedOverseas: skippedOverseas.length > 0 ? skippedOverseas : undefined,
+    // Skipped because their library row had < PROFILE_MIN_CHARS of profileText
+    // (typically: JobAdder-imported with no CV PDF, so extract-cv-text had
+    // nothing to read). UI can prompt the recruiter to upload a CV for them.
+    skippedEmpty: skippedEmpty > 0 ? skippedEmpty : undefined,
   });
 }
