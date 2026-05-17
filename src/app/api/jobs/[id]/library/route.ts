@@ -215,19 +215,28 @@ export async function POST(
   // for this; mirror it at the SQL level with a length predicate so the
   // modal-driven path can't smuggle in empty-profile candidates either.
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
+  // Drop the SQL `profileText: { not: null }` predicate so null-profileText
+  // rows still reach the JS gate — otherwise they'd be silently filtered at
+  // SQL and `skippedEmpty` would undercount them, leaving the UI showing
+  // `added: 0` with no diagnostic. We count nulls + sub-500-chars together
+  // as one "empty / too short" bucket.
   const sourceCandidatesRaw = await prisma.candidate.findMany({
     where: {
       id: { in: parsed.data.candidateIds },
-      profileText: { not: null },
       ...candidateOrgFilter(accessibleOrgIds),
     },
   });
   const sourceCandidates = sourceCandidatesRaw.filter(
     (c) => (c.profileText?.trim().length ?? 0) >= LIBRARY_PROFILE_MIN_CHARS,
   );
-  const skippedEmpty = sourceCandidatesRaw.length - sourceCandidates.length;
-  if (skippedEmpty > 0) {
-    console.log(`[library-import] skipped ${skippedEmpty} library row(s) with profileText < ${LIBRARY_PROFILE_MIN_CHARS} chars`);
+  // Count BOTH (a) IDs the caller passed that we couldn't find at all
+  // (deleted, wrong org, etc.) and (b) IDs we found but whose profileText
+  // was null / under the min-chars threshold. Without this the UI shows
+  // `added: 0` with no idea why nothing landed.
+  const skippedMissingOrEmpty =
+    parsed.data.candidateIds.length - sourceCandidates.length;
+  if (skippedMissingOrEmpty > 0) {
+    console.log(`[library-import] skipped ${skippedMissingOrEmpty} library row(s) — missing, wrong-org, or profileText < ${LIBRARY_PROFILE_MIN_CHARS} chars`);
   }
 
   let added = 0;
@@ -325,9 +334,10 @@ export async function POST(
     // Let the UI warn the recruiter when candidates imported without scores.
     unscoredIds: unscoredIds.length > 0 ? unscoredIds : undefined,
     skippedOverseas: skippedOverseas.length > 0 ? skippedOverseas : undefined,
-    // Skipped because their library row had < PROFILE_MIN_CHARS of profileText
-    // (typically: JobAdder-imported with no CV PDF, so extract-cv-text had
-    // nothing to read). UI can prompt the recruiter to upload a CV for them.
-    skippedEmpty: skippedEmpty > 0 ? skippedEmpty : undefined,
+    // Skipped because their library row had < PROFILE_MIN_CHARS of
+    // profileText OR was missing entirely (deleted/wrong-org). Typically:
+    // JobAdder-imported with no CV PDF, so extract-cv-text had nothing to
+    // read. UI can prompt the recruiter to upload a CV for these.
+    skippedEmpty: skippedMissingOrEmpty > 0 ? skippedMissingOrEmpty : undefined,
   });
 }
