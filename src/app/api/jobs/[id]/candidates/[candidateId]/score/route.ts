@@ -7,6 +7,7 @@ import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 
@@ -51,6 +52,7 @@ export async function POST(
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
       : null;
     const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
+    const correctionsVersion = await getCorrectionsVersion(auth.orgId);
 
     // Cache hit: profile text + role + salary + location + weights all
     // match what was previously scored. Skip the API call entirely and
@@ -64,6 +66,7 @@ export async function POST(
       jobLocation2: job.location2,
       isRemote: job.isRemote,
       weights,
+      correctionsVersion,
     });
     if (
       candidate.profileTextHash === scoreCacheKey &&

@@ -26,6 +26,7 @@ import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { getJobScoringWeights } from "@/lib/scoring-config";
+import { getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
 import { SCORE_CUTOFF_FULL_PROFILE } from "@/lib/provisional-scoring";
@@ -121,6 +122,9 @@ export async function POST(
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
   const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
+  // Fetched once per route call (60s in-process cache) — feeds every cache
+  // key written below so a freshly-saved correction busts stale pool scores.
+  const correctionsVersion = await getCorrectionsVersion(auth.orgId);
 
   // targetLocation feeds into score-time location_fit ranking. The hard
   // import gate is now country-only (NZ-wide), so we no longer need the
@@ -395,6 +399,7 @@ export async function POST(
         jobLocation2: job.location2,
         isRemote: job.isRemote,
         weights,
+        correctionsVersion,
       }),
     };
 

@@ -17,11 +17,14 @@ const dbMocks = vi.hoisted(() => ({
       aggregate: vi.fn().mockResolvedValue({ _sum: { costUsd: 0 } }),
     },
     orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
-    // tryAcquireLock / releaseLock target the Setting table via db-lock.ts
+    // tryAcquireLock / releaseLock target the Setting table via db-lock.ts,
+    // and getCorrectionsVersion (audit SC4) reads cv.corrections.version.<orgId>.
     setting: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }), // claims the lock
       create: vi.fn().mockResolvedValue({}),
       update: vi.fn().mockResolvedValue({}),
+      findUnique: vi.fn().mockResolvedValue(null), // no corrections recorded
+      upsert: vi.fn().mockResolvedValue({}),
     },
   },
 }));
