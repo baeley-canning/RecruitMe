@@ -23,6 +23,11 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
+import {
+  deriveHeadlineFromCv,
+  existingHeadlineLooksCorrect,
+  formatHeadline,
+} from "./_cv-headline.mjs";
 
 const require = createRequire(import.meta.url);
 const prisma = new PrismaClient();
@@ -46,6 +51,14 @@ const LIMIT       = args.limit ? Number(args.limit) : null;
 const CONCURRENCY = args.concurrency ? Number(args.concurrency) : 5;
 const DRY_RUN     = args["dry-run"] === true;
 const ORG_FILTER  = args.org ?? null;
+// New "headline-from-CV" feature: derive a better headline from the freshly
+// extracted profileText and overwrite the JobAdder-CSV one when it looks
+// wrong (e.g. Bede's "High-Performance Coordinator..." → "Junior Software
+// Engineer at Integration Technologies Limited"). Default-off so an
+// existing extract run keeps doing exactly what it did before; pass
+// --commit to enable the headline write. --dry-run still wins (it
+// suppresses every write).
+const COMMIT_HEADLINE = args.commit === true;
 
 // Bumped from 100 → 200 — the prior threshold let through two near-empty
 // CVs (173- and 441-char garbage from heavily-templated docs). 200 still
@@ -185,6 +198,7 @@ async function withDbRetry(fn, label) {
 
 async function main() {
   console.log(`[extract] mode: ${DRY_RUN ? "DRY RUN (no writes)" : "live"} concurrency=${CONCURRENCY}${LIMIT ? ` limit=${LIMIT}` : ""}${ORG_FILTER ? ` org=${ORG_FILTER}` : ""}`);
+  console.log(`[extract] headline rewrite: ${COMMIT_HEADLINE && !DRY_RUN ? "ENABLED (will overwrite obviously-wrong headlines)" : "dry-run (pass --commit to enable writes)"}`);
   console.log(`[extract] legacy .doc support: ${TEXTUTIL_PATH ? `enabled via ${TEXTUTIL_PATH}` : "DISABLED (textutil not found — .doc files will be skipped)"}`);
 
   // Pull candidate IDs + file metadata only — NOT the file bytes. Loading
@@ -201,6 +215,9 @@ async function main() {
     },
     select: {
       id: true,
+      // Needed by the headline-rewrite gate: we only override a headline
+      // that obviously LACKS a technical role keyword.
+      headline: true,
       files: {
         where: { type: "cv" },
         orderBy: { createdAt: "desc" },
@@ -213,14 +230,20 @@ async function main() {
   console.log(`[extract] ${targets.length.toLocaleString()} candidates to process`);
 
   const stats = {
-    scanned: targets.length,
+    scanned: 0,
     extracted: 0,
     skippedShortText: 0,
     skippedUnsupportedKind: 0,
     errored: 0,
     charsWritten: 0,
     byKind: { pdf: 0, docx: 0, txt: 0, doc_legacy: 0, unknown: 0 },
+    // Headline-rewrite counters (independent of profileText path).
+    headlineDerived: 0,        // deriveHeadlineFromCv returned non-null
+    headlineKeptCorrect: 0,    // existing headline already looked correct — skipped
+    headlineUpdated: 0,        // wrote a new headline
+    headlineDryRunOnly: 0,     // derived a change but --commit wasn't set
   };
+  stats.scanned = targets.length;
   const failures = [];
 
   const started = Date.now();
@@ -316,6 +339,46 @@ async function main() {
     stats.extracted++;
     stats.charsWritten += text.length;
 
+    // ── Headline rewrite, gated on the new profileText we just wrote.
+    // Independent of the profileText write outcome above only conceptually:
+    // we still skip the headline path if --dry-run is set (no writes at
+    // all in that mode) or if we never got here because the row errored.
+    const derived = deriveHeadlineFromCv(text);
+    if (derived) {
+      stats.headlineDerived++;
+      const wantsOverride = !existingHeadlineLooksCorrect(row.headline);
+      if (!wantsOverride) {
+        stats.headlineKeptCorrect++;
+      } else {
+        const next = formatHeadline(derived);
+        if (next === row.headline) {
+          // Already equal — nothing to do.
+        } else if (DRY_RUN || !COMMIT_HEADLINE) {
+          stats.headlineDryRunOnly++;
+          console.log(
+            `[headline] DRY ${row.id}: "${row.headline ?? "(null)"}" → "${next}"`,
+          );
+        } else {
+          // Race-safe: only write if the headline is still whatever we
+          // observed at query time. If a recruiter edited it in the
+          // meantime we leave their value alone.
+          const headUpd = await withDbRetry(
+            () => prisma.candidate.updateMany({
+              where: { id: row.id, headline: row.headline },
+              data: { headline: next },
+            }),
+            `headline update (cid=${row.id})`,
+          );
+          if (headUpd.count === 1) {
+            stats.headlineUpdated++;
+            console.log(
+              `[headline] ${row.id}: "${row.headline ?? "(null)"}" → "${next}"`,
+            );
+          }
+        }
+      }
+    }
+
     if (idx - lastTick >= 250 || idx === targets.length - 1) {
       lastTick = idx;
       const pct = (((idx + 1) / targets.length) * 100).toFixed(1);
@@ -340,6 +403,10 @@ async function main() {
   console.log(`Skipped — raced:          ${(stats.racedSkipped ?? 0).toLocaleString()}  (another writer populated profileText first)`);
   console.log(`Errored:                  ${stats.errored.toLocaleString()}`);
   console.log(`By kind:                  pdf=${stats.byKind.pdf} docx=${stats.byKind.docx} txt=${stats.byKind.txt} doc_legacy=${stats.byKind.doc_legacy} unknown=${stats.byKind.unknown}`);
+  console.log(`Headlines derived:        ${stats.headlineDerived.toLocaleString()}  (deriveHeadlineFromCv returned a value)`);
+  console.log(`Headlines kept (already correct): ${stats.headlineKeptCorrect.toLocaleString()}`);
+  console.log(`Headlines updated:        ${stats.headlineUpdated.toLocaleString()}  ${COMMIT_HEADLINE ? "" : "(would update if --commit was passed)"}`);
+  console.log(`Headlines dry-run only:   ${stats.headlineDryRunOnly.toLocaleString()}`);
   if (failures.length > 0 && !DRY_RUN) console.log(`Failures logged to:       ${FAILURES_FILE}`);
 }
 
