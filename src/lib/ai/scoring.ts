@@ -91,7 +91,11 @@ function findCoverageMatch<T extends { requirement: string }>(
       usedIndexes.add(index);
       return items[index];
     }
-    if (looseIndex === -1 && (candidateKey.includes(expectedKey) || expectedKey.includes(candidateKey))) {
+    // Minimum 15-char threshold prevents short tokens ("SQL", "C++", "Git")
+    // from substring-matching unrelated longer requirements.
+    const shorter = candidateKey.length <= expectedKey.length ? candidateKey : expectedKey;
+    const longer  = candidateKey.length <= expectedKey.length ? expectedKey  : candidateKey;
+    if (looseIndex === -1 && shorter.length >= 15 && longer.includes(shorter)) {
       looseIndex = index;
     }
   }

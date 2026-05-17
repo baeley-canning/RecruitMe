@@ -947,6 +947,24 @@ export default function JobDetailPage({
     [patchCandidate]
   );
 
+  const handleNameChange = useCallback(
+    (candidateId: string, name: string) =>
+      patchCandidate(candidateId, { name: name || null }, "Name saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleHeadlineChange = useCallback(
+    (candidateId: string, headline: string) =>
+      patchCandidate(candidateId, { headline: headline || null }, "Headline saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleLocationChange = useCallback(
+    (candidateId: string, location: string) =>
+      patchCandidate(candidateId, { location: location || null }, "Location saved").then(() => undefined),
+    [patchCandidate]
+  );
+
   const handleScreeningDataChange = useCallback((_candidateId: string, data: string) => {
     setJob((prev) => {
       if (!prev) return prev;
@@ -2290,6 +2308,9 @@ ${toHtml(job.rawJd)}
                     onNotesChange={handleNotesChange}
                     onLinkedInChange={handleLinkedInChange}
                     onJobAdderChange={handleJobAdderChange}
+                    onNameChange={handleNameChange}
+                    onHeadlineChange={handleHeadlineChange}
+                    onLocationChange={handleLocationChange}
                     onScreeningDataChange={handleScreeningDataChange}
                     onInterviewNotesChange={handleInterviewNotesChange}
                     onDelete={handleDelete}

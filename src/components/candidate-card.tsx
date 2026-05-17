@@ -13,6 +13,9 @@ import {
   RefreshCw,
   FileText,
   Mail,
+  Gauge,
+  AlertTriangle,
+  Pencil,
 } from "lucide-react";
 
 import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
@@ -158,6 +161,9 @@ interface CandidateCardProps {
   onNotesChange: (id: string, notes: string) => void;
   onLinkedInChange?: (id: string, url: string) => void;
   onJobAdderChange?: (id: string, url: string) => void;
+  onNameChange?: (id: string, name: string) => void;
+  onHeadlineChange?: (id: string, headline: string) => void;
+  onLocationChange?: (id: string, location: string) => void;
   onScreeningDataChange?: (id: string, data: string) => void;
   onInterviewNotesChange?: (id: string, data: string) => void;
   onDelete: (id: string) => void;
@@ -323,6 +329,9 @@ function ProfileDrawer({
   onClose,
   onLinkedInChange,
   onJobAdderChange,
+  onNameChange,
+  onHeadlineChange,
+  onLocationChange,
   onFetchProfile,
   fetchingProfile = false,
   fetchQueueState,
@@ -333,6 +342,9 @@ function ProfileDrawer({
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
   onJobAdderChange?: (id: string, url: string) => void;
+  onNameChange?: (id: string, name: string) => void;
+  onHeadlineChange?: (id: string, headline: string) => void;
+  onLocationChange?: (id: string, location: string) => void;
   onFetchProfile?: (id: string) => void;
   fetchingProfile?: boolean;
   fetchQueueState?: FetchState;
@@ -394,6 +406,28 @@ function ProfileDrawer({
     }
   }, [candidate.id, jobAdderInput, onJobAdderChange]);
 
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(candidate.name);
+  const handleSaveName = useCallback(() => {
+    const trimmed = nameInput.trim();
+    if (trimmed) onNameChange?.(candidate.id, trimmed);
+    setEditingName(false);
+  }, [candidate.id, nameInput, onNameChange]);
+
+  const [editingHeadline, setEditingHeadline] = useState(false);
+  const [headlineInput, setHeadlineInput] = useState(candidate.headline ?? "");
+  const handleSaveHeadline = useCallback(() => {
+    onHeadlineChange?.(candidate.id, headlineInput.trim());
+    setEditingHeadline(false);
+  }, [candidate.id, headlineInput, onHeadlineChange]);
+
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [locationInput, setLocationInput] = useState(candidate.location ?? "");
+  const handleSaveLocation = useCallback(() => {
+    onLocationChange?.(candidate.id, locationInput.trim());
+    setEditingLocation(false);
+  }, [candidate.id, locationInput, onLocationChange]);
+
   return (
     <>
       {/* Backdrop */}
@@ -410,8 +444,34 @@ function ProfileDrawer({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="font-semibold text-text-primary text-md leading-tight">{candidate.name}</h2>
-              {displayableLinkedinUrl(candidate.linkedinUrl) && !editingLinkedIn && (
+              {editingName ? (
+                <div className="flex items-center gap-1.5 flex-1">
+                  <input
+                    type="text"
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSaveName(); if (e.key === "Escape") setEditingName(false); }}
+                    className="h-7 px-2 text-md rounded bg-surface-sunken border border-separator text-text-primary focus:outline-none focus:border-accent focus:shadow-focus transition-all flex-1 min-w-0"
+                    autoFocus
+                  />
+                  <button onClick={handleSaveName} className="text-xs text-accent font-medium hover:text-accent-hover flex-shrink-0">Save</button>
+                  <button onClick={() => setEditingName(false)} className="text-xs text-text-tertiary hover:text-text-primary flex-shrink-0">Cancel</button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <h2 className="font-semibold text-text-primary text-md leading-tight">{candidate.name}</h2>
+                  {onNameChange && (
+                    <button
+                      onClick={() => { setNameInput(candidate.name); setEditingName(true); }}
+                      className="text-text-tertiary hover:text-accent transition-colors"
+                      title="Edit name"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )}
+              {displayableLinkedinUrl(candidate.linkedinUrl) && !editingLinkedIn && !editingName && (
                 <a
                   href={displayableLinkedinUrl(candidate.linkedinUrl)!}
                   target="_blank"
@@ -445,7 +505,33 @@ function ProfileDrawer({
               </div>
             ) : (
               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                {candidate.headline && <p className="text-base text-text-secondary">{candidate.headline}</p>}
+                {editingHeadline ? (
+                  <>
+                    <input
+                      type="text"
+                      value={headlineInput}
+                      onChange={(e) => setHeadlineInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleSaveHeadline(); if (e.key === "Escape") setEditingHeadline(false); }}
+                      placeholder="Headline / title"
+                      className="h-7 px-2 text-md rounded bg-surface-sunken border border-separator text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all w-48"
+                      autoFocus
+                    />
+                    <button onClick={handleSaveHeadline} className="text-xs text-accent font-medium hover:text-accent-hover">Save</button>
+                    <button onClick={() => setEditingHeadline(false)} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    {candidate.headline && <p className="text-base text-text-secondary">{candidate.headline}</p>}
+                    {onHeadlineChange && (
+                      <button
+                        onClick={() => { setHeadlineInput(candidate.headline ?? ""); setEditingHeadline(true); }}
+                        className="text-xs text-text-tertiary hover:text-accent underline underline-offset-2 transition-colors flex-shrink-0"
+                      >
+                        {candidate.headline ? "Edit headline" : "Add headline"}
+                      </button>
+                    )}
+                  </>
+                )}
                 <button
                   onClick={() => { setLinkedInInput(candidate.linkedinUrl ?? ""); setEditingLinkedIn(true); }}
                   className="text-xs text-text-tertiary hover:text-accent underline underline-offset-2 transition-colors flex-shrink-0"
@@ -483,9 +569,31 @@ function ProfileDrawer({
                 </div>
               </div>
             )}
-            {candidate.location && (
-              <div className="mt-1.5">
-                <LocationFitPill location={candidate.location} score={locationFitScore} />
+            {editingLocation ? (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={locationInput}
+                  onChange={(e) => setLocationInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSaveLocation(); if (e.key === "Escape") setEditingLocation(false); }}
+                  placeholder="City, Country"
+                  className="h-7 px-2 text-md rounded bg-surface-sunken border border-separator text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all w-44"
+                  autoFocus
+                />
+                <button onClick={handleSaveLocation} className="text-xs text-accent font-medium hover:text-accent-hover">Save</button>
+                <button onClick={() => setEditingLocation(false)} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
+              </div>
+            ) : (
+              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                {candidate.location && <LocationFitPill location={candidate.location} score={locationFitScore} />}
+                {onLocationChange && (
+                  <button
+                    onClick={() => { setLocationInput(candidate.location ?? ""); setEditingLocation(true); }}
+                    className="text-xs text-text-tertiary hover:text-accent underline underline-offset-2 transition-colors"
+                  >
+                    {candidate.location ? "Edit location" : "Add location"}
+                  </button>
+                )}
               </div>
             )}
             {/* Phone (from Firmable enrichment). tel: link so recruiter can
@@ -701,6 +809,9 @@ export const CandidateCard = memo(function CandidateCard({
   onNotesChange,
   onLinkedInChange,
   onJobAdderChange,
+  onNameChange,
+  onHeadlineChange,
+  onLocationChange,
   onScreeningDataChange,
   onInterviewNotesChange,
   onDelete,
@@ -1494,6 +1605,9 @@ export const CandidateCard = memo(function CandidateCard({
           onClose={() => setShowProfile(false)}
           onLinkedInChange={onLinkedInChange}
           onJobAdderChange={onJobAdderChange}
+          onNameChange={onNameChange}
+          onHeadlineChange={onHeadlineChange}
+          onLocationChange={onLocationChange}
           onFetchProfile={onFetchProfile}
           fetchingProfile={fetchingProfile}
           fetchQueueState={fetchQueueState}

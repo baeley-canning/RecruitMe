@@ -17,9 +17,11 @@ import {
   Loader2,
   Users,
   DollarSign,
+  FileText,
 } from "lucide-react";
 import { ScoreBadge } from "@/components/score-badge";
 import { ShareShortlistButton } from "@/components/job/share-shortlist-button";
+import { ClientReportModal } from "@/components/job/client-report-modal";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { cn, safeParseJson } from "@/lib/utils";
 import { scoreTier } from "@/lib/score-utils";
@@ -263,6 +265,7 @@ export default function ShortlistPage({
   const { id } = use(params);
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showClientReport, setShowClientReport] = useState(false);
 
   const fetchJob = async () => {
     const res = await fetch(`/api/jobs/${id}`);
@@ -311,6 +314,7 @@ export default function ShortlistPage({
   const highAcceptance = shortlisted.filter((c) => scoreTier(c.acceptanceScore ?? 0, "acceptance") === "strong").length;
 
   return (
+    <>
     <div className="bg-surface-base min-h-screen">
       <div className="p-4 sm:p-6 max-w-4xl mx-auto print:p-0 print:max-w-none">
       {/* Nav bar — hidden on print */}
@@ -324,6 +328,15 @@ export default function ShortlistPage({
         </Link>
         <div className="flex items-center gap-1.5">
           <ShareShortlistButton jobId={id} shortlistCount={shortlisted.length} />
+          {shortlisted.length > 0 && (
+            <button
+              onClick={() => setShowClientReport(true)}
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md font-medium border border-separator transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Client Report
+            </button>
+          )}
           <button
             onClick={() => window.print()}
             className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md font-medium border border-separator transition-colors"
@@ -436,5 +449,16 @@ export default function ShortlistPage({
       </div>
       </div>
     </div>
+
+    {showClientReport && job && (
+      <ClientReportModal
+        jobId={id}
+        jobTitle={job.title}
+        jobParsedRole={job.parsedRole}
+        candidates={shortlisted.map((c) => ({ ...c, profileText: null }))}
+        onClose={() => setShowClientReport(false)}
+      />
+    )}
+    </>
   );
 }
