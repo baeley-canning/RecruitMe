@@ -552,7 +552,17 @@ function ProfileDrawer({
                 </span>
               ) : hasFetchedProfile ? (
                 <button
-                  onClick={() => onFetchProfile(candidate.id)}
+                  onClick={async () => {
+                    if (candidate.profileText && candidate.profileText.trim().length > 0) {
+                      const ok = await confirm({
+                        title: "Re-fetch LinkedIn profile?",
+                        message: "This will overwrite the captured profile text. Continue?",
+                        confirmLabel: "Re-fetch",
+                      });
+                      if (!ok) return;
+                    }
+                    onFetchProfile(candidate.id);
+                  }}
                   className="text-xs text-text-tertiary hover:text-text-primary flex items-center gap-1 transition-colors"
                   title="Re-fetch LinkedIn profile"
                 >
@@ -1337,7 +1347,23 @@ export const CandidateCard = memo(function CandidateCard({
                 <span className="sm:hidden">…</span>
               </Button>
             ) : hasFetchedProfile ? (
-              <Button size="sm" variant="ghost" onClick={() => onFetchProfile(candidate.id)} title="Re-fetch LinkedIn profile" aria-label="Re-fetch LinkedIn profile">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={async () => {
+                  if (candidate.profileText && candidate.profileText.trim().length > 0) {
+                    const ok = await confirm({
+                      title: "Re-fetch LinkedIn profile?",
+                      message: "This will overwrite the captured profile text. Continue?",
+                      confirmLabel: "Re-fetch",
+                    });
+                    if (!ok) return;
+                  }
+                  onFetchProfile(candidate.id);
+                }}
+                title="Re-fetch LinkedIn profile"
+                aria-label="Re-fetch LinkedIn profile"
+              >
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
             ) : (
