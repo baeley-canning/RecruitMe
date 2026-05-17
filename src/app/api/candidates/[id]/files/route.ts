@@ -13,6 +13,13 @@ import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
 
+// CV uploads kick off PDF extract → cleanCvText → extractCandidateInfo →
+// scoreCandidateStructured + predictAcceptance all synchronously before the
+// response. On a 10MB PDF that chain can spend the full default function
+// timeout in Claude calls alone. Lift the ceiling so a slow scoring batch
+// doesn't truncate the upload + score in mid-write.
+export const maxDuration = 60;
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_TYPES = [
   "application/pdf",

@@ -11,6 +11,12 @@ import {
 import { isLinkedInProfileUrl } from "@/lib/linkedin";
 import { verifyExtensionAuth } from "@/lib/session";
 
+// Stage 1 (saveCapturedProfileFast) is synchronous and bounded — but the
+// extension can post a 100KB profile and the DB write + identity hashing
+// occasionally spikes past the default function timeout. Lift to 60s so the
+// 202 always lands, leaving Stage 2 (background scoring) to run after.
+export const maxDuration = 60;
+
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
 const BodySchema = z.object({

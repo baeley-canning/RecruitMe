@@ -32,6 +32,12 @@ import { executePlan, planSync, summarisePlans } from "@/lib/contact-sheet/sync"
 import type { SyncSummary } from "@/lib/contact-sheet/types";
 import { tryAcquireLock, releaseLock } from "@/lib/db-lock";
 
+// Large sheets (the live deployment has 30+ tabs, hundreds of rows each) take
+// minutes to fetch + reconcile. 300s matches the cron job's grace window so a
+// scheduled run never gets truncated mid-plan-execution — the advisory lock
+// below already guards against concurrent runs.
+export const maxDuration = 300;
+
 const SYNC_LOCK_NAME = "contact-sheet-sync";
 
 /** Constant-time compare that bails on length mismatch before timingSafeEqual

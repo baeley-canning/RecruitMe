@@ -27,6 +27,11 @@ import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import type { ParsedRole } from "@/lib/ai";
 
+// PATCH re-scores the candidate synchronously after a manual profile-text
+// paste — scoreCandidateStructured can take 10-30s under load. 60s gives the
+// chain enough room while still failing fast on a stuck Claude provider.
+export const maxDuration = 60;
+
 const PatchSchema = z.object({
   text: z
     .string()

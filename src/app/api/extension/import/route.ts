@@ -7,6 +7,11 @@ import { prisma } from "@/lib/db";
 import { verifyExtensionAuth } from "@/lib/session";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 
+// Stage 1 (importCapturedLinkedInProfileFast) is synchronous and bounded —
+// but the extension can post a 100KB profile + captureMeta and Firmable
+// pre-checks add a few hundred ms. 60s comfortably covers any single capture.
+export const maxDuration = 60;
+
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
 const BodySchema = z.object({
