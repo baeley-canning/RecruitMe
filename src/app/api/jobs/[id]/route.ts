@@ -17,11 +17,12 @@ export async function GET(
   // matchReason etc. can be 10-50KB each. At 500 candidates that's 25MB+ per page load.
   // The full candidate detail is fetched separately when a card is expanded.
   //
-  // scoreBreakdown is intentionally KEPT in the select set despite being
-  // ~5KB per candidate: candidate-card.tsx reads it at render time (via
-  // safeParseJson in the useMemo at L339 + L749) to compute the category
-  // dots / overall summary that show before the "Why?" panel opens. If a
-  // card-level lazy fetch lands later, drop it here too.
+  // scoreBreakdown (~5KB per candidate) is fetched on demand from
+  // /api/jobs/:id/candidates/:candidateId/score-breakdown when the recruiter
+  // opens the "Why?" panel on a card. Keeping it out of the list select shaves
+  // ~2-5MB off the page load for a 500-candidate job. The card-level chips
+  // that previously read this field gracefully degrade until the lazy fetch
+  // lands — see candidate-card.tsx for the wiring.
   const full = await prisma.job.findUnique({
     where: { id },
     include: {
@@ -30,7 +31,7 @@ export async function GET(
         select: {
           id: true, jobId: true, orgId: true, name: true, headline: true,
           location: true, linkedinUrl: true, source: true, status: true, phone: true,
-          matchScore: true, scoreBreakdown: true, matchReason: true,
+          matchScore: true, matchReason: true,
           fetchPriorityScore: true, fetchPriorityReason: true,
           acceptanceScore: true, acceptanceReason: true,
           profileCapturedAt: true, profileTextHash: true,
