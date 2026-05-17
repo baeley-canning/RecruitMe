@@ -277,11 +277,13 @@ export default function JobDetailPage({
   const pollCandidateFetchRef = useRef<(candidateId: string) => Promise<void>>(async () => {});
   const finishFetchRef = useRef<(candidateId: string, state: "done" | "error", message: string) => void>(() => {});
 
-  const fetchJob = useCallback(async () => {
+  const fetchJob = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/jobs/${id}`);
+      const res = await fetch(`/api/jobs/${id}`, { signal });
+      if (signal?.aborted) return;
       if (res.ok) {
         const data = await res.json() as Job;
+        if (signal?.aborted) return;
         setJob(data);
         setSalaryMin(data.salaryMin ? String(data.salaryMin / 1000) : "");
         setSalaryMax(data.salaryMax ? String(data.salaryMax / 1000) : "");
@@ -289,15 +291,22 @@ export default function JobDetailPage({
       } else {
         setFetchError(true);
       }
-    } catch {
+    } catch (error) {
+      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
       setFetchError(true);
     } finally {
+      if (signal?.aborted) return;
       setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
-    fetchJob();
+    const controller = new AbortController();
+    setLoading(true);
+    setFetchError(false);
+    setJob(null);
+    void fetchJob(controller.signal);
+    return () => controller.abort();
   }, [fetchJob]);
 
   // On mount: resume polling for any captures still in-progress. Recovers

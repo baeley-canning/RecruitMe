@@ -222,11 +222,20 @@ export async function POST(
       orgId: true,
       job: { select: { orgId: true } },
     },
-    // id-desc tiebreaker prevents bulk-import timestamp-ties from biasing
-    // the head when many rows share one createdAt. Cap of 12k stays as a
-    // safety net for the no-prefilter fallback path.
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 12000,
+    // CRITICAL perf note: only apply SQL `orderBy` on the no-prefilter
+    // path. With prefilter ON, Postgres's planner picks the trgm GIN
+    // bitmap scan — but adding `ORDER BY createdAt DESC LIMIT 12000`
+    // makes the planner prefer a sequential createdAt index scan that
+    // filters in-place, defeating the GIN bitmap entirely and forcing
+    // a 14k-row sort over TOAST'd profileText. That blew through the
+    // 50s frontend abort on prod. With the orderBy gone, GIN bitmap +
+    // heap fetch is fast; the JS relevance ranker below resorts anyway.
+    //
+    // take cap: 2000 with prefilter is plenty (typical match count is
+    // ~500-2000 anyway). 12000 stays only as the no-prefilter safety
+    // net so a thin JD doesn't silently miss the whole library.
+    ...(usePrefilter ? {} : { orderBy: [{ createdAt: "desc" }, { id: "desc" }] }),
+    take: usePrefilter ? 2000 : 12000,
   });
   console.log(`[talent-pool] pre-filter terms=${prefilterTerms.length} (must=${mustHaveSignalTerms.length}, widened-with-nice-to-haves=${widenedNiceToHaves.length}) usePrefilter=${usePrefilter} → ${poolRows.length} rows`);
 
