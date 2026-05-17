@@ -24,6 +24,11 @@ import { getAccessibleOrgIds, candidateOrgFilter } from "@/lib/org-access";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 
+// Mirrors CAPTURED_PROFILE_MIN_CHARS in candidate-profile.ts — applied at
+// both the GET (modal listing) and POST (import) layers so a candidate with
+// no extractable CV / paste can't smuggle into a job via the library modal.
+const LIBRARY_PROFILE_MIN_CHARS = 500;
+
 // Library POST scores N candidates × 2 (score + acceptance) with retry. At the
 // 50-candidate Zod cap and ~3-5s per Claude call, a sequential run could
 // linger near 5 minutes. The new CONCURRENCY=3 pattern brings worst-case to
@@ -65,27 +70,58 @@ export async function GET(
   // Library scope: caller's own org plus any orgs the caller has been granted
   // library_read access to (cross-org subscription). Owner sees all.
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
-  const candidates = await prisma.candidate.findMany({
-    where: {
-      profileText: { not: null },
-      ...candidateOrgFilter(accessibleOrgIds),
-      // Push the search query to SQL. Without this, the previous JS-side
-      // filter only saw the 500 newest rows — after the JobAdder bulk
-      // import all 500 collapsed to today's imports, so any query for a
-      // candidate created earlier than the import returned 0 hits even
-      // though they were in the library. Doing it in Postgres means
-      // "Library is large" no longer hides older relevant people.
-      ...(q ? {
-        OR: [
-          { name:     { contains: q, mode: "insensitive" } },
-          { headline: { contains: q, mode: "insensitive" } },
-          { location: { contains: q, mode: "insensitive" } },
-        ],
-      } : {}),
-    },
+
+  // ── Length-gate the library at SQL ─────────────────────────────────────
+  // The "Bede problem": JobAdder-imported candidates with no CV PDF land
+  // with profileText="" (CV extraction had nothing to read) but still pass
+  // `profileText: { not: null }`. They render as normal cards in the modal
+  // and import with zero content. Filter them out at SQL so Prisma never
+  // returns them, mirroring the POST-side LIBRARY_PROFILE_MIN_CHARS gate.
+  //
+  // Prisma's query builder can't express `length("profileText") >= N`, so
+  // we pre-fetch the eligible candidate IDs via $queryRaw (just IDs — no
+  // profileText shipped to Node) and then feed them into the existing
+  // findMany for the column shape. The raw query also pushes the q= filter
+  // and org-scope into Postgres so we never pull 14k rows into memory.
+  const qLike = q ? `%${q.replace(/[%_\\]/g, "\\$&")}%` : null;
+  // accessibleOrgIds === null → owner (no org filter). Empty array → no
+  // accessible orgs (return zero rows). Otherwise restrict by job.orgId OR
+  // candidate.orgId, matching candidateOrgFilter's semantics.
+  const orgIdsParam: string[] = accessibleOrgIds ?? [];
+  const useOrgFilter = accessibleOrgIds !== null;
+  if (useOrgFilter && orgIdsParam.length === 0) {
+    return NextResponse.json({ candidates: [], total: 0 });
+  }
+
+  const eligibleRows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT c.id
+    FROM "Candidate" c
+    LEFT JOIN "Job" j ON j.id = c."jobId"
+    WHERE c."profileText" IS NOT NULL
+      AND char_length(c."profileText") >= ${LIBRARY_PROFILE_MIN_CHARS}
+      AND (
+        ${!useOrgFilter}::boolean
+        OR j."orgId" = ANY(${orgIdsParam}::text[])
+        OR (c."jobId" IS NULL AND c."orgId" = ANY(${orgIdsParam}::text[]))
+      )
+      AND (
+        ${qLike === null}::boolean
+        OR c."name"     ILIKE ${qLike ?? ""}
+        OR c."headline" ILIKE ${qLike ?? ""}
+        OR c."location" ILIKE ${qLike ?? ""}
+      )
+    ORDER BY c."createdAt" DESC, c."id" DESC
+    LIMIT ${prismaTake}
+  `;
+  const eligibleIds = eligibleRows.map((r) => r.id);
+  if (eligibleIds.length === 0) {
+    return NextResponse.json({ candidates: [], total: 0 });
+  }
+
+  const candidatesRaw = await prisma.candidate.findMany({
+    where: { id: { in: eligibleIds } },
     // id-desc tiebreaker against bulk-insert timestamp collisions.
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: prismaTake, // honours ?limit= with a 4× buffer for dedupe
     select: {
       id: true,
       name: true,
@@ -98,6 +134,12 @@ export async function GET(
       archivedJobTitle: true,
     },
   });
+  // Preserve the raw query's ordering — Prisma's `in:` doesn't guarantee
+  // returned-row order matches the input array.
+  const byId = new Map(candidatesRaw.map((c) => [c.id, c]));
+  const candidates = eligibleIds
+    .map((id) => byId.get(id))
+    .filter((c): c is NonNullable<typeof c> => c !== undefined);
 
   // De-duplicate by linkedinUrl — the same person across multiple jobs only
   // shows once (the most recent row wins). Query string `q` is now applied
@@ -173,7 +215,6 @@ export async function POST(
   // for this; mirror it at the SQL level with a length predicate so the
   // modal-driven path can't smuggle in empty-profile candidates either.
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
-  const PROFILE_MIN_CHARS = 500; // matches CAPTURED_PROFILE_MIN_CHARS in candidate-profile.ts
   const sourceCandidatesRaw = await prisma.candidate.findMany({
     where: {
       id: { in: parsed.data.candidateIds },
@@ -182,11 +223,11 @@ export async function POST(
     },
   });
   const sourceCandidates = sourceCandidatesRaw.filter(
-    (c) => (c.profileText?.trim().length ?? 0) >= PROFILE_MIN_CHARS,
+    (c) => (c.profileText?.trim().length ?? 0) >= LIBRARY_PROFILE_MIN_CHARS,
   );
   const skippedEmpty = sourceCandidatesRaw.length - sourceCandidates.length;
   if (skippedEmpty > 0) {
-    console.log(`[library-import] skipped ${skippedEmpty} library row(s) with profileText < ${PROFILE_MIN_CHARS} chars`);
+    console.log(`[library-import] skipped ${skippedEmpty} library row(s) with profileText < ${LIBRARY_PROFILE_MIN_CHARS} chars`);
   }
 
   let added = 0;
