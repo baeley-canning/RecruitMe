@@ -123,6 +123,9 @@ export function ScoreCorrectionButton({
         maxLength={500}
         className="w-full text-xs border border-separator rounded px-2 py-1.5 bg-surface-sunken text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
       />
+      <p className="text-2xs text-text-tertiary leading-snug">
+        Don&apos;t include health, religion, or other protected info — this reason is sent to the AI scorer.
+      </p>
 
       {error && <p className="text-xs text-danger">{error}</p>}
 
