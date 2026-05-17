@@ -24,6 +24,13 @@ const DEFAULT_STALE_MS = 15 * 60 * 1000;
 /**
  * Try to claim a named lock. Returns `true` if claimed, `false` if a
  * non-stale lock is already held by another worker.
+ *
+ * @param staleMs how long the lock can sit without a heartbeat before another
+ *   worker is allowed to reclaim it. Defaults to {@link DEFAULT_STALE_MS}
+ *   (15 min). Long-running jobs that can exceed 15 min (e.g. a full
+ *   sync-contact-sheet pass over a large sheet) MUST pass a higher value
+ *   AND call {@link refreshLock} periodically — otherwise a sibling worker
+ *   may reclaim mid-flight and run a duplicate pass.
  */
 export async function tryAcquireLock(name: string, staleMs = DEFAULT_STALE_MS): Promise<boolean> {
   const key = `lock:${name}`;
@@ -52,6 +59,28 @@ export async function tryAcquireLock(name: string, staleMs = DEFAULT_STALE_MS): 
 export async function releaseLock(name: string): Promise<void> {
   const key = `lock:${name}`;
   await prisma.setting.update({ where: { key }, data: { value: "" } }).catch(() => {});
+}
+
+/**
+ * Heartbeat: re-stamp the lock's timestamp so siblings don't reclaim it
+ * mid-task. Long-running jobs should call this periodically (e.g. every
+ * `staleMs / 3`) while they hold the lock.
+ *
+ * Best-effort: a failed update (transient DB blip) is swallowed — the next
+ * heartbeat will reset the clock. If the lock row has been reclaimed by
+ * another worker we still rewrite the value here; that's intentional and
+ * mirrors the "best-effort release" stance. Locking is advisory, not a
+ * hard mutex.
+ */
+export async function refreshLock(name: string): Promise<void> {
+  const key = `lock:${name}`;
+  const now = new Date();
+  // updateMany rather than update so a missing row is a no-op rather than
+  // a P2025 throw (caller may have already released, or the row was
+  // garbage-collected by an admin clear).
+  await prisma.setting
+    .updateMany({ where: { key }, data: { value: now.toISOString() } })
+    .catch(() => {});
 }
 
 /** Convenience wrapper: acquire, run, release. Throws `LockBusyError` if
