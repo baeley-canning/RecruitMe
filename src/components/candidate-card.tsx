@@ -65,7 +65,6 @@ import { isPlausibleLocation } from "@/lib/location";
 import { ScoreBreakdownPanel } from "./candidate/ScoreBreakdownPanel";
 import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
 import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
-import { UploadCvButton } from "./candidate/UploadCvButton";
 import { ProfileTextSection } from "./candidate/ProfileTextSection";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
 import { ScoreCorrectionButton } from "./candidate/score-correction-button";
