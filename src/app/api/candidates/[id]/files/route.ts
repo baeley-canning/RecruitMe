@@ -12,6 +12,7 @@ import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
+import { encryptCv } from "@/lib/cv-encryption";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_TYPES = [
@@ -197,13 +198,18 @@ export async function POST(
     }
   }
 
+  // Encrypt before persisting — audit P2 HIGH (NZ Privacy Act). Every byte
+  // we write to `data` after this point is AES-256-GCM ciphertext, so Railway
+  // backups no longer contain plaintext-equivalent CVs.
+  const encryptedData = await encryptCv(base64);
+
   const created = await prisma.candidateFile.create({
     data: {
       candidateId: id,
       type,
       filename: upload.name,
       mimeType: upload.type || "application/octet-stream",
-      data: base64,
+      data: encryptedData,
       dataHash: fileHash,
       size: upload.size,
     },

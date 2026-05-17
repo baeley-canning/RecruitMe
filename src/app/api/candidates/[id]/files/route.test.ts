@@ -64,6 +64,15 @@ vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
 vi.mock("@/lib/pdf", () => ({
   extractTextFromPdf: vi.fn().mockResolvedValue(""),
 }));
+// Encryption is unit-tested in src/lib/__tests__/cv-encryption.test.ts; here we
+// stub it so the route test focuses on the upload flow and doesn't need a key
+// or DB-backed Setting bootstrap.
+vi.mock("@/lib/cv-encryption", () => ({
+  encryptCv: vi.fn(async (plain: string) => `v1:enc(${plain.slice(0, 12)})`),
+  decryptCv: vi.fn(async (stored: string) => stored),
+  isEncrypted: (s: string) => s.startsWith("v1:"),
+  maybeMigrateLegacy: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { POST } from "./route";
 
