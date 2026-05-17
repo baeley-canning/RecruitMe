@@ -54,6 +54,28 @@ export async function POST(
     }, { status: 429 });
   }
 
+  // Select first, claim later. The cooldown stamp protects against
+  // double-billing two concurrent runs, but if there's nothing to score
+  // we shouldn't 429 a chained `?onlyUnscored=1` call from a library
+  // import that found zero new candidates — that path is supposed to be
+  // a no-op, not an error.
+  //
+  // Select only the fields we need for scoring. Without this we fetch every
+  // candidate's profileText (50KB+), scoreBreakdown (~5KB), matchReason etc —
+  // turning a 500-candidate score-all into a 25MB+ memory hit even before
+  // any scoring fires.
+  const candidatesPreflight = await prisma.candidate.findMany({
+    where: {
+      jobId: id,
+      profileText: { not: null },
+      ...(onlyUnscored ? { matchScore: null } : {}),
+    },
+    select: { id: true },
+  });
+  if (candidatesPreflight.length === 0) {
+    return NextResponse.json({ scored: 0, total: 0, message: onlyUnscored ? "Nothing to score." : "No scoreable candidates." });
+  }
+
   // Conditional cooldown stamp — only one score-all run can claim the job at
   // a time. Two recruiters who hit the button simultaneously both pass the
   // process-local rate limiter; without this guard they'd both stamp
@@ -76,10 +98,6 @@ export async function POST(
     }, { status: 429 });
   }
 
-  // Select only the fields we need for scoring. Without this we fetch every
-  // candidate's profileText (50KB+), scoreBreakdown (~5KB), matchReason etc —
-  // turning a 500-candidate score-all into a 25MB+ memory hit even before
-  // any scoring fires.
   const candidates = await prisma.candidate.findMany({
     where: {
       jobId: id,
