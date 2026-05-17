@@ -16,6 +16,7 @@ const dbMocks = vi.hoisted(() => ({
       aggregate: vi.fn().mockResolvedValue({ _sum: { costUsd: 0 } }),
     },
     orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
+    searchSession: { create: vi.fn().mockResolvedValue({ id: "session-1" }) },
     // tryAcquireLock / releaseLock target the Setting table via db-lock.ts,
     // and getCorrectionsVersion (audit SC4) reads cv.corrections.version.<orgId>.
     setting: {

@@ -407,13 +407,37 @@ export async function POST(
     ? ` (Library is large — imported the first ${saved.length}; click search again to pull more.)`
     : "";
 
-  if (saved.length === 0) {
-    const reason = skippedRequirements > 0
+  const baseMessage = saved.length > 0
+    ? `Imported ${saved.length} from the library — click Score all to rank against this JD.${partialNote}`
+    : skippedRequirements > 0
       ? `${skippedRequirements} library profile${skippedRequirements !== 1 ? "s" : ""} didn't mention this role's must-haves.${partialNote}`
       : skippedOverseas > 0
         ? `Skipped ${skippedOverseas} overseas candidate${skippedOverseas !== 1 ? "s" : ""}; no NZ-based pool candidates matched.${partialNote}`
         : `No pool candidates matched this role's requirements.${partialNote}`;
-    return NextResponse.json({ count: 0, candidates: [], message: reason, skippedOverseas, stoppedEarly });
+
+  // Log a SearchSession row so the "Analysis History" panel reflects library
+  // searches with today's date. Pre-fix, only LinkedIn searches wrote here,
+  // so library-only users saw their history frozen on the last LinkedIn run.
+  // status: "complete" — library imports are synchronous, no running state.
+  void prisma.searchSession.create({
+    data: {
+      jobId,
+      status: "complete",
+      queries: JSON.stringify(prefilterTerms),
+      location: job.location ?? parsedRole.location_rules ?? "",
+      target: maxResults,
+      collected: saved.length,
+      importedIds: JSON.stringify(saved.map((c) => c.id)),
+      message: baseMessage,
+      orgId: auth.orgId ?? null,
+      totalExamined: candidates.length,
+      candidatesRejected: skippedRequirements + skippedOverseas,
+      evaluation: "library_only",
+    },
+  }).catch((err) => reportError(err, { route: "talent-pool:session-log", jobId, orgId: auth.orgId }));
+
+  if (saved.length === 0) {
+    return NextResponse.json({ count: 0, candidates: [], message: baseMessage, skippedOverseas, stoppedEarly });
   }
 
   return NextResponse.json({
@@ -421,6 +445,6 @@ export async function POST(
     candidates: saved,
     skippedOverseas,
     stoppedEarly,
-    message: `Imported ${saved.length} from the library — click Score all to rank against this JD.${partialNote}`,
+    message: baseMessage,
   });
 }
