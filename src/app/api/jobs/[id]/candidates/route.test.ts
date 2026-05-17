@@ -145,6 +145,41 @@ describe("manual candidate ingestion route", () => {
     expect(body.scoreBreakdown).toContain("\"version\":2");
   });
 
+  it("flags scoringError on screeningData when auto-score fails (does not silently drop the score)", async () => {
+    // The fix: when scoreCandidateStructured rejects we used to swallow the
+    // error with a bare console.error, leaving the row with NO score and
+    // NO failure trail. After the fix the row must:
+    //   (a) still be created (don't lose the candidate)
+    //   (b) have matchScore: null (don't surface a stale 0)
+    //   (c) have screeningData.scoringError populated so the recruiter sees why.
+    aiMocks.scoreCandidateStructured.mockRejectedValueOnce(new Error("Claude blew up: 503"));
+    dbMocks.prisma.candidate.create.mockResolvedValueOnce({ id: "cand-fail", name: "Alex Chen" });
+
+    const req = new Request("http://localhost/api/jobs/job-1/candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profileText: "Alex Chen\nSoftware Engineer\nAbout\nFull-stack engineer with 8 years of experience building Ruby on Rails and React applications.",
+        autoScore: true,
+      }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+
+    expect(res.status).toBe(201);
+    // The row was created (a)…
+    expect(dbMocks.prisma.candidate.create).toHaveBeenCalled();
+    // …and patched with the scoringError flag (b + c). matchScore: null
+    // because deriveUpdateData never ran.
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
+    const updateData = dbMocks.prisma.candidate.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(updateData.matchScore).toBeNull();
+    expect(typeof updateData.screeningData).toBe("string");
+    const screening = JSON.parse(updateData.screeningData as string);
+    expect(screening.scoringError).toContain("Claude blew up");
+    expect(screening.scoringErrorAt).toBeTruthy();
+  });
+
   it("normalizes manual LinkedIn URLs before saving", async () => {
     const req = new Request("http://localhost/api/jobs/job-1/candidates", {
       method: "POST",

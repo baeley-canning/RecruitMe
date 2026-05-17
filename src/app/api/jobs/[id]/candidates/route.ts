@@ -12,6 +12,7 @@ import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { reportError } from "@/lib/error-reporting";
+import { mergeScoringError } from "@/lib/linkedin-capture";
 import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 
 export async function GET(
@@ -150,7 +151,22 @@ export async function POST(
         rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined,
       }, { status: 201 });
     } catch (err) {
+      // Auto-score blew up. The candidate row already exists — flag the
+      // failure on screeningData and leave matchScore null so the UI can
+      // distinguish "imported, scoring failed" from "imported, not yet
+      // scored". reportError gets the structured logs + Sentry trail.
       console.error("Auto-score failed:", err);
+      reportError(err, { route: "candidates:post:auto-score", jobId: id, candidateId: candidate.id, orgId: auth.orgId });
+      const reason = err instanceof Error ? err.message : String(err);
+      await prisma.candidate.update({
+        where: { id: candidate.id },
+        data: {
+          matchScore: null,
+          screeningData: mergeScoringError(null, reason),
+        },
+      }).catch((updateErr) => {
+        reportError(updateErr, { route: "candidates:post:auto-score-flag", jobId: id, candidateId: candidate.id, orgId: auth.orgId });
+      });
     }
   }
 

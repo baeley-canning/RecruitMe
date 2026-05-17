@@ -10,6 +10,8 @@ import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { shouldRejectAsOverseas } from "@/lib/location";
+import { reportError } from "@/lib/error-reporting";
+import { mergeScoringError } from "@/lib/linkedin-capture";
 
 const BodySchema = z.object({
   jobId:       z.string().min(1),
@@ -62,6 +64,7 @@ export async function POST(req: Request) {
     : null;
 
   let scoreData: Record<string, unknown> = {};
+  let scoringError: string | null = null;
   if (parsedRole) {
     try {
       const weights   = await getJobScoringWeights(job.scoringWeights, auth.orgId);
@@ -77,8 +80,14 @@ export async function POST(req: Request) {
         ...deriveUpdateData(breakdown),
         profileTextHash: buildScoreCacheKey({ profileText, parsedRole, salary, jobLocation: job.location, jobLocation2: job.location2, isRemote: job.isRemote, weights }),
       };
-    } catch {
-      // Scoring failed — import without a score, recruiter can re-score manually
+    } catch (err) {
+      // Scoring failed — import the row but flag the failure on screeningData
+      // so the recruiter sees "Imported, scoring failed" instead of "Imported
+      // with no score" (which was indistinguishable from "JD not parsed yet").
+      // matchScore stays null; recruiter can hit Re-score once the underlying
+      // issue (Claude outage, parse drift, etc.) is resolved.
+      scoringError = err instanceof Error ? err.message : String(err);
+      reportError(err, { route: "github:import", jobId, orgId: auth.orgId });
     }
   }
 
@@ -115,6 +124,10 @@ export async function POST(req: Request) {
       // Store GitHub URL in notes so we can identify the source
       notes: `GitHub: ${githubUrl}\nLogin: ${login}`,
       ...scoreData,
+      // Flag a scoring failure so the recruiter sees why a freshly-imported
+      // candidate has no score. matchScore stays null (already absent from
+      // scoreData when this fires).
+      ...(scoringError ? { screeningData: mergeScoringError(null, scoringError) } : {}),
     },
   });
 

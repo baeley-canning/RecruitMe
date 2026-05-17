@@ -10,6 +10,7 @@ import {
   type ParsedRole,
 } from "./ai";
 import { buildScoreCacheKey, safeParseJson } from "./utils";
+import { reportError } from "./error-reporting";
 import { normaliseLinkedInUrl } from "./linkedin";
 import {
   isConfirmedOutOfAreaForLocalRole,
@@ -295,6 +296,28 @@ function buildAcceptanceData(acceptance: Awaited<ReturnType<typeof predictAccept
   };
 }
 
+/**
+ * Merge `{scoringError, scoringErrorAt}` into the candidate's `screeningData`
+ * JSON without clobbering existing fields. Returns a JSON string ready to
+ * write straight into the `screeningData` column.
+ *
+ * Use this in catch blocks where scoring failed but the candidate row still
+ * exists — leaving `matchScore: null` alone is half the story; we also need
+ * a recruiter-visible "this candidate's score blew up because X" trail so
+ * "Imported N / Scored 0" stops being a silent void.
+ */
+export function mergeScoringError(
+  existing: string | null | undefined,
+  reason: string,
+): string {
+  const base = safeParseJson<Record<string, unknown>>(existing ?? null, {});
+  return JSON.stringify({
+    ...base,
+    scoringError: reason,
+    scoringErrorAt: new Date().toISOString(),
+  });
+}
+
 // ─── Two-stage capture pipeline ────────────────────────────────────────────
 //
 // Stage 1 (sync, no AI):   buildIdentityData → save profileText + regex-
@@ -461,19 +484,31 @@ function identityToCandidateUpdate(identity: IdentityData) {
 }
 
 // Stage 2 — three Claude calls in parallel, returns the field updates.
-// Returns null if all AI calls fail (DB write becomes a no-op).
-async function runAiEnrichment(identity: IdentityData): Promise<Record<string, unknown> | null> {
+// Returns null if all AI calls fail (DB write becomes a no-op). When the
+// structured scorer specifically fails (vs. extractCandidateInfo /
+// predictAcceptance), `scoringError` is populated so the caller can mark
+// the candidate row with a recruiter-visible failure flag instead of
+// silently dropping the score.
+async function runAiEnrichment(identity: IdentityData): Promise<{
+  update: Record<string, unknown> | null;
+  scoringError: string | null;
+}> {
   const { cleanedProfileText, currentStatus, parsedRole, salary, weights, job, profileUnchanged } = identity;
 
   if (profileUnchanged) {
     // Existing score is still valid — nothing to do in stage 2.
-    return null;
+    return { update: null, scoringError: null };
   }
 
+  let scoringError: string | null = null;
   const [info, rawBreakdown, acceptance] = await Promise.all([
     extractCandidateInfo(cleanedProfileText).catch(() => null),
     parsedRole
-      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch(() => null)
+      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch((err) => {
+          scoringError = err instanceof Error ? err.message : String(err);
+          reportError(err, { route: "linkedin-capture:runAiEnrichment", jobId: job.id, orgId: job.orgId });
+          return null;
+        })
       : Promise.resolve(null),
     cleanedProfileText.length >= 250 && parsedRole
       ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch(() => null)
@@ -535,7 +570,10 @@ async function runAiEnrichment(identity: IdentityData): Promise<Record<string, u
     Object.assign(update, buildAcceptanceData(acceptance));
   }
 
-  return Object.keys(update).length > 0 ? update : null;
+  return {
+    update: Object.keys(update).length > 0 ? update : null,
+    scoringError,
+  };
 }
 
 // Apply stage 2 results to the candidate row, gated on profileTextHash so a
@@ -602,7 +640,7 @@ async function buildCapturedCandidateData(args: {
 }) {
   const identity = await buildIdentityData(args);
   const stage1 = identityToCandidateUpdate(identity);
-  const stage2 = await runAiEnrichment(identity);
+  const { update: stage2 } = await runAiEnrichment(identity);
   return { ...stage1, ...(stage2 ?? {}) };
 }
 
@@ -674,7 +712,28 @@ export async function applyAiEnrichmentInBackground(
   candidateId: string,
   identity: IdentityData,
 ): Promise<{ applied: boolean }> {
-  const update = await runAiEnrichment(identity);
+  const { update, scoringError } = await runAiEnrichment(identity);
+
+  // Scoring blew up. The candidate row already has matchScore: null (cleared
+  // by stage 1 when the profile changed). Surface the error to the recruiter
+  // via screeningData.scoringError so they're not staring at a quiet "Scored
+  // 0" without an explanation. profileTextHash guard makes this safe under
+  // concurrent re-captures — if the row has moved on, our flag is stale and
+  // we deliberately skip rather than overwrite the fresher write.
+  if (scoringError) {
+    const current = await prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: { screeningData: true },
+    });
+    await prisma.candidate.updateMany({
+      where: { id: candidateId, profileTextHash: identity.profileTextHash },
+      data: {
+        matchScore: null,
+        screeningData: mergeScoringError(current?.screeningData ?? null, scoringError),
+      },
+    });
+  }
+
   if (!update) return { applied: false };
   const applied = await applyAiEnrichment(candidateId, identity.profileTextHash, update);
   return { applied };
