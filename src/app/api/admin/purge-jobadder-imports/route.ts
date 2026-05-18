@@ -1,34 +1,41 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { getAuth, unauthorized } from "@/lib/session";
 import { prisma } from "@/lib/db";
 
-export async function DELETE(req: Request) {
-  const auth = await getAuth();
-  if (!auth?.isOwner) return unauthorized();
+function secretsMatch(provided: string | null | undefined, expected: string | undefined): boolean {
+  if (!provided || !expected) return false;
+  try {
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
 
-  if (!auth.orgId) {
-    return NextResponse.json(
-      { error: "No organisation on this account — cannot scope deletion safely." },
-      { status: 400 }
-    );
+export async function DELETE(req: Request) {
+  const cronSecret = req.headers.get("x-cron-secret");
+  const cronAuth = secretsMatch(cronSecret, process.env.CONTACT_SYNC_CRON_SECRET);
+
+  if (!cronAuth) {
+    const auth = await getAuth();
+    if (!auth?.isOwner) return unauthorized();
   }
 
   const { count } = await prisma.candidate.deleteMany({
-    where: { orgId: auth.orgId, source: "jobadder_import" },
+    where: { source: "jobadder_import" },
   });
 
-  // Clean up CandidateIdentity rows that no longer have any candidates.
   const orphans = await prisma.$executeRaw`
     DELETE FROM "CandidateIdentity"
-    WHERE "orgId" = ${auth.orgId}
-      AND id NOT IN (
-        SELECT DISTINCT "candidateIdentityId"
-        FROM "Candidate"
-        WHERE "candidateIdentityId" IS NOT NULL
-          AND "orgId" = ${auth.orgId}
-      )
+    WHERE id NOT IN (
+      SELECT DISTINCT "candidateIdentityId"
+      FROM "Candidate"
+      WHERE "candidateIdentityId" IS NOT NULL
+    )
   `;
 
-  console.warn(`[admin] purge-jobadder-imports: ${count} candidates + ${orphans} identity rows deleted by orgId=${auth.orgId}`);
+  console.warn(`[admin] purge-jobadder-imports: ${count} candidates + ${orphans} identity rows deleted`);
   return NextResponse.json({ deleted: count, identityRowsRemoved: orphans });
 }
