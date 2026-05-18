@@ -441,8 +441,8 @@ function ProfileDrawer({
       <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-surface-raised shadow-overlay z-[1210] flex flex-col border-l border-separator">
         {/* Header */}
         <div className="flex items-start gap-3 px-4 py-4 border-b border-separator flex-shrink-0">
-          <div className="w-10 h-10 rounded-md bg-surface-hover flex items-center justify-center flex-shrink-0 text-text-primary font-semibold text-md">
-            {candidate.name.charAt(0).toUpperCase()}
+          <div className="w-10 h-10 rounded-md bg-accent-subtle text-accent flex items-center justify-center flex-shrink-0 font-semibold text-sm">
+            {candidate.name.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -977,14 +977,14 @@ export const CandidateCard = memo(function CandidateCard({
     <div className="bg-surface-raised border border-separator rounded-md hover:bg-surface-hover transition-colors">
       {/* Header row */}
       <div className="flex items-start gap-3 p-4">
-        {/* Avatar */}
+        {/* Avatar — 2-letter initials, consistent with library and detail page */}
         <button
           type="button"
           onClick={() => setShowProfile(true)}
-          className="w-8 h-8 rounded-md bg-surface-hover flex items-center justify-center flex-shrink-0 text-text-primary font-semibold text-md hover:bg-surface-overlay transition-colors"
-          title="View stored LinkedIn data"
+          className="w-8 h-8 rounded-md bg-accent-subtle text-accent flex items-center justify-center flex-shrink-0 font-semibold text-xs hover:bg-accent/25 transition-colors flex-shrink-0"
+          title="View profile"
         >
-          {candidate.name.charAt(0).toUpperCase()}
+          {candidate.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
         </button>
 
         {/* Main info */}

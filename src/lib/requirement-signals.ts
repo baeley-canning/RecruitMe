@@ -523,6 +523,17 @@ function expandDomainAnchors(anchors: Set<string>): Set<string> {
   return result;
 }
 
+function expandDomainAnchor(anchor: string): string[] {
+  for (const group of ANCHOR_DOMAIN_GROUPS) {
+    if (group.has(anchor)) return [...group];
+  }
+  return [anchor];
+}
+
+function filterRoleAwareAnchors(anchors: Iterable<string>, isPureCompliance: boolean): string[] {
+  return [...anchors].filter((term) => isPureCompliance || !COMPLIANCE_GATE_TERMS.has(term));
+}
+
 /**
  * Role-aware distinctive anchors. Two adjustments on top of the raw
  * DISTINCTIVE alias output:
@@ -556,6 +567,40 @@ export function extractRoleAwareDistinctiveAnchors(args: {
     ? all
     : new Set([...all].filter((term) => !COMPLIANCE_GATE_TERMS.has(term)));
   return [...expandDomainAnchors(filtered)];
+}
+
+/**
+ * Hard anchor groups for specialist source gates.
+ *
+ * Each returned inner array is one hard anchor requirement plus accepted
+ * aliases/domain peers. Multi-anchor roles must match EVERY group. This keeps
+ * "C++ only" from passing a "C++ + Sybase" role, while still allowing a
+ * SCADA-role candidate to satisfy the SCADA group through tight power-domain
+ * peers such as RTU / metering / substation.
+ */
+export function extractRoleAwareDistinctiveAnchorGroups(args: {
+  title: string | null | undefined;
+  requirements: string[];
+}): string[][] {
+  const isPure = isPureComplianceRole(args.title);
+  const seen = new Set<string>();
+  const groups: string[][] = [];
+
+  for (const requirement of args.requirements) {
+    const anchors = filterRoleAwareAnchors(
+      extractDistinctiveSignalsFromRequirement(requirement),
+      isPure,
+    );
+    for (const anchor of anchors) {
+      const group = expandDomainAnchor(anchor);
+      const key = group.map((term) => term.toLowerCase()).sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      groups.push(group);
+    }
+  }
+
+  return groups;
 }
 
 /**

@@ -32,6 +32,12 @@ const searchCollectionMocks = vi.hoisted(() => ({
   collectPagedSearchResults: vi.fn(),
 }));
 
+const searchMocks = vi.hoisted(() => ({
+  searchLinkedInProfiles: vi.fn(),
+  searchPDLProfiles: vi.fn(),
+  inferEmploymentType: vi.fn(() => "unknown"),
+}));
+
 const talentPoolMocks = vi.hoisted(() => ({
   buildTalentPoolMap: vi.fn(),
   searchTalentPoolForRole: vi.fn(),
@@ -61,12 +67,12 @@ const scoringConfigMocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/search", () => ({
-  searchLinkedInProfiles: vi.fn(),
-  searchPDLProfiles: vi.fn(),
+  searchLinkedInProfiles: searchMocks.searchLinkedInProfiles,
+  searchPDLProfiles: searchMocks.searchPDLProfiles,
   // Mock matches the real signature: classifies JD text into permanent /
   // contract / unknown. Default to "unknown" in tests — they don't care
   // about this signal unless they explicitly opt in.
-  inferEmploymentType: vi.fn(() => "unknown"),
+  inferEmploymentType: searchMocks.inferEmploymentType,
 }));
 vi.mock("@/lib/search-collection", () => searchCollectionMocks);
 vi.mock("@/lib/talent-pool", () => talentPoolMocks);
@@ -110,6 +116,10 @@ describe("search import route", () => {
     // set by one test would otherwise leak into the next.
     talentPoolMocks.buildTalentPoolMap.mockReset();
     talentPoolMocks.searchTalentPoolForRole.mockReset();
+    searchMocks.searchLinkedInProfiles.mockReset();
+    searchMocks.searchPDLProfiles.mockReset();
+    searchMocks.inferEmploymentType.mockReset();
+    searchMocks.inferEmploymentType.mockReturnValue("unknown");
     talentPoolMocks.searchTalentPoolForRole.mockResolvedValue({
       results: [],
       examined: 0,
@@ -365,6 +375,65 @@ describe("search import route", () => {
     expect(importedNames).toEqual(["Relevant Developer"]);
     expect(dbMocks.prisma.searchSession.create.mock.calls[0][0].data.queries).toContain("Sybase dba");
   });
+
+  it("does not let scarce-skill fallback candidates bypass source gate or score cutoff", async () => {
+    const specialistJob = {
+      id: "job-1",
+      parsedRole: JSON.stringify({
+        title: "Senior C++ Developer",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        search_queries: ["c++ sybase developer"],
+        google_queries: [],
+        synonym_titles: [],
+        seniority_band: "Senior",
+        must_haves: ["C++ programming experience", "Sybase database experience"],
+        nice_to_haves: [],
+        knockout_criteria: [],
+        skills_required: ["C++", "Sybase"],
+        skills_preferred: [],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+      isRemote: false,
+      location: "Wellington",
+      orgId: "org-1",
+    };
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: specialistJob, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(specialistJob);
+    searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
+      items: [],
+      sawRetryableFailure: false,
+    });
+    searchMocks.searchLinkedInProfiles.mockResolvedValue([
+      {
+        name: "Adjacent Candidate",
+        headline: "Rust Developer | Sybase",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/adjacent-candidate/",
+        snippet: "Rust systems developer with Sybase database experience and low-level services work.",
+        source: "serpapi",
+      },
+    ]);
+
+    const req = new Request("http://localhost/api/jobs/job-1/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 1 }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+    await new Promise((r) => setTimeout(r, 2600));
+
+    expect(res.status).toBe(200);
+    expect(searchMocks.searchLinkedInProfiles).toHaveBeenCalled();
+    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
+    expect(dbMocks.prisma.searchSession.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        collected: 0,
+      }),
+    }));
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -441,6 +510,10 @@ describe("search route — pool-first integration scenarios", () => {
     vi.clearAllMocks();
     talentPoolMocks.buildTalentPoolMap.mockReset();
     talentPoolMocks.searchTalentPoolForRole.mockReset();
+    searchMocks.searchLinkedInProfiles.mockReset();
+    searchMocks.searchPDLProfiles.mockReset();
+    searchMocks.inferEmploymentType.mockReset();
+    searchMocks.inferEmploymentType.mockReturnValue("unknown");
     dbMocks.prisma.candidate.findMany.mockReset();
   });
 

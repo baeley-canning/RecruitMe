@@ -731,6 +731,34 @@ describe("buildScoreBreakdown", () => {
     expect(bd.data_quality).toBe("snippet");
   });
 
+  it("caps full-profile scores when critical must-haves are only historical", () => {
+    const bd = buildScoreBreakdown({
+      categories: {
+        skill_fit:        { score: 88, weight: CATEGORY_WEIGHTS_V2.skill_fit, evidence: "Strong legacy systems background" },
+        location_fit:     { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Wellington-based" },
+        seniority_fit:    { score: 90, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Senior engineer" },
+        title_fit:        { score: 85, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Close title match" },
+        domain_fit:       { score: 85, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Enterprise systems domain" },
+        nice_to_have_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some extras" },
+      },
+      must_have_coverage: [
+        { requirement: "C++ development experience", status: "likely_historical", evidence: "C++ role from 1997-2001" },
+        { requirement: "Sybase database experience", status: "likely_historical", evidence: "Sybase ASE role from 1998-2001" },
+      ],
+      nice_to_have_coverage: [],
+      reasons_for: ["Historic C++/Sybase evidence is visible."],
+      reasons_against: [],
+      missing_evidence: [],
+      recruiter_summary: "Relevant legacy experience, but not recent.",
+      profileCharCount: 5000,
+      claudeOverallScore: 82,
+    });
+
+    expect(bd.data_quality).toBe("full_profile");
+    expect(bd.overall).toBeLessThanOrEqual(58);
+    expect(bd.reasons_against.join(" ")).toMatch(/critical requirement|reduced|capped/i);
+  });
+
   it("flags and caps long profile captures that appear to be missing work history", () => {
     const warning = analyseProfileCaptureCompleteness({
       profileText: [

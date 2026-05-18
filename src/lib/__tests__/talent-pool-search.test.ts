@@ -91,6 +91,12 @@ const POWER_ROLE = makeRole({
   skills_required: ["SCADA", "RTU", "metering"],
 });
 
+const CPP_SYBASE_ROLE = makeRole({
+  title: "Senior C++ Developer",
+  must_haves: ["C++ programming experience", "Sybase database experience"],
+  skills_required: ["C++", "Sybase"],
+});
+
 describe("searchTalentPoolForRole", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -221,6 +227,112 @@ describe("searchTalentPoolForRole", () => {
     expect(summary.preRankPool).toBe(1);
     expect(summary.shortlisted).toBe(1);
     expect(summary.results.map((r) => r.hit.candidateId)).toEqual(["scada-eng"]);
+  });
+
+  it("multi-anchor specialist role rejects C++ only profiles", async () => {
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      {
+        id: "cpp-only",
+        name: "CPP Only",
+        headline: "Senior C++ Developer",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/cpp-only/",
+        profileText: longProfile("C++ Linux distributed systems"),
+        profileCapturedAt: new Date(),
+        createdAt: new Date(),
+      },
+      {
+        id: "cpp-sybase",
+        name: "CPP Sybase",
+        headline: "Senior C++ Developer",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/cpp-sybase/",
+        profileText: longProfile("C++ development with Sybase ASE database systems"),
+        profileCapturedAt: new Date(),
+        createdAt: new Date(),
+      },
+    ]);
+
+    const summary = await searchTalentPoolForRole({
+      parsedRole: CPP_SYBASE_ROLE,
+      job: { isRemote: false },
+      orgScope: "org-1",
+      excludeLinkedInUrls: new Set(),
+      maxResults: 5,
+      targetLocation: "Wellington, New Zealand",
+      scoringOrgId: "org-1",
+      salary: null,
+    });
+
+    expect(summary.results.map((r) => r.hit.candidateId)).toEqual(["cpp-sybase"]);
+  });
+
+  it("multi-anchor specialist role rejects Sybase only profiles", async () => {
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      {
+        id: "sybase-only",
+        name: "Sybase Only",
+        headline: "Sybase DBA",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/sybase-only/",
+        profileText: longProfile("Sybase ASE database administration and SQL tuning"),
+        profileCapturedAt: new Date(),
+        createdAt: new Date(),
+      },
+      {
+        id: "cpp-sybase",
+        name: "CPP Sybase",
+        headline: "Senior C++ Developer",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/cpp-sybase/",
+        profileText: longProfile("C++ development with Sybase ASE database systems"),
+        profileCapturedAt: new Date(),
+        createdAt: new Date(),
+      },
+    ]);
+
+    const summary = await searchTalentPoolForRole({
+      parsedRole: CPP_SYBASE_ROLE,
+      job: { isRemote: false },
+      orgScope: "org-1",
+      excludeLinkedInUrls: new Set(),
+      maxResults: 5,
+      targetLocation: "Wellington, New Zealand",
+      scoringOrgId: "org-1",
+      salary: null,
+    });
+
+    expect(summary.results.map((r) => r.hit.candidateId)).toEqual(["cpp-sybase"]);
+  });
+
+  it("targeted rare-anchor pass rescues older pool profiles outside the newest slice", async () => {
+    const olderRare = {
+      id: "older-cpp-sybase",
+      name: "Older Rare",
+      headline: "Senior C++ Developer",
+      location: "Wellington, New Zealand",
+      linkedinUrl: "https://www.linkedin.com/in/older-rare/",
+      profileText: longProfile("C++ development with Sybase ASE database systems"),
+      profileCapturedAt: new Date("2024-01-01"),
+      createdAt: new Date("2024-01-01"),
+    };
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([olderRare]);
+
+    const summary = await searchTalentPoolForRole({
+      parsedRole: CPP_SYBASE_ROLE,
+      job: { isRemote: false },
+      orgScope: "org-1",
+      excludeLinkedInUrls: new Set(),
+      maxResults: 5,
+      targetLocation: "Wellington, New Zealand",
+      scoringOrgId: "org-1",
+      salary: null,
+    });
+
+    expect(dbMocks.prisma.candidate.findMany).toHaveBeenCalledTimes(2);
+    expect(summary.results.map((r) => r.hit.candidateId)).toEqual(["older-cpp-sybase"]);
   });
 
   it("drops candidates whose location is explicitly overseas for non-remote roles", async () => {

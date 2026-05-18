@@ -740,6 +740,18 @@ export function buildScoreBreakdown(params: {
     if (criticalMissing.length > 0) {
       cap = Math.min(cap, 50);
     }
+
+    const criticalHistorical = params.must_have_coverage.filter(
+      (c) =>
+        getMustHaveImportance(c.requirement) >= 1.5 &&
+        c.status === "likely_historical"
+    );
+    if (criticalHistorical.length > 0) {
+      // Historical evidence is real evidence, but for critical must-haves it
+      // should not rank as a strong current match without fresher proof.
+      const historicalCap = Math.max(54, 62 - (criticalHistorical.length - 1) * 4);
+      cap = Math.min(cap, historicalCap);
+    }
   }
 
   const formulaOverall = Math.min(rawOverall, cap);

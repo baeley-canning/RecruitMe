@@ -7,7 +7,7 @@ import {
   ChevronRight, Search, Camera, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ScoreBadge } from "@/components/score-badge";
+import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
 
 interface TopCandidate { id: string; name: string; headline: string | null; location: string | null; matchScore: number | null; }
 interface JobStat {
@@ -144,12 +144,14 @@ export default function DashboardPage() {
               ) : (
                 <div className="divide-y divide-separator">
                   {recentCaptures.slice(0, 6).map((c) => (
-                    <div key={c.id} className="flex items-center gap-2 px-3 py-2">
-                      <ScoreBadge score={c.matchScore} size="sm" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-text-primary truncate">{c.name}</p>
-                        {c.job && <p className="text-xs text-text-tertiary truncate">{c.job.title}</p>}
-                      </div>
+                    <div key={c.id} className="px-3 py-2.5">
+                      <CandidateIdentityBlock
+                        name={c.name}
+                        headline={c.job?.title ?? undefined}
+                        score={c.matchScore}
+                        size="sm"
+                        showScore
+                      />
                     </div>
                   ))}
                 </div>

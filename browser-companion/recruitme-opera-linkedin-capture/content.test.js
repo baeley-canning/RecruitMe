@@ -248,6 +248,39 @@ describe("RecruitMe content script", () => {
     expect(capped.endsWith("\n") || /line-\d+ contents go here$/.test(capped)).toBe(true);
   });
 
+  it("builds a deep-experience failure message with reason, status, chars, and main size", () => {
+    const { context } = loadContentScriptContext();
+
+    const message = context.buildDeepExperienceFailureMessage(
+      {
+        reason: "too_thin",
+        status: 200,
+        chars: 42,
+        finalUrl: "https://www.linkedin.com/in/jane/details/experience/",
+      },
+      734
+    );
+
+    expect(message).toContain("too_thin");
+    expect(message).toContain("status 200");
+    expect(message).toContain("42 chars");
+    expect(message).toContain("main profile 734 chars");
+    expect(message).toContain("/details/experience/");
+  });
+
+  it("builds too-short diagnostics with char count and detected sections", () => {
+    const { context } = loadContentScriptContext();
+    const message = context.buildTooShortCaptureMessage(
+      { profileText: "Jane\nEngineer", sectionKeys: ["experience"], title: "Jane | LinkedIn" },
+      "final validation"
+    );
+
+    expect(message).toContain("final validation");
+    expect(message).toContain("13 chars");
+    expect(message).toContain("sections=experience");
+    expect(message).toContain("Jane | LinkedIn");
+  });
+
   it("filterProfileLines drops embedded LinkedIn hydration JSON and tracking noise", () => {
     const { context } = loadContentScriptContext();
     const lines = [
@@ -322,6 +355,26 @@ describe("RecruitMe content script", () => {
         expect(`${file} → ${m}`).toBe(`${file} → manualOnlyMode: true`);
       }
     }
+  });
+
+  it("routes popup pending captures through the navigation-aware capture-and-post path", () => {
+    const code = fs.readFileSync(path.join(__dirname, "background.js"), "utf8");
+    const manualHandler = code.slice(code.indexOf('message?.type === "manual-capture-pending"'));
+
+    expect(manualHandler).toContain("capturePendingSessionInTab(tab.id, pending.data, pending.base)");
+    expect(manualHandler).not.toContain("doManualCapture(tab.id, pending.data, pending.base)");
+  });
+
+  it("does not delete in-flight fetch sessions from the job page unmount cleanup", () => {
+    const pagePath = path.resolve(__dirname, "../../src/app/jobs/[id]/page.tsx");
+    const code = fs.readFileSync(pagePath, "utf8");
+    const unmountCleanup = code.slice(
+      code.indexOf("return () => {\n      // Unmount can be a route change"),
+      code.indexOf("const handleSaveSalary")
+    );
+
+    expect(unmountCleanup).toContain("clearInterval(entry.pollInterval)");
+    expect(unmountCleanup).not.toContain("method: \"DELETE\"");
   });
 
   it("rejects a second capture session while the tab is already capturing", () => {

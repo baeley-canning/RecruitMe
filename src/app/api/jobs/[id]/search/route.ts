@@ -50,6 +50,7 @@ import {
 } from "@/lib/provisional-scoring";
 import {
   extractRoleAwareDistinctiveAnchors,
+  extractRoleAwareDistinctiveAnchorGroups,
   extractStrippedComplianceAnchors,
   extractSignalsFromRequirement,
   extractDistinctiveSignalsFromRequirement,
@@ -120,8 +121,9 @@ function looksUnderqualifiedForRole(result: SearchResult, parsedRole: ParsedRole
 }
 
 function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole, profileText?: string | null, candidateLocation?: string | null) {
-  const terms = extractDistinctiveRequirementTerms(parsedRole);
-  if (terms.length === 0) {
+  const anchorGroups = extractDistinctiveRequirementGroups(parsedRole);
+  const anchorTerms = extractAnchorRequirementTerms(parsedRole);
+  if (anchorGroups.length === 0 && anchorTerms.length === 0) {
     // No distinctive technical anchors. Try the hybrid-role compliance
     // fallback FIRST: a "Technology and Solution Support Manager" role has
     // ISMS/ISO 27001 stripped by extractRoleAwareDistinctiveAnchors so it
@@ -155,29 +157,23 @@ function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole,
   }
 
   const text = candidateSearchText(result, profileText, candidateLocation);
-  const anchorTerms = extractAnchorRequirementTerms(parsedRole);
-
-  // Re-audit found this gate was using anchorTerms EXCLUSIVELY when any were
-  // present, ignoring the distinctive set entirely. Effect: a POWER role's
-  // legacy anchors are only [SCADA, RTU] (RARE_ANCHOR_PATTERNS is narrow) so
-  // a real Mercury / Vector field-service engineer with substation +
-  // commissioning + HV + metering experience would fail the gate because
-  // none of those terms are in the legacy list. Now we UNION the two sets
-  // so any legitimate domain anchor — legacy OR distinctive — passes.
-  // Also expand each anchor through requirement-signals so candidates
-  // writing the long form ("programmable logic controller", "remote
-  // terminal unit", "information security management system") are
-  // recognised even when the short token isn't in their text.
-  const combinedAnchors = new Set<string>([...anchorTerms, ...terms]);
   const candidateSignals = new Set(
     extractSignalsFromRequirement(text).map((s) => s.toLowerCase()),
   );
-  return [...combinedAnchors].some((anchor) => {
-    const lower = anchor.toLowerCase();
-    if (candidateSignals.has(lower)) return true;
-    // Fall back to the original direct-match for any anchor that isn't an
-    // alias-table entry (e.g. AI-generated anchor_terms).
-    return textHasTerm(text, anchor);
+
+  // Multi-anchor specialist roles are conjunctive at the group level:
+  // C++ alone must not satisfy a C++ + Sybase role. Each group can still
+  // contain tight aliases/domain peers (e.g. SCADA/RTU/metering).
+  const groups = anchorGroups.length > 0
+    ? anchorGroups
+    : anchorTerms.map((anchor) => [anchor]);
+
+  return groups.every((group) => {
+    return group.some((anchor) => {
+      const lower = anchor.toLowerCase();
+      if (candidateSignals.has(lower)) return true;
+      return textHasTerm(text, anchor);
+    });
   });
 }
 
@@ -221,6 +217,17 @@ function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
   // just don't gate. Pure compliance roles ("ISMS Lead", "CISO") keep the
   // full distinctive set including ISMS / ISO 27001.
   return extractRoleAwareDistinctiveAnchors({
+    title: parsedRole.title,
+    requirements: [
+      ...(parsedRole.must_haves ?? []),
+      ...(parsedRole.skills_required ?? []),
+      ...(parsedRole.knockout_criteria ?? []),
+    ],
+  });
+}
+
+function extractDistinctiveRequirementGroups(parsedRole: ParsedRole): string[][] {
+  return extractRoleAwareDistinctiveAnchorGroups({
     title: parsedRole.title,
     requirements: [
       ...(parsedRole.must_haves ?? []),
@@ -811,9 +818,9 @@ async function runSearchBackground(args: {
     const seenUrls = new Set<string>();
     const allRaw: SearchResult[] = [];
     // URLs found via the scarce-skill adjacent-skill fallback (e.g. SQL Server DBA
-    // found when searching for a Sybase role). These candidates do not carry the
-    // rare original term, so they must bypass the specialist source gate — they were
-    // explicitly retrieved because of the skill substitution, not by accident.
+    // found when searching for a Sybase role). They are tracked for diagnostics only;
+    // adjacent candidates still have to pass the same source gate and score cutoff
+    // as every other specialist result.
     const scarceSkillFallbackUrls = new Set<string>();
 
     // ── Phase 1a: PDL bulk fetch (not paginated — returns full profiles) ──────
@@ -1278,12 +1285,11 @@ async function runSearchBackground(args: {
           return false;
         }
         const profileText = poolEntry?.profileText ?? r.fullText ?? null;
-        const isFallbackCandidate = scarceSkillFallbackUrls.has(normaliseLinkedInUrl(r.linkedinUrl));
-        if (!isFallbackCandidate && !hasSpecialistSourceSignal(r, parsedRole, profileText, loc || null)) {
+        if (!hasSpecialistSourceSignal(r, parsedRole, profileText, loc || null)) {
           skippedSourceGate++;
           return false;
         }
-        if (!isFallbackCandidate && !poolEntry && !r.fullText && fetchPriorityScore < 44) {
+        if (!poolEntry && !r.fullText && fetchPriorityScore < 44) {
           skippedSourceGate++;
           return false;
         }
@@ -1447,13 +1453,8 @@ async function runSearchBackground(args: {
         // Gate 2 — score threshold for specialist roles.
         //   Full-profile: 45 (Claude has all the info; low score is a real "no")
         //   Snippet:      30 (provisional scores are conservative; same as floor)
-        // Fallback candidates bypass this gate — they were retrieved as adjacent-skill
-        // substitutes and their provisional score will naturally be lower because they
-        // don't carry the exact rare term. Claude scoring after fetch will provide the
-        // real signal.
-        const isFallback = scarceSkillFallbackUrls.has(normUrl);
         const scoreCutoff = hasFullProfile ? SCORE_CUTOFF_FULL_PROFILE : SCORE_CUTOFF_SNIPPET;
-        if (!isFallback && specialistRole && matchScore !== null && matchScore < scoreCutoff) {
+        if (specialistRole && matchScore !== null && matchScore < scoreCutoff) {
           skippedScore++;
           continue;
         }

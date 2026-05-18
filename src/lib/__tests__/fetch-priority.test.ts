@@ -27,6 +27,7 @@ const role: ParsedRole = {
   search_queries: ["C++ Sybase developer Wellington"],
   google_queries: [],
   synonym_titles: ["Software Engineer"],
+  anchor_terms: ["C++", "Sybase"],
   explicitly_stated: [],
   strongly_inferred: [],
   search_expansion: [],
@@ -70,6 +71,43 @@ describe("computeFetchPriority", () => {
 
     expect(priority.score).toBeLessThan(45);
     expect(priority.reason.risks.join(" ")).toMatch(/Junior|Few must-have/i);
+  });
+
+  it("does not use matchedQuery as candidate evidence", () => {
+    const priority = computeFetchPriority({
+      parsedRole: role,
+      candidateLocation: "Wellington, New Zealand",
+      result: {
+        name: "Query Only",
+        headline: "Enterprise Software Developer",
+        location: "Wellington, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/query-only/",
+        snippet: "Experienced enterprise developer with government delivery background.",
+        matchedQuery: "C++ Sybase Linux developer Wellington",
+        source: "serpapi",
+      },
+    });
+
+    expect(priority.reason.signals.join(" ")).not.toMatch(/C\+\+|Sybase|high-intent query/i);
+    expect(priority.reason.matchedTerms).not.toEqual(expect.arrayContaining(["c++", "sybase", "linux"]));
+    expect(priority.score).toBeLessThan(65);
+  });
+
+  it("does not let matchedQuery-only anchor text erase specialist risk", () => {
+    const priority = computeFetchPriority({
+      parsedRole: role,
+      result: {
+        name: "Matched Query Only",
+        headline: "Senior Software Engineer",
+        location: "",
+        linkedinUrl: "https://www.linkedin.com/in/matched-query-only/",
+        snippet: "Builds React and TypeScript applications.",
+        matchedQuery: "C++ Sybase",
+        source: "serpapi",
+      },
+    });
+
+    expect(priority.reason.risks.join(" ")).toMatch(/Missing 2 of 2 anchor terms|Few must-have/i);
   });
 
   it("boosts existing captured profiles because no LinkedIn fetch is needed", () => {

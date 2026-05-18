@@ -8,8 +8,8 @@
     "https://www.linkedin.com/*",
     "https://*.up.railway.app/*",
     "https://recruitme.railway.app/*",
-    "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*"
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

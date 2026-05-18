@@ -762,7 +762,9 @@ async function getActiveLinkedInTab() {
   return tab;
 }
 
-// Manual capture (from popup button) — synchronous flow so popup gets real-time result.
+// Legacy manual capture helper kept for non-session callers. Pending-session
+// manual captures use capturePendingSessionInTab so they get the same
+// navigation-aware /details/experience reliability path as auto-captures.
 async function doManualCapture(tabId, pending, preferredBase) {
   const capture = await sendMessageToTab(tabId, { type: "capture-profile" });
   return requestRecruitMe(
@@ -1155,12 +1157,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!pending.data.pending) {
         throw new Error("No pending RecruitMe fetch matches this LinkedIn profile");
       }
-      await doManualCapture(tab.id, pending.data, pending.base);
+      await capturePendingSessionInTab(tab.id, pending.data, pending.base);
       const candidateName = pending.data.candidateName || "Profile";
-      await notifyCaptureDone(candidateName);
-      return candidateName;
+      return { candidateName, status: "started" };
     })()
-      .then((candidateName) => sendResponse({ ok: true, candidateName }))
+      .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

@@ -19,7 +19,7 @@ import { prisma } from "./db";
 import { hasFullCandidateProfile } from "./candidate-profile";
 import { normaliseLinkedInUrl } from "./linkedin";
 import {
-  extractRoleAwareDistinctiveAnchors,
+  extractRoleAwareDistinctiveAnchorGroups,
   extractSignalsFromRequirement,
   signalMatchesText,
 } from "./requirement-signals";
@@ -237,6 +237,7 @@ export async function buildTalentPoolMap(
 // without burning the API budget.
 
 export const POOL_SEARCH_DEFAULT_SHORTLIST = 30;
+const POOL_SEARCH_RARE_ANCHOR_EXTRA_LIMIT = 2000;
 
 export interface TalentPoolSearchHit {
   candidateId: string;
@@ -294,6 +295,20 @@ function looksJuniorOnSeniorRole(headline: string | null, parsedRole: ParsedRole
   return /^(junior|graduate|intern|internship|trainee|student|entry.?level|bootcamp|in training|seeking entry)/i.test(titleOnly);
 }
 
+function matchesEveryAnchorGroup(haystack: string, anchorGroups: string[][]): { matchedAnchors: string[]; matchedGroupCount: number } {
+  const matchedAnchors: string[] = [];
+  let matchedGroupCount = 0;
+
+  for (const group of anchorGroups) {
+    const matched = group.find((anchor) => signalMatchesText(haystack, anchor));
+    if (!matched) return { matchedAnchors, matchedGroupCount };
+    matchedAnchors.push(matched.toLowerCase());
+    matchedGroupCount++;
+  }
+
+  return { matchedAnchors, matchedGroupCount };
+}
+
 export async function searchTalentPoolForRole(args: {
   parsedRole: ParsedRole;
   job: { isRemote: boolean };
@@ -343,7 +358,17 @@ export async function searchTalentPoolForRole(args: {
   // (b) the realistic per-org pool size (~200-500 unique candidates per
   // the data-model audit) to keep this cheap. If a tenant outgrows that,
   // add a candidate full-text search index and refactor the pre-rank step.
-  const rows = await prisma.candidate.findMany({
+  const roleAnchorGroups = extractRoleAwareDistinctiveAnchorGroups({
+    title: parsedRole.title,
+    requirements: [
+      ...(parsedRole.must_haves ?? []),
+      ...(parsedRole.skills_required ?? []),
+      ...(parsedRole.knockout_criteria ?? []),
+    ],
+  });
+  const flattenedRoleAnchors = [...new Set(roleAnchorGroups.flat())];
+
+  const baseRows = await prisma.candidate.findMany({
     where: {
       profileText: { not: null },
       ...orgFilter,
@@ -367,6 +392,40 @@ export async function searchTalentPoolForRole(args: {
     // this need a different strategy (full-text index / vector search).
     take: 2000,
   });
+  const rowsById = new Map<string, typeof baseRows[number]>();
+  for (const row of baseRows) rowsById.set(row.id, row);
+
+  // Rare anchors can sit outside the newest-2000 window in older library
+  // imports. For specialist roles, add a targeted older-pool pass so legacy
+  // C++/Sybase/SCADA profiles are not invisible purely because they are old.
+  if (flattenedRoleAnchors.length > 0) {
+    const anchorFilter = {
+      OR: flattenedRoleAnchors.flatMap((anchor) => [
+        { profileText: { contains: anchor } },
+        { headline: { contains: anchor } },
+      ]),
+    };
+    const anchorRows = await prisma.candidate.findMany({
+      where: {
+        profileText: { not: null },
+        AND: [orgFilter, anchorFilter],
+      },
+      select: {
+        id: true,
+        name: true,
+        headline: true,
+        location: true,
+        linkedinUrl: true,
+        profileText: true,
+        profileCapturedAt: true,
+        createdAt: true,
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: POOL_SEARCH_RARE_ANCHOR_EXTRA_LIMIT,
+    });
+    for (const row of anchorRows) rowsById.set(row.id, row);
+  }
+  const rows = [...rowsById.values()];
 
   const examined = rows.length;
 
@@ -405,18 +464,7 @@ export async function searchTalentPoolForRole(args: {
     if (newAge > priorAge) byUrl.set(key, candidate);
   }
 
-  // Build the role anchor set ONCE (role-aware: hybrid IT-ops roles strip
-  // ISMS / ISO 27001 from the gate; SCADA-only roles benefit from
-  // domain-group expansion to substation/HV/metering).
-  const roleAnchors = extractRoleAwareDistinctiveAnchors({
-    title: parsedRole.title,
-    requirements: [
-      ...(parsedRole.must_haves ?? []),
-      ...(parsedRole.skills_required ?? []),
-      ...(parsedRole.knockout_criteria ?? []),
-    ],
-  }).map((a) => a.toLowerCase());
-  const isSpecialistRole = roleAnchors.length > 0;
+  const isSpecialistRole = roleAnchorGroups.length > 0;
 
   // Build the must-have signal set for non-specialist signal density.
   const mustHaveSignals = new Set<string>();
@@ -443,16 +491,11 @@ export async function searchTalentPoolForRole(args: {
     if (looksJuniorOnSeniorRole(candidate.headline, parsedRole)) continue;
 
     const haystack = buildPoolHaystack(candidate);
-    const matchedAnchors: string[] = [];
-    let signalDensity = 0;
-    for (const anchor of roleAnchors) {
-      if (signalMatchesText(haystack, anchor)) {
-        matchedAnchors.push(anchor);
-        signalDensity++;
-      }
-    }
+    const groupMatch = matchesEveryAnchorGroup(haystack, roleAnchorGroups);
+    const matchedAnchors = groupMatch.matchedAnchors;
+    let signalDensity = groupMatch.matchedGroupCount;
 
-    if (isSpecialistRole && matchedAnchors.length === 0) continue;
+    if (isSpecialistRole && groupMatch.matchedGroupCount < roleAnchorGroups.length) continue;
 
     if (!isSpecialistRole) {
       // Non-specialist roles: rank by must-have signal density so the

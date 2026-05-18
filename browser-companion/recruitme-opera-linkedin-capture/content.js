@@ -1183,7 +1183,7 @@ async function captureProfile() {
 
   const finalize = (cap) => {
     if (cap.profileText.length < 200) {
-      throw new Error("Captured profile text did not contain enough usable profile text");
+      throw new Error(buildTooShortCaptureMessage(cap, "final validation"));
     }
     cap.captureMeta = {
       capturedAt: new Date().toISOString(),
@@ -1369,6 +1369,7 @@ function clearNavCaptureState() {
 // + re-parse so extractLinesFromDetachedDocument's destructive cleanup
 // (script/style/code removal) doesn't mutate the page the recruiter sees.
 function extractExperienceFromLiveDocument() {
+  const meta = { reason: "ok", chars: 0, status: 200, finalUrl: location.href.replace(/[?#].*$/, "") };
   let lines = [];
   try {
     const html = document.documentElement.outerHTML;
@@ -1376,7 +1377,8 @@ function extractExperienceFromLiveDocument() {
     lines = extractLinesFromDetachedDocument(doc);
   } catch (e) {
     console.warn("[RecruitMe] extractExperienceFromLiveDocument failed:", e?.message || e);
-    return "";
+    meta.reason = "extract_failed";
+    return { text: "", meta };
   }
   while (lines.length > 0 && /^experience$/i.test(lines[0])) lines.shift();
 
@@ -1392,8 +1394,32 @@ function extractExperienceFromLiveDocument() {
     useful.push(line);
   }
 
-  if (useful.length < 2 || useful.join("\n").length < 80) return "";
-  return capSectionText(`Experience\n${useful.join("\n")}`);
+  const usefulText = useful.join("\n");
+  meta.chars = usefulText.length;
+  if (useful.length < 2 || usefulText.length < 80) {
+    meta.reason = "too_thin";
+    return { text: "", meta };
+  }
+  const text = capSectionText(`Experience\n${usefulText}`);
+  meta.chars = text.length;
+  return { text, meta };
+}
+
+function buildDeepExperienceFailureMessage(meta = {}, mainChars = 0) {
+  const reason = meta.reason || "unknown";
+  const status = meta.status ? `status ${meta.status}` : "no HTTP status";
+  const chars = Number.isFinite(meta.chars) ? meta.chars : 0;
+  const finalUrl = meta.finalUrl ? ` finalUrl=${String(meta.finalUrl).slice(0, 160)}` : "";
+  return `LinkedIn experience details capture failed (${reason}, ${status}, ${chars} chars, main profile ${mainChars} chars).${finalUrl}`;
+}
+
+function buildTooShortCaptureMessage(capture, context = "final") {
+  const chars = capture?.profileText?.length ?? 0;
+  const sections = Array.isArray(capture?.sectionKeys) && capture.sectionKeys.length
+    ? capture.sectionKeys.join(",")
+    : "none";
+  const title = capture?.title ? ` title=${String(capture.title).slice(0, 120)}` : "";
+  return `Captured profile text was too short during ${context} (${chars} chars, sections=${sections}). Reload LinkedIn, confirm you are signed in, and try again.${title}`;
 }
 
 // Light scroll helper used on the details page only — humanlike enough to
@@ -1491,6 +1517,7 @@ async function captureWithOptionalDeepNavigation(sessionId, serverBase, expected
         startUrl, detailsUrl,
         mainCapture: summarizeMainCaptureForState(capture, mainChars),
         deepText: null,
+        deepMeta: null,
         stage: "navigating_to_details",
         startedAt: Date.now(),
       });
@@ -1522,7 +1549,7 @@ async function captureWithOptionalDeepNavigation(sessionId, serverBase, expected
   }
 
   if (finalCapture.profileText.length < 200) {
-    throw new Error("Captured profile text did not contain enough usable profile text");
+    throw new Error(buildTooShortCaptureMessage(finalCapture, "navigation-aware inline validation"));
   }
 
   finalCapture.captureMeta = {
@@ -1566,15 +1593,17 @@ async function resumeNavigationCaptureIfNeeded() {
       await sleep(800);
       await scrollDetailsPage();
 
-      const deepText = extractExperienceFromLiveDocument();
+      const { text: deepText, meta: deepMeta } = extractExperienceFromLiveDocument();
       console.log("[RecruitMe] resume: details extraction done", {
         chars: deepText.length,
+        reason: deepMeta.reason,
         firstLine: deepText.split("\n").slice(0, 2).join(" | ").slice(0, 200),
       });
 
       await writeNavCaptureState({
         ...state,
         deepText,
+        deepMeta,
         stage: "details_done_navigating_back",
       });
 
@@ -1586,8 +1615,14 @@ async function resumeNavigationCaptureIfNeeded() {
     } catch (err) {
       console.warn("[RecruitMe] resume details step failed:", err?.message || err);
       // Fall through: navigate back with no deepText. Finalize will still
-      // POST main-only rather than dropping the capture entirely.
-      await writeNavCaptureState({ ...state, deepText: null, stage: "details_done_navigating_back" });
+      // report the deep failure from the root page rather than silently
+      // treating a main-only fallback as success.
+      await writeNavCaptureState({
+        ...state,
+        deepText: null,
+        deepMeta: { reason: "details_step_failed", status: 0, chars: 0, finalUrl: location.href.replace(/[?#].*$/, "") },
+        stage: "details_done_navigating_back",
+      });
       try { location.assign(state.startUrl); } catch { /* unloading */ }
     }
     return;
@@ -1607,12 +1642,50 @@ async function resumeNavigationCaptureIfNeeded() {
       let finalText = mainCap.profileText;
       let mergeMode = "skip";
       let charsAdded = 0;
+      const deepMeta = state.deepMeta || {
+        reason: state.deepText ? "ok" : "empty",
+        status: state.deepText ? 200 : 0,
+        chars: state.deepText?.length || 0,
+        finalUrl: state.detailsUrl,
+      };
 
-      if (state.deepText && state.deepText.length > 0) {
-        const merged = mergeExperienceSection(mainCap, state.deepText);
-        finalText = merged.capture.profileText;
-        mergeMode = merged.mode;
-        charsAdded = merged.charsAdded;
+      if (!state.deepText) {
+        const failure = buildDeepExperienceFailureMessage(deepMeta, mainCap.profileText.length).slice(0, 500);
+        console.warn("[RecruitMe] resume: details capture failed; reporting session error", {
+          failure,
+          deepMeta,
+          mainChars: mainCap.profileText.length,
+        });
+        await sendToServiceWorker(
+          { type: "submit-capture-error", sessionId: state.sessionId, error: failure, serverBase: state.serverBase },
+          15_000,
+        ).catch(() => {});
+        await clearNavCaptureState();
+        return;
+      }
+
+      const merged = mergeExperienceSection(mainCap, state.deepText);
+      finalText = merged.capture.profileText;
+      mergeMode = merged.mode;
+      charsAdded = merged.charsAdded;
+
+      if (mergeMode === "skip-too-small") {
+        const failure = buildDeepExperienceFailureMessage(
+          { ...deepMeta, reason: "merge_skip_too_small", chars: state.deepText.length },
+          mainCap.profileText.length
+        ).slice(0, 500);
+        console.warn("[RecruitMe] resume: details capture too small after merge; reporting session error", {
+          failure,
+          deepMeta,
+          mainChars: mainCap.profileText.length,
+          deepChars: state.deepText.length,
+        });
+        await sendToServiceWorker(
+          { type: "submit-capture-error", sessionId: state.sessionId, error: failure, serverBase: state.serverBase },
+          15_000,
+        ).catch(() => {});
+        await clearNavCaptureState();
+        return;
       }
 
       const captureMeta = {
@@ -1622,10 +1695,10 @@ async function resumeNavigationCaptureIfNeeded() {
         sections: [{
           key: "experience",
           fetched: true,
-          status: 200,
-          finalUrl: state.detailsUrl,
-          fetchOutcome: state.deepText ? "ok" : "empty",
-          deepChars: state.deepText?.length || 0,
+          status: deepMeta.status ?? 200,
+          finalUrl: deepMeta.finalUrl || state.detailsUrl,
+          fetchOutcome: deepMeta.reason || "ok",
+          deepChars: deepMeta.chars ?? state.deepText.length,
           mergeMode,
           charsAdded,
         }],
@@ -2528,7 +2601,7 @@ async function handleAddToJobClick(button, linkedinUrl, serverBase) {
   try {
     const capture = await captureProfile();
     if (!capture?.profileText || capture.profileText.length < 100) {
-      throw new Error("Profile text was too short to import.");
+      throw new Error(buildTooShortCaptureMessage(capture, "add-to-job import"));
     }
     setStatus(`Adding to ${jobTitle}…`);
     const res = await sendToServiceWorker(

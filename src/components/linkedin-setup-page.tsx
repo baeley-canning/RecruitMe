@@ -5,8 +5,17 @@ import Link from "next/link";
 import { Copy, Check, Download, Settings, Zap, ArrowRight, FolderOpen } from "lucide-react";
 
 interface ElectronBridge {
-  prepareExtension?: () => Promise<{ ok: boolean; path?: string | null; browser?: string | null; error?: string }>;
+  prepareExtension?: (options?: { browserId?: string }) => Promise<{ ok: boolean; path?: string | null; browser?: string | null; error?: string }>;
 }
+
+const BROWSER_STORAGE_KEY = "recruitme.linkedinSetup.browserId";
+const BROWSERS = [
+  { id: "chrome", label: "Google Chrome" },
+  { id: "opera", label: "Opera" },
+  { id: "opera-gx", label: "Opera GX" },
+  { id: "edge", label: "Microsoft Edge" },
+  { id: "brave", label: "Brave" },
+] as const;
 
 function getElectronBridge(): ElectronBridge | null {
   if (typeof window === "undefined") return null;
@@ -17,11 +26,16 @@ export function LinkedInSetupPage() {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [desktopReady, setDesktopReady] = useState(false);
+  const [browserId, setBrowserId] = useState<(typeof BROWSERS)[number]["id"]>("chrome");
   const [prepareStatus, setPrepareStatus] = useState<{ tone: "ok" | "error"; message: string } | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
     setDesktopReady(typeof getElectronBridge()?.prepareExtension === "function");
+    const storedBrowserId = window.localStorage.getItem(BROWSER_STORAGE_KEY);
+    if (BROWSERS.some((browser) => browser.id === storedBrowserId)) {
+      setBrowserId(storedBrowserId as (typeof BROWSERS)[number]["id"]);
+    }
   }, []);
 
   async function handleCopyOrigin() {
@@ -39,7 +53,8 @@ export function LinkedInSetupPage() {
       return;
     }
 
-    const result = await electron.prepareExtension();
+    window.localStorage.setItem(BROWSER_STORAGE_KEY, browserId);
+    const result = await electron.prepareExtension({ browserId });
     if (!result.ok) {
       setPrepareStatus({ tone: "error", message: result.error || "Could not prepare the extension folder." });
       return;
@@ -47,7 +62,7 @@ export function LinkedInSetupPage() {
 
     setPrepareStatus({
       tone: "ok",
-      message: `Extension folder ready: ${result.path || "opened"}. Use Load unpacked once, then hit Reload here after future updates.`,
+      message: `Extension folder ready: ${result.path || "opened"}. ${result.browser ? `Opened ${result.browser}. ` : ""}Use Load unpacked once, then hit Reload here after future updates.`,
     });
   }
 
@@ -73,6 +88,20 @@ export function LinkedInSetupPage() {
           </div>
         </div>
         <div className="px-5 py-5 space-y-4">
+          {desktopReady && (
+            <label className="block space-y-1.5">
+              <span className="text-md font-medium text-text-primary">Browser for automatic LinkedIn tabs</span>
+              <select
+                value={browserId}
+                onChange={(event) => setBrowserId(event.target.value as (typeof BROWSERS)[number]["id"])}
+                className="w-full bg-surface-sunken border border-separator rounded px-3 py-2 text-md text-text-primary"
+              >
+                {BROWSERS.map((browser) => (
+                  <option key={browser.id} value={browser.id}>{browser.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
           {desktopReady ? (
             <button
               type="button"
@@ -98,7 +127,7 @@ export function LinkedInSetupPage() {
             </p>
           )}
           <div className="space-y-2 text-md text-text-secondary">
-            <p className="font-medium text-text-primary">Load it into Chrome, Opera, Edge, or another Chromium browser:</p>
+            <p className="font-medium text-text-primary">Load it into the same Chromium browser you selected above:</p>
             <ol className="space-y-1.5 list-decimal list-inside">
               <li>{desktopReady ? "Use the folder RecruitMe just opened" : "Unzip the downloaded file"}</li>
               <li>Go to <code className="bg-surface-sunken px-1.5 py-0.5 rounded text-xs text-text-primary font-mono">chrome://extensions</code> or your browser&apos;s extensions page</li>
@@ -121,7 +150,7 @@ export function LinkedInSetupPage() {
         </div>
         <div className="px-5 py-5 space-y-3">
           <p className="text-md text-text-secondary">
-            Click the extension icon in your browser toolbar. Set the server URL to:
+            Open the extension settings from your browser toolbar. Set the RecruitMe server URL to:
           </p>
           <div className="flex items-center gap-3 flex-wrap">
             <code className="flex-1 bg-surface-sunken px-3 py-2 rounded text-md text-text-primary font-mono min-w-0 break-all border border-separator">
@@ -136,7 +165,7 @@ export function LinkedInSetupPage() {
             </button>
           </div>
           <p className="text-md text-text-tertiary">
-            The popup only needs your RecruitMe server URL. Manual capture reads the pending job from RecruitMe automatically.
+            Enter your RecruitMe username and password, then save and test the connection. The extension stores these settings locally in the browser and uses them to call your RecruitMe server.
           </p>
         </div>
       </div>
@@ -168,9 +197,9 @@ export function LinkedInSetupPage() {
       </div>
 
       <div className="bg-success-subtle border border-separator rounded-md px-5 py-4">
-        <p className="text-md font-semibold text-success">RecruitMe must be open in the same browser</p>
+        <p className="text-md font-semibold text-success">Keep one browser contract</p>
         <p className="text-md text-text-secondary mt-1">
-          For desktop auto-fetch, keep the extension loaded in a supported browser. RecruitMe talks to the extension through your server URL, so the app does not need to be open in that browser tab.
+          For desktop auto-fetch, keep the extension loaded in the browser selected during setup. The extension can talk to desktop RecruitMe on whatever localhost port the app chose, but the server URL in extension settings must exactly match this page&apos;s URL.
         </p>
       </div>
     </div>

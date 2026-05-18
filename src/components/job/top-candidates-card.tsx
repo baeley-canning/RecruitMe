@@ -1,7 +1,7 @@
 "use client";
 
 import { Star, ChevronRight, TrendingDown } from "lucide-react";
-import { ScoreBadge } from "@/components/score-badge";
+import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
 
 interface Candidate {
   id: string;
@@ -52,21 +52,16 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
       <div className="divide-y divide-separator">
         {top.map((c) => (
           <div key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-surface-hover transition-colors">
-            {/* Score badge */}
-            <div className="flex-shrink-0">
-              <ScoreBadge score={c.matchScore} size="sm" />
-            </div>
-
-            {/* Info */}
-            <div className="flex-1 min-w-0">
-              <p className="text-md font-medium text-text-primary truncate">{c.name}</p>
-              {c.headline && (
-                <p className="text-xs text-text-secondary truncate">{c.headline}</p>
-              )}
-              {c.location && (
-                <p className="text-xs text-text-tertiary truncate">{c.location}</p>
-              )}
-            </div>
+            {/* Identity block — consistent with all other candidate views */}
+            <CandidateIdentityBlock
+              name={c.name}
+              headline={c.headline}
+              location={c.location}
+              score={c.matchScore}
+              size="sm"
+              showScore
+              className="flex-1 min-w-0"
+            />
 
             {/* Actions */}
             <div className="flex items-center gap-2 flex-shrink-0">

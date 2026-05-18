@@ -4,7 +4,6 @@ import { use, useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  MapPin,
   FileText,
   Upload,
   Trash2,
@@ -17,11 +16,20 @@ import {
   X,
   StickyNote,
   AlertTriangle,
+  Phone,
+  Globe,
+  DollarSign,
+  Clock,
+  CalendarCheck,
+  Shield,
+  Heart,
 } from "lucide-react";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, timeAgo, safeParseJson } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
 import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
+import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { LinkedInIcon } from "@/components/candidate/icons";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { confirm } from "@/components/ui/confirm-dialog";
@@ -43,15 +51,28 @@ interface OtherJob {
   status: string;
 }
 
+interface ScreeningData {
+  availability?: string;
+  salaryExpectation?: string;
+  visaStatus?: string;
+  noticePeriod?: string;
+  motivations?: string;
+  notes?: string;
+  screenedAt?: string;
+}
+
 interface CandidateDetail {
   id: string;
   name: string;
   headline: string | null;
   location: string | null;
+  phone: string | null;
   linkedinUrl: string | null;
+  jobAdderUrl: string | null;
   profileText: string | null;
   matchScore: number | null;
   notes: string | null;
+  screeningData: string | null;
   source: string;
   status: string;
   profileCapturedAt: string | null;
@@ -63,29 +84,49 @@ interface CandidateDetail {
   otherJobs: OtherJob[];
 }
 
-// Score tier styling for the detail page — token-only.
-// Bucketing is delegated to the canonical scoreTier helper (80/65/50 for
-// match scores). This page needs both a text-colour AND a progress-bar fill
-// colour per tier, so we keep a small mapping here rather than routing
-// through scoreTierColor (which returns combined bg+text classes for badges).
 const TIER_STYLE: Record<ScoreTier, { text: string; fill: string; label: string }> = {
-  strong: { text: "text-success",        fill: "bg-success",        label: "Strong" },
-  fair:   { text: "text-accent",         fill: "bg-accent",         label: "Good" },
-  weak:   { text: "text-warning",        fill: "bg-warning",        label: "Moderate" },
-  poor:   { text: "text-text-tertiary",  fill: "bg-text-tertiary",  label: "Weak" },
+  strong: { text: "text-success",       fill: "bg-success",       label: "Strong match" },
+  fair:   { text: "text-accent",        fill: "bg-accent",        label: "Good match" },
+  weak:   { text: "text-warning",       fill: "bg-warning",       label: "Moderate match" },
+  poor:   { text: "text-text-tertiary", fill: "bg-text-tertiary", label: "Weak match" },
 };
-
 
 function scoreTier(score: number) {
   return TIER_STYLE[canonicalScoreTier(score, "match")];
 }
 
-function parseSkills(headline: string | null): { skills: string[]; rest: string } {
-  if (!headline) return { skills: [], rest: "" };
-  const parts = headline.split("|").map((s) => s.trim()).filter(Boolean);
-  if (parts.length > 1) return { skills: parts, rest: "" };
-  return { skills: [], rest: headline };
-}
+const SOURCE_LABEL: Record<string, string> = {
+  manual: "Added manually",
+  serpapi: "LinkedIn search",
+  pdl: "PDL",
+  extension: "LinkedIn extension",
+  talent_pool: "Talent pool",
+  jobadder_import: "JobAdder import",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  new: "New",
+  reviewing: "Reviewing",
+  shortlisted: "Shortlisted",
+  contacted: "Contacted",
+  interviewing: "Interviewing",
+  offer_sent: "Offer sent",
+  hired: "Hired",
+  declined: "Declined",
+  rejected: "Rejected",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  new:          "bg-surface-hover text-text-secondary",
+  reviewing:    "bg-surface-hover text-text-secondary",
+  shortlisted:  "bg-accent-subtle text-accent",
+  contacted:    "bg-warning-subtle text-warning",
+  interviewing: "bg-warning-subtle text-warning",
+  offer_sent:   "bg-warning-subtle text-warning",
+  hired:        "bg-success-subtle text-success",
+  declined:     "bg-surface-hover text-text-tertiary",
+  rejected:     "bg-surface-hover text-text-tertiary",
+};
 
 function typeLabel(type: string) {
   if (type === "cv") return "CV / Resume";
@@ -95,15 +136,52 @@ function typeLabel(type: string) {
 
 function typeBadgeClass(type: string) {
   if (type === "cv") return "bg-accent-subtle text-accent";
-  if (type === "cover_letter") return "bg-llama-subtle text-llama";
+  if (type === "cover_letter") return "bg-warning-subtle text-warning";
   return "bg-surface-hover text-text-secondary";
 }
 
-function LinkedInIcon({ className }: { className?: string }) {
+// Extract skills and employer from headline.
+// Format: "Title at Company" or "Title | Skill | Skill" or plain headline.
+function parseHeadline(headline: string | null): {
+  title: string | null;
+  employer: string | null;
+  skills: string[];
+  rest: string;
+} {
+  if (!headline) return { title: null, employer: null, skills: [], rest: "" };
+
+  // Pipe-separated skills
+  const pipeParts = headline.split("|").map((s) => s.trim()).filter(Boolean);
+  if (pipeParts.length > 1) {
+    return { title: pipeParts[0] ?? null, employer: null, skills: pipeParts.slice(1), rest: "" };
+  }
+
+  // "Title at Employer" pattern — cap employer at 60 chars to avoid capturing
+  // qualifiers like "Acme Corp with 10 years" from complex headlines.
+  const atMatch = headline.match(/^(.+?)\s+at\s+(.+)$/i);
+  if (atMatch) {
+    const employer = atMatch[2]?.trim() ?? null;
+    if (employer && employer.length <= 60) {
+      return { title: atMatch[1]?.trim() ?? null, employer, skills: [], rest: "" };
+    }
+  }
+
+  return { title: null, employer: null, skills: [], rest: headline };
+}
+
+function LinkedInBadge({ url }: { url: string | null }) {
+  const display = displayableLinkedinUrl(url);
+  if (!display) return null;
   return (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 23.2 23.227 23.2 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-    </svg>
+    <a
+      href={display}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent transition-colors"
+    >
+      <LinkedInIcon className="w-3.5 h-3.5" />
+      View LinkedIn
+    </a>
   );
 }
 
@@ -188,9 +266,11 @@ function UploadZone({
           const data = await res.json();
           onUploaded(data);
           if (type === "cv") {
-            setNotice(data.scored
-              ? "CV uploaded and scored against this candidate's job."
-              : "CV saved. To score it, open the candidate from a job page where the JD has been parsed.");
+            setNotice(
+              data.scored
+                ? "CV uploaded and scored against this candidate's job."
+                : "CV saved. To score it, open the candidate from a job page where the JD has been parsed.",
+            );
           }
         }
       } catch {
@@ -200,7 +280,7 @@ function UploadZone({
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [candidateId, type, onUploaded]
+    [candidateId, type, onUploaded],
   );
 
   return (
@@ -220,7 +300,7 @@ function UploadZone({
             "inline-flex items-center gap-1.5 h-7 px-3 rounded text-md font-medium cursor-pointer transition-colors",
             uploading
               ? "bg-surface-hover text-text-tertiary cursor-not-allowed"
-              : "bg-accent hover:bg-accent-hover text-white"
+              : "bg-accent hover:bg-accent-hover text-white",
           )}
         >
           {uploading ? (
@@ -241,6 +321,32 @@ function UploadZone({
       <p className="text-xs text-text-tertiary">PDF, Word, or plain text · max 10 MB</p>
       {error && <p className="text-xs text-danger flex items-center gap-1"><X className="w-3 h-3" /> {error}</p>}
       {notice && <p className="text-xs text-text-secondary">{notice}</p>}
+    </div>
+  );
+}
+
+// A single labelled detail row — icon + label + value
+function DetailRow({
+  icon: Icon,
+  label,
+  value,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value?: string | null;
+  children?: React.ReactNode;
+}) {
+  if (!value && !children) return null;
+  return (
+    <div className="flex items-start gap-3 py-2.5 border-b border-separator last:border-0">
+      <div className="flex items-center gap-1.5 w-36 flex-shrink-0 text-xs text-text-tertiary mt-0.5">
+        <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+        <span>{label}</span>
+      </div>
+      <div className="flex-1 min-w-0 text-sm text-text-primary">
+        {children ?? value}
+      </div>
     </div>
   );
 }
@@ -310,14 +416,32 @@ export default function CandidateDetailPage({
     );
   }
 
-  const { skills, rest } = parseSkills(candidate.headline);
-  const initials = candidate.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  const { title, employer, skills, rest } = parseHeadline(candidate.headline);
+  const screening = safeParseJson<ScreeningData>(candidate.screeningData, {});
+  // Only show the "Profile details" card if there's at least one concrete field to display.
+  const hasProfileDetails = !!(
+    employer || title || candidate.phone ||
+    displayableLinkedinUrl(candidate.linkedinUrl) ||
+    candidate.jobAdderUrl ||
+    (!employer && !title && candidate.headline)
+  );
   const score = candidate.matchScore;
   const tier = score !== null ? scoreTier(score) : null;
   const allJobs = [
-    ...(candidate.job ? [{ id: candidate.job.id, title: candidate.job.title, company: candidate.job.company, matchScore: candidate.matchScore, status: candidate.status }] : []),
+    ...(candidate.job
+      ? [{ id: candidate.job.id, title: candidate.job.title, company: candidate.job.company, matchScore: candidate.matchScore, status: candidate.status }]
+      : []),
     ...candidate.otherJobs,
   ];
+  const hasCV = candidate.files.some((f) => f.type === "cv");
+  const hasScreeningData = !!(
+    screening.availability ||
+    screening.salaryExpectation ||
+    screening.visaStatus ||
+    screening.noticePeriod ||
+    screening.motivations ||
+    screening.notes
+  );
 
   return (
     <div className="min-h-screen bg-surface-base">
@@ -332,8 +456,8 @@ export default function CandidateDetailPage({
         </Link>
         <span className="text-text-tertiary">/</span>
         <span className="text-md text-text-primary font-medium truncate">{candidate.name}</span>
-        <Badge className="ml-1 bg-surface-hover text-text-secondary capitalize">
-          {candidate.status.replace(/_/g, " ")}
+        <Badge className={cn("ml-1 capitalize", STATUS_COLOR[candidate.status] ?? "bg-surface-hover text-text-secondary")}>
+          {STATUS_LABEL[candidate.status] ?? candidate.status.replace(/_/g, " ")}
         </Badge>
         <div className="ml-auto flex items-center gap-1.5">
           {displayableLinkedinUrl(candidate.linkedinUrl) && (
@@ -350,58 +474,46 @@ export default function CandidateDetailPage({
         </div>
       </div>
 
-      {/* Body — two columns */}
+      {/* Body */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-          {/* LEFT — candidate header, score, profile, notes */}
+          {/* LEFT — identity, profile details, screening, profile text, notes */}
           <div className="lg:col-span-2 space-y-4">
 
-            {/* Header card: avatar + name + meta + score */}
+            {/* ── Header card ─────────────────────────────────────────────── */}
             <Card>
               <CardBody>
                 <div className="flex items-start gap-4">
-                  {/* Avatar */}
-                  <div className="w-14 h-14 rounded-md bg-surface-hover border border-separator flex items-center justify-center text-text-primary text-lg font-semibold flex-shrink-0">
-                    {initials}
-                  </div>
-                  {/* Identity */}
-                  <div className="flex-1 min-w-0">
-                    <h1 className="text-xl font-semibold text-text-primary truncate">{candidate.name}</h1>
-                    {rest && <p className="text-base text-text-secondary mt-0.5">{rest}</p>}
-                    {skills.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {skills.slice(0, 8).map((skill) => (
-                          <Badge key={skill} className="bg-surface-hover text-text-secondary">
-                            {skill}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex flex-wrap items-center gap-3 mt-2.5 text-xs text-text-tertiary">
-                      {candidate.location && (
-                        <span className="flex items-center gap-1">
-                          <MapPin className="w-3.5 h-3.5" />
-                          {candidate.location}
-                        </span>
-                      )}
-                      <span suppressHydrationWarning>
-                        {candidate.profileCapturedAt
-                          ? `Captured ${timeAgo(new Date(candidate.profileCapturedAt))}`
-                          : `Added ${timeAgo(new Date(candidate.createdAt))}`}
-                      </span>
-                    </div>
-                  </div>
+                  <CandidateIdentityBlock
+                    name={candidate.name}
+                    headline={rest || title || candidate.headline}
+                    location={candidate.location}
+                    phone={candidate.phone}
+                    linkedinUrl={candidate.linkedinUrl}
+                    score={score}
+                    size="lg"
+                    showScore={score !== null}
+                    showPhone={!!candidate.phone}
+                    showLinkedIn={false}
+                    className="flex-1"
+                  />
                 </div>
+
+                {/* Skills tags (from pipe-separated headline) */}
+                {skills.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-separator">
+                    {skills.map((skill) => (
+                      <Badge key={skill} className="bg-surface-hover text-text-secondary">
+                        {skill}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </CardBody>
             </Card>
 
-            {/* "Bede problem" empty-state panel — the candidate was imported
-                (typically from JobAdder) with no CV PDF and no LinkedIn
-                capture, so there's nothing for scoring or screening to read.
-                The panel sits below the header so it's the first thing the
-                recruiter sees, and spells out the two concrete remediation
-                actions. */}
+            {/* ── Empty-state warning ─────────────────────────────────────── */}
             {!candidate.profileText?.trim() && candidate.files.length === 0 && (
               <Card>
                 <CardBody>
@@ -410,20 +522,18 @@ export default function CandidateDetailPage({
                       <AlertTriangle className="w-4 h-4 text-warning" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h2 className="text-md font-semibold text-text-primary">
-                        No CV or profile text yet
-                      </h2>
+                      <h2 className="text-md font-semibold text-text-primary">No CV or profile text yet</h2>
                       <p className="text-base text-text-secondary mt-1 leading-relaxed">
-                        This candidate has no CV or profile text yet. Two options:
+                        Two options:
                       </p>
                       <ul className="mt-2 space-y-1 text-base text-text-secondary leading-relaxed">
                         <li className="flex items-start gap-2">
                           <span className="text-warning font-semibold flex-shrink-0">(a)</span>
-                          <span>upload a CV file below, or</span>
+                          <span>upload a CV file in Documents below, or</span>
                         </li>
                         <li className="flex items-start gap-2">
                           <span className="text-warning font-semibold flex-shrink-0">(b)</span>
-                          <span>paste profile text via &ldquo;Add / edit&rdquo; in the LinkedIn Capture section.</span>
+                          <span>open the candidate from a job page and use &ldquo;Fetch Profile&rdquo; or paste profile text.</span>
                         </li>
                       </ul>
                     </div>
@@ -432,7 +542,84 @@ export default function CandidateDetailPage({
               </Card>
             )}
 
-            {/* Score breakdown */}
+            {/* ── Profile details ─────────────────────────────────────────── */}
+            {hasProfileDetails && <Card>
+              <CardHeader>
+                <h2 className="text-md font-semibold text-text-primary">Profile details</h2>
+              </CardHeader>
+              <CardBody className="py-0">
+                {employer && (
+                  <DetailRow icon={Briefcase} label="Current employer" value={employer} />
+                )}
+                {title && (
+                  <DetailRow icon={Briefcase} label="Current title" value={title} />
+                )}
+                {candidate.phone && (
+                  <DetailRow icon={Phone} label="Phone">
+                    <a href={`tel:${candidate.phone}`} className="text-accent hover:text-accent-hover transition-colors">
+                      {candidate.phone}
+                    </a>
+                  </DetailRow>
+                )}
+                {displayableLinkedinUrl(candidate.linkedinUrl) && (
+                  <DetailRow icon={Globe} label="LinkedIn">
+                    <LinkedInBadge url={candidate.linkedinUrl} />
+                  </DetailRow>
+                )}
+                {candidate.jobAdderUrl && (
+                  <DetailRow icon={Globe} label="JobAdder">
+                    <a
+                      href={candidate.jobAdderUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-accent hover:text-accent-hover transition-colors"
+                    >
+                      Open in JobAdder
+                    </a>
+                  </DetailRow>
+                )}
+                {/* Fallback if no structured fields parsed but headline exists */}
+                {!employer && !title && candidate.headline && (
+                  <DetailRow icon={Briefcase} label="Headline" value={candidate.headline} />
+                )}
+              </CardBody>
+            </Card>}
+
+            {/* ── Screening data ──────────────────────────────────────────── */}
+            {hasScreeningData && (
+              <Card>
+                <CardHeader>
+                  <h2 className="text-md font-semibold text-text-primary">Screening notes</h2>
+                  {screening.screenedAt && (
+                    <span className="ml-auto text-xs text-text-tertiary" suppressHydrationWarning>
+                      Screened {timeAgo(new Date(screening.screenedAt))}
+                    </span>
+                  )}
+                </CardHeader>
+                <CardBody className="py-0">
+                  {screening.salaryExpectation && (
+                    <DetailRow icon={DollarSign} label="Salary expectation" value={screening.salaryExpectation} />
+                  )}
+                  {screening.availability && (
+                    <DetailRow icon={CalendarCheck} label="Availability" value={screening.availability} />
+                  )}
+                  {screening.noticePeriod && (
+                    <DetailRow icon={Clock} label="Notice period" value={screening.noticePeriod} />
+                  )}
+                  {screening.visaStatus && (
+                    <DetailRow icon={Shield} label="Visa / work rights" value={screening.visaStatus} />
+                  )}
+                  {screening.motivations && (
+                    <DetailRow icon={Heart} label="Motivations" value={screening.motivations} />
+                  )}
+                  {screening.notes && (
+                    <DetailRow icon={StickyNote} label="Screening notes" value={screening.notes} />
+                  )}
+                </CardBody>
+              </Card>
+            )}
+
+            {/* ── Match score ─────────────────────────────────────────────── */}
             {tier && score !== null && (
               <Card>
                 <CardHeader className="flex items-center justify-between">
@@ -452,14 +639,18 @@ export default function CandidateDetailPage({
                           style={{ width: `${Math.max(2, Math.min(100, score))}%` }}
                         />
                       </div>
-                      <p className="text-xs text-text-tertiary mt-1.5">Overall fit against current job</p>
+                      <p className="text-xs text-text-tertiary mt-1.5">
+                        {allJobs.length > 0
+                          ? `Score against "${allJobs[0]?.title ?? "current role"}"`
+                          : "Overall fit against current job"}
+                      </p>
                     </div>
                   </div>
                 </CardBody>
               </Card>
             )}
 
-            {/* LinkedIn profile text */}
+            {/* ── LinkedIn profile text ───────────────────────────────────── */}
             {candidate.profileText && (
               <Card>
                 <CardHeader className="flex items-center justify-between">
@@ -479,7 +670,7 @@ export default function CandidateDetailPage({
                   <div
                     className={cn(
                       "text-base text-text-secondary whitespace-pre-wrap leading-relaxed overflow-hidden transition-all duration-300",
-                      profileExpanded ? "max-h-[2000px]" : "max-h-44"
+                      profileExpanded ? "max-h-[2000px]" : "max-h-44",
                     )}
                   >
                     {candidate.profileText}
@@ -501,7 +692,7 @@ export default function CandidateDetailPage({
               </Card>
             )}
 
-            {/* Notes */}
+            {/* ── Notes ──────────────────────────────────────────────────── */}
             <Card>
               <CardHeader className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -509,10 +700,12 @@ export default function CandidateDetailPage({
                   <h2 className="text-md font-semibold text-text-primary">Notes</h2>
                 </div>
                 {notesStatus !== "idle" && (
-                  <span className={cn(
-                    "text-xs flex items-center gap-1",
-                    notesStatus === "saved" ? "text-success" : "text-text-tertiary"
-                  )}>
+                  <span
+                    className={cn(
+                      "text-xs flex items-center gap-1",
+                      notesStatus === "saved" ? "text-success" : "text-text-tertiary",
+                    )}
+                  >
                     {notesStatus === "saving" ? (
                       <><Loader2 className="w-3 h-3 animate-spin" />Saving…</>
                     ) : (
@@ -526,7 +719,7 @@ export default function CandidateDetailPage({
                   value={notes}
                   onChange={(e) => { setNotes(e.target.value); setNotesStatus("idle"); }}
                   onBlur={saveNotes}
-                  rows={5}
+                  rows={4}
                   placeholder="Add notes about this candidate…"
                   className="w-full text-base text-text-primary bg-surface-sunken border border-separator rounded px-3 py-2 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none transition-all"
                 />
@@ -534,10 +727,66 @@ export default function CandidateDetailPage({
             </Card>
           </div>
 
-          {/* RIGHT — activity log: docs + jobs */}
+          {/* RIGHT — contact/meta, documents, jobs */}
           <div className="space-y-4">
 
-            {/* Documents */}
+            {/* ── Contact & meta ──────────────────────────────────────────── */}
+            <Card>
+              <CardHeader>
+                <h2 className="text-md font-semibold text-text-primary">Details</h2>
+              </CardHeader>
+              <CardBody className="space-y-2.5">
+                {candidate.phone && (
+                  <div className="flex items-center gap-2">
+                    <Phone className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+                    <a href={`tel:${candidate.phone}`} className="text-sm text-accent hover:text-accent-hover transition-colors">
+                      {candidate.phone}
+                    </a>
+                  </div>
+                )}
+                {displayableLinkedinUrl(candidate.linkedinUrl) && (
+                  <div className="flex items-center gap-2">
+                    <LinkedInIcon className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+                    <a
+                      href={displayableLinkedinUrl(candidate.linkedinUrl)!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-accent hover:text-accent-hover truncate transition-colors"
+                    >
+                      LinkedIn profile
+                    </a>
+                  </div>
+                )}
+                <div className="pt-1 border-t border-separator space-y-1.5 text-xs text-text-tertiary">
+                  <div className="flex justify-between">
+                    <span>Source</span>
+                    <span className="text-text-secondary">{SOURCE_LABEL[candidate.source] ?? candidate.source}</span>
+                  </div>
+                  {candidate.profileCapturedAt && (
+                    <div className="flex justify-between">
+                      <span>Captured</span>
+                      <span className="text-text-secondary" suppressHydrationWarning>
+                        {timeAgo(new Date(candidate.profileCapturedAt))}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Added</span>
+                    <span className="text-text-secondary" suppressHydrationWarning>
+                      {timeAgo(new Date(candidate.createdAt))}
+                    </span>
+                  </div>
+                  {hasCV && (
+                    <div className="flex justify-between">
+                      <span>CV</span>
+                      <span className="text-success">Uploaded</span>
+                    </div>
+                  )}
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* ── Documents ───────────────────────────────────────────────── */}
             <Card>
               <CardHeader className="flex items-center gap-2">
                 <FileText className="w-3.5 h-3.5 text-text-tertiary" />
@@ -564,7 +813,7 @@ export default function CandidateDetailPage({
               </CardBody>
             </Card>
 
-            {/* Jobs */}
+            {/* ── Jobs ────────────────────────────────────────────────────── */}
             <Card>
               <CardHeader className="flex items-center gap-2">
                 <Briefcase className="w-3.5 h-3.5 text-text-tertiary" />
@@ -592,6 +841,14 @@ export default function CandidateDetailPage({
                         {job.company && (
                           <p className="text-xs text-text-tertiary line-clamp-1">{job.company}</p>
                         )}
+                        <Badge
+                          className={cn(
+                            "mt-1 capitalize text-2xs",
+                            STATUS_COLOR[job.status] ?? "bg-surface-hover text-text-secondary",
+                          )}
+                        >
+                          {STATUS_LABEL[job.status] ?? job.status.replace(/_/g, " ")}
+                        </Badge>
                       </div>
                       {job.matchScore !== null && jobTier && (
                         <span className={cn("text-xs font-medium data-mono flex-shrink-0", jobTier.text)}>

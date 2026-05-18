@@ -385,13 +385,11 @@ export default function JobDetailPage({
   useEffect(() => {
     const ref = activeFetchesRef.current;
     return () => {
-      // Clean up all active sessions and poll intervals on unmount.
+      // Unmount can be a route change, refresh, or React remount while the
+      // extension is still working. Clear local timers only; the server
+      // session is recovered on the next mount via the resume effect above.
       for (const entry of ref.values()) {
         if (entry.pollInterval) clearInterval(entry.pollInterval);
-        void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
-          method: "DELETE",
-          credentials: "include",
-        }).catch(() => {});
       }
       ref.clear();
     };
@@ -670,17 +668,18 @@ export default function JobDetailPage({
     if (!entry || entry.done) return;
     const now = Date.now();
     // Pending = waiting for the extension to claim the session. If nothing
-    // happens for 2 minutes the extension probably isn't running.
-    // Processing = extension is capturing + AI scoring. Allow 5 minutes.
-    const PENDING_LIMIT    = 120_000;  // 2 min
-    const PROCESSING_LIMIT = 300_000;  // 5 min
+    // happens for 3 minutes the extension probably isn't running.
+    // Processing = extension is capturing, possibly navigating to LinkedIn's
+    // /details/experience page, then saving + scoring. Allow 7 minutes.
+    const PENDING_LIMIT    = 180_000;  // 3 min
+    const PROCESSING_LIMIT = 420_000;  // 7 min
     if (entry.lastKnownStatus === "processing") {
       const processingStartedAt = entry.processingStartedAt ?? now;
       if (now - processingStartedAt > PROCESSING_LIMIT) {
         finishFetchRef.current(
           candidateId,
           "error",
-          "Profile reached RecruitMe but AI scoring took too long — refresh the job and re-score if needed."
+          "Capture started but took too long to finish — refresh the job to resume tracking, or re-score if the profile saved."
         );
         return;
       }

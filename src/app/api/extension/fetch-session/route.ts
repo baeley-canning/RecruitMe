@@ -16,6 +16,26 @@ import { verifyAnyAuth, requireJobAccess, verifyExtensionAuth } from "@/lib/sess
 
 // EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
+function canAccessSession(
+  session: Pick<ExtensionCaptureSession, "userId" | "orgId">,
+  auth: { userId: string; orgId: string | null; isOwner: boolean },
+): boolean {
+  if (auth.isOwner) return true;
+  if (session.orgId) return Boolean(auth.orgId && session.orgId === auth.orgId);
+  if (session.userId) return session.userId === auth.userId;
+  return true; // truly legacy/anonymous session; no org/user scope exists to enforce
+}
+
+function publicSessionStatus(session: ExtensionCaptureSession) {
+  return {
+    sessionId: session.sessionId,
+    status: session.status,
+    message: session.message,
+    error: session.error,
+    updatedAt: session.updatedAt,
+  };
+}
+
 const StartSchema = z.object({
   jobId: z.string().min(1),
   candidateId: z.string().min(1),
@@ -77,11 +97,13 @@ export async function GET(req: Request) {
   if (jobId && !sessionId) {
     const auth = await verifyAnyAuth(req);
     if (!auth) return NextResponse.json({ sessions: [] }, { status: 401, headers: extensionCorsHeaders(req) });
+    const { error: jobError } = await requireJobAccess(jobId, auth);
+    if (jobError) return NextResponse.json({ sessions: [] }, { status: 403, headers: extensionCorsHeaders(req) });
     const all = await getSessionQueue();
     const sessions = all.filter((s) =>
       s.jobId === jobId &&
       (s.status === "pending" || s.status === "processing") &&
-      (auth.isOwner || s.orgId === auth.orgId || s.userId === auth.userId)
+      canAccessSession(s, auth)
     );
     return NextResponse.json({ sessions }, { headers: extensionCorsHeaders(req) });
   }
@@ -94,12 +116,11 @@ export async function GET(req: Request) {
 
     // The web UI polls by an unguessable UUID it just created. Allow that token
     // to keep working even if the browser drops auth cookies while LinkedIn is
-    // open; if auth is present, still enforce ownership/org visibility.
+    // open, but redact org/candidate metadata unless the caller is authenticated.
+    // If auth is present, still enforce ownership/org visibility.
     const auth = await verifyAnyAuth(req).catch(() => null);
     if (auth) {
-      const sameUser = !session.userId || session.userId === auth.userId;
-      const sameOrg = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
-      if (!auth.isOwner && !sameUser && !sameOrg) {
+      if (!canAccessSession(session, auth)) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
       }
     }
@@ -115,7 +136,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ ...session, candidate }, { headers: extensionCorsHeaders(req) });
     }
 
-    return NextResponse.json(session, { headers: extensionCorsHeaders(req) });
+    return NextResponse.json(auth ? session : publicSessionStatus(session), { headers: extensionCorsHeaders(req) });
   }
 
   // No sessionId = extension alarm / popup status query.
@@ -130,7 +151,7 @@ export async function GET(req: Request) {
 
   const queue = await getSessionQueue();
   const visible = queue.filter(
-    (s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId)
+    (s) => canAccessSession(s, auth)
   );
   return NextResponse.json(visible.length > 0 ? visible : null, { headers: extensionCorsHeaders(req) });
 }
@@ -154,9 +175,7 @@ export async function PATCH(req: Request) {
   if (!session) return NextResponse.json({ ok: false }, { headers: extensionCorsHeaders(req) });
 
   // Org-scope: only the user/org that created the session can advance it.
-  const sameUser = !session.userId || session.userId === auth.userId;
-  const sameOrg  = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
-  if (!auth.isOwner && !sameUser && !sameOrg) {
+  if (!canAccessSession(session, auth)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
   }
 
@@ -182,9 +201,7 @@ export async function DELETE(req: Request) {
     // Verify the session belongs to this user / org before deleting.
     const session = await findSessionInQueue((s) => s.sessionId === sessionId);
     if (session) {
-      const sameUser = !session.userId || session.userId === auth.userId;
-      const sameOrg  = Boolean(session.orgId && auth.orgId && session.orgId === auth.orgId);
-      if (!auth.isOwner && !sameUser && !sameOrg) {
+      if (!canAccessSession(session, auth)) {
         return NextResponse.json({ cleared: false }, { headers: extensionCorsHeaders(req) });
       }
     }

@@ -224,7 +224,7 @@ capturePendingButton.addEventListener("click", async () => {
     const response = await sendMessage({ type: "manual-capture-pending" });
     setStatus(
       pendingStatus,
-      `Captured and sent ${response.candidateName || "profile"} to RecruitMe.`,
+      `Started capture for ${response.candidateName || "profile"}. Keep this LinkedIn tab open.`,
       "ok"
     );
   } catch (error) {

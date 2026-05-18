@@ -107,7 +107,6 @@ export function computeFetchPriority(args: {
     result.headline,
     candidateLocation ?? result.location,
     result.snippet,
-    result.matchedQuery,
     profileText ?? result.fullText,
   ].filter(Boolean).join("\n");
 
@@ -139,7 +138,7 @@ export function computeFetchPriority(args: {
   signals.push(sourceLabel(result.source));
 
   const roleTerms = titleTerms(parsedRole);
-  const matchedTitleTerms = roleTerms.filter((term) => textHasTerm(`${result.headline} ${result.matchedQuery ?? ""}`, term));
+  const matchedTitleTerms = roleTerms.filter((term) => textHasTerm(`${result.headline}`, term));
   if (matchedTitleTerms.length >= 2) {
     score += 18;
     signals.push(`Role/title terms match: ${matchedTitleTerms.slice(0, 3).join(", ")}`);
@@ -214,18 +213,10 @@ export function computeFetchPriority(args: {
   // Scan full searchable text for US/AU geographic signals even when no explicit location field.
   // Catches "Senior Developer at PNC, Pittsburgh PA" type headlines.
   if (!loc) {
-    const fullText = [result.headline, result.snippet, result.matchedQuery].filter(Boolean).join(" ");
+    const fullText = [result.headline, result.snippet].filter(Boolean).join(" ");
     if (isExplicitlyOverseasLocation(fullText)) {
       score -= 25;
       risks.push("Overseas geographic signal detected in profile text");
-    }
-  }
-
-  if (result.matchedQuery) {
-    const queryMatchesReq = reqTerms.filter((term) => textHasTerm(result.matchedQuery ?? "", term));
-    if (queryMatchesReq.length > 0) {
-      score += 8;
-      signals.push(`Matched a high-intent query: ${result.matchedQuery}`);
     }
   }
 

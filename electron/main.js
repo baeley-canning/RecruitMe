@@ -12,15 +12,26 @@ let mainWindow = null;
 let serverProcess = null;
 let activePort = DEV_PORT;
 
+const SUPPORTED_BROWSER_IDS = new Set(["chrome", "opera", "opera-gx", "edge", "brave"]);
+
 const MAC_BROWSER_CANDIDATES = [
-  { name: "Google Chrome", path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" },
-  { name: "Opera", path: "/Applications/Opera.app/Contents/MacOS/Opera" },
-  { name: "Opera GX", path: "/Applications/Opera GX.app/Contents/MacOS/Opera GX" },
-  { name: "Microsoft Edge", path: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" },
-  { name: "Brave Browser", path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" },
+  { id: "chrome", name: "Google Chrome", path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" },
+  { id: "opera", name: "Opera", path: "/Applications/Opera.app/Contents/MacOS/Opera" },
+  { id: "opera-gx", name: "Opera GX", path: "/Applications/Opera GX.app/Contents/MacOS/Opera GX" },
+  { id: "edge", name: "Microsoft Edge", path: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" },
+  { id: "brave", name: "Brave Browser", path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" },
 ];
 
-const EXTENSION_FILES = ["manifest.json", "background.js", "content.js", "popup.html", "popup.js", "README.md"];
+const EXTENSION_FILES = [
+  "manifest.json",
+  "background.js",
+  "content.js",
+  "popup.html",
+  "popup.js",
+  "options.html",
+  "options.js",
+  "README.md",
+];
 const EXTENSION_RELATIVE_DIR = path.join("browser-companion", "recruitme-opera-linkedin-capture");
 
 function getBundledExtensionDir() {
@@ -51,9 +62,51 @@ function prepareExtensionFolder() {
   return targetDir;
 }
 
-function findSupportedBrowser() {
+function normalizeBrowserId(value) {
+  return typeof value === "string" && SUPPORTED_BROWSER_IDS.has(value) ? value : null;
+}
+
+function browserPreferencePath() {
+  return path.join(app.getPath("userData"), "browser-preference.json");
+}
+
+function readPreferredBrowserId() {
+  try {
+    const raw = fs.readFileSync(browserPreferencePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    return normalizeBrowserId(parsed?.browserId);
+  } catch {
+    return null;
+  }
+}
+
+function writePreferredBrowserId(browserId) {
+  const normalized = normalizeBrowserId(browserId);
+  if (!normalized) return null;
+
+  const userDataPath = app.getPath("userData");
+  fs.mkdirSync(userDataPath, { recursive: true });
+  fs.writeFileSync(
+    browserPreferencePath(),
+    JSON.stringify({ browserId: normalized }, null, 2),
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return normalized;
+}
+
+function preferBrowser(candidates, preferredBrowserId) {
+  const preferred = normalizeBrowserId(preferredBrowserId) ?? readPreferredBrowserId();
+  if (!preferred) return candidates;
+  return [
+    ...candidates.filter((browser) => browser.id === preferred),
+    ...candidates.filter((browser) => browser.id !== preferred),
+  ];
+}
+
+function findSupportedBrowser(preferredBrowserId) {
   if (process.platform === "darwin") {
-    return MAC_BROWSER_CANDIDATES.find((browser) => fs.existsSync(browser.path)) ?? null;
+    return preferBrowser(MAC_BROWSER_CANDIDATES, preferredBrowserId)
+      .find((browser) => fs.existsSync(browser.path)) ?? null;
   }
 
   if (process.platform !== "win32") return null;
@@ -65,13 +118,15 @@ $foundName = $null
 $lad = [Environment]::GetFolderPath('LocalApplicationData')
 $pf  = [Environment]::GetFolderPath('ProgramFiles')
 $pf86= [Environment]::GetFolderPath('ProgramFilesX86')
+$preferred = "${normalizeBrowserId(preferredBrowserId) ?? readPreferredBrowserId() ?? ""}"
 $candidates = @(
-  @{ Name = "Google Chrome"; Paths = @("$pf\\Google\\Chrome\\Application\\chrome.exe", "$pf86\\Google\\Chrome\\Application\\chrome.exe", "$lad\\Google\\Chrome\\Application\\chrome.exe") },
-  @{ Name = "Opera"; Paths = @("$lad\\Programs\\Opera\\launcher.exe", "$lad\\Programs\\Opera\\opera.exe", "$pf\\Opera\\launcher.exe", "$pf86\\Opera\\launcher.exe") },
-  @{ Name = "Opera GX"; Paths = @("$lad\\Programs\\Opera GX\\launcher.exe", "$lad\\Programs\\Opera GX\\opera.exe", "$pf\\Opera GX\\launcher.exe", "$pf86\\Opera GX\\launcher.exe") },
-  @{ Name = "Microsoft Edge"; Paths = @("$pf\\Microsoft\\Edge\\Application\\msedge.exe", "$pf86\\Microsoft\\Edge\\Application\\msedge.exe", "$lad\\Microsoft\\Edge\\Application\\msedge.exe") },
-  @{ Name = "Brave Browser"; Paths = @("$pf\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$pf86\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$lad\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") }
+  @{ Id = "chrome"; Name = "Google Chrome"; Paths = @("$pf\\Google\\Chrome\\Application\\chrome.exe", "$pf86\\Google\\Chrome\\Application\\chrome.exe", "$lad\\Google\\Chrome\\Application\\chrome.exe") },
+  @{ Id = "opera"; Name = "Opera"; Paths = @("$lad\\Programs\\Opera\\launcher.exe", "$lad\\Programs\\Opera\\opera.exe", "$pf\\Opera\\launcher.exe", "$pf86\\Opera\\launcher.exe") },
+  @{ Id = "opera-gx"; Name = "Opera GX"; Paths = @("$lad\\Programs\\Opera GX\\launcher.exe", "$lad\\Programs\\Opera GX\\opera.exe", "$pf\\Opera GX\\launcher.exe", "$pf86\\Opera GX\\launcher.exe") },
+  @{ Id = "edge"; Name = "Microsoft Edge"; Paths = @("$pf\\Microsoft\\Edge\\Application\\msedge.exe", "$pf86\\Microsoft\\Edge\\Application\\msedge.exe", "$lad\\Microsoft\\Edge\\Application\\msedge.exe") },
+  @{ Id = "brave"; Name = "Brave Browser"; Paths = @("$pf\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$pf86\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$lad\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") }
 )
+$candidates = @($candidates | Sort-Object @{ Expression = { if ($_.Id -eq $preferred) { 0 } else { 1 } } })
 foreach ($candidate in $candidates) {
   foreach ($p in $candidate.Paths) {
     if (Test-Path $p) {
@@ -84,11 +139,12 @@ foreach ($candidate in $candidates) {
 }
 if (-not $found) {
   $commands = @(
-    @{ Name = "Google Chrome"; Command = "chrome.exe" },
-    @{ Name = "Microsoft Edge"; Command = "msedge.exe" },
-    @{ Name = "Brave Browser"; Command = "brave.exe" },
-    @{ Name = "Opera"; Command = "opera.exe" }
+    @{ Id = "chrome"; Name = "Google Chrome"; Command = "chrome.exe" },
+    @{ Id = "edge"; Name = "Microsoft Edge"; Command = "msedge.exe" },
+    @{ Id = "brave"; Name = "Brave Browser"; Command = "brave.exe" },
+    @{ Id = "opera"; Name = "Opera"; Command = "opera.exe" }
   )
+  $commands = @($commands | Sort-Object @{ Expression = { if ($_.Id -eq $preferred) { 0 } else { 1 } } })
   foreach ($entry in $commands) {
     $cmd = Get-Command $entry.Command -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -116,8 +172,8 @@ if ($found) { Write-Output ($foundName + "|" + $found) }
   return null;
 }
 
-function openInSupportedBrowser(url) {
-  const browser = findSupportedBrowser();
+function openInSupportedBrowser(url, preferredBrowserId) {
+  const browser = findSupportedBrowser(preferredBrowserId);
   if (!browser) return { ok: false, browser: null };
   try {
     const child = spawn(browser.path, [url], { detached: true, stdio: "ignore" });
@@ -129,8 +185,8 @@ function openInSupportedBrowser(url) {
   }
 }
 
-function openExtensionsPage() {
-  const result = openInSupportedBrowser("chrome://extensions");
+function openExtensionsPage(preferredBrowserId) {
+  const result = openInSupportedBrowser("chrome://extensions", preferredBrowserId);
   if (result.ok) return result;
   void shell.openExternal("chrome://extensions").catch(() => {});
   return result;
@@ -344,11 +400,12 @@ ipcMain.handle("recruitme:open-external", (_event, url) => {
   return openInSupportedBrowser(url);
 });
 
-ipcMain.handle("recruitme:prepare-extension", async () => {
+ipcMain.handle("recruitme:prepare-extension", async (_event, options = {}) => {
   try {
+    const preferredBrowserId = writePreferredBrowserId(options?.browserId) ?? readPreferredBrowserId();
     const extensionPath = prepareExtensionFolder();
     await shell.openPath(extensionPath).catch(() => {});
-    const browser = openExtensionsPage();
+    const browser = openExtensionsPage(preferredBrowserId);
     return { ok: true, path: extensionPath, browser: browser.browser ?? null };
   } catch (error) {
     return {

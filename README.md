@@ -189,8 +189,11 @@ Each `Job` and derived data is scoped to an `orgId`. The `requireJobAccess` help
 The extension ships as a zip download from `/api/extension/download`. Source lives in `browser-companion/recruitme-opera-linkedin-capture/`.
 
 **To install locally:**
-1. Open Opera → Extensions → Load unpacked → select the folder above
-2. Open the extension popup → set server URL to `http://localhost:3000` → enter credentials → Save
+1. Open Chrome, Opera, Edge, Brave, or another Chromium browser → Extensions → Load unpacked → select the folder above
+2. Open the extension settings → set the RecruitMe server URL to the exact app origin, for example `http://localhost:3000` in dev or the desktop app's displayed `http://localhost:<port>`
+3. Enter your RecruitMe username and password → Save and test connection
+
+Desktop builds may use a free localhost port when `3000` is unavailable. The extension manifest allows any localhost port, but the saved server URL still needs to match the URL shown by the running RecruitMe app.
 
 **How it works:**
 1. The web app creates a `FetchSession` when you click "Fetch Profile"

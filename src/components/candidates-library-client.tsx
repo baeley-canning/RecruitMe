@@ -3,11 +3,12 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { MapPin, Search, Users, FileText, Briefcase, Star, UserPlus } from "lucide-react";
+import { Search, Users, FileText, Briefcase, Star, UserPlus } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { cn, timeAgo } from "@/lib/utils";
-import { scoreTier, scoreTierColor } from "@/lib/score-utils";
+import { timeAgo } from "@/lib/utils";
+import { scoreTier } from "@/lib/score-utils";
 import { AddLibraryCandidateModal } from "@/components/add-library-candidate-modal";
+import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,7 @@ interface LibraryCandidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  phone: string | null;
   matchScore: number | null;
   source: string;
   status: string;
@@ -39,116 +41,91 @@ interface LibraryCandidate {
   files: CandidateFile[];
 }
 
-function sourceLabel(s: string) {
-  const map: Record<string, string> = {
-    manual: "Manual",
-    serpapi: "Search",
-    pdl: "PDL",
-    extension: "LinkedIn",
-    talent_pool: "Talent Pool",
-  };
-  return map[s] ?? s;
-}
+const SOURCE_LABEL: Record<string, string> = {
+  manual: "Manual",
+  serpapi: "Search",
+  pdl: "PDL",
+  extension: "LinkedIn",
+  talent_pool: "Talent Pool",
+  jobadder_import: "JobAdder",
+};
 
 function CandidateCard({ c }: { c: LibraryCandidate }) {
   const hasCV = c.files.some((f) => f.type === "cv");
   const hasCoverLetter = c.files.some((f) => f.type === "cover_letter");
-  const initials = c.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
   return (
     <Link
       href={`/candidates/${c.id}`}
       className="block bg-surface-raised rounded-md border border-separator p-4 hover:bg-surface-hover transition-colors group"
     >
-      <div className="flex items-start gap-3">
-        {/* Avatar */}
-        <div className="w-10 h-10 rounded-full bg-accent-subtle text-accent flex items-center justify-center flex-shrink-0 text-sm font-semibold">
-          {initials}
-        </div>
+      {/* Identity — consistent with all other candidate views */}
+      <CandidateIdentityBlock
+        name={c.name}
+        headline={c.headline}
+        location={c.location}
+        phone={c.phone}
+        linkedinUrl={c.linkedinUrl}
+        score={c.matchScore}
+        size="md"
+        showScore={c.matchScore !== null}
+        showPhone={!!c.phone}
+        showLinkedIn={false}
+        nameClassName="group-hover:text-accent transition-colors"
+      />
 
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <p className="font-semibold text-text-primary text-md group-hover:text-accent transition-colors line-clamp-1">
-                {c.name}
-              </p>
-              {c.headline && (
-                <p className="text-xs text-text-secondary line-clamp-1 mt-0.5">{c.headline}</p>
-              )}
-            </div>
-            {c.matchScore !== null && (
-              <span
-                className={cn(
-                  "text-xs font-medium px-1.5 py-0.5 rounded-sm flex-shrink-0 data-mono",
-                  scoreTierColor(scoreTier(c.matchScore, "match"))
-                )}
-              >
-                {c.matchScore}%
-              </span>
-            )}
-          </div>
+      {/* Badges */}
+      <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+        {/* Org name — only shown to owner, identifies cross-org candidates */}
+        {c.sharedFromOrgName && (
+          <Badge className="bg-accent-subtle text-accent">
+            <span title={`Organisation: ${c.sharedFromOrgName}`}>{c.sharedFromOrgName}</span>
+          </Badge>
+        )}
+        {/* Job context */}
+        <Badge>
+          <Briefcase className="w-2.5 h-2.5" />
+          <span className="line-clamp-1 max-w-[100px] ml-1">
+            {c.job?.title ?? c.archivedJobTitle ?? (c.source === "manual" || c.source === "jobadder_import" ? "Library" : "Archived role")}
+          </span>
+        </Badge>
 
-          {c.location && (
-            <div className="flex items-center gap-1 mt-1.5 text-xs text-text-tertiary">
-              <MapPin className="w-3 h-3 flex-shrink-0" />
-              <span className="line-clamp-1">{c.location}</span>
-            </div>
-          )}
+        {/* Profile captured */}
+        <Badge className="bg-success-subtle text-success">
+          <span className="w-1.5 h-1.5 rounded-full bg-success inline-block mr-1" />
+          Profile
+        </Badge>
 
-          {/* Badges */}
-          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-            {/* Org name — only shown to owner, identifies cross-org candidates */}
-            {c.sharedFromOrgName && (
-              <Badge className="bg-accent-subtle text-accent" >
-                <span title={`Organisation: ${c.sharedFromOrgName}`}>{c.sharedFromOrgName}</span>
-              </Badge>
-            )}
-            {/* Job context */}
-            <Badge>
-              <Briefcase className="w-2.5 h-2.5" />
-              <span className="line-clamp-1 max-w-[100px] ml-1">
-                {c.job?.title ?? c.archivedJobTitle ?? (c.source === "manual" || c.source === "jobadder_import" ? "Library" : "Archived role")}
-              </span>
-            </Badge>
+        {/* CV */}
+        {hasCV && (
+          <Badge className="bg-accent-subtle text-accent">
+            <FileText className="w-2.5 h-2.5 mr-1" />
+            CV
+          </Badge>
+        )}
 
-            {/* Profile captured */}
-            <Badge className="bg-success-subtle text-success">
-              <span className="w-1.5 h-1.5 rounded-full bg-success inline-block mr-1" />
-              Profile
-            </Badge>
+        {/* No LinkedIn URL — may be duplicate */}
+        {!c.linkedinUrl && (
+          <span
+            title="No LinkedIn URL — if this person appears twice, they may be a duplicate. Add their LinkedIn URL to enable deduplication."
+            className="inline-flex items-center h-5 px-1.5 py-0.5 rounded-sm text-xs font-medium leading-none bg-warning-subtle text-warning cursor-help"
+          >
+            No LinkedIn
+          </span>
+        )}
 
-            {/* CV */}
-            {hasCV && (
-              <Badge className="bg-accent-subtle text-accent">
-                <FileText className="w-2.5 h-2.5 mr-1" />
-                CV
-              </Badge>
-            )}
+        {/* Cover letter */}
+        {hasCoverLetter && (
+          <Badge className="bg-warning-subtle text-warning">
+            <FileText className="w-2.5 h-2.5 mr-1" />
+            Cover
+          </Badge>
+        )}
 
-            {/* No LinkedIn URL — may be duplicate */}
-            {!c.linkedinUrl && (
-              <span
-                title="No LinkedIn URL — if this person appears twice, they may be a duplicate. Add their LinkedIn URL to enable deduplication."
-                className="inline-flex items-center h-5 px-1.5 py-0.5 rounded-sm text-xs font-medium leading-none bg-warning-subtle text-warning cursor-help"
-              >
-                No LinkedIn
-              </span>
-            )}
-
-            {/* Cover letter */}
-            {hasCoverLetter && (
-              <Badge className="bg-warning-subtle text-warning">
-                <FileText className="w-2.5 h-2.5 mr-1" />
-                Cover
-              </Badge>
-            )}
-
-            {/* Source */}
-            <Badge className="ml-auto">
-              {sourceLabel(c.source)}
-            </Badge>
-          </div>
-        </div>
+        {/* Source */}
+        <Badge className="ml-auto">
+          {SOURCE_LABEL[c.source] ?? c.source}
+        </Badge>
       </div>
 
       <p className="text-xs text-text-tertiary mt-2.5 text-right" suppressHydrationWarning>

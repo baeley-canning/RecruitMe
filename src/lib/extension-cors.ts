@@ -7,18 +7,54 @@
  * helper (deny by default, reflect a known origin) so any drift is safer.
  */
 
-const RAILWAY_HOSTNAME_RE = /^https:\/\/(?:[a-z0-9-]+\.)?(?:railway\.app|up\.railway\.app)$/i;
+function configuredOrigins(): Set<string> {
+  const values = [
+    process.env.NEXTAUTH_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : undefined,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ];
+
+  return new Set(
+    values
+      .flatMap((value) => (value ?? "").split(","))
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => {
+        try {
+          return new URL(value).origin;
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean)
+  );
+}
+
+function configuredExtensionOrigins(): Set<string> {
+  return new Set(
+    (process.env.EXTENSION_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
 
 function isAllowedExtensionOrigin(origin: string): boolean {
   if (!origin) return false;
-  if (/^chrome-extension:\/\//i.test(origin)) return true;
-  if (/^moz-extension:\/\//i.test(origin)) return true;
-  if (/^safari-extension:\/\//i.test(origin)) return true;
-  if (origin === (process.env.NEXTAUTH_URL ?? "")) return true;
-  if (origin === "http://localhost:3000") return true;
-  // Restrict railway origins to the production app domain — `endsWith`
-  // matched any Railway tenant; this URL form matches only well-formed hosts.
-  return RAILWAY_HOSTNAME_RE.test(origin);
+  const extensionOrigins = configuredExtensionOrigins();
+  if (extensionOrigins.size > 0 && extensionOrigins.has(origin)) return true;
+  if (extensionOrigins.size === 0) {
+    // Unpacked Chrome/Opera/Edge extensions have installation-specific IDs, so
+    // keep extension schemes working by default. Deployments that know their
+    // packaged IDs can set EXTENSION_ALLOWED_ORIGINS to pin them exactly.
+    if (/^chrome-extension:\/\/[a-z]{32}$/i.test(origin)) return true;
+    if (/^moz-extension:\/\/[0-9a-f-]+$/i.test(origin)) return true;
+    if (/^safari-extension:\/\/[a-z0-9.-]+$/i.test(origin)) return true;
+  }
+
+  return configuredOrigins().has(origin);
 }
 
 export function extensionCorsHeaders(req: Request): Record<string, string> {
@@ -30,7 +66,7 @@ export function extensionCorsHeaders(req: Request): Record<string, string> {
     // (denied) — credential-bearing fetches without an Origin header are
     // exotic and not part of the supported flows.
     "Access-Control-Allow-Origin": allowed ? origin : "null",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Vary": "Origin",
   };
@@ -43,7 +79,7 @@ export function extensionCorsHeaders(req: Request): Record<string, string> {
  */
 export const EXTENSION_CORS = {
   "Access-Control-Allow-Origin": "null",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Vary": "Origin",
 } as const;

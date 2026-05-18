@@ -23,6 +23,7 @@ export default async function CandidatesPage() {
     headline: candidate.headline,
     location: candidate.location,
     linkedinUrl: candidate.linkedinUrl,
+    phone: candidate.phone,
     matchScore: candidate.matchScore,
     source: candidate.source,
     status: candidate.status,
