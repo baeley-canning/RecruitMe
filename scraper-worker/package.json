@@ -1,0 +1,25 @@
+{
+  "name": "recruitme-scraper-worker",
+  "version": "1.0.0",
+  "description": "Standalone scraper worker for RecruitMe — runs on Raspberry Pi (4G) or Fly.io (residential proxy). Polls Railway for ScrapeJob rows, scrapes LinkedIn/SEEK/JobAdder, posts results back.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node --esm src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "ts-node": "^10.9.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

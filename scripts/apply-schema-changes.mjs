@@ -870,7 +870,34 @@ await step("create Subscription table", async () => {
   await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Subscription_orgId_idx" ON "Subscription"("orgId")`;
 });
 
-// Step 32: ApiKey model (Phase 6 — Score-as-a-Service API)
+// Step 32: ScrapeJob table (Mobile Scraper — scraper-worker job queue)
+// This table is the queue between Railway and the Pi-based scraper-worker service.
+// Worker polls GET /api/scraper/jobs and posts results to PATCH /api/scraper/jobs/[id].
+// Gated: only active when SCRAPER_ENABLED=true in Railway env vars.
+await step("create ScrapeJob table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ScrapeJob" (
+      "id"          TEXT         NOT NULL,
+      "orgId"       TEXT         NOT NULL,
+      "platform"    TEXT         NOT NULL,
+      "jobType"     TEXT         NOT NULL,
+      "input"       TEXT         NOT NULL,
+      "status"      TEXT         NOT NULL DEFAULT 'pending',
+      "result"      TEXT,
+      "error"       TEXT,
+      "workerId"    TEXT,
+      "priority"    INTEGER      NOT NULL DEFAULT 0,
+      "retryCount"  INTEGER      NOT NULL DEFAULT 0,
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "completedAt" TIMESTAMP(3),
+      CONSTRAINT "ScrapeJob_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ScrapeJob_status_priority_createdAt_idx" ON "ScrapeJob"("status", "priority" DESC, "createdAt" ASC)`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ScrapeJob_orgId_idx" ON "ScrapeJob"("orgId")`;
+});
+
+// Step 33: ApiKey model (Phase 6 — Score-as-a-Service API)
 await step("create ApiKey table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "ApiKey" (

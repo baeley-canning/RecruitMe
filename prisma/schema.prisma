@@ -677,6 +677,37 @@ model Archetype {
   @@index([orgId, isAntiArchetype])
 }
 
+// ScrapeJob — job queue for the scraper-worker service (Phase: Mobile Scraper).
+//
+// HOW IT WORKS (for AI handoff):
+//   Railway creates ScrapeJob rows; a standalone scraper-worker process (running
+//   on a Raspberry Pi with 4G or on Fly.io with residential proxies) polls
+//   GET /api/scraper/jobs to claim them, scrapes the target, then PATCHes the
+//   result back. Candidates with profileText=null (snippet-only imports) get a
+//   "profile" job auto-created so they can be enriched in the background.
+//
+// STATUS FLOW: pending → processing → done | error
+// RETRY: retryCount < 3 → requeued as pending; ≥ 3 → permanent error
+// AUTH: worker authenticates with an ApiKey (Bearer token) scoped to the org
+model ScrapeJob {
+  id          String    @id @default(cuid())
+  orgId       String
+  platform    String    // "linkedin" | "seek" | "jobadder"
+  jobType     String    // "profile" | "search"
+  input       String    // JSON: { url?, query?, location?, count?, jobId? }
+  status      String    @default("pending") // pending | processing | done | error
+  result      String?   // JSON: scraped data (profileText, name, headline, ...)
+  error       String?
+  workerId    String?   // identifies which scraper node processed this
+  priority    Int       @default(0) // higher = more urgent
+  retryCount  Int       @default(0)
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([status, priority, createdAt]) // worker polling index
+  @@index([orgId])
+}
+
 // API keys for Score-as-a-Service (P6-2). Agency plan only.
 // keyHash is SHA-256 of the raw key — raw key shown once at creation only.
 model ApiKey {
