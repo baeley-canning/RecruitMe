@@ -129,6 +129,11 @@ export default function AdminPage() {
 
   // Danger zone
   const [wiping, setWiping] = useState<string | null>(null);
+  // Confirmation phrase the user must type to enable the platform-wide JobAdder purge.
+  // Mirrors the existing confirm-body shape used by /api/admin/wipe-candidates.
+  const PURGE_JOBADDER_PHRASE = "DELETE_ALL_JOBADDER";
+  const [purgePhrase, setPurgePhrase] = useState("");
+
   const handleWipeCandidates = async (jobId?: string) => {
     const label = jobId ? "all candidates for this job" : "ALL candidates in your organisation";
     if (!await confirm({ title: "Delete candidates?", message: `Delete ${label}? This cannot be undone.`, danger: true, confirmLabel: "Delete" })) return;
@@ -146,6 +151,20 @@ export default function AdminPage() {
     }
     setWiping(null);
     setStats(s => s ? { ...s, candidates: 0 } : s);
+  };
+
+  const handlePurgeJobadderImports = async () => {
+    if (purgePhrase !== PURGE_JOBADDER_PHRASE) return;
+    if (!await confirm({
+      title: "Purge JobAdder imports?",
+      message: "This deletes EVERY candidate with source=jobadder_import across ALL ORGS on the platform, plus orphaned CandidateIdentity rows. There is no undo.",
+      danger: true,
+      confirmLabel: "Purge across all orgs",
+    })) return;
+    setWiping("jobadder");
+    await fetch("/api/admin/purge-jobadder-imports", { method: "DELETE" }).catch(() => {});
+    setWiping(null);
+    setPurgePhrase("");
   };
 
   const isOwner = sessionIsOwner(session);
@@ -938,12 +957,19 @@ export default function AdminPage() {
             Danger zone
           </h2>
           <p className="text-xs text-text-tertiary mb-2">Destructive actions. These cannot be undone.</p>
-          <div className="rounded-md border border-danger/30 bg-danger-subtle">
+          <div className="rounded-md border border-danger/30 bg-danger-subtle divide-y divide-danger/20">
+            {/* Org-scoped: wipe-candidates only touches the caller's org */}
             <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <div>
-                <p className="text-base font-medium text-text-primary">Delete all candidates</p>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-base font-medium text-text-primary">Delete all candidates</p>
+                  <span className="text-2xs px-1.5 py-0.5 rounded-sm font-medium bg-success/15 text-success">
+                    This org only
+                  </span>
+                </div>
                 <p className="text-xs text-text-secondary mt-0.5">
-                  Removes every candidate across all jobs. Jobs and parsed roles are kept.
+                  Deletes every Candidate row scoped to your organisation. Cascades to CandidateFile,
+                  ContactEvent, ScoreCorrection, and ReferenceCheck rows. Jobs and parsed roles are kept.
                 </p>
               </div>
               <button
@@ -954,6 +980,48 @@ export default function AdminPage() {
                 {wiping === "all" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                 {wiping === "all" ? "Deleting…" : "Delete all candidates"}
               </button>
+            </div>
+
+            {/* Platform-wide: purge-jobadder-imports deletes across every org */}
+            <div className="px-4 py-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-base font-medium text-text-primary">Purge JobAdder imports</p>
+                    <span className="text-2xs px-1.5 py-0.5 rounded-sm font-medium bg-danger text-white uppercase tracking-wider">
+                      All orgs / platform-wide
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Deletes every Candidate with <span className="data-mono">source=jobadder_import</span> across
+                    {" "}<strong>every organisation on the platform</strong>, then removes orphaned
+                    CandidateIdentity rows. Cascades to CandidateFile, ContactEvent, ScoreCorrection, and
+                    ReferenceCheck rows.
+                  </p>
+                </div>
+                <button
+                  onClick={handlePurgeJobadderImports}
+                  disabled={wiping === "jobadder" || purgePhrase !== PURGE_JOBADDER_PHRASE}
+                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-danger hover:bg-danger-hover text-white text-md font-medium transition-colors disabled:opacity-50 flex-shrink-0"
+                >
+                  {wiping === "jobadder" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  {wiping === "jobadder" ? "Purging…" : "Purge JobAdder imports"}
+                </button>
+              </div>
+              <div className="mt-2.5">
+                <label className="block text-xs font-medium text-text-secondary mb-1">
+                  Type <span className="data-mono text-danger">{PURGE_JOBADDER_PHRASE}</span> to enable
+                </label>
+                <input
+                  type="text"
+                  value={purgePhrase}
+                  onChange={(e) => setPurgePhrase(e.target.value)}
+                  placeholder={PURGE_JOBADDER_PHRASE}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={`${INPUT} data-mono max-w-xs`}
+                />
+              </div>
             </div>
           </div>
         </section>
