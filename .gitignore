@@ -29,6 +29,9 @@ tsconfig.tsbuildinfo
 *.log
 *.pid
 
+# Railway CLI project config
+.railway/
+
 # misc
 .DS_Store
 *.pem
