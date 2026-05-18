@@ -9,7 +9,10 @@ export async function GET() {
 
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // last 7 days
 
-  const [jobs, recentCaptures, recentSearches] = await Promise.all([
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+
+  const [jobs, recentCaptures, recentSearches, remindersToday, placementStats] = await Promise.all([
     // All active jobs with candidate stats
     prisma.job.findMany({
       where: { status: "active", ...jobsWhere(auth) },
@@ -76,6 +79,27 @@ export async function GET() {
         job: { select: { id: true, title: true } },
       },
     }),
+
+    // Reminders due today (or overdue)
+    prisma.reminder.findMany({
+      where: {
+        dismissed: false,
+        dueAt: { lte: today },
+        ...(!auth.isOwner ? { orgId: auth.orgId ?? "__none__" } : {}),
+      },
+      orderBy: { dueAt: "asc" },
+      take: 10,
+      select: { id: true, type: true, dueAt: true, note: true, candidateId: true, jobId: true, clientId: true },
+    }),
+
+    // Placement fee totals (this calendar month)
+    prisma.placement.findMany({
+      where: {
+        placedAt: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) },
+        ...(!auth.isOwner ? { orgId: auth.orgId ?? "__none__" } : {}),
+      },
+      select: { feeAmount: true, feePct: true, salaryPlaced: true, paidAt: true },
+    }),
   ]);
 
   // Compute job health signals
@@ -117,10 +141,27 @@ export async function GET() {
     };
   });
 
+  const monthlyFeeTotal = placementStats.reduce((s, p) => {
+    if (p.feeAmount) return s + p.feeAmount;
+    if (p.feePct && p.salaryPlaced) return s + Math.round(p.salaryPlaced * p.feePct / 100);
+    return s;
+  }, 0);
+  const monthlyFeePaid = placementStats.filter(p => p.paidAt).reduce((s, p) => {
+    if (p.feeAmount) return s + p.feeAmount;
+    if (p.feePct && p.salaryPlaced) return s + Math.round(p.salaryPlaced * p.feePct / 100);
+    return s;
+  }, 0);
+
   return NextResponse.json({
     jobs: jobStats,
     recentCaptures,
     recentSearches,
+    remindersToday,
+    placements: {
+      monthlyFeeTotal,
+      monthlyFeePaid,
+      thisMonthCount: placementStats.length,
+    },
     totals: {
       activeJobs: jobs.length,
       totalCandidates: jobs.reduce((s, j) => s + j.candidates.length, 0),

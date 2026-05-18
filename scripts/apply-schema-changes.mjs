@@ -639,6 +639,131 @@ await step(22, "add clientId to Job", async () => {
   `;
 });
 
+// ── Step 23: Create Submission table ─────────────────────────────────────
+await step(23, "create Submission table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "Submission" (
+      "id"             TEXT NOT NULL,
+      "orgId"          TEXT NOT NULL,
+      "jobId"          TEXT NOT NULL,
+      "clientId"       TEXT,
+      "candidateId"    TEXT NOT NULL,
+      "submittedAt"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "submittedBy"    TEXT,
+      "matchScore"     INTEGER,
+      "cvVersion"      TEXT,
+      "notes"          TEXT,
+      "status"         TEXT NOT NULL DEFAULT 'sent',
+      "clientFeedback" TEXT,
+      "feedbackAt"     TIMESTAMP(3),
+      "createdAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Submission_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "Submission_candidateId_fkey" FOREIGN KEY ("candidateId") REFERENCES "Candidate"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "Submission_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE SET NULL ON UPDATE CASCADE
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_orgId_idx" ON "Submission"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_jobId_idx" ON "Submission"("jobId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_candidateId_idx" ON "Submission"("candidateId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_clientId_idx" ON "Submission"("clientId")`;
+});
+
+// ── Step 24: Create Placement table ──────────────────────────────────────
+await step(24, "create Placement table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "Placement" (
+      "id"              TEXT NOT NULL,
+      "orgId"           TEXT NOT NULL,
+      "clientId"        TEXT,
+      "jobId"           TEXT,
+      "candidateId"     TEXT NOT NULL,
+      "submissionId"    TEXT,
+      "placedAt"        TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "startDate"       TIMESTAMP(3),
+      "salaryPlaced"    INTEGER,
+      "feeType"         TEXT NOT NULL DEFAULT 'percentage',
+      "feePct"          DOUBLE PRECISION,
+      "feeAmount"       INTEGER,
+      "invoiceRef"      TEXT,
+      "invoicedAt"      TIMESTAMP(3),
+      "paidAt"          TIMESTAMP(3),
+      "guaranteeMonths" INTEGER,
+      "guaranteeExpiry" TIMESTAMP(3),
+      "notes"           TEXT,
+      "createdAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Placement_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "Placement_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE SET NULL ON UPDATE CASCADE
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_orgId_idx" ON "Placement"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_clientId_idx" ON "Placement"("clientId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_jobId_idx" ON "Placement"("jobId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_candidateId_idx" ON "Placement"("candidateId")`;
+});
+
+// ── Step 25: Create Reminder table ───────────────────────────────────────
+await step(25, "create Reminder table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "Reminder" (
+      "id"          TEXT NOT NULL,
+      "orgId"       TEXT NOT NULL,
+      "userId"      TEXT,
+      "candidateId" TEXT,
+      "jobId"       TEXT,
+      "clientId"    TEXT,
+      "placementId" TEXT,
+      "type"        TEXT NOT NULL DEFAULT 'follow_up',
+      "dueAt"       TIMESTAMP(3) NOT NULL,
+      "note"        TEXT,
+      "dismissed"   BOOLEAN NOT NULL DEFAULT false,
+      "dismissedAt" TIMESTAMP(3),
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Reminder_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Reminder_orgId_idx" ON "Reminder"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Reminder_orgId_dismissed_dueAt_idx" ON "Reminder"("orgId", "dismissed", "dueAt")`;
+});
+
+// ── Step 26: Create CandidateTag + CandidateTagAssignment tables ──────────
+await step(26, "create CandidateTag and CandidateTagAssignment tables", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateTag" (
+      "id"        TEXT NOT NULL,
+      "orgId"     TEXT NOT NULL,
+      "label"     TEXT NOT NULL,
+      "color"     TEXT NOT NULL DEFAULT '#6366f1',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateTag_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateTag_orgId_label_key" ON "CandidateTag"("orgId", "label")
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateTag_orgId_idx" ON "CandidateTag"("orgId")`;
+
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateTagAssignment" (
+      "candidateId" TEXT NOT NULL,
+      "tagId"       TEXT NOT NULL,
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateTagAssignment_pkey" PRIMARY KEY ("candidateId", "tagId"),
+      CONSTRAINT "CandidateTagAssignment_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "CandidateTag"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "CandidateTagAssignment_candidateId_fkey" FOREIGN KEY ("candidateId") REFERENCES "Candidate"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateTagAssignment_candidateId_idx" ON "CandidateTagAssignment"("candidateId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateTagAssignment_tagId_idx" ON "CandidateTagAssignment"("tagId")`;
+});
+
+// ── Step 27: Add bulk-status route helper index ───────────────────────────
+await step(27, "add Job_clientId_idx if missing (idempotent)", async () => {
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Job_clientId_idx" ON "Job"("clientId")`;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

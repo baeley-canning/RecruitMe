@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Briefcase, Users, Star, AlertCircle, CheckCircle2,
-  ChevronRight, Search, Camera, Loader2,
+  ChevronRight, Search, Camera, Loader2, Bell, DollarSign, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
@@ -18,10 +18,13 @@ interface JobStat {
 }
 interface RecentCapture { id: string; name: string; matchScore: number | null; status: string; profileCapturedAt: string | null; job: { id: string; title: string } | null; }
 interface SearchSession { id: string; collected: number; avgScore: number | null; evaluation: string | null; createdAt: string; job: { id: string; title: string } | null; }
+interface Reminder { id: string; type: string; dueAt: string; note: string | null; candidateId: string | null; jobId: string | null; clientId: string | null; }
 interface DashboardData {
   jobs: JobStat[];
   recentCaptures: RecentCapture[];
   recentSearches: SearchSession[];
+  remindersToday: Reminder[];
+  placements: { monthlyFeeTotal: number; monthlyFeePaid: number; thisMonthCount: number };
   totals: { activeJobs: number; totalCandidates: number; shortlisted: number; capturedThisWeek: number };
 }
 
@@ -50,7 +53,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { jobs, recentCaptures, recentSearches, totals } = data;
+  const { jobs, recentCaptures, recentSearches, totals, remindersToday = [], placements } = data;
   const needsAttention = jobs.filter((j) => j.needsAttention);
   const healthy = jobs.filter((j) => !j.needsAttention);
 
@@ -71,9 +74,50 @@ export default function DashboardPage() {
       </div>
 
       <div className="p-5 max-w-6xl mx-auto">
+        {/* Reminders due today */}
+        {remindersToday.length > 0 && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-md p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Bell className="w-3.5 h-3.5 text-amber-600" />
+              <span className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                {remindersToday.length} reminder{remindersToday.length !== 1 ? "s" : ""} due today
+              </span>
+            </div>
+            <div className="space-y-1">
+              {remindersToday.map(r => (
+                <div key={r.id} className="flex items-center justify-between text-xs text-amber-900">
+                  <span>{r.note ?? r.type.replace("_", " ")}</span>
+                  <button
+                    onClick={async () => {
+                      await fetch(`/api/reminders/${r.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ dismissed: true }),
+                      });
+                      setData(d => d ? { ...d, remindersToday: d.remindersToday.filter(x => x.id !== r.id) } : d);
+                    }}
+                    className="text-amber-600 hover:text-amber-800 ml-2"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Stat tiles */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
-          {tiles.map(({ label, value, icon: Icon }) => (
+          {[
+            ...tiles,
+            ...(placements?.thisMonthCount > 0 ? [{
+              label: "Fees this month",
+              value: placements.monthlyFeeTotal >= 1000
+                ? `$${(placements.monthlyFeeTotal / 1000).toFixed(0)}k`
+                : `$${placements.monthlyFeeTotal}`,
+              icon: DollarSign,
+            }] : []),
+          ].map(({ label, value, icon: Icon }) => (
             <div
               key={label}
               className="bg-surface-raised border border-separator rounded-md p-3"

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, Github, Menu, Building2 } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, Github, Menu, Building2, DollarSign, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isOwner as sessionIsOwner } from "@/lib/access";
 import { useState, useEffect } from "react";
@@ -164,7 +164,9 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/dashboard",           icon: LayoutDashboard,    label: "Dashboard",          match: (p) => p === "/dashboard" },
   { href: "/jobs/listing-builder",icon: FileText,           label: "Listing Builder",    match: (p) => p === "/jobs/listing-builder" },
   { href: "/clients",             icon: Building2,          label: "Clients",            match: (p) => p === "/clients" || p.startsWith("/clients/") },
+  { href: "/placements",          icon: DollarSign,         label: "Placements",         match: (p) => p === "/placements" || p.startsWith("/placements/") },
   { href: "/candidates",          icon: Library,            label: "Candidates Library", match: (p) => p === "/candidates" || p.startsWith("/candidates/") },
+  { href: "/admin/duplicates",    icon: Copy,               label: "Duplicates",         match: (p) => p.startsWith("/admin/duplicates") },
   { href: "/candidate-profiles",  icon: ClipboardList,      label: "Candidate Profiles", match: (p) => p === "/candidate-profiles" },
   { href: "/github-search",       icon: Github,             label: "GitHub Search",      match: (p) => p.startsWith("/github-search") },
   { href: "/linkedin-setup",      icon: Bookmark,           label: "LinkedIn Setup",     match: (p) => p === "/linkedin-setup" },

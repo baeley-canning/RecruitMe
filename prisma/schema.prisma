@@ -150,6 +150,8 @@ model Candidate {
   fetchSessions    FetchSession[]
   scoreCorrections ScoreCorrection[]
   contactEvents    ContactEvent[]
+  submissions      Submission[]
+  tagAssignments   CandidateTagAssignment[]
 
   @@unique([jobId, linkedinUrl])
   @@index([linkedinUrl]) // talent pool cross-job URL lookups
@@ -509,6 +511,108 @@ model Client {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   jobs           Job[]
+  submissions    Submission[]
+  placements     Placement[]
 
   @@index([orgId])
+}
+
+model Submission {
+  id             String    @id @default(cuid())
+  orgId          String
+  jobId          String
+  clientId       String?
+  candidateId    String
+  submittedAt    DateTime  @default(now())
+  submittedBy    String? // userId
+  matchScore     Int? // snapshot at time of submission
+  cvVersion      String?
+  notes          String?
+  status         String    @default("sent") // sent|viewed|interested|rejected|on_hold
+  clientFeedback String?
+  feedbackAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([jobId])
+  @@index([candidateId])
+  @@index([clientId])
+}
+
+model Placement {
+  id              String    @id @default(cuid())
+  orgId           String
+  clientId        String?
+  jobId           String?
+  candidateId     String
+  submissionId    String?
+  placedAt        DateTime  @default(now())
+  startDate       DateTime?
+  salaryPlaced    Int?
+  feeType         String    @default("percentage") // fixed|percentage
+  feePct          Float?
+  feeAmount       Int?
+  invoiceRef      String?
+  invoicedAt      DateTime?
+  paidAt          DateTime?
+  guaranteeMonths Int?
+  guaranteeExpiry DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([clientId])
+  @@index([jobId])
+  @@index([candidateId])
+}
+
+model Reminder {
+  id          String    @id @default(cuid())
+  orgId       String
+  userId      String?
+  candidateId String?
+  jobId       String?
+  clientId    String?
+  placementId String?
+  type        String    @default("follow_up") // follow_up|guarantee_check|client_feedback|custom
+  dueAt       DateTime
+  note        String?
+  dismissed   Boolean   @default(false)
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([orgId])
+  @@index([orgId, dismissed, dueAt])
+}
+
+model CandidateTag {
+  id          String                   @id @default(cuid())
+  orgId       String
+  label       String
+  color       String                   @default("#6366f1")
+  createdAt   DateTime                 @default(now())
+  assignments CandidateTagAssignment[]
+
+  @@unique([orgId, label])
+  @@index([orgId])
+}
+
+model CandidateTagAssignment {
+  candidateId String
+  tagId       String
+  createdAt   DateTime     @default(now())
+  tag         CandidateTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  candidate   Candidate    @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@id([candidateId, tagId])
+  @@index([candidateId])
+  @@index([tagId])
 }
