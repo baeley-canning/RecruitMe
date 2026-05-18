@@ -14,6 +14,21 @@ function secretsMatch(provided: string | null | undefined, expected: string | un
   }
 }
 
+export async function GET(req: Request) {
+  const cronSecret = req.headers.get("x-cron-secret");
+  const cronAuth = secretsMatch(cronSecret, process.env.CONTACT_SYNC_CRON_SECRET);
+  if (!cronAuth) {
+    const auth = await getAuth();
+    if (!auth?.isOwner) return unauthorized();
+  }
+
+  const rows = await prisma.$queryRaw<{ source: string; count: bigint }[]>`
+    SELECT source, COUNT(*) as count FROM "Candidate" GROUP BY source ORDER BY count DESC
+  `;
+  const total = await prisma.candidate.count();
+  return NextResponse.json({ total, bySource: rows.map(r => ({ source: r.source, count: Number(r.count) })) });
+}
+
 export async function DELETE(req: Request) {
   const cronSecret = req.headers.get("x-cron-secret");
   const cronAuth = secretsMatch(cronSecret, process.env.CONTACT_SYNC_CRON_SECRET);
