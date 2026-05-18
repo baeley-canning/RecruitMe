@@ -9,24 +9,24 @@ datasource db {
 }
 
 model Job {
-  id          String   @id @default(cuid())
-  title       String
-  company     String?
-  location    String?
-  location2   String?  // Optional secondary location for hybrid / dual-site roles (e.g. Wellington + Christchurch). Used by location-fit scoring so a candidate in either metro scores 100.
-  rawJd       String
-  parsedRole  String?  // JSON string: parsed AI output
-  salaryMin   Int?     // NZD yearly minimum (optional)
-  salaryMax   Int?     // NZD yearly maximum (optional)
-  scoringWeights String? // JSON: ScoringWeights override for this job; null = use org/default
-  shareToken     String? @unique // opaque random token for read-only public shortlist URL; null = sharing disabled
+  id                  String    @id @default(cuid())
+  title               String
+  company             String?
+  location            String?
+  location2           String? // Optional secondary location for hybrid / dual-site roles (e.g. Wellington + Christchurch). Used by location-fit scoring so a candidate in either metro scores 100.
+  rawJd               String
+  parsedRole          String? // JSON string: parsed AI output
+  salaryMin           Int? // NZD yearly minimum (optional)
+  salaryMax           Int? // NZD yearly maximum (optional)
+  scoringWeights      String? // JSON: ScoringWeights override for this job; null = use org/default
+  shareToken          String?   @unique // opaque random token for read-only public shortlist URL; null = sharing disabled
   shareTokenExpiresAt DateTime? // tokens expire after 30d; the public route 404s once past
-  isRemote     Boolean   @default(false)
-  status       String    @default("active") // active | closed | on-hold
-  lastScoredAt DateTime? // set by score-all; prevents re-runs within cooldown window
-  lastParsedAt DateTime? // set by re-analyse; UI shows "re-score recommended" when > lastScoredAt
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  isRemote            Boolean   @default(false)
+  status              String    @default("active") // active | closed | on-hold
+  lastScoredAt        DateTime? // set by score-all; prevents re-runs within cooldown window
+  lastParsedAt        DateTime? // set by re-analyse; UI shows "re-score recommended" when > lastScoredAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   candidates     Candidate[]
   fetchSessions  FetchSession[]
@@ -34,7 +34,7 @@ model Job {
   savedSearches  SavedSearch[]
   parseHistory   JobParseHistory[]
   orgId          String?
-  org            Org?     @relation(fields: [orgId], references: [id])
+  org            Org?              @relation(fields: [orgId], references: [id])
 
   @@index([orgId])
   @@index([status])
@@ -47,12 +47,13 @@ model Setting {
 }
 
 model Org {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  users     User[]
-  jobs      Job[]
+  id                  String              @id @default(cuid())
+  name                String              @unique
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  users               User[]
+  jobs                Job[]
+  candidateIdentities CandidateIdentity[]
 }
 
 // Cross-org library access grant. When org A buys a higher-tier subscription
@@ -70,13 +71,13 @@ model Org {
 // after the org has paid (whatever channel that is) and audits via createdAt
 // + grantedByUserId.
 model OrgAccessGrant {
-  id              String   @id @default(cuid())
-  viewerOrgId     String   // who can see
-  providerOrgId   String   // whose library is shared
-  scope           String   @default("library_read")
-  grantedByUserId String   // owner userId who created the grant
-  note            String?  // free-text — sub tier name, expiry reason, etc.
-  createdAt       DateTime @default(now())
+  id              String    @id @default(cuid())
+  viewerOrgId     String // who can see
+  providerOrgId   String // whose library is shared
+  scope           String    @default("library_read")
+  grantedByUserId String // owner userId who created the grant
+  note            String? // free-text — sub tier name, expiry reason, etc.
+  createdAt       DateTime  @default(now())
   expiresAt       DateTime?
 
   @@unique([viewerOrgId, providerOrgId, scope])
@@ -87,7 +88,7 @@ model OrgAccessGrant {
 model User {
   id        String   @id @default(cuid())
   username  String   @unique
-  password  String   // bcrypt hash
+  password  String // bcrypt hash
   role      String   @default("user") // "owner" | "user"
   orgId     String?
   org       Org?     @relation(fields: [orgId], references: [id])
@@ -96,68 +97,75 @@ model User {
 }
 
 model Candidate {
-  id           String   @id @default(cuid())
-  jobId        String?
-  job          Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
-  orgId        String?  // copied from job.orgId on create; preserved after job deletion for auth scoping
-  archivedJobTitle   String?  // job title at time of deletion, for library display
-  archivedJobCompany String?  // job company at time of deletion, for library display
+  id                 String  @id @default(cuid())
+  jobId              String?
+  job                Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  orgId              String? // copied from job.orgId on create; preserved after job deletion for auth scoping
+  archivedJobTitle   String? // job title at time of deletion, for library display
+  archivedJobCompany String? // job company at time of deletion, for library display
 
-  name         String
-  headline     String?
-  location     String?
-  linkedinUrl  String?
-  jobAdderUrl  String?  // JobAdder candidate profile URL — set manually until API integration
-  phone        String?  // Primary contact phone — set by Firmable enrichment (preferred mobile; falls back to first available). UI display field.
-  firmableData String?  // JSON: full Firmable People response (other phones, emails, deliverability flags). Source-of-truth for "what else did the lookup return".
-  firmableEnrichedAt DateTime? // Last successful Firmable lookup; gates the 90-day re-enrichment check.
-  profileText     String?  // Raw pasted/captured profile text
-  profileTextHash String?  // Written after every score; cleared when profile is updated. Used by the UI stale indicator — if matchScore is set but this is null, the profile was refreshed since last score.
+  // Pointer to the per-(org, real-person) identity row. Nullable so existing
+  // Candidate rows that haven't been clustered yet keep working — see
+  // CandidateIdentity model + scripts/cluster-identities.mjs.
+  candidateIdentityId String?
+  candidateIdentity   CandidateIdentity? @relation(fields: [candidateIdentityId], references: [id], onDelete: SetNull)
+
+  name                String
+  headline            String?
+  location            String?
+  linkedinUrl         String?
+  jobAdderUrl         String? // JobAdder candidate profile URL — set manually until API integration
+  phone               String? // Primary contact phone — set by Firmable enrichment (preferred mobile; falls back to first available). UI display field.
+  firmableData        String? // JSON: full Firmable People response (other phones, emails, deliverability flags). Source-of-truth for "what else did the lookup return".
+  firmableEnrichedAt  DateTime? // Last successful Firmable lookup; gates the 90-day re-enrichment check.
+  profileText         String? // Raw pasted/captured profile text
+  profileTextHash     String? // Written after every score; cleared when profile is updated. Used by the UI stale indicator — if matchScore is set but this is null, the profile was refreshed since last score.
   matchScore          Int?
-  provisionalScore    Int?     // matchScore at snippet-import time; never overwritten — used to compute score delta after full-profile scoring
-  matchReason         String?  // AI JSON: { summary, strengths, gaps }
+  provisionalScore    Int? // matchScore at snippet-import time; never overwritten — used to compute score delta after full-profile scoring
+  matchReason         String? // AI JSON: { summary, strengths, gaps }
   fetchPriorityScore  Int?
-  fetchPriorityReason String?  // JSON: why this search hit is/isn't worth fetching before full scoring
-  acceptanceScore  Int?
-  acceptanceReason String?  // AI JSON: { likelihood, headline, signals, summary }
-  scoreBreakdown   String?  // Structured scoring JSON: ScoreBreakdown type
-  notes            String?  // Recruiter notes
-  screeningData    String?  // JSON: {availability,salaryExpectation,visaStatus,noticePeriod,motivations,notes,screenedAt}
-  interviewNotes   String?  // JSON: {date,interviewer,format,impression,technical,culture,recommendation,updatedAt}
-  status       String   @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
-  statusHistory    String?  // JSON: [{status, changedAt}]
-  contactedAt      DateTime?
-  source       String   @default("manual") // manual | serpapi | pdl | extension | talent_pool
-  profileCapturedAt DateTime?
-  captureMetadata   String? // JSON: extension capture metadata — which deep pages were fetched, status, chars added, merge mode
+  fetchPriorityReason String? // JSON: why this search hit is/isn't worth fetching before full scoring
+  acceptanceScore     Int?
+  acceptanceReason    String? // AI JSON: { likelihood, headline, signals, summary }
+  scoreBreakdown      String? // Structured scoring JSON: ScoreBreakdown type
+  notes               String? // Recruiter notes
+  screeningData       String? // JSON: {availability,salaryExpectation,visaStatus,noticePeriod,motivations,notes,screenedAt}
+  interviewNotes      String? // JSON: {date,interviewer,format,impression,technical,culture,recommendation,updatedAt}
+  status              String    @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
+  statusHistory       String? // JSON: [{status, changedAt}]
+  contactedAt         DateTime?
+  source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool
+  profileCapturedAt   DateTime?
+  captureMetadata     String? // JSON: extension capture metadata — which deep pages were fetched, status, chars added, merge mode
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  references    ReferenceCheck[]
-  files         CandidateFile[]
-  fetchSessions FetchSession[]
+  references       ReferenceCheck[]
+  files            CandidateFile[]
+  fetchSessions    FetchSession[]
   scoreCorrections ScoreCorrection[]
-  contactEvents ContactEvent[]
+  contactEvents    ContactEvent[]
 
   @@unique([jobId, linkedinUrl])
-  @@index([linkedinUrl])               // talent pool cross-job URL lookups
+  @@index([linkedinUrl]) // talent pool cross-job URL lookups
   @@index([orgId])
   @@index([status])
-  @@index([orgId, createdAt])          // timeline queries in candidates library
-  @@index([orgId, profileCapturedAt])  // dashboard "needs fetch" query
-  @@index([jobId, matchScore])         // shortlist + job views frequently order by matchScore desc
+  @@index([orgId, createdAt]) // timeline queries in candidates library
+  @@index([orgId, profileCapturedAt]) // dashboard "needs fetch" query
+  @@index([jobId, matchScore]) // shortlist + job views frequently order by matchScore desc
+  @@index([candidateIdentityId]) // joins from CandidateIdentity → all candidate rows for one person
 }
 
 model CandidateFile {
   id          String    @id @default(cuid())
   candidateId String
   candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  type        String    // "cv" | "cover_letter" | "other"
+  type        String // "cv" | "cover_letter" | "other"
   filename    String
   mimeType    String
-  data        String    // base64 encoded file content
-  size        Int       // original size in bytes
+  data        String // base64 encoded file content
+  size        Int // original size in bytes
   // SHA-256 (first 32 hex chars) of the raw file bytes. Set on every new
   // upload; nullable for pre-existing rows that haven't been backfilled.
   // Used to detect duplicate uploads without loading every existing file's
@@ -213,30 +221,30 @@ model ScoringWeightPreset {
   id        String   @id @default(cuid())
   orgId     String?
   name      String
-  weights   String   // JSON: ScoringWeights
+  weights   String // JSON: ScoringWeights
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([orgId, name])              // preset names are unique per org
+  @@unique([orgId, name]) // preset names are unique per org
   @@index([orgId])
 }
 
 // Log of every time a recruiter contacts a candidate — prevents two agents
 // messaging the same person blind and gives a shared audit trail.
 model ContactEvent {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   candidateId String
   candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   orgId       String?
-  userId      String   // who logged it
-  userName    String   // display name snapshot so it shows even if user is deleted
+  userId      String // who logged it
+  userName    String // display name snapshot so it shows even if user is deleted
   // Which role the contact was about. Optional — older events have null.
   // Not a hard FK so the event survives if the job is deleted; we resolve
   // titles via a separate Job lookup at read time.
   jobId       String?
-  type        String   // "message" | "call" | "email" | "ai_outreach_generated" | "other"
-  note        String?  // optional free text
-  createdAt   DateTime @default(now())
+  type        String // "message" | "call" | "email" | "ai_outreach_generated" | "other"
+  note        String? // optional free text
+  createdAt   DateTime  @default(now())
 
   @@index([candidateId])
   @@index([orgId])
@@ -247,16 +255,16 @@ model ContactEvent {
 // Fed back into the scoring prompt as calibration examples so similar future
 // candidates score closer to the recruiter's mental model.
 model ScoreCorrection {
-  id            String    @id @default(cuid())
-  candidateId   String
-  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  jobId         String?   // captured at correction time so we can match against role-similar past corrections
-  orgId         String?
-  originalScore Int       // matchScore at correction time
-  recruiterScore Int      // 0-100, what the recruiter thinks the score should be
-  reason        String?   // optional free text explanation
-  roleTitle     String?   // snapshot of parsedRole.title at correction time for similarity match
-  createdAt     DateTime  @default(now())
+  id             String    @id @default(cuid())
+  candidateId    String
+  candidate      Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobId          String? // captured at correction time so we can match against role-similar past corrections
+  orgId          String?
+  originalScore  Int // matchScore at correction time
+  recruiterScore Int // 0-100, what the recruiter thinks the score should be
+  reason         String? // optional free text explanation
+  roleTitle      String? // snapshot of parsedRole.title at correction time for similarity match
+  createdAt      DateTime  @default(now())
 
   @@index([orgId])
   @@index([candidateId])
@@ -265,20 +273,20 @@ model ScoreCorrection {
 // User-named, re-runnable search definitions — recruiters often run the same
 // search weekly without wanting to re-type queries/location/target.
 model SavedSearch {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   jobId           String
-  job             Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job             Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
   orgId           String?
-  name            String   // recruiter-chosen label, e.g. "React leads in Auckland"
-  queries         String   // JSON: string[]
+  name            String // recruiter-chosen label, e.g. "React leads in Auckland"
+  queries         String // JSON: string[]
   location        String
-  target           Int     @default(20)
+  target          Int       @default(20)
   lastRunAt       DateTime?
   lastResultCount Int?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  @@unique([jobId, name])              // saved-search names are unique per job
+  @@unique([jobId, name]) // saved-search names are unique per job
   @@index([jobId])
   @@index([orgId])
 }
@@ -289,7 +297,7 @@ model SearchSession {
   jobId              String
   job                Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
   status             String   @default("running") // running | complete | rate_limited
-  queries            String   // JSON: string[]
+  queries            String // JSON: string[]
   location           String
   collected          Int      @default(0)
   target             Int
@@ -315,9 +323,9 @@ model JobParseHistory {
   jobId         String
   job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
   parsedAt      DateTime @default(now())
-  anchorTerms   String   // JSON: string[]
+  anchorTerms   String // JSON: string[]
   mustHaveCount Int
-  changes       String   // JSON: string[]
+  changes       String // JSON: string[]
   evaluation    String
 
   @@index([jobId])
@@ -335,39 +343,150 @@ model LoginAttempt {
 
 // Tracks billable/auditable API usage per org. Used for rate limiting and metering.
 model UsageEvent {
-  id        String   @id @default(cuid())
-  orgId     String?
-  userId    String?
-  type      String   // "search" | "score" | "score_all" | "capture" | "parse" | "ai_call"
-  meta      String?  // JSON: extra context (jobId, count, etc.)
+  id           String   @id @default(cuid())
+  orgId        String?
+  userId       String?
+  type         String // "search" | "score" | "score_all" | "capture" | "parse" | "ai_call"
+  meta         String? // JSON: extra context (jobId, count, etc.)
   // AI cost tracking — populated on type="ai_call" events written by chat.ts.
   // Nullable so the existing rate-limit event types (score, parse, etc.) keep working.
   inputTokens  Int?
   outputTokens Int?
   costUsd      Float?
-  createdAt DateTime @default(now())
+  createdAt    DateTime @default(now())
 
   @@index([orgId, type, createdAt])
   @@index([orgId, createdAt])
 }
 
+// Per-(org, real-person) identity row. One row per human as recognised by
+// recruiter-truth keys (LinkedIn URL, JobAdder URL, email, phone). Multiple
+// Candidate rows (per-job applications) point at the same identity. Insights
+// (AI-extracted universal facts) live on ProfileInsight, also per-org.
+//
+// Cross-org isolation is NON-NEGOTIABLE: even when OrgAccessGrant lets one
+// org read another's library rows, identities and insights are still scoped
+// to the owning org. See plan §A decision #5.
+model CandidateIdentity {
+  id                   String   @id @default(cuid())
+  orgId                String
+  org                  Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  canonicalName        String // Latest known display name; updated when alias evidence improves
+  primaryEmail         String? // Lowercased, plus-tag preserved; treat as identity hint, not unique
+  primaryPhone         String? // E.164 normalised when available
+  linkedinUrl          String? // Canonical (current) LinkedIn URL; previous values move to alias rows
+  jobAdderUrl          String? // Canonical (current) JobAdder URL; previous values move to alias rows
+  // When a merge collapses this identity into a survivor, the merger sets this.
+  // Queries follow this chain to find the canonical identity. Splits (unmerge)
+  // null this back out and write a tombstone CandidateIdentityMerge row.
+  mergedIntoIdentityId String?
+  // Latest valid ProfileInsight for this identity. Denormalised so the read
+  // path doesn't have to find-the-newest-non-superseded for every join.
+  currentInsightId     String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  candidates Candidate[]
+  aliases    CandidateIdentityAlias[]
+  insights   ProfileInsight[]
+
+  // Same person legitimately exists across orgs; uniqueness is per-org only.
+  // jobAdderUrl uniqueness within an org prevents auto-merging two subsidiaries
+  // that share one JobAdder tenant — never collapse jobAdderUrl across orgs.
+  @@unique([orgId, linkedinUrl])
+  @@unique([orgId, jobAdderUrl])
+  @@index([orgId])
+  @@index([orgId, primaryEmail])
+  @@index([mergedIntoIdentityId])
+}
+
+// History of identity-resolution keys. Lets an identity survive a LinkedIn URL
+// rename or a candidate switching email/phone without splitting. validTo set
+// when a newer alias supersedes this one; otherwise null = current.
+model CandidateIdentityAlias {
+  id         String            @id @default(cuid())
+  identityId String
+  identity   CandidateIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  kind       String // 'linkedinUrl' | 'email' | 'phone' | 'jobAdderUrl'
+  value      String
+  source     String // 'extraction' | 'recruiter' | 'system' (clustering script)
+  validFrom  DateTime          @default(now())
+  validTo    DateTime?
+
+  @@index([identityId])
+  @@index([kind, value])
+}
+
+// Merge audit. Every auto- or recruiter-confirmed merge writes one row.
+// Tombstone rows (isTombstone=true) record a deliberate UNMERGE and prevent
+// any auto-merge logic from re-collapsing the same (source, survivor) pair —
+// without this, the next nightly clustering pass silently re-merges what the
+// recruiter just split. See Critic A §1.4.
+model CandidateIdentityMerge {
+  id                 String   @id @default(cuid())
+  orgId              String
+  sourceIdentityId   String // identity that was absorbed (or unmerged from)
+  survivorIdentityId String
+  mergedByUserId     String? // null for auto-merges by clustering script
+  mergedAt           DateTime @default(now())
+  reason             String // 'auto_linkedin' | 'auto_jobadder' | 'recruiter_confirm' | 'unmerge'
+  isTombstone        Boolean  @default(false)
+
+  // Single tombstone per (source, survivor) — re-running cluster shouldn't
+  // duplicate rows. Auto-merges may legitimately repeat (e.g. re-clustering
+  // after a new alias) so they are NOT covered by this constraint.
+  @@unique([orgId, sourceIdentityId, survivorIdentityId, isTombstone])
+  @@index([orgId, survivorIdentityId])
+  @@index([orgId, sourceIdentityId])
+}
+
+// Versioned AI-extracted reusable facts about an identity. Per-(orgId,
+// identityId) — never shared across orgs even when OrgAccessGrant exists.
+// Stale detection is hash-based: when Candidate.profileText changes, its hash
+// changes, and a new ProfileInsight row is extracted for the new hash. Old
+// rows stay as audit history (supersededAt set), so we can compare extractions
+// across prompt versions.
+//
+// The actual extractor + write path land in PR 2. PR 1 ships only the table
+// so the FK from CandidateIdentity.currentInsightId can reference it.
+model ProfileInsight {
+  id                    String            @id @default(cuid())
+  orgId                 String
+  identityId            String
+  identity              CandidateIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  factsJson             String // JSON: primaryStack, domains, titlesHeld, evidenceSnippets, etc.
+  extractionVersion     Int // Gate for Stage 1 ranker; bumped only after re-extraction sweep
+  promptVersion         String // e.g. "insight-v1.0" — bumped on prompt edits
+  extractedBy           String // "claude" | "openai" | "deterministic"
+  modelId               String // exact model id at extraction time
+  sourceProfileTextHash String // SHA-256 of normalised profileText that was the input
+  sourceCandidateId     String? // which Candidate row was the longest-text source
+  extractedAt           DateTime          @default(now())
+  supersededAt          DateTime?
+
+  // Idempotency: re-running the extractor with the same inputs is a no-op.
+  @@unique([orgId, identityId, sourceProfileTextHash, extractionVersion])
+  @@index([orgId, identityId, supersededAt])
+  @@index([orgId, extractionVersion])
+}
+
 model ReferenceCheck {
-  id              String    @id @default(cuid())
-  candidateId     String
-  candidate       Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
-  refereeName     String
-  refereeTitle    String?
-  refereeCompany  String?
-  refereeEmail    String?
-  refereePhone    String?
-  relationship    String?   // "Direct manager" | "Peer" | "Report" | "Client"
+  refereeName    String
+  refereeTitle   String?
+  refereeCompany String?
+  refereeEmail   String?
+  refereePhone   String?
+  relationship   String? // "Direct manager" | "Peer" | "Report" | "Client"
 
-  status          String    @default("pending") // pending | contacted | received | complete
-  questions       String?   // JSON: [{question, category}]
-  responses       String?   // JSON: [{question, answer}]
-  summary         String?   // AI-generated paragraph
+  status    String  @default("pending") // pending | contacted | received | complete
+  questions String? // JSON: [{question, category}]
+  responses String? // JSON: [{question, answer}]
+  summary   String? // AI-generated paragraph
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

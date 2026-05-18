@@ -269,6 +269,246 @@ await step("CandidateFile (candidateId, dataHash) unique constraint", async () =
   `;
 });
 
+// 14. CandidateIdentity table — per-(org, real-person) identity row.
+//     One row per human as recognised by recruiter-truth keys; multiple
+//     Candidate rows (per-job) point at the same identity. Per-org isolation
+//     is enforced via @@unique([orgId, linkedinUrl]) + @@unique([orgId, jobAdderUrl]).
+//
+//     Adding the table is metadata-only at sub-second cost on 13.5k rows.
+//     The FK from Candidate.candidateIdentityId comes in step 17 as
+//     NOT VALID to skip the revalidation lock; step 18 validates outside the
+//     hot path.
+await step("CandidateIdentity table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateIdentity" (
+      "id"                   TEXT         NOT NULL,
+      "orgId"                TEXT         NOT NULL,
+      "canonicalName"        TEXT         NOT NULL,
+      "primaryEmail"         TEXT,
+      "primaryPhone"         TEXT,
+      "linkedinUrl"          TEXT,
+      "jobAdderUrl"          TEXT,
+      "mergedIntoIdentityId" TEXT,
+      "currentInsightId"     TEXT,
+      "createdAt"            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateIdentity_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  // Per-org unique constraints — same person can legitimately exist across
+  // orgs, so uniqueness is scoped. jobAdderUrl uniqueness within an org
+  // prevents parent+subsidiary sharing one JobAdder tenant from auto-merging.
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_linkedinUrl_key"
+    ON "CandidateIdentity"("orgId", "linkedinUrl")
+    WHERE "linkedinUrl" IS NOT NULL
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_jobAdderUrl_key"
+    ON "CandidateIdentity"("orgId", "jobAdderUrl")
+    WHERE "jobAdderUrl" IS NOT NULL
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateIdentity_orgId_idx"
+    ON "CandidateIdentity"("orgId")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateIdentity_orgId_primaryEmail_idx"
+    ON "CandidateIdentity"("orgId", "primaryEmail")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateIdentity_mergedIntoIdentityId_idx"
+    ON "CandidateIdentity"("mergedIntoIdentityId")
+  `;
+  // FK to Org. ON DELETE CASCADE because identity is per-org; if the org
+  // itself is deleted, everything beneath it dies.
+  await prisma.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'CandidateIdentity_orgId_fkey'
+      ) THEN
+        ALTER TABLE "CandidateIdentity"
+          ADD CONSTRAINT "CandidateIdentity_orgId_fkey"
+          FOREIGN KEY ("orgId") REFERENCES "Org"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+});
+
+// 15. CandidateIdentityAlias — history of identity-resolution keys. Lets an
+//     identity survive a LinkedIn URL rename / email change without splitting.
+await step("CandidateIdentityAlias table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateIdentityAlias" (
+      "id"         TEXT         NOT NULL,
+      "identityId" TEXT         NOT NULL,
+      "kind"       TEXT         NOT NULL,
+      "value"      TEXT         NOT NULL,
+      "source"     TEXT         NOT NULL,
+      "validFrom"  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "validTo"    TIMESTAMP(3),
+      CONSTRAINT "CandidateIdentityAlias_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateIdentityAlias_identityId_idx"
+    ON "CandidateIdentityAlias"("identityId")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateIdentityAlias_kind_value_idx"
+    ON "CandidateIdentityAlias"("kind", "value")
+  `;
+  await prisma.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'CandidateIdentityAlias_identityId_fkey'
+      ) THEN
+        ALTER TABLE "CandidateIdentityAlias"
+          ADD CONSTRAINT "CandidateIdentityAlias_identityId_fkey"
+          FOREIGN KEY ("identityId") REFERENCES "CandidateIdentity"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+});
+
+// 16. CandidateIdentityMerge — merge audit + tombstone blocker.
+//     Tombstone rows prevent the next clustering pass from re-collapsing a
+//     pair that a recruiter has manually split.
+await step("CandidateIdentityMerge table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateIdentityMerge" (
+      "id"                 TEXT         NOT NULL,
+      "orgId"              TEXT         NOT NULL,
+      "sourceIdentityId"   TEXT         NOT NULL,
+      "survivorIdentityId" TEXT         NOT NULL,
+      "mergedByUserId"     TEXT,
+      "mergedAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "reason"             TEXT         NOT NULL,
+      "isTombstone"        BOOLEAN      NOT NULL DEFAULT FALSE,
+      CONSTRAINT "CandidateIdentityMerge_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateIdentityMerge_orgId_survivor_idx"
+    ON "CandidateIdentityMerge"("orgId", "survivorIdentityId")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateIdentityMerge_orgId_source_idx"
+    ON "CandidateIdentityMerge"("orgId", "sourceIdentityId")
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentityMerge_unique_tombstone_key"
+    ON "CandidateIdentityMerge"("orgId", "sourceIdentityId", "survivorIdentityId", "isTombstone")
+  `;
+});
+
+// 17. ProfileInsight — versioned AI-extracted facts about an identity.
+//     Per-(orgId, identityId, hash, version). The unique constraint makes
+//     re-extraction idempotent: same inputs → upsert to same row, no-op.
+//
+//     PR 2 wires the extractor; PR 1 just ships the table so the FK from
+//     CandidateIdentity.currentInsightId has a target.
+await step("ProfileInsight table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ProfileInsight" (
+      "id"                    TEXT         NOT NULL,
+      "orgId"                 TEXT         NOT NULL,
+      "identityId"            TEXT         NOT NULL,
+      "factsJson"             TEXT         NOT NULL,
+      "extractionVersion"     INTEGER      NOT NULL,
+      "promptVersion"         TEXT         NOT NULL,
+      "extractedBy"           TEXT         NOT NULL,
+      "modelId"               TEXT         NOT NULL,
+      "sourceProfileTextHash" TEXT         NOT NULL,
+      "sourceCandidateId"     TEXT,
+      "extractedAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "supersededAt"          TIMESTAMP(3),
+      CONSTRAINT "ProfileInsight_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "ProfileInsight_unique_extraction_key"
+    ON "ProfileInsight"("orgId", "identityId", "sourceProfileTextHash", "extractionVersion")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ProfileInsight_orgId_identity_superseded_idx"
+    ON "ProfileInsight"("orgId", "identityId", "supersededAt")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ProfileInsight_orgId_extractionVersion_idx"
+    ON "ProfileInsight"("orgId", "extractionVersion")
+  `;
+  await prisma.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ProfileInsight_identityId_fkey'
+      ) THEN
+        ALTER TABLE "ProfileInsight"
+          ADD CONSTRAINT "ProfileInsight_identityId_fkey"
+          FOREIGN KEY ("identityId") REFERENCES "CandidateIdentity"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+});
+
+// 18. Candidate.candidateIdentityId column + index + FK.
+//     Adding a nullable column on a 13.5k-row table is metadata-only in
+//     Postgres ≥11. FK added NOT VALID so existing rows don't trigger a
+//     revalidation lock. Step 19 validates the constraint outside the hot path.
+await step("Candidate.candidateIdentityId column + index", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate"
+      ADD COLUMN IF NOT EXISTS "candidateIdentityId" TEXT
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_candidateIdentityId_idx"
+    ON "Candidate"("candidateIdentityId")
+  `;
+  await prisma.$executeRaw`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'Candidate_candidateIdentityId_fkey'
+      ) THEN
+        ALTER TABLE "Candidate"
+          ADD CONSTRAINT "Candidate_candidateIdentityId_fkey"
+          FOREIGN KEY ("candidateIdentityId") REFERENCES "CandidateIdentity"("id")
+          ON DELETE SET NULL ON UPDATE CASCADE
+          NOT VALID;
+      END IF;
+    END $$
+  `;
+});
+
+// 19. Validate the Candidate.candidateIdentityId FK added NOT VALID in step 18.
+//     Runs separately so the long-locking validation doesn't block step 18's
+//     creation. VALIDATE CONSTRAINT takes a SHARE UPDATE EXCLUSIVE lock —
+//     blocks DDL but not normal reads/writes. Idempotent: re-validating an
+//     already-valid constraint is a no-op.
+await step("validate Candidate.candidateIdentityId FK", async () => {
+  await prisma.$executeRaw`
+    DO $$
+    DECLARE
+      is_valid BOOLEAN;
+    BEGIN
+      SELECT convalidated INTO is_valid
+      FROM pg_constraint
+      WHERE conname = 'Candidate_candidateIdentityId_fkey';
+
+      IF is_valid IS FALSE THEN
+        ALTER TABLE "Candidate"
+          VALIDATE CONSTRAINT "Candidate_candidateIdentityId_fkey";
+      END IF;
+    END $$
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {
