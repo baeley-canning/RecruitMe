@@ -87,7 +87,7 @@ export async function POST(
     // OpenAI). The failover wrapper is the resilience layer; one
     // primary attempt + one secondary attempt is enough.
     const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-      scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId),
+      scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId, undefined, candidate.location),
       predictAcceptance(candidate.profileText!, parsedRole, salary),
     ]);
 

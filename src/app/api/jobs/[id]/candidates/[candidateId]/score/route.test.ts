@@ -147,7 +147,9 @@ describe("candidate re-score route", () => {
       expect.any(Object),
       null,
       scoringConfigMocks.customWeights,
-      "org-1"
+      "org-1",
+      undefined,
+      expect.anything() // candidateLocation
     );
     expect(body.scoreBreakdown).toContain("\"version\":2");
   });

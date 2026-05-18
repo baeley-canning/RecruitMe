@@ -2,6 +2,7 @@ import { parseJson, SONNET, resolveModelForDataQuality, withRetry } from "./chat
 import { chatWithFailover, type ChatSource } from "./chat-with-failover";
 import { analyseProfileCaptureCompleteness, classifyDataQuality, runDeterministicMatch, buildStubBreakdown } from "../scoring";
 import { getRecruitingContext, getAntiArchetypeContext } from "../recruiter-memory";
+import { routeScoring } from "../nlp/ai-router";
 import {
   buildScoreBreakdown,
   CATEGORY_WEIGHTS_V2,
@@ -463,6 +464,7 @@ export async function scoreCandidateStructured(
   weights?: ScoringWeights,
   orgId?: string | null,         // used to retrieve recruiter memory examples
   recruiterContext?: string,     // pre-fetched context (avoids DB call inside scoring)
+  candidateLocation?: string | null, // used by AI router for local location scoring
 ): Promise<ScoreBreakdown> {
   if (!profileText || profileText.trim().length < 100) {
     throw new Error("Profile text too short to score");
@@ -541,6 +543,22 @@ export async function scoreCandidateStructured(
       visibleSignals:       { headline: visibleHeadline, location: visibleLocation },
       weights,
     });
+  }
+
+  // ── AI Router: local path (no Claude call) ─────────────────────────────────
+  // Enabled via RECRUITME_LOCAL_SCORING=true. For tech-skill-heavy roles with
+  // full profiles, the router can produce a complete breakdown deterministically.
+  // Target: 70-80% of scoring calls. Gated behind env flag for gradual rollout.
+  if (process.env.RECRUITME_LOCAL_SCORING === "true") {
+    try {
+      const routerDecision = routeScoring(profileText, parsedRole, candidateLocation ?? null, weights);
+      if (routerDecision.path === "local" && routerDecision.localBreakdown) {
+        console.log("[scoring] local path — skipping Claude");
+        return routerDecision.localBreakdown;
+      }
+    } catch {
+      // Router failure is non-fatal — fall through to Claude
+    }
   }
 
   const salaryLine    = salary?.min || salary?.max
