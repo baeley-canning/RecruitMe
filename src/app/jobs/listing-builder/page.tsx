@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Upload, FileText, X, Loader2, DollarSign, Wifi, Sparkles, Copy, Check, ChevronRight, Download, Eye, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -332,7 +333,7 @@ ${toHtml(listingBody)}
           </p>
           <p className="text-xs text-text-tertiary mt-1">
             Already have a finished JD? Skip ahead and{" "}
-            <a href="/jobs/new" className="text-accent hover:text-accent-hover font-medium">create the job</a>
+            <Link href="/jobs/new" className="text-accent hover:text-accent-hover font-medium">create the job</Link>
             {" "}directly.
           </p>
         </div>

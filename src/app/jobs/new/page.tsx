@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Upload, FileText, X, ChevronRight, Loader2, DollarSign, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -188,7 +189,7 @@ export default function NewJobPage() {
           </p>
           <p className="text-xs text-text-tertiary mt-1">
             Don&apos;t have the ad written yet? Try the{" "}
-            <a href="/jobs/listing-builder" className="text-accent hover:text-accent-hover font-medium">Listing Builder</a>
+            <Link href="/jobs/listing-builder" className="text-accent hover:text-accent-hover font-medium">Listing Builder</Link>
             {" "}to draft one from a rough brief.
           </p>
         </div>
