@@ -295,21 +295,9 @@ await step("CandidateIdentity table", async () => {
       CONSTRAINT "CandidateIdentity_pkey" PRIMARY KEY ("id")
     )
   `;
-  // Per-org unique constraints — same person can legitimately exist across
-  // orgs, so uniqueness is scoped. We do NOT create unique indexes here:
-  // Prisma db push adds them based on the @@unique declarations in
-  // schema.prisma. Earlier versions of this script created partial-unique
-  // indexes (WHERE "linkedinUrl" IS NOT NULL) which then collided with
-  // Prisma's non-partial expectation — db push 4xx'd six times in a row
-  // until we dropped them. Postgres treats NULLs as distinct in unique
-  // indexes by default, so a non-partial unique on (orgId, linkedinUrl)
-  // still allows many rows with NULL linkedinUrl per org.
-  //
-  // Idempotent cleanup of the broken partial-unique indexes — safe to
-  // re-run on every startup, drops the old shape so Prisma can lay down
-  // the correct one.
-  await prisma.$executeRaw`DROP INDEX IF EXISTS "CandidateIdentity_orgId_linkedinUrl_key"`;
-  await prisma.$executeRaw`DROP INDEX IF EXISTS "CandidateIdentity_orgId_jobAdderUrl_key"`;
+  // Unique indexes are created in step 20 (after deduplication) with the
+  // exact names Prisma expects, so db push finds them in place and skips its
+  // GROUP-BY-based data-loss pre-check. Do not create or drop them here.
   await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "CandidateIdentity_orgId_idx"
     ON "CandidateIdentity"("orgId")
@@ -511,12 +499,20 @@ await step("validate Candidate.candidateIdentityId FK", async () => {
   `;
 });
 
-// 20. Deduplicate CandidateIdentity before Prisma adds the @@unique constraints
-//     for (orgId, linkedinUrl) and (orgId, jobAdderUrl). Collapses each group
-//     of duplicates to the most-recently-updated survivor; re-points Candidate
-//     candidateIdentityId to the survivor before deleting duplicates so the
-//     ON DELETE SET NULL FK cascade never fires. Alias rows cascade-delete
-//     automatically. Idempotent: after the first clean run nothing matches.
+// 20. Deduplicate CandidateIdentity and create its unique indexes directly.
+//
+//     Why not let prisma db push create them?
+//     Prisma's data-loss pre-check uses GROUP BY on the nullable columns, which
+//     treats NULL = NULL. So multiple rows with (orgId=X, linkedinUrl=NULL) look
+//     like "duplicates" to Prisma even though PostgreSQL unique indexes treat
+//     NULLs as distinct and would happily accept them. The pre-check fires,
+//     prisma db push refuses, and the container dies.
+//
+//     Fix: (a) deduplicate any real duplicates where the value IS NOT NULL, then
+//     (b) CREATE UNIQUE INDEX IF NOT EXISTS with Prisma's expected names. When
+//     prisma db push introspects the DB and finds the indexes already present it
+//     skips them entirely — no pre-check, no false alarm. Idempotent on every
+//     subsequent startup.
 await step("deduplicate CandidateIdentity (linkedinUrl + jobAdderUrl)", async () => {
   // ── linkedinUrl pass ──────────────────────────────────────────────────────
   const repointed1 = await prisma.$executeRaw`
@@ -584,6 +580,19 @@ await step("deduplicate CandidateIdentity (linkedinUrl + jobAdderUrl)", async ()
     )
   `;
   console.log(`  re-pointed ${repointed1 + repointed2} candidate(s), removed ${deleted1 + deleted2} duplicate identity row(s)`);
+
+  // Create the unique indexes with Prisma's expected names so db push finds
+  // them already in place and skips its GROUP-BY-based data-loss pre-check.
+  // PostgreSQL treats NULLs as distinct in unique indexes, so multiple rows
+  // with (orgId=X, linkedinUrl=NULL) are fine — but Prisma's check isn't.
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_linkedinUrl_key"
+    ON "CandidateIdentity"("orgId", "linkedinUrl")
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_jobAdderUrl_key"
+    ON "CandidateIdentity"("orgId", "jobAdderUrl")
+  `;
 });
 
 await prisma.$disconnect();
