@@ -46,3 +46,12 @@ pnpm-debug.log*
 
 # Agent tool worktree snapshots (left behind by Agent + isolation="worktree")
 .claude/
+
+# CV-extraction failure log: written at repo root by scripts/extract-cv-text.mjs
+# on each run. Per-run artifact, not source. Safe to delete anytime.
+/extract-cv-failures.json
+
+# One-off iPhone debugging dump from 2026-05-17 (devicectl + 60s syslog).
+# Kept locally for reference; not part of the app. TODO: delete once the
+# iPhone-side issue it captured is fully closed out.
+/iphone-diagnostics/
