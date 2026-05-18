@@ -870,6 +870,26 @@ await step("create Subscription table", async () => {
   await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Subscription_orgId_idx" ON "Subscription"("orgId")`;
 });
 
+// Step 32: ApiKey model (Phase 6 — Score-as-a-Service API)
+await step("create ApiKey table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ApiKey" (
+      "id"        TEXT         NOT NULL,
+      "orgId"     TEXT         NOT NULL,
+      "name"      TEXT         NOT NULL,
+      "keyHash"   TEXT         NOT NULL,
+      "prefix"    TEXT         NOT NULL,
+      "lastUsed"  TIMESTAMP(3),
+      "rateLimit" INTEGER      NOT NULL DEFAULT 100,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "revokedAt" TIMESTAMP(3),
+      CONSTRAINT "ApiKey_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "ApiKey_keyHash_key" ON "ApiKey"("keyHash")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ApiKey_orgId_idx" ON "ApiKey"("orgId")`;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, Github, Menu, Building2, DollarSign, Copy, CreditCard } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, ClipboardList, Github, Menu, Building2, DollarSign, Copy, CreditCard, Paintbrush } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isOwner as sessionIsOwner } from "@/lib/access";
 import { useState, useEffect } from "react";
@@ -167,7 +167,8 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/placements",          icon: DollarSign,         label: "Placements",         match: (p) => p === "/placements" || p.startsWith("/placements/") },
   { href: "/candidates",          icon: Library,            label: "Candidates Library", match: (p) => p === "/candidates" || p.startsWith("/candidates/") },
   { href: "/admin/duplicates",    icon: Copy,               label: "Duplicates",         match: (p) => p.startsWith("/admin/duplicates") },
-  { href: "/settings/billing",   icon: CreditCard,         label: "Billing",            match: (p) => p.startsWith("/settings/billing") },
+  { href: "/settings/billing",      icon: CreditCard,   label: "Billing",            match: (p) => p.startsWith("/settings/billing") },
+  { href: "/settings/white-label",  icon: Paintbrush,   label: "White-label",        match: (p) => p.startsWith("/settings/white-label") },
   { href: "/candidate-profiles",  icon: ClipboardList,      label: "Candidate Profiles", match: (p) => p === "/candidate-profiles" },
   { href: "/github-search",       icon: Github,             label: "GitHub Search",      match: (p) => p.startsWith("/github-search") },
   { href: "/linkedin-setup",      icon: Bookmark,           label: "LinkedIn Setup",     match: (p) => p === "/linkedin-setup" },

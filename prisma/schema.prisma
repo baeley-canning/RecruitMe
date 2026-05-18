@@ -677,6 +677,22 @@ model Archetype {
   @@index([orgId, isAntiArchetype])
 }
 
+// API keys for Score-as-a-Service (P6-2). Agency plan only.
+// keyHash is SHA-256 of the raw key — raw key shown once at creation only.
+model ApiKey {
+  id        String    @id @default(cuid())
+  orgId     String
+  name      String
+  keyHash   String    @unique
+  prefix    String
+  lastUsed  DateTime?
+  rateLimit Int       @default(100)
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([orgId])
+}
+
 // Stripe subscription per org. One active subscription per org at a time.
 // status mirrors Stripe: active | past_due | canceled | trialing | incomplete
 model Subscription {
