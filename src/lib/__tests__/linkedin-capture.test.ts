@@ -109,4 +109,17 @@ Software developer based in Wellington.`;
       location: "Wellington, Wellington, New Zealand",
     });
   });
+
+  it("does not treat comma-separated headline text as location", () => {
+    const capture = `Owen Nicholson
+Specialist in Training Design, Development and Delivery at Multiple Clients
+About
+I design and deliver training programmes for clients.`;
+
+    expect(extractIdentityFromLinkedInProfileText(capture)).toEqual({
+      name: "Owen Nicholson",
+      headline: "Specialist in Training Design, Development and Delivery at Multiple Clients",
+      location: "",
+    });
+  });
 });

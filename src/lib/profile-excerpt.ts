@@ -1,8 +1,43 @@
+import {
+  extractSignalsFromRequirement,
+  normalizeSignalText,
+  signalMatchesText,
+} from "./requirement-signals";
+
+/**
+ * Escape angle brackets and ampersands in user-supplied text before
+ * injecting it inside XML tags in an AI prompt. Without this, a candidate
+ * profile containing `</candidate_profile>` could close the safety wrapper
+ * and inject instructions that the model would then execute.
+ */
+export function escapeXmlForPrompt(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 const PROFILE_SECTION_ALIASES = new Map<string, string>([
   ["about", "About"],
+  ["profile", "About"],
+  ["summary", "Summary"],
+  ["objective", "Summary"],
+  // CV variants — keep first to preserve the "Experience" output key the
+  // priority + limits maps below already understand.
   ["experience", "Experience"],
+  ["work experience", "Experience"],
+  ["professional experience", "Experience"],
+  ["employment history", "Experience"],
+  ["employment", "Experience"],
+  ["work history", "Experience"],
+  ["career history", "Experience"],
+  ["career summary", "Experience"],
   ["education", "Education"],
+  ["qualifications", "Education"],
   ["skills", "Skills"],
+  ["technical skills", "Skills"],
+  ["key skills", "Skills"],
+  ["core competencies", "Skills"],
   ["top skills", "Top skills"],
   ["licenses certifications", "Licenses & certifications"],
   ["certifications", "Certifications"],
@@ -11,7 +46,9 @@ const PROFILE_SECTION_ALIASES = new Map<string, string>([
   ["publications", "Publications"],
   ["volunteering", "Volunteering"],
   ["honors awards", "Honors & awards"],
-  ["summary", "Summary"],
+  ["references", "References"],
+  ["achievements", "Achievements"],
+  ["languages", "Languages"],
 ]);
 
 const PROFILE_SECTION_PRIORITY = [
@@ -32,7 +69,7 @@ const PROFILE_SECTION_PRIORITY = [
 
 const PROFILE_SECTION_LIMITS: Record<string, number> = {
   "About": 1100,
-  "Experience": 2200,
+  "Experience": 3800,
   "Education": 700,
   "Top skills": 500,
   "Skills": 500,
@@ -46,7 +83,7 @@ const PROFILE_SECTION_LIMITS: Record<string, number> = {
   "Summary": 500,
 };
 
-export const SCORE_PROFILE_EXCERPT_MAX_CHARS = 4500;
+export const SCORE_PROFILE_EXCERPT_MAX_CHARS = 6500;
 export const OUTREACH_PROFILE_EXCERPT_MAX_CHARS = 3500;
 export const ACCEPTANCE_PROFILE_EXCERPT_MAX_CHARS = 3500;
 
@@ -126,4 +163,64 @@ export function buildProfileExcerpt(profileText: string, maxChars: number): stri
 
   const excerpt = chunks.join("\n\n").trim();
   return excerpt.length > maxChars ? excerpt.slice(0, maxChars).trim() : excerpt;
+}
+
+function normalizeRequirementTerm(value: string) {
+  return normalizeSignalText(value);
+}
+
+function extractRequirementTerms(requirements: string[]): string[] {
+  const terms = new Set<string>();
+
+  for (const requirement of requirements) {
+    extractSignalsFromRequirement(requirement).forEach((term) => terms.add(normalizeRequirementTerm(term)));
+  }
+
+  return [...terms].filter((term) => term.length >= 2).slice(0, 24);
+}
+
+function lineIncludesTerm(line: string, term: string) {
+  return signalMatchesText(line, term);
+}
+
+export function buildRequirementAwareProfileExcerpt(
+  profileText: string,
+  maxChars: number,
+  requirements: string[]
+): string {
+  const baseline = buildProfileExcerpt(profileText, maxChars);
+  if (!requirements.length || profileText.length <= maxChars) return baseline;
+
+  const terms = extractRequirementTerms(requirements).filter((term) =>
+    signalMatchesText(profileText, term) && !signalMatchesText(baseline, term)
+  );
+  if (terms.length === 0) return baseline;
+
+  const lines = profileText
+    .replace(/\r/g, "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const snippets: string[] = [];
+  const seen = new Set<string>();
+  for (const term of terms) {
+    const index = lines.findIndex((line) => lineIncludesTerm(line, term));
+    if (index === -1) continue;
+    const start = Math.max(0, index - 2);
+    const end = Math.min(lines.length, index + 7);
+    const snippet = lines.slice(start, end).join("\n");
+    const key = snippet.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    snippets.push(snippet);
+  }
+
+  if (snippets.length === 0) return baseline;
+
+  const evidenceBlock = `Requirement evidence from full profile\n${snippets.join("\n\n")}`.slice(0, Math.min(1400, maxChars));
+  const remaining = maxChars - evidenceBlock.length - 2;
+  if (remaining <= 0) return evidenceBlock.slice(0, maxChars).trim();
+
+  return `${baseline.slice(0, remaining).trim()}\n\n${evidenceBlock}`.slice(0, maxChars).trim();
 }

@@ -5,6 +5,7 @@ import {
   computeEvidenceCoverageScore,
   computeOverallScore,
   classifyDataQuality,
+  analyseProfileCaptureCompleteness,
   computeConfidence,
   buildScoreBreakdown,
   getMustHaveImportance,
@@ -17,13 +18,12 @@ import {
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 const baseCategories: ScoreBreakdown["categories"] = {
-  skill_fit:         { score: 80, weight: CATEGORY_WEIGHTS_V2.skill_fit,         evidence: "Uses React and TypeScript" },
-  location_fit:      { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit,     evidence: "Based in Auckland" },
-  seniority_fit:     { score: 80, weight: CATEGORY_WEIGHTS_V2.seniority_fit,     evidence: "Senior Software Engineer title" },
-  title_fit:         { score: 70, weight: CATEGORY_WEIGHTS_V2.title_fit,         evidence: "Close synonym title" },
-  industry_fit:      { score: 90, weight: CATEGORY_WEIGHTS_V2.industry_fit,      evidence: "Fintech experience" },
-  nice_to_have_fit:  { score: 60, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit,  evidence: "Some nice-to-haves present" },
-  keyword_alignment: { score: 75, weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Vocabulary aligns well" },
+  skill_fit:        { score: 80,  weight: CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Uses React and TypeScript" },
+  location_fit:     { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit,     evidence: "Based in Auckland" },
+  seniority_fit:    { score: 80,  weight: CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Senior Software Engineer title" },
+  title_fit:        { score: 70,  weight: CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Close synonym title" },
+  domain_fit:       { score: 85,  weight: CATEGORY_WEIGHTS_V2.domain_fit,       evidence: "Fintech experience, vocabulary aligns" },
+  nice_to_have_fit: { score: 60,  weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some nice-to-haves present" },
 };
 
 const allConfirmed: MustHaveStatus[] = [
@@ -52,16 +52,16 @@ const withNegative: MustHaveStatus[] = [
 // ─── computeMustHavePct ────────────────────────────────────────────────────────
 
 describe("computeMustHavePct", () => {
-  it("returns 100 when coverage is empty (no must-haves)", () => {
-    expect(computeMustHavePct([])).toBe(100);
+  it("returns 50 when coverage is empty (no must-haves — neutral, not inflated)", () => {
+    expect(computeMustHavePct([])).toBe(50);
   });
 
   it("returns 100 when all confirmed", () => {
     expect(computeMustHavePct(allConfirmed)).toBe(100);
   });
 
-  it("returns 65 when all likely", () => {
-    expect(computeMustHavePct(allLikely)).toBe(65);
+  it("returns 50 when all likely (full_profile likely=50)", () => {
+    expect(computeMustHavePct(allLikely)).toBe(50);
   });
 
   it("returns 0 when all negative", () => {
@@ -86,21 +86,67 @@ describe("computeMustHavePct", () => {
     expect(computeMustHavePct(coverage)).toBe(0);
   });
 
-  it("treats unknown must-haves as provisional for snippets", () => {
+  it("treats unknown must-haves as neutral for snippets — absence of evidence is not evidence of mismatch", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "Leadership", status: "unknown", evidence: "Insufficient data" },
     ];
-    // snippet.unknown = 30 (neutral credit — absence of evidence ≠ evidence of absence)
-    expect(computeMustHavePct(coverage, "snippet")).toBe(30);
+    // snippet.unknown = 50 (truly neutral — the snippet didn't carry enough
+    // body text to confirm, but that's a data-quality issue, not a candidate
+    // gap. Pulling the must-have pct down here would penalise candidates for
+    // a thin scrape, which is exactly what we're fixing.)
+    expect(computeMustHavePct(coverage, "snippet")).toBe(50);
   });
 
-  it("treats missing must-haves as provisional for minimal snippets", () => {
+  it("gives missing must-haves on minimal snippets low credit, unknown gets neutral-ish", () => {
     const coverage: MustHaveStatus[] = [
       { requirement: "WordPress", status: "missing", evidence: "Not mentioned in snippet" },
       { requirement: "UX", status: "unknown", evidence: "Insufficient data" },
     ];
-    // WordPress (1.5×, missing=0) + UX (1.3×, unknown=10): (0+13)/2.8 = 4.64 → 5
-    expect(computeMustHavePct(coverage, "minimal")).toBe(5);
+    // minimal.missing = 0, minimal.unknown = 40. Weights: WordPress 1.5×, UX 1.3×.
+    // (0 × 1.5 + 40 × 1.3) / (1.5 + 1.3) = 52 / 2.8 ≈ 18.57 → 19
+    expect(computeMustHavePct(coverage, "minimal")).toBe(19);
+  });
+
+  // Soft-skill must-haves (importance < 0.8) are kept in the coverage list
+  // for recruiter visibility but EXCLUDED from must_have_pct so they can't
+  // rescue a weak technical profile. This is the "Co-Op .NET Dev had 14
+  // must-haves with 5 behavioural → must_have_pct inflated ~15pts" bug.
+  it("excludes soft-skill must-haves from the pct formula but keeps them in coverage", () => {
+    const coverage: MustHaveStatus[] = [
+      // 2 technical, both confirmed
+      { requirement: "C++ development experience",   status: "confirmed", evidence: "Found" },
+      { requirement: "Azure Kubernetes (AKS)",       status: "confirmed", evidence: "Found" },
+      // 3 behavioural — would otherwise drag pct down on "missing" or inflate on "likely"
+      { requirement: "Strong communication skills",  status: "missing", evidence: "Not mentioned" },
+      { requirement: "Ability to collaborate across teams", status: "missing", evidence: "Not mentioned" },
+      { requirement: "Self-driven with deadline focus",     status: "missing", evidence: "Not mentioned" },
+    ];
+    // Without filter: (100×1.5 + 100×1.3 + 0×0.7 + 0×0.7 + 0×0.7) / (1.5+1.3+0.7+0.7+0.7)
+    //               = 280 / 4.9 ≈ 57 — soft skills tank the score on missing.
+    // With filter: (100×1.5 + 100×1.3) / (1.5+1.3) = 280/2.8 = 100 — true technical fit.
+    expect(computeMustHavePct(coverage)).toBe(100);
+  });
+
+  it("excludes soft-skills even when they're 'likely' (the inflation case)", () => {
+    // All three soft items below match the getMustHaveImportance 0.7 regex
+    // (collaborate / communication / team). Without the filter, three
+    // 'likely' soft entries @ snippet.likely=55 × 0.7 = 38.5 each pull the
+    // pct toward 47. With the filter, only C++ scores and missing@snippet=20.
+    const coverage: MustHaveStatus[] = [
+      { requirement: "C++ development experience",       status: "missing", evidence: "Not in snippet" },
+      { requirement: "Strong communication skills",       status: "likely",  evidence: "Senior title" },
+      { requirement: "Team player who can collaborate",   status: "likely",  evidence: "Manager role" },
+      { requirement: "Excellent team communication",      status: "likely",  evidence: "Implied" },
+    ];
+    expect(computeMustHavePct(coverage, "snippet")).toBe(20);
+  });
+
+  it("returns neutral 50 when ALL must-haves are soft-skill (no real signal to score on)", () => {
+    const coverage: MustHaveStatus[] = [
+      { requirement: "Strong communication skills",  status: "missing", evidence: "Not mentioned" },
+      { requirement: "Team player",                  status: "likely", evidence: "Implied" },
+    ];
+    expect(computeMustHavePct(coverage)).toBe(50);
   });
 
   it("averages mixed statuses correctly (confirmed=100, missing=0 → 50)", () => {
@@ -112,13 +158,13 @@ describe("computeMustHavePct", () => {
   });
 
   it("rounds correctly for non-integer averages", () => {
-    // confirmed=100, likely=65, missing=0 → avg = 165/3 = 55
+    // full_profile points: confirmed=100, likely=50, missing=0 → avg = 150/3 = 50
     const coverage: MustHaveStatus[] = [
       { requirement: "A", status: "confirmed", evidence: "Found" },
       { requirement: "B", status: "likely",    evidence: "Implied" },
       { requirement: "C", status: "missing",   evidence: "Not found" },
     ];
-    expect(computeMustHavePct(coverage)).toBe(55);
+    expect(computeMustHavePct(coverage)).toBe(50);
   });
 
   it("treats equivalent as 100 for full_profile (satisfies the requirement)", () => {
@@ -189,6 +235,31 @@ describe("getMustHaveImportance — degree requirements", () => {
   it("returns 1.5 for work rights requirements (existing behaviour unchanged)", () => {
     expect(getMustHaveImportance("NZ citizenship or permanent residency required")).toBe(1.5);
     expect(getMustHaveImportance("Right to work in New Zealand")).toBe(1.5);
+  });
+
+  it("returns 1.5 for held / active security clearance requirements", () => {
+    // Active or required clearances — real credentials, not residency checks
+    expect(getMustHaveImportance("Secret Vetting clearance required")).toBe(1.5);
+    expect(getMustHaveImportance("Current Confidential Vetting (CV) with upgrade pathway")).toBe(1.5);
+    expect(getMustHaveImportance("Security vetting required for this role")).toBe(1.5);
+    expect(getMustHaveImportance("National security clearance — baseline level")).toBe(1.5);
+    expect(getMustHaveImportance("Security clearance required")).toBe(1.5);
+    expect(getMustHaveImportance("Must hold current security clearance")).toBe(1.5);
+  });
+
+  it("returns 1.0 for eligibility-only clearance phrases (residency check, not a held credential)", () => {
+    // "Eligible for clearance" just means NZ citizen/PR — already handled by
+    // the work-rights rule if the requirement spells it out. Should not give
+    // the same 1.5× weight as actually holding a clearance.
+    expect(getMustHaveImportance("Eligible for NZ security clearance (NZ citizen or permanent resident)")).toBe(1.5); // NZ citizen triggers work-rights rule first
+    expect(getMustHaveImportance("Security clearance eligibility or existing clearance relevant to sensitive government systems")).toBe(1.0);
+    expect(getMustHaveImportance("Ability to obtain NZ security clearance")).toBe(1.0);
+    expect(getMustHaveImportance("Must be eligible for security clearance")).toBe(1.0);
+  });
+
+  it("returns 1.5 for C++ despite punctuation boundaries", () => {
+    expect(getMustHaveImportance("Strong C++ engineering experience")).toBe(1.5);
+    expect(getMustHaveImportance("Microsoft Visual C++ developer")).toBe(1.5);
   });
 });
 
@@ -442,6 +513,73 @@ describe("buildScoreBreakdown", () => {
     expect(bd.missing_evidence).toHaveLength(4);
   });
 
+  // Confidence cap: when we genuinely don't know the candidate (minimal
+  // profile data + several unknown / missing must-haves) the score must
+  // not sit above 40, regardless of what the formula or Claude says. This
+  // prevents the "60% match" + "low confidence" mixed signal from showing
+  // up next to each other in the UI.
+  it("caps overall at 40 when confidence < 30 (truly low-data candidate)", () => {
+    // Minimal profile (180 chars) + 4 critical unknowns drives confidence
+    // base 15 + (4/4 unknown → -30) = -15, clamped to 0 by computeConfidence.
+    const bd = buildScoreBreakdown({
+      categories: {
+        skill_fit:        { score: 60, weight: 0.22, evidence: "Some signals visible" },
+        location_fit:     { score: 100, weight: 0.08, evidence: "Wellington-based" },
+        seniority_fit:    { score: 70, weight: 0.10, evidence: "Senior title" },
+        title_fit:        { score: 70, weight: 0.08, evidence: "Adjacent title" },
+        domain_fit:       { score: 60, weight: 0.10, evidence: "Plausible domain" },
+        nice_to_have_fit: { score: 50, weight: 0.06, evidence: "Some bonus" },
+      },
+      // All technical (no soft-skill exclusion), all unknown — formula
+      // would land in the 40-50s without the cap. Confidence cap kicks in.
+      must_have_coverage: [
+        { requirement: "C++ development experience",   status: "unknown", evidence: "Not visible" },
+        { requirement: "Sybase database experience",   status: "unknown", evidence: "Not visible" },
+        { requirement: "Azure Kubernetes (AKS)",       status: "unknown", evidence: "Not visible" },
+        { requirement: "Microservices architecture",   status: "unknown", evidence: "Not visible" },
+      ],
+      nice_to_have_coverage: [],
+      reasons_for: ["Wellington-based"],
+      reasons_against: [],
+      missing_evidence: [],
+      recruiter_summary: "Minimal capture — visible signals only.",
+      profileCharCount: 180,        // minimal data quality
+      claudeOverallScore: 55,        // Claude scored 55 from the headline + employer
+    });
+
+    expect(bd.confidence.score).toBeLessThan(30);
+    expect(bd.overall).toBeLessThanOrEqual(40);
+  });
+
+  it("does NOT cap overall at 40 when confidence is healthy", () => {
+    // Full profile with confirmed must-haves → high confidence → no cap.
+    const bd = buildScoreBreakdown({
+      categories: {
+        skill_fit:        { score: 80, weight: 0.22, evidence: "Strong stack overlap" },
+        location_fit:     { score: 100, weight: 0.08, evidence: "Wellington-based" },
+        seniority_fit:    { score: 80, weight: 0.10, evidence: "Senior fit" },
+        title_fit:        { score: 75, weight: 0.08, evidence: "Direct title match" },
+        domain_fit:       { score: 70, weight: 0.10, evidence: "Same sector" },
+        nice_to_have_fit: { score: 70, weight: 0.06, evidence: "Most present" },
+      },
+      must_have_coverage: [
+        { requirement: "C++ development experience",   status: "confirmed", evidence: "10 years C++" },
+        { requirement: "Sybase database experience",   status: "confirmed", evidence: "Sybase ASE at ACC" },
+        { requirement: "Azure Kubernetes (AKS)",       status: "confirmed", evidence: "AKS at FINEOS" },
+      ],
+      nice_to_have_coverage: [],
+      reasons_for: [],
+      reasons_against: [],
+      missing_evidence: [],
+      recruiter_summary: "Strong technical match.",
+      profileCharCount: 6500,
+      claudeOverallScore: 75,
+    });
+
+    expect(bd.confidence.score).toBeGreaterThanOrEqual(50);
+    expect(bd.overall).toBeGreaterThan(40);
+  });
+
   it("returns must_have_pct of 100 when no must-haves given", () => {
     const bd = buildScoreBreakdown({
       categories:            baseCategories,
@@ -453,7 +591,7 @@ describe("buildScoreBreakdown", () => {
       recruiter_summary:     "",
       profileCharCount:      2500,
     });
-    expect(bd.must_have_pct).toBe(100);
+    expect(bd.must_have_pct).toBe(50);
   });
 
   it("returns evidence_coverage_score of 0 when all items missing or absent", () => {
@@ -533,10 +671,10 @@ describe("buildScoreBreakdown", () => {
     // Snippets give unknowns partial credit (30pts) vs full profiles (0pts) —
     // absence of evidence is not evidence of absence.
     expect(snippetBreakdown.must_have_pct).toBeGreaterThan(fullProfileBreakdown.must_have_pct);
-    // Snippet cap is 70% — prevents snippets from looking like confirmed strong matches.
-    expect(snippetBreakdown.overall).toBeLessThanOrEqual(70);
-    // Snippet with sparse must-have evidence should not reach 70% cap.
-    expect(snippetBreakdown.overall).toBeLessThan(70);
+    // Short snippets stay below match territory even when the available evidence is positive.
+    expect(snippetBreakdown.overall).toBeLessThanOrEqual(55);
+    // Sparse snippet evidence should not reach the short-snippet cap.
+    expect(snippetBreakdown.overall).toBeLessThan(55);
     expect(snippetBreakdown.confidence.level).toBe("low");
     expect(snippetBreakdown.data_quality).toBe("snippet");
   });
@@ -572,8 +710,105 @@ describe("buildScoreBreakdown", () => {
     });
 
     // When all must-haves are confirmed, full profile should always outscore a snippet
-    // because snippet cap (70%) is below where a fully-confirmed full profile lands.
+    // because the short-snippet cap is below where a fully-confirmed full profile lands.
     expect(fullProfileBreakdown.overall).toBeGreaterThan(snippetBreakdown.overall);
-    expect(snippetBreakdown.overall).toBeLessThanOrEqual(70);
+    expect(snippetBreakdown.overall).toBeLessThanOrEqual(55);
+  });
+
+  it("caps longer partial profiles below confirmed full-profile territory", () => {
+    const bd = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    allConfirmed,
+      nice_to_have_coverage: [],
+      reasons_for:           [],
+      reasons_against:       [],
+      missing_evidence:      [],
+      recruiter_summary:     "",
+      profileCharCount:      1200,
+    });
+
+    expect(bd.overall).toBeLessThanOrEqual(65);
+    expect(bd.data_quality).toBe("snippet");
+  });
+
+  it("caps full-profile scores when critical must-haves are only historical", () => {
+    const bd = buildScoreBreakdown({
+      categories: {
+        skill_fit:        { score: 88, weight: CATEGORY_WEIGHTS_V2.skill_fit, evidence: "Strong legacy systems background" },
+        location_fit:     { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Wellington-based" },
+        seniority_fit:    { score: 90, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Senior engineer" },
+        title_fit:        { score: 85, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Close title match" },
+        domain_fit:       { score: 85, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Enterprise systems domain" },
+        nice_to_have_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some extras" },
+      },
+      must_have_coverage: [
+        { requirement: "C++ development experience", status: "likely_historical", evidence: "C++ role from 1997-2001" },
+        { requirement: "Sybase database experience", status: "likely_historical", evidence: "Sybase ASE role from 1998-2001" },
+      ],
+      nice_to_have_coverage: [],
+      reasons_for: ["Historic C++/Sybase evidence is visible."],
+      reasons_against: [],
+      missing_evidence: [],
+      recruiter_summary: "Relevant legacy experience, but not recent.",
+      profileCharCount: 5000,
+      claudeOverallScore: 82,
+    });
+
+    expect(bd.data_quality).toBe("full_profile");
+    expect(bd.overall).toBeLessThanOrEqual(58);
+    expect(bd.reasons_against.join(" ")).toMatch(/critical requirement|reduced|capped/i);
+  });
+
+  it("flags and caps long profile captures that appear to be missing work history", () => {
+    const warning = analyseProfileCaptureCompleteness({
+      profileText: [
+        "Brendan Lester",
+        "Lead Engineer - Quality at Xero",
+        "About",
+        "QA automation, Playwright, Salesforce automation and SDLC consultancy. ".repeat(80),
+      ].join("\n"),
+      recruiterSummary: "Profile is a near-empty stub with no work history visible; do not progress without a full CV.",
+      reasonsAgainst: ["No work history or skills list visible."],
+      missingEvidence: ["Full work history would materially change this assessment."],
+    });
+
+    expect(warning?.code).toBe("incomplete_capture");
+
+    const bd = buildScoreBreakdown({
+      categories:            baseCategories,
+      must_have_coverage:    allConfirmed,
+      nice_to_have_coverage: [],
+      reasons_for:           ["Based in Wellington"],
+      reasons_against:       ["Profile is a near-empty stub"],
+      missing_evidence:      ["Full work history"],
+      recruiter_summary:     "Profile is a near-empty stub.",
+      profileCharCount:      8234,
+      profileCaptureWarning: warning,
+      claudeOverallScore:    82,
+    });
+
+    expect(bd.profile_capture_warning?.code).toBe("incomplete_capture");
+    expect(bd.overall).toBeLessThanOrEqual(50);
+    expect(bd.confidence.level).toBe("low");
+    expect(bd.reasons_against[0]).toMatch(/LinkedIn capture appears incomplete/);
+    expect(bd.missing_evidence[0]).toMatch(/Full work history/);
+  });
+
+  it("does not flag a long profile with multiple dated work-history entries", () => {
+    const warning = analyseProfileCaptureCompleteness({
+      profileText: [
+        "Experience",
+        "Technical Consultant / C++ Developer at ACC",
+        "Jun 1998 - Aug 2001",
+        "Microsoft Visual C++ developer using Sybase DB.",
+        "C++ Developer & Support at New Zealand Customs Service",
+        "Mar 1997 - Jun 1998",
+        "Solaris C++ developer supporting the CusMod platform.",
+        "Additional profile content. ".repeat(120),
+      ].join("\n"),
+      recruiterSummary: "Historic C++ and Sybase experience is visible.",
+    });
+
+    expect(warning).toBeNull();
   });
 });

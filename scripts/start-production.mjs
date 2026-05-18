@@ -50,7 +50,12 @@ await runRequiredWithRetry("apply schema changes", process.execPath, ["scripts/a
 
 // Step 2: Sync any remaining schema drift (safe now that unique constraints are clean)
 if (existsSync(prismaBin)) {
-  await runRequiredWithRetry("sync database schema", prismaBin, ["db", "push", "--skip-generate", "--accept-data-loss"]);
+  const dbPushArgs = ["db", "push", "--skip-generate"];
+  if (process.env.ALLOW_STARTUP_DB_DATA_LOSS === "true") {
+    console.warn("[startup] ALLOW_STARTUP_DB_DATA_LOSS=true; prisma db push may apply destructive changes");
+    dbPushArgs.push("--accept-data-loss");
+  }
+  await runRequiredWithRetry("sync database schema", prismaBin, dbPushArgs);
 } else {
   console.error("[startup] Prisma CLI not found; cannot sync database schema");
   process.exit(1);

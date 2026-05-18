@@ -1,86 +1,103 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { extractCandidateInfo } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { hasFullCandidateProfile } from "@/lib/candidate-profile";
+import { getLibraryCandidates } from "@/lib/library";
 
 /**
  * GET /api/candidates
  *
- * Returns the candidates library: all unique people with a captured profile
- * (profileText ≥500 chars), org-scoped, deduplicated by LinkedIn URL.
+ * Returns the candidates library: all unique people with a meaningful reusable
+ * profile, org-scoped (with cross-org grant expansion), deduplicated by
+ * LinkedIn URL.
  *
- * For each unique person we return the most recently captured Candidate row
- * plus file metadata (no file data payload).
+ * The query / dedupe / shared-org enrichment lives in src/lib/library.ts so
+ * the page-level SSR loader (app/candidates/page.tsx) can share the same
+ * code path — they used to drift, with the page missing cross-org grants.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
-  const rows = await prisma.candidate.findMany({
-    where: {
-      profileText: { not: null },
-      ...(auth.isOwner ? {} : {
-        OR: [
-          { job: { orgId: auth.orgId } },        // candidate still linked to a job
-          { jobId: null, orgId: auth.orgId },     // candidate preserved after job deletion
-        ],
-      }),
-    },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      name: true,
-      headline: true,
-      location: true,
-      linkedinUrl: true,
-      profileText: true,
-      matchScore: true,
-      source: true,
-      status: true,
-      profileCapturedAt: true,
-      createdAt: true,
-      jobId: true,
-      archivedJobTitle: true,
-      archivedJobCompany: true,
-      job: { select: { id: true, title: true, company: true } },
-      files: {
-        select: { id: true, type: true, filename: true, size: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
-      },
+  // Cursor pagination — passed via ?cursor=<candidateId>. The helper returns
+  // `nextCursor` when more rows exist beyond the take cap.
+  const url = new URL(req.url);
+  const cursor = url.searchParams.get("cursor") ?? undefined;
+
+  const { candidates, nextCursor } = await getLibraryCandidates(auth, { cursor });
+
+  // Existing consumers (candidates-library-client) expect the array shape on
+  // first-page calls. Preserve that for the no-cursor request; expose the
+  // paginated shape only when an explicit cursor is requested.
+  if (cursor !== undefined) {
+    return NextResponse.json({ candidates, nextCursor });
+  }
+  // Set a header so paginated clients can pick up the cursor without changing
+  // the body shape. NextRequest doesn't expose set; using the response.
+  const response = NextResponse.json(candidates);
+  if (nextCursor) response.headers.set("X-Next-Cursor", nextCursor);
+  return response;
+}
+
+const CreateLibraryCandidateSchema = z.object({
+  name:        z.string().min(1).max(200).trim().optional(),
+  headline:    z.string().max(500).trim().optional(),
+  location:    z.string().max(200).trim().optional(),
+  linkedinUrl: z.string().url().max(500).optional().or(z.literal("")),
+  profileText: z.string().max(50_000).optional(),
+});
+
+/**
+ * POST /api/candidates
+ *
+ * Creates a library candidate not tied to any job.
+ * Extracts name/headline/location from profileText via AI if not supplied.
+ */
+export async function POST(req: Request) {
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+
+  const result = CreateLibraryCandidateSchema.safeParse(await req.json().catch(() => ({})));
+  if (!result.success) {
+    return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
+  }
+  const body = result.data;
+  const linkedinUrl = body.linkedinUrl ? normaliseLinkedInUrl(body.linkedinUrl) : null;
+
+  if (!body.profileText && !body.name) {
+    return NextResponse.json({ error: "Provide profileText or a name." }, { status: 400 });
+  }
+
+  let name = body.name ?? "";
+  let headline = body.headline ?? "";
+  let location = body.location ?? "";
+
+  if (body.profileText && !name) {
+    try {
+      const info = await extractCandidateInfo(body.profileText);
+      name = info.name;
+      headline = headline || info.headline;
+      location = location || info.location;
+    } catch {
+      name = "Unknown";
+    }
+  }
+
+  const candidate = await prisma.candidate.create({
+    data: {
+      jobId:       null,
+      orgId:       auth.orgId ?? null,
+      name:        name || "Unknown",
+      headline:    headline || null,
+      location:    location || null,
+      linkedinUrl,
+      profileText: body.profileText?.trim() || null,
+      source:      "manual",
+      status:      "new",
     },
   });
 
-  const withProfile = rows.filter(hasFullCandidateProfile);
-
-  // Deduplicate by normalised LinkedIn URL; keep most recent capture per person.
-  // Candidates without a LinkedIn URL are included individually (distinct people).
-  type Row = typeof withProfile[number];
-  const byUrl = new Map<string, Row>();
-  const noUrl: Row[] = [];
-
-  for (const row of withProfile) {
-    if (!row.linkedinUrl) {
-      noUrl.push(row);
-      continue;
-    }
-    let norm: string;
-    try { norm = normaliseLinkedInUrl(row.linkedinUrl); } catch { noUrl.push(row); continue; }
-
-    const existing = byUrl.get(norm);
-    if (!existing) { byUrl.set(norm, row); continue; }
-    const rowAge = row.profileCapturedAt ?? row.createdAt;
-    const existAge = existing.profileCapturedAt ?? existing.createdAt;
-    if (rowAge > existAge) byUrl.set(norm, row);
-  }
-
-  const people = [...byUrl.values(), ...noUrl].sort(
-    (a, b) => (b.profileCapturedAt ?? b.createdAt) > (a.profileCapturedAt ?? a.createdAt) ? 1 : -1
-  );
-
-  return NextResponse.json(people.map((row) => {
-    const person: Omit<typeof row, "profileText"> & { profileText?: string | null } = { ...row };
-    delete person.profileText;
-    return person;
-  }));
+  return NextResponse.json(candidate, { status: 201 });
 }

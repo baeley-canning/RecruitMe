@@ -31,10 +31,10 @@
   ],
   "recruiter_summary": "Technically relevant candidate, but location is the major risk.",
   "expected": {
-    "overall": 31,
+    "overall": 34,
     "locationFit": 0,
     "mustHavePct": 33,
-    "confidenceScore": 42,
+    "confidenceScore": 60,
     "confidenceLevel": "medium",
     "summaryIncludes": "Based in Shanghai, China"
   }

@@ -4,7 +4,6 @@ import { use, useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  MapPin,
   FileText,
   Upload,
   Trash2,
@@ -16,8 +15,24 @@ import {
   Check,
   X,
   StickyNote,
+  AlertTriangle,
+  Phone,
+  Globe,
+  DollarSign,
+  Clock,
+  CalendarCheck,
+  Shield,
+  Heart,
 } from "lucide-react";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, timeAgo, safeParseJson } from "@/lib/utils";
+import { formatBytes } from "@/lib/format";
+import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
+import { displayableLinkedinUrl } from "@/components/candidate/helpers";
+import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { LinkedInIcon } from "@/components/candidate/icons";
+import { Card, CardHeader, CardBody } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { confirm } from "@/components/ui/confirm-dialog";
 
 interface CandidateFile {
   id: string;
@@ -36,15 +51,28 @@ interface OtherJob {
   status: string;
 }
 
+interface ScreeningData {
+  availability?: string;
+  salaryExpectation?: string;
+  visaStatus?: string;
+  noticePeriod?: string;
+  motivations?: string;
+  notes?: string;
+  screenedAt?: string;
+}
+
 interface CandidateDetail {
   id: string;
   name: string;
   headline: string | null;
   location: string | null;
+  phone: string | null;
   linkedinUrl: string | null;
+  jobAdderUrl: string | null;
   profileText: string | null;
   matchScore: number | null;
   notes: string | null;
+  screeningData: string | null;
   source: string;
   status: string;
   profileCapturedAt: string | null;
@@ -56,25 +84,49 @@ interface CandidateDetail {
   otherJobs: OtherJob[];
 }
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+const TIER_STYLE: Record<ScoreTier, { text: string; fill: string; label: string }> = {
+  strong: { text: "text-success",       fill: "bg-success",       label: "Strong match" },
+  fair:   { text: "text-accent",        fill: "bg-accent",        label: "Good match" },
+  weak:   { text: "text-warning",       fill: "bg-warning",       label: "Moderate match" },
+  poor:   { text: "text-text-tertiary", fill: "bg-text-tertiary", label: "Weak match" },
+};
+
+function scoreTier(score: number) {
+  return TIER_STYLE[canonicalScoreTier(score, "match")];
 }
 
-function scoreRing(score: number) {
-  if (score >= 80) return { ring: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-200", label: "Strong" };
-  if (score >= 60) return { ring: "text-blue-600", bg: "bg-blue-50", border: "border-blue-200", label: "Good" };
-  if (score >= 40) return { ring: "text-amber-500", bg: "bg-amber-50", border: "border-amber-200", label: "Moderate" };
-  return { ring: "text-slate-400", bg: "bg-slate-50", border: "border-slate-200", label: "Weak" };
-}
+const SOURCE_LABEL: Record<string, string> = {
+  manual: "Added manually",
+  serpapi: "LinkedIn search",
+  pdl: "PDL",
+  extension: "LinkedIn extension",
+  talent_pool: "Talent pool",
+  jobadder_import: "JobAdder import",
+};
 
-function parseSkills(headline: string | null): { skills: string[]; rest: string } {
-  if (!headline) return { skills: [], rest: "" };
-  const parts = headline.split("|").map((s) => s.trim()).filter(Boolean);
-  if (parts.length > 1) return { skills: parts, rest: "" };
-  return { skills: [], rest: headline };
-}
+const STATUS_LABEL: Record<string, string> = {
+  new: "New",
+  reviewing: "Reviewing",
+  shortlisted: "Shortlisted",
+  contacted: "Contacted",
+  interviewing: "Interviewing",
+  offer_sent: "Offer sent",
+  hired: "Hired",
+  declined: "Declined",
+  rejected: "Rejected",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  new:          "bg-surface-hover text-text-secondary",
+  reviewing:    "bg-surface-hover text-text-secondary",
+  shortlisted:  "bg-accent-subtle text-accent",
+  contacted:    "bg-warning-subtle text-warning",
+  interviewing: "bg-warning-subtle text-warning",
+  offer_sent:   "bg-warning-subtle text-warning",
+  hired:        "bg-success-subtle text-success",
+  declined:     "bg-surface-hover text-text-tertiary",
+  rejected:     "bg-surface-hover text-text-tertiary",
+};
 
 function typeLabel(type: string) {
   if (type === "cv") return "CV / Resume";
@@ -82,17 +134,55 @@ function typeLabel(type: string) {
   return "Other";
 }
 
-function typeColor(type: string) {
-  if (type === "cv") return "bg-blue-50 text-blue-600 border-blue-100";
-  if (type === "cover_letter") return "bg-purple-50 text-purple-600 border-purple-100";
-  return "bg-slate-50 text-slate-500 border-slate-100";
+function typeBadgeClass(type: string) {
+  if (type === "cv") return "bg-accent-subtle text-accent";
+  if (type === "cover_letter") return "bg-warning-subtle text-warning";
+  return "bg-surface-hover text-text-secondary";
 }
 
-function LinkedInIcon({ className }: { className?: string }) {
+// Extract skills and employer from headline.
+// Format: "Title at Company" or "Title | Skill | Skill" or plain headline.
+function parseHeadline(headline: string | null): {
+  title: string | null;
+  employer: string | null;
+  skills: string[];
+  rest: string;
+} {
+  if (!headline) return { title: null, employer: null, skills: [], rest: "" };
+
+  // Pipe-separated skills
+  const pipeParts = headline.split("|").map((s) => s.trim()).filter(Boolean);
+  if (pipeParts.length > 1) {
+    return { title: pipeParts[0] ?? null, employer: null, skills: pipeParts.slice(1), rest: "" };
+  }
+
+  // "Title at Employer" pattern — stop at pipe, paren, dash, or em-dash so
+  // complex headlines like "Engineer at Acme Corp | 10 yrs" don't bleed
+  // "| 10 yrs" into the employer field.
+  const atMatch = headline.match(/^(.+?)\s+at\s+([^|(–—]+)/i);
+  if (atMatch) {
+    const employer = atMatch[2]?.trim() ?? null;
+    if (employer) {
+      return { title: atMatch[1]?.trim() ?? null, employer, skills: [], rest: "" };
+    }
+  }
+
+  return { title: null, employer: null, skills: [], rest: headline };
+}
+
+function LinkedInBadge({ url }: { url: string | null }) {
+  const display = displayableLinkedinUrl(url);
+  if (!display) return null;
   return (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 23.2 23.227 23.2 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-    </svg>
+    <a
+      href={display}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent transition-colors"
+    >
+      <LinkedInIcon className="w-3.5 h-3.5" />
+      View LinkedIn
+    </a>
   );
 }
 
@@ -108,26 +198,28 @@ function FileRow({
   const [deleting, setDeleting] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${file.filename}"?`)) return;
+    if (!await confirm({ message: `Delete "${file.filename}"?`, danger: true, confirmLabel: "Delete" })) return;
     setDeleting(true);
     await fetch(`/api/candidates/${candidateId}/files/${file.id}`, { method: "DELETE" });
     onDeleted(file.id);
   };
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white border border-slate-100 group hover:border-slate-200 transition-colors">
-      <div className={cn("px-1.5 py-0.5 rounded text-xs font-medium border flex-shrink-0", typeColor(file.type))}>
-        {typeLabel(file.type)}
-      </div>
+    <div className="flex items-center gap-2 px-3 py-2 rounded border border-separator bg-surface-sunken group hover:bg-surface-hover transition-colors">
+      <Badge className={typeBadgeClass(file.type)}>{typeLabel(file.type)}</Badge>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-slate-700 truncate">{file.filename}</p>
-        <p className="text-xs text-slate-400">{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
+        <p className="text-base font-medium text-text-primary truncate">{file.filename}</p>
+        <p className="text-xs text-text-tertiary">
+          <span className="data-mono">{formatBytes(file.size)}</span>
+          <span className="mx-1">·</span>
+          <span suppressHydrationWarning>{timeAgo(new Date(file.createdAt))}</span>
+        </p>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <a
           href={`/api/candidates/${candidateId}/files/${file.id}`}
           download={file.filename}
-          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+          className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
           title="Download"
         >
           <Download className="w-3.5 h-3.5" />
@@ -135,7 +227,7 @@ function FileRow({
         <button
           onClick={handleDelete}
           disabled={deleting}
-          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+          className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-surface-hover transition-colors disabled:opacity-50"
           title="Delete"
         >
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -175,9 +267,11 @@ function UploadZone({
           const data = await res.json();
           onUploaded(data);
           if (type === "cv") {
-            setNotice(data.scored
-              ? "CV uploaded and scored against this candidate's job."
-              : "CV saved. To score it, open the candidate from a job page where the JD has been parsed.");
+            setNotice(
+              data.scored
+                ? "CV uploaded and scored against this candidate's job."
+                : "CV saved. To score it, open the candidate from a job page where the JD has been parsed.",
+            );
           }
         }
       } catch {
@@ -187,7 +281,7 @@ function UploadZone({
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [candidateId, type, onUploaded]
+    [candidateId, type, onUploaded],
   );
 
   return (
@@ -196,7 +290,7 @@ function UploadZone({
         <select
           value={type}
           onChange={(e) => setType(e.target.value as typeof type)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 focus:outline-none focus:border-blue-400"
+          className="h-7 px-2 rounded bg-surface-sunken border border-separator text-base text-text-primary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
         >
           <option value="cv">CV / Resume</option>
           <option value="cover_letter">Cover Letter</option>
@@ -204,10 +298,10 @@ function UploadZone({
         </select>
         <label
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors",
+            "inline-flex items-center gap-1.5 h-7 px-3 rounded text-md font-medium cursor-pointer transition-colors",
             uploading
-              ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-              : "bg-blue-600 hover:bg-blue-500 text-white"
+              ? "bg-surface-hover text-text-tertiary cursor-not-allowed"
+              : "bg-accent hover:bg-accent-hover text-white",
           )}
         >
           {uploading ? (
@@ -225,9 +319,35 @@ function UploadZone({
           />
         </label>
       </div>
-      <p className="text-xs text-slate-400">PDF, Word, or plain text · max 10 MB</p>
-      {error && <p className="text-xs text-red-500 flex items-center gap-1"><X className="w-3 h-3" /> {error}</p>}
-      {notice && <p className="text-xs text-slate-500">{notice}</p>}
+      <p className="text-xs text-text-tertiary">PDF, Word, or plain text · max 10 MB</p>
+      {error && <p className="text-xs text-danger flex items-center gap-1"><X className="w-3 h-3" /> {error}</p>}
+      {notice && <p className="text-xs text-text-secondary">{notice}</p>}
+    </div>
+  );
+}
+
+// A single labelled detail row — icon + label + value
+function DetailRow({
+  icon: Icon,
+  label,
+  value,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value?: string | null;
+  children?: React.ReactNode;
+}) {
+  if (!value && !children) return null;
+  return (
+    <div className="flex items-start gap-3 py-2.5 border-b border-separator last:border-0">
+      <div className="flex items-center gap-1.5 w-36 flex-shrink-0 text-xs text-text-tertiary mt-0.5">
+        <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+        <span>{label}</span>
+      </div>
+      <div className="flex-1 min-w-0 text-sm text-text-primary">
+        {children ?? value}
+      </div>
     </div>
   );
 }
@@ -283,134 +403,262 @@ export default function CandidateDetailPage({
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-300" />
+        <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
       </div>
     );
   }
 
   if (notFound || !candidate) {
     return (
-      <div className="p-8 text-center text-slate-500">
+      <div className="p-8 text-center text-text-secondary text-base">
         Candidate not found.{" "}
-        <Link href="/candidates" className="text-blue-600 hover:underline">Back to library</Link>
+        <Link href="/candidates" className="text-accent hover:text-accent-hover">Back to library</Link>
       </div>
     );
   }
 
-  const { skills, rest } = parseSkills(candidate.headline);
-  const initials = candidate.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-  const scoreInfo = candidate.matchScore !== null ? scoreRing(candidate.matchScore) : null;
+  const { title, employer, skills, rest } = parseHeadline(candidate.headline);
+  const screening = safeParseJson<ScreeningData>(candidate.screeningData, {});
+  // Only show the "Profile details" card if there's at least one concrete field to display.
+  const hasProfileDetails = !!(
+    employer || title || candidate.phone ||
+    displayableLinkedinUrl(candidate.linkedinUrl) ||
+    candidate.jobAdderUrl ||
+    (!employer && !title && candidate.headline)
+  );
+  const score = candidate.matchScore;
+  const tier = score !== null ? scoreTier(score) : null;
   const allJobs = [
-    ...(candidate.job ? [{ id: candidate.job.id, title: candidate.job.title, company: candidate.job.company, matchScore: candidate.matchScore, status: candidate.status }] : []),
+    ...(candidate.job
+      ? [{ id: candidate.job.id, title: candidate.job.title, company: candidate.job.company, matchScore: candidate.matchScore, status: candidate.status }]
+      : []),
     ...candidate.otherJobs,
   ];
+  const hasCV = candidate.files.some((f) => f.type === "cv");
+  const hasScreeningData = !!(
+    screening.availability ||
+    screening.salaryExpectation ||
+    screening.visaStatus ||
+    screening.noticePeriod ||
+    screening.motivations ||
+    screening.notes
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Top bar */}
-      <div className="bg-white border-b border-slate-200 px-8 py-3">
+    <div className="min-h-screen bg-surface-base">
+      {/* Toolbar */}
+      <div className="toolbar">
         <Link
           href="/candidates"
-          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 transition-colors"
+          className="inline-flex items-center gap-1.5 h-7 px-2 rounded text-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Candidates Library
+          <ArrowLeft className="w-3.5 h-3.5" />
+          Candidates
         </Link>
-      </div>
-
-      {/* Hero header */}
-      <div className="bg-white border-b border-slate-200">
-        <div className="max-w-5xl mx-auto px-8 py-8">
-          <div className="flex items-start gap-6">
-            {/* Avatar */}
-            <div className="relative flex-shrink-0">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-blue-200">
-                {initials}
-              </div>
-              {scoreInfo && (
-                <div className={cn(
-                  "absolute -bottom-2 -right-2 w-9 h-9 rounded-xl border-2 border-white flex items-center justify-center text-xs font-bold shadow-sm",
-                  scoreInfo.bg, scoreInfo.ring
-                )}>
-                  {candidate.matchScore}
-                </div>
-              )}
-            </div>
-
-            {/* Name + details */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h1 className="text-2xl font-bold text-slate-900">{candidate.name}</h1>
-                  {rest && <p className="text-slate-500 mt-0.5">{rest}</p>}
-                </div>
-                {scoreInfo && (
-                  <div className={cn("flex flex-col items-center px-4 py-2 rounded-xl border", scoreInfo.bg, scoreInfo.border)}>
-                    <span className={cn("text-2xl font-bold", scoreInfo.ring)}>{candidate.matchScore}%</span>
-                    <span className={cn("text-xs font-medium", scoreInfo.ring)}>{scoreInfo.label}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Skill tags */}
-              {skills.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  {skills.map((skill) => (
-                    <span
-                      key={skill}
-                      className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-blue-50 hover:text-blue-700 transition-colors"
-                    >
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Meta row */}
-              <div className="flex flex-wrap items-center gap-4 mt-3">
-                {candidate.location && (
-                  <span className="flex items-center gap-1.5 text-sm text-slate-500">
-                    <MapPin className="w-3.5 h-3.5" />
-                    {candidate.location}
-                  </span>
-                )}
-                {candidate.linkedinUrl && (
-                  <a
-                    href={candidate.linkedinUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-sm text-[#0077B5] hover:text-[#005582] font-medium transition-colors"
-                  >
-                    <LinkedInIcon className="w-4 h-4" />
-                    LinkedIn profile
-                  </a>
-                )}
-                <span className="text-sm text-slate-400">
-                  {candidate.profileCapturedAt
-                    ? `Captured ${timeAgo(new Date(candidate.profileCapturedAt))}`
-                    : `Added ${timeAgo(new Date(candidate.createdAt))}`}
-                </span>
-              </div>
-            </div>
-          </div>
+        <span className="text-text-tertiary">/</span>
+        <span className="text-md text-text-primary font-medium truncate">{candidate.name}</span>
+        <Badge className={cn("ml-1 capitalize", STATUS_COLOR[candidate.status] ?? "bg-surface-hover text-text-secondary")}>
+          {STATUS_LABEL[candidate.status] ?? candidate.status.replace(/_/g, " ")}
+        </Badge>
+        <div className="ml-auto flex items-center gap-1.5">
+          {displayableLinkedinUrl(candidate.linkedinUrl) && (
+            <a
+              href={displayableLinkedinUrl(candidate.linkedinUrl)!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-overlay text-text-primary text-md border border-separator transition-colors"
+            >
+              <LinkedInIcon className="w-3.5 h-3.5" />
+              LinkedIn
+            </a>
+          )}
         </div>
       </div>
 
       {/* Body */}
-      <div className="max-w-5xl mx-auto px-8 py-7">
-        <div className="grid grid-cols-3 gap-6">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-          {/* Left — profile + notes */}
-          <div className="col-span-2 space-y-5">
+          {/* LEFT — identity, profile details, screening, profile text, notes */}
+          <div className="lg:col-span-2 space-y-4">
 
-            {/* LinkedIn Profile */}
+            {/* ── Header card ─────────────────────────────────────────────── */}
+            <Card>
+              <CardBody>
+                <div className="flex items-start gap-4">
+                  <CandidateIdentityBlock
+                    name={candidate.name}
+                    headline={rest || title || candidate.headline}
+                    location={candidate.location}
+                    phone={candidate.phone}
+                    linkedinUrl={candidate.linkedinUrl}
+                    score={score}
+                    size="lg"
+                    showScore={score !== null}
+                    showPhone={!!candidate.phone}
+                    showLinkedIn={false}
+                    className="flex-1"
+                  />
+                </div>
+
+                {/* Skills tags (from pipe-separated headline) */}
+                {skills.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-separator">
+                    {skills.map((skill) => (
+                      <Badge key={skill} className="bg-surface-hover text-text-secondary">
+                        {skill}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+
+            {/* ── Empty-state warning ─────────────────────────────────────── */}
+            {!candidate.profileText?.trim() && candidate.files.length === 0 && (
+              <Card>
+                <CardBody>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-md bg-warning-subtle flex items-center justify-center flex-shrink-0">
+                      <AlertTriangle className="w-4 h-4 text-warning" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h2 className="text-md font-semibold text-text-primary">No CV or profile text yet</h2>
+                      <p className="text-base text-text-secondary mt-1 leading-relaxed">
+                        Two options:
+                      </p>
+                      <ul className="mt-2 space-y-1 text-base text-text-secondary leading-relaxed">
+                        <li className="flex items-start gap-2">
+                          <span className="text-warning font-semibold flex-shrink-0">(a)</span>
+                          <span>upload a CV file in Documents below, or</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-warning font-semibold flex-shrink-0">(b)</span>
+                          <span>open the candidate from a job page and use &ldquo;Fetch Profile&rdquo; or paste profile text.</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+
+            {/* ── Profile details ─────────────────────────────────────────── */}
+            {hasProfileDetails && <Card>
+              <CardHeader>
+                <h2 className="text-md font-semibold text-text-primary">Profile details</h2>
+              </CardHeader>
+              <CardBody className="py-0">
+                {employer && (
+                  <DetailRow icon={Briefcase} label="Current employer" value={employer} />
+                )}
+                {title && (
+                  <DetailRow icon={Briefcase} label="Current title" value={title} />
+                )}
+                {candidate.phone && (
+                  <DetailRow icon={Phone} label="Phone">
+                    <a href={`tel:${candidate.phone}`} className="text-accent hover:text-accent-hover transition-colors">
+                      {candidate.phone}
+                    </a>
+                  </DetailRow>
+                )}
+                {displayableLinkedinUrl(candidate.linkedinUrl) && (
+                  <DetailRow icon={Globe} label="LinkedIn">
+                    <LinkedInBadge url={candidate.linkedinUrl} />
+                  </DetailRow>
+                )}
+                {candidate.jobAdderUrl && (
+                  <DetailRow icon={Globe} label="JobAdder">
+                    <a
+                      href={candidate.jobAdderUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-accent hover:text-accent-hover transition-colors"
+                    >
+                      Open in JobAdder
+                    </a>
+                  </DetailRow>
+                )}
+                {/* Fallback if no structured fields parsed but headline exists */}
+                {!employer && !title && candidate.headline && (
+                  <DetailRow icon={Briefcase} label="Headline" value={candidate.headline} />
+                )}
+              </CardBody>
+            </Card>}
+
+            {/* ── Screening data ──────────────────────────────────────────── */}
+            {hasScreeningData && (
+              <Card>
+                <CardHeader>
+                  <h2 className="text-md font-semibold text-text-primary">Screening notes</h2>
+                  {screening.screenedAt && (
+                    <span className="ml-auto text-xs text-text-tertiary" suppressHydrationWarning>
+                      Screened {timeAgo(new Date(screening.screenedAt))}
+                    </span>
+                  )}
+                </CardHeader>
+                <CardBody className="py-0">
+                  {screening.salaryExpectation && (
+                    <DetailRow icon={DollarSign} label="Salary expectation" value={screening.salaryExpectation} />
+                  )}
+                  {screening.availability && (
+                    <DetailRow icon={CalendarCheck} label="Availability" value={screening.availability} />
+                  )}
+                  {screening.noticePeriod && (
+                    <DetailRow icon={Clock} label="Notice period" value={screening.noticePeriod} />
+                  )}
+                  {screening.visaStatus && (
+                    <DetailRow icon={Shield} label="Visa / work rights" value={screening.visaStatus} />
+                  )}
+                  {screening.motivations && (
+                    <DetailRow icon={Heart} label="Motivations" value={screening.motivations} />
+                  )}
+                  {screening.notes && (
+                    <DetailRow icon={StickyNote} label="Screening notes" value={screening.notes} />
+                  )}
+                </CardBody>
+              </Card>
+            )}
+
+            {/* ── Match score ─────────────────────────────────────────────── */}
+            {tier && score !== null && (
+              <Card>
+                <CardHeader className="flex items-center justify-between">
+                  <h2 className="text-md font-semibold text-text-primary">Match score</h2>
+                  <Badge className={cn("bg-surface-hover", tier.text)}>{tier.label}</Badge>
+                </CardHeader>
+                <CardBody>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-baseline gap-1">
+                      <span className={cn("text-2xl data-mono font-semibold", tier.text)}>{score}</span>
+                      <span className="text-md text-text-tertiary data-mono">%</span>
+                    </div>
+                    <div className="flex-1">
+                      <div className="h-1 bg-separator rounded-full overflow-hidden">
+                        <div
+                          className={cn("h-full rounded-full transition-all", tier.fill)}
+                          style={{ width: `${Math.max(2, Math.min(100, score))}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-text-tertiary mt-1.5">
+                        {allJobs.length > 0
+                          ? `Score against "${allJobs[0]?.title ?? "current role"}"`
+                          : "Overall fit against current job"}
+                      </p>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+
+            {/* ── LinkedIn profile text ───────────────────────────────────── */}
             {candidate.profileText && (
-              <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-                  <h2 className="text-sm font-semibold text-slate-800">LinkedIn Profile</h2>
+              <Card>
+                <CardHeader className="flex items-center justify-between">
+                  <h2 className="text-md font-semibold text-text-primary">LinkedIn profile</h2>
                   <button
                     onClick={() => setProfileExpanded((v) => !v)}
-                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700 transition-colors"
+                    className="inline-flex items-center gap-1 h-6 px-2 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                   >
                     {profileExpanded ? (
                       <><ChevronUp className="w-3.5 h-3.5" />Collapse</>
@@ -418,42 +666,47 @@ export default function CandidateDetailPage({
                       <><ChevronDown className="w-3.5 h-3.5" />Expand</>
                     )}
                   </button>
-                </div>
-                <div className="relative px-5 py-4">
+                </CardHeader>
+                <div className="relative px-4 py-3">
                   <div
                     className={cn(
-                      "text-sm text-slate-600 whitespace-pre-wrap leading-relaxed overflow-hidden transition-all duration-300",
-                      profileExpanded ? "max-h-[2000px]" : "max-h-44"
+                      "text-base text-text-secondary whitespace-pre-wrap leading-relaxed overflow-hidden transition-all duration-300",
+                      profileExpanded ? "max-h-[2000px]" : "max-h-44",
                     )}
                   >
                     {candidate.profileText}
                   </div>
                   {!profileExpanded && (
-                    <div className="absolute bottom-0 left-0 right-0 h-14 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+                    <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-surface-raised to-transparent pointer-events-none" />
                   )}
                 </div>
                 {!profileExpanded && (
-                  <div className="px-5 pb-4">
+                  <div className="px-4 pb-3">
                     <button
                       onClick={() => setProfileExpanded(true)}
-                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      className="text-xs text-accent hover:text-accent-hover font-medium"
                     >
                       Show full profile
                     </button>
                   </div>
                 )}
-              </section>
+              </Card>
             )}
 
-            {/* Notes */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            {/* ── Notes ──────────────────────────────────────────────────── */}
+            <Card>
+              <CardHeader className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <StickyNote className="w-4 h-4 text-slate-400" />
-                  <h2 className="text-sm font-semibold text-slate-800">Notes</h2>
+                  <StickyNote className="w-3.5 h-3.5 text-text-tertiary" />
+                  <h2 className="text-md font-semibold text-text-primary">Notes</h2>
                 </div>
                 {notesStatus !== "idle" && (
-                  <span className={cn("text-xs flex items-center gap-1", notesStatus === "saved" ? "text-emerald-600" : "text-slate-400")}>
+                  <span
+                    className={cn(
+                      "text-xs flex items-center gap-1",
+                      notesStatus === "saved" ? "text-success" : "text-text-tertiary",
+                    )}
+                  >
                     {notesStatus === "saving" ? (
                       <><Loader2 className="w-3 h-3 animate-spin" />Saving…</>
                     ) : (
@@ -461,37 +714,91 @@ export default function CandidateDetailPage({
                     )}
                   </span>
                 )}
-              </div>
-              <div className="px-5 py-4">
+              </CardHeader>
+              <CardBody>
                 <textarea
                   value={notes}
                   onChange={(e) => { setNotes(e.target.value); setNotesStatus("idle"); }}
                   onBlur={saveNotes}
-                  rows={5}
+                  rows={4}
                   placeholder="Add notes about this candidate…"
-                  className="w-full text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 placeholder-slate-400 focus:outline-none focus:border-blue-400 focus:bg-white resize-none transition-colors"
+                  className="w-full text-base text-text-primary bg-surface-sunken border border-separator rounded px-3 py-2 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none transition-all"
                 />
-              </div>
-            </section>
+              </CardBody>
+            </Card>
           </div>
 
-          {/* Right — docs + jobs */}
-          <div className="space-y-5">
+          {/* RIGHT — contact/meta, documents, jobs */}
+          <div className="space-y-4">
 
-            {/* Documents */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100">
-                <FileText className="w-4 h-4 text-slate-400" />
-                <h2 className="text-sm font-semibold text-slate-800">Documents</h2>
-                {candidate.files.length > 0 && (
-                  <span className="ml-auto text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
-                    {candidate.files.length}
-                  </span>
+            {/* ── Contact & meta ──────────────────────────────────────────── */}
+            <Card>
+              <CardHeader>
+                <h2 className="text-md font-semibold text-text-primary">Details</h2>
+              </CardHeader>
+              <CardBody className="space-y-2.5">
+                {candidate.phone && (
+                  <div className="flex items-center gap-2">
+                    <Phone className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+                    <a href={`tel:${candidate.phone}`} className="text-sm text-accent hover:text-accent-hover transition-colors">
+                      {candidate.phone}
+                    </a>
+                  </div>
                 )}
-              </div>
-              <div className="px-4 py-4 space-y-2">
+                {displayableLinkedinUrl(candidate.linkedinUrl) && (
+                  <div className="flex items-center gap-2">
+                    <LinkedInIcon className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+                    <a
+                      href={displayableLinkedinUrl(candidate.linkedinUrl)!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-accent hover:text-accent-hover truncate transition-colors"
+                    >
+                      LinkedIn profile
+                    </a>
+                  </div>
+                )}
+                <div className="pt-1 border-t border-separator space-y-1.5 text-xs text-text-tertiary">
+                  <div className="flex justify-between">
+                    <span>Source</span>
+                    <span className="text-text-secondary">{SOURCE_LABEL[candidate.source] ?? candidate.source}</span>
+                  </div>
+                  {candidate.profileCapturedAt && (
+                    <div className="flex justify-between">
+                      <span>Captured</span>
+                      <span className="text-text-secondary" suppressHydrationWarning>
+                        {timeAgo(new Date(candidate.profileCapturedAt))}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Added</span>
+                    <span className="text-text-secondary" suppressHydrationWarning>
+                      {timeAgo(new Date(candidate.createdAt))}
+                    </span>
+                  </div>
+                  {hasCV && (
+                    <div className="flex justify-between">
+                      <span>CV</span>
+                      <span className="text-success">Uploaded</span>
+                    </div>
+                  )}
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* ── Documents ───────────────────────────────────────────────── */}
+            <Card>
+              <CardHeader className="flex items-center gap-2">
+                <FileText className="w-3.5 h-3.5 text-text-tertiary" />
+                <h2 className="text-md font-semibold text-text-primary">Documents</h2>
+                {candidate.files.length > 0 && (
+                  <Badge className="ml-auto data-mono">{candidate.files.length}</Badge>
+                )}
+              </CardHeader>
+              <CardBody className="p-3 space-y-1.5">
                 {candidate.files.length === 0 && (
-                  <p className="text-xs text-slate-400 text-center py-2">No files yet</p>
+                  <p className="text-xs text-text-tertiary text-center py-2">No files yet</p>
                 )}
                 {candidate.files.map((f) => (
                   <FileRow
@@ -501,46 +808,59 @@ export default function CandidateDetailPage({
                     onDeleted={handleFileDeleted}
                   />
                 ))}
-              </div>
-              <div className="px-4 pb-4">
-                <UploadZone candidateId={candidate.id} onUploaded={handleFileUploaded} />
-              </div>
-            </section>
+                <div className="pt-2">
+                  <UploadZone candidateId={candidate.id} onUploaded={handleFileUploaded} />
+                </div>
+              </CardBody>
+            </Card>
 
-            {/* Jobs */}
-            <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-100">
-                <Briefcase className="w-4 h-4 text-slate-400" />
-                <h2 className="text-sm font-semibold text-slate-800">Jobs</h2>
-              </div>
-              <div className="px-3 py-3 space-y-1">
-                {allJobs.map((job) => (
-                  <Link
-                    key={job.id}
-                    href={`/jobs/${job.id}`}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-50 transition-colors group"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-700 group-hover:text-blue-600 line-clamp-1 transition-colors">
-                        {job.title}
-                      </p>
-                      {job.company && (
-                        <p className="text-xs text-slate-400 line-clamp-1">{job.company}</p>
+            {/* ── Jobs ────────────────────────────────────────────────────── */}
+            <Card>
+              <CardHeader className="flex items-center gap-2">
+                <Briefcase className="w-3.5 h-3.5 text-text-tertiary" />
+                <h2 className="text-md font-semibold text-text-primary">Jobs</h2>
+                {allJobs.length > 0 && (
+                  <Badge className="ml-auto data-mono">{allJobs.length}</Badge>
+                )}
+              </CardHeader>
+              <CardBody className="p-2 space-y-0.5">
+                {allJobs.length === 0 && (
+                  <p className="text-xs text-text-tertiary text-center py-2">No jobs linked</p>
+                )}
+                {allJobs.map((job) => {
+                  const jobTier = job.matchScore !== null ? scoreTier(job.matchScore) : null;
+                  return (
+                    <Link
+                      key={job.id}
+                      href={`/jobs/${job.id}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded hover:bg-surface-hover transition-colors group"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-base font-medium text-text-primary group-hover:text-accent line-clamp-1 transition-colors">
+                          {job.title}
+                        </p>
+                        {job.company && (
+                          <p className="text-xs text-text-tertiary line-clamp-1">{job.company}</p>
+                        )}
+                        <Badge
+                          className={cn(
+                            "mt-1 capitalize text-2xs",
+                            STATUS_COLOR[job.status] ?? "bg-surface-hover text-text-secondary",
+                          )}
+                        >
+                          {STATUS_LABEL[job.status] ?? job.status.replace(/_/g, " ")}
+                        </Badge>
+                      </div>
+                      {job.matchScore !== null && jobTier && (
+                        <span className={cn("text-xs font-medium data-mono flex-shrink-0", jobTier.text)}>
+                          {job.matchScore}%
+                        </span>
                       )}
-                    </div>
-                    {job.matchScore !== null && (
-                      <span className={cn(
-                        "text-xs font-bold px-2 py-0.5 rounded-lg flex-shrink-0",
-                        scoreRing(job.matchScore).bg,
-                        scoreRing(job.matchScore).ring
-                      )}>
-                        {job.matchScore}%
-                      </span>
-                    )}
-                  </Link>
-                ))}
-              </div>
-            </section>
+                    </Link>
+                  );
+                })}
+              </CardBody>
+            </Card>
           </div>
         </div>
       </div>

@@ -5,9 +5,13 @@ interface CardProps {
   className?: string;
 }
 
+// Pro App card surface — flat, no shadow. Depth comes from the raised tone
+// (#252527) sitting above the surface-base page background, plus the
+// hairline separator border. Matches the Cards/Panels recipe in
+// docs/design-system.md.
 export function Card({ children, className }: CardProps) {
   return (
-    <div className={cn("bg-white rounded-xl border border-slate-200 shadow-sm", className)}>
+    <div className={cn("bg-surface-raised rounded-md border border-separator", className)}>
       {children}
     </div>
   );
@@ -15,12 +19,12 @@ export function Card({ children, className }: CardProps) {
 
 export function CardHeader({ children, className }: CardProps) {
   return (
-    <div className={cn("px-5 py-4 border-b border-slate-100", className)}>
+    <div className={cn("px-4 py-2.5 border-b border-separator", className)}>
       {children}
     </div>
   );
 }
 
 export function CardBody({ children, className }: CardProps) {
-  return <div className={cn("px-5 py-4", className)}>{children}</div>;
+  return <div className={cn("p-4", className)}>{children}</div>;
 }

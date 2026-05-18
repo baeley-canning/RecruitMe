@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { X, Loader2, Copy, Check } from "lucide-react";
+import { Modal } from "./ui/modal";
 
 interface RejectionEmailModalProps {
   jobId: string;
@@ -35,28 +36,32 @@ export function RejectionEmailModal({ jobId, candidateId, candidateName, onClose
   useEffect(() => { generate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy="rejection-modal-title"
+      className="bg-surface-overlay rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto border border-separator"
+    >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-separator">
           <div>
-            <h3 className="font-semibold text-slate-900">Rejection Email</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Drafted for {candidateName}</p>
+            <h3 id="rejection-modal-title" className="text-md font-semibold text-text-primary">Rejection Email</h3>
+            <p className="text-xs text-text-secondary mt-0.5">Drafted for {candidateName}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} aria-label="Close" className="text-text-tertiary hover:text-text-primary transition-colors">
+            <X className="w-4 h-4" />
           </button>
         </div>
         <div className="px-6 py-5 space-y-4">
           {loading && (
-            <div className="flex items-center gap-2 text-sm text-slate-500 py-6 justify-center">
-              <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+            <div className="flex items-center gap-2 text-md text-text-secondary py-6 justify-center">
+              <Loader2 className="w-4 h-4 animate-spin text-accent" />
               Drafting rejection email…
             </div>
           )}
-          {error && <p className="text-sm text-red-600 text-center">{error}</p>}
+          {error && <p className="text-md text-danger text-center">{error}</p>}
           {text && (
             <>
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
+              <div className="p-4 bg-surface-sunken border border-separator rounded-md text-md text-text-primary leading-relaxed whitespace-pre-wrap">
                 {text}
               </div>
               <div className="flex items-center gap-3">
@@ -65,14 +70,14 @@ export function RejectionEmailModal({ jobId, candidateId, candidateName, onClose
                     setCopied(true);
                     setTimeout(() => setCopied(false), 2000);
                   })}
-                  className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium"
+                  className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary font-medium transition-colors"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
                   {copied ? "Copied!" : "Copy email"}
                 </button>
                 <button
                   onClick={() => { setText(""); generate(); }}
-                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  className="text-xs text-accent hover:text-accent-hover font-medium transition-colors"
                 >
                   Regenerate
                 </button>
@@ -80,7 +85,6 @@ export function RejectionEmailModal({ jobId, candidateId, candidateName, onClose
             </>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
-import { authOptions } from "./auth";
+import { authOptions, checkLoginLocked, recordLoginFailure, clearLoginFailures } from "./auth";
 import { prisma } from "./db";
 
 export interface AuthResult {
@@ -45,6 +45,43 @@ export async function requireJobAccess(jobId: string, auth: AuthResult) {
   if (!job) return { job: null, error: notFound("Job not found") };
   if (!auth.isOwner && job.orgId !== auth.orgId) return { job: null, error: forbidden() };
   return { job, error: null };
+}
+
+// ─── Route handler wrappers ────────────────────────────────────────────────
+// These reduce ~6 lines of auth boilerplate per route to a single composition.
+// Use sparingly — they're for the common case where a route just needs auth +
+// optional job/candidate access. Routes with bespoke flows (the search-async
+// dispatcher, the public shortlist endpoint) should keep their explicit guards.
+
+type RouteHandler<P, R> = (args: { auth: AuthResult; req: Request; params: P }) => Promise<R>;
+
+/** Wrap a handler to require an authenticated session. */
+export function withAuth<P, R>(handler: RouteHandler<P, R>) {
+  return async (req: Request, ctx: { params: Promise<P> }) => {
+    const auth = await getAuth();
+    if (!auth) return unauthorized();
+    const params = await ctx.params;
+    return handler({ auth, req, params });
+  };
+}
+
+/** Wrap a handler to require auth + ownership of {id} (a Job ID). */
+export function withJobAuth<R>(
+  handler: (args: {
+    auth: AuthResult;
+    req: Request;
+    params: { id: string };
+    job: NonNullable<Awaited<ReturnType<typeof requireJobAccess>>["job"]>;
+  }) => Promise<R>,
+) {
+  return async (req: Request, ctx: { params: Promise<{ id: string }> }) => {
+    const auth = await getAuth();
+    if (!auth) return unauthorized();
+    const params = await ctx.params;
+    const { job, error } = await requireJobAccess(params.id, auth);
+    if (error || !job) return error;
+    return handler({ auth, req, params, job });
+  };
 }
 
 /** Load a candidate for a specific job and verify the caller can access both. */
@@ -102,12 +139,28 @@ export async function verifyExtensionAuth(req: Request): Promise<AuthResult | nu
 
   if (!username || !password) return null;
 
+  // Same brute-force protection as the NextAuth login path. checkLoginLocked
+  // now has an in-process fallback when the DB is unreachable, so we trust
+  // its return value and don't swallow exceptions — failing closed for the
+  // extension is acceptable (the extension already retries) and prevents
+  // the brute-force ceiling from disappearing during a Postgres blip.
+  const key = `ext:${username.toLowerCase().trim()}`;
+  const { locked } = await checkLoginLocked(key).catch(() => ({ locked: true, minsLeft: 15 }));
+  if (locked) return null;
+
   const user = await prisma.user.findUnique({ where: { username } });
-  if (!user) return null;
+  if (!user) {
+    await recordLoginFailure(key).catch(() => {});
+    return null;
+  }
 
   const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return null;
+  if (!valid) {
+    await recordLoginFailure(key).catch(() => {});
+    return null;
+  }
 
+  await clearLoginFailures(key).catch(() => {});
   return {
     userId: user.id,
     orgId: user.orgId ?? null,
@@ -119,4 +172,38 @@ export async function verifyExtensionAuth(req: Request): Promise<AuthResult | nu
 export function jobsWhere(auth: AuthResult) {
   if (auth.isOwner) return {};
   return { orgId: auth.orgId };
+}
+
+/**
+ * Jobs for the sidebar, ordered by most-recent activity descending.
+ * "Activity" = the latest of the Job's own updatedAt and the latest
+ * Candidate.updatedAt on the job — so adding/scoring/editing a candidate
+ * bubbles the job to the top, not just edits to the job itself.
+ */
+export async function getSidebarJobs(auth: AuthResult) {
+  const rows = await prisma.job.findMany({
+    where: jobsWhere(auth),
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      status: true,
+      updatedAt: true,
+      _count: { select: { candidates: true } },
+      candidates: {
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+        select: { updatedAt: true },
+      },
+    },
+  });
+
+  return rows
+    .map((j) => {
+      const latestCand = j.candidates[0]?.updatedAt;
+      const activityAt = latestCand && latestCand > j.updatedAt ? latestCand : j.updatedAt;
+      return { id: j.id, title: j.title, company: j.company, status: j.status, _count: j._count, activityAt };
+    })
+    .sort((a, b) => b.activityAt.getTime() - a.activityAt.getTime())
+    .map(({ activityAt: _a, ...rest }) => rest);
 }

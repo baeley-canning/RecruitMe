@@ -1,4 +1,5 @@
 import type { ParsedRole } from "./ai";
+import { isRemoteFriendlyLocationRule } from "./location";
 
 export interface JobBriefUploadPrefill {
   title: string;
@@ -8,6 +9,83 @@ export interface JobBriefUploadPrefill {
   salaryEnabled: boolean;
   salaryMin: number | null;
   salaryMax: number | null;
+  /** "ai" = full structured parse via Claude; "regex" = simple line/keyword
+   *  fallback when AI parse failed or returned empty fields. Recruiter can
+   *  see in the UI which path was used and review accordingly. */
+  source: "ai" | "regex" | "merged";
+}
+
+// ─── Regex fallback ────────────────────────────────────────────────────────
+// When the AI parse fails OR returns empty title/company/location, try a
+// minimal text-level extraction so the recruiter at least gets the title
+// pre-filled. Better than an empty form.
+
+const NZ_CITY_RE = /\b(Wellington|Auckland|Christchurch|Hamilton|Tauranga|Dunedin|Palmerston North|Napier|Hastings|Nelson|Rotorua|Whangarei|Invercargill|New Plymouth|Whanganui|Gisborne|Timaru|Levin|Masterton|Porirua|Lower Hutt|Upper Hutt)\b/i;
+
+export function extractTitleFromBriefText(jd: string): string {
+  // The first non-empty, non-trivial line of a JD is almost always the title.
+  // We trim common decorations and skip obvious template prefixes.
+  for (const rawLine of jd.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    // Skip very long lines (probably a paragraph, not a title) and very short
+    // ones (likely a header artefact like "JD" or "Role").
+    if (line.length < 4 || line.length > 120) continue;
+    // Skip obvious non-title patterns.
+    if (/^(?:job description|hiring brief|position description|jd|role|about (?:the |us|the role|the company)|responsible to|reports to)$/i.test(line)) continue;
+    if (/^(?:date|version|page)\b/i.test(line)) continue;
+    // Strip trailing decoration ("- POWER", "(2024)", "v2") — keep useful suffixes.
+    return line;
+  }
+  return "";
+}
+
+export function extractLocationFromBriefText(jd: string): string {
+  // Prefer explicit "Location: X" line, fall back to first NZ city mention.
+  const labelled = jd.match(/(?:^|\n)\s*Location\s*[:\-]\s*([^\n]{2,80})/i);
+  if (labelled) {
+    const value = labelled[1].trim().replace(/\s+/g, " ");
+    if (value) return value;
+  }
+  const city = jd.match(NZ_CITY_RE);
+  if (city) return city[1];
+  return "";
+}
+
+export function extractCompanyFromBriefText(jd: string): string {
+  // Conservative — only return when we see an explicit "Company: X" label.
+  // First-line guessing produces too many false positives (the title is more
+  // valuable to extract right than the company).
+  const labelled = jd.match(/(?:^|\n)\s*(?:Company|Organisation|Organization|Client|Employer)\s*[:\-]\s*([^\n]{2,80})/i);
+  if (labelled) {
+    const value = labelled[1].trim().replace(/\s+/g, " ");
+    if (value) return value;
+  }
+  return "";
+}
+
+/**
+ * Build a prefill from the raw JD text using regex only — no AI. Used as a
+ * fallback when parseJobDescription fails or returns empty fields. Better
+ * than nothing.
+ */
+export function deriveRegexFallbackPrefill(jdText: string): JobBriefUploadPrefill | null {
+  const title = extractTitleFromBriefText(jdText);
+  const location = extractLocationFromBriefText(jdText);
+  const company = extractCompanyFromBriefText(jdText);
+
+  if (!title && !location && !company) return null;
+
+  return {
+    title,
+    company,
+    location,
+    isRemote: false,
+    salaryEnabled: false,
+    salaryMin: null,
+    salaryMax: null,
+    source: "regex",
+  };
 }
 
 function cleanText(value: string | null | undefined): string {
@@ -61,43 +139,40 @@ export function parseSalaryBandRange(salaryBand: string): { min: number | null; 
 }
 
 export function inferRemoteRole(locationRules: string): boolean {
-  const normalized = cleanText(locationRules).toLowerCase();
-  if (!normalized) return false;
-
-  const hasHybridSignal =
-    /\bhybrid\b/.test(normalized) ||
-    /\b\d+\s+days?\s+in\s+(?:the\s+)?office\b/.test(normalized) ||
-    /\bin\s+(?:the\s+)?office\b/.test(normalized) ||
-    /\bonsite\b/.test(normalized) ||
-    /\bon-site\b/.test(normalized) ||
-    /\boffice based\b/.test(normalized);
-
-  if (hasHybridSignal) return false;
-
-  return (
-    /^remote\b/.test(normalized) ||
-    /\bfully remote\b/.test(normalized) ||
-    /\bremote role\b/.test(normalized) ||
-    /\bremote\s*\/\s*flexible\b/.test(normalized) ||
-    /\bwork from anywhere\b/.test(normalized) ||
-    /\bcan work from anywhere\b/.test(normalized) ||
-    /\banywhere in nz\b/.test(normalized) ||
-    /\bnz-based remote\b/.test(normalized) ||
-    /\bnew zealand-based remote\b/.test(normalized)
-  );
+  return isRemoteFriendlyLocationRule(locationRules);
 }
 
 export function deriveJobBriefUploadPrefill(
-  parsedRole: Partial<ParsedRole> | null | undefined
+  parsedRole: Partial<ParsedRole> | null | undefined,
+  /** Raw JD text — used as a regex-fallback source when AI fields are empty. */
+  jdText?: string,
 ): JobBriefUploadPrefill | null {
-  if (!parsedRole) return null;
+  if (!parsedRole) {
+    return jdText ? deriveRegexFallbackPrefill(jdText) : null;
+  }
 
-  const title = cleanText(parsedRole.title);
-  const company = cleanText(parsedRole.company);
-  const location = cleanText(parsedRole.location);
+  const aiTitle = cleanText(parsedRole.title);
+  const aiCompany = cleanText(parsedRole.company);
+  const aiLocation = cleanText(parsedRole.location);
   const isRemote = inferRemoteRole(parsedRole.location_rules ?? "");
   const salaryRange = parseSalaryBandRange(parsedRole.salary_band ?? "");
   const hasFullSalaryRange = Boolean(salaryRange.min && salaryRange.max);
+
+  // Regex fallback fills the gaps the AI missed. The AI is preferred for
+  // every field it produces; the regex only fires for empty AI fields.
+  // Recruiter sees a "merged" source flag if any field came from regex.
+  let regexFallback: JobBriefUploadPrefill | null = null;
+  const needsFallback = (!aiTitle || !aiLocation || !aiCompany) && jdText;
+  if (needsFallback) regexFallback = deriveRegexFallbackPrefill(jdText!);
+
+  const title = aiTitle || regexFallback?.title || "";
+  const company = aiCompany || regexFallback?.company || "";
+  const location = aiLocation || regexFallback?.location || "";
+  const usedRegex = regexFallback !== null && (
+    (!aiTitle && Boolean(regexFallback.title)) ||
+    (!aiCompany && Boolean(regexFallback.company)) ||
+    (!aiLocation && Boolean(regexFallback.location))
+  );
 
   const prefill: JobBriefUploadPrefill = {
     title,
@@ -107,6 +182,7 @@ export function deriveJobBriefUploadPrefill(
     salaryEnabled: hasFullSalaryRange,
     salaryMin: hasFullSalaryRange ? salaryRange.min : null,
     salaryMax: hasFullSalaryRange ? salaryRange.max : null,
+    source: usedRegex ? "merged" : "ai",
   };
 
   if (

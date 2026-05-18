@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
@@ -8,46 +9,63 @@ import {
   getSessionQueue,
   normaliseLinkedInUrl,
   removeSessionFromQueue,
+  updateSessionInQueue,
   type ExtensionCaptureSession,
 } from "@/lib/linkedin-capture";
 import { verifyAnyAuth, requireJobAccess, verifyExtensionAuth } from "@/lib/session";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+// EXTENSION_CORS headers are computed per-request to restrict to extension origins
+
+function canAccessSession(
+  session: Pick<ExtensionCaptureSession, "userId" | "orgId">,
+  auth: { userId: string; orgId: string | null; isOwner: boolean },
+): boolean {
+  if (auth.isOwner) return true;
+  if (session.orgId) return Boolean(auth.orgId && session.orgId === auth.orgId);
+  if (session.userId) return session.userId === auth.userId;
+  return true; // truly legacy/anonymous session; no org/user scope exists to enforce
+}
+
+function publicSessionStatus(session: ExtensionCaptureSession) {
+  return {
+    sessionId: session.sessionId,
+    status: session.status,
+    message: session.message,
+    error: session.error,
+    updatedAt: session.updatedAt,
+  };
+}
 
 const StartSchema = z.object({
   jobId: z.string().min(1),
   candidateId: z.string().min(1),
 });
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS });
+export async function OPTIONS(req: Request) {
+  return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
 }
 
 export async function POST(req: Request) {
   const auth = await verifyAnyAuth(req);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: extensionCorsHeaders(req) });
 
   const parsed = StartSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: CORS });
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: extensionCorsHeaders(req) });
   }
 
   const { jobId, candidateId } = parsed.data;
 
   // Verify the job belongs to the caller's org before creating a capture session.
   const { error: jobError } = await requireJobAccess(jobId, auth);
-  if (jobError) return NextResponse.json({ error: "Job not found or access denied" }, { status: 403, headers: CORS });
+  if (jobError) return NextResponse.json({ error: "Job not found or access denied" }, { status: 403, headers: extensionCorsHeaders(req) });
 
   const candidate = await prisma.candidate.findFirst({ where: { id: candidateId, jobId } });
   if (!candidate) {
-    return NextResponse.json({ error: "Candidate not found" }, { status: 404, headers: CORS });
+    return NextResponse.json({ error: "Candidate not found" }, { status: 404, headers: extensionCorsHeaders(req) });
   }
   if (!candidate.linkedinUrl) {
-    return NextResponse.json({ error: "Candidate has no LinkedIn URL" }, { status: 400, headers: CORS });
+    return NextResponse.json({ error: "Candidate has no LinkedIn URL" }, { status: 400, headers: extensionCorsHeaders(req) });
   }
 
   const now = new Date().toISOString();
@@ -67,68 +85,137 @@ export async function POST(req: Request) {
 
   await addSessionToQueue(session);
 
-  return NextResponse.json(session, { headers: CORS });
+  return NextResponse.json(session, { headers: extensionCorsHeaders(req) });
 }
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
+  const jobId = url.searchParams.get("jobId");
+
+  // ?jobId= — web UI on page load, recover any in-progress capture sessions
+  if (jobId && !sessionId) {
+    const auth = await verifyAnyAuth(req);
+    if (!auth) return NextResponse.json({ sessions: [] }, { status: 401, headers: extensionCorsHeaders(req) });
+    const { error: jobError } = await requireJobAccess(jobId, auth);
+    if (jobError) return NextResponse.json({ sessions: [] }, { status: 403, headers: extensionCorsHeaders(req) });
+    const all = await getSessionQueue();
+    const sessions = all.filter((s) =>
+      s.jobId === jobId &&
+      (s.status === "pending" || s.status === "processing") &&
+      canAccessSession(s, auth)
+    );
+    return NextResponse.json({ sessions }, { headers: extensionCorsHeaders(req) });
+  }
 
   if (sessionId) {
-    // Polling by sessionId from the web UI — requires auth so only the session owner can poll.
-    const auth = await verifyAnyAuth(req);
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
-
     const session = await findSessionInQueue((s) => s.sessionId === sessionId);
     if (!session) {
-      return NextResponse.json({ session: null }, { status: 404, headers: CORS });
+      return NextResponse.json({ session: null }, { status: 404, headers: extensionCorsHeaders(req) });
+    }
+
+    // The web UI polls by an unguessable UUID it just created. Allow that token
+    // to keep working even if the browser drops auth cookies while LinkedIn is
+    // open, but redact org/candidate metadata unless the caller is authenticated.
+    // If auth is present, still enforce ownership/org visibility.
+    const auth = await verifyAnyAuth(req).catch(() => null);
+    if (auth) {
+      if (!canAccessSession(session, auth)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
+      }
     }
 
     // When completed, embed the updated candidate so the web UI can update
-    // without an extra round-trip. saveCapturedProfileToCandidate runs before
-    // the session is marked "completed", so the candidate is already up to date.
-    if (session.status === "completed") {
+    // without an extra round-trip. Only include the candidate when the caller
+    // is authenticated AND passed the org check above — without auth, the
+    // sessionId alone is treated as a polling capability for status only,
+    // never a route to the full PII (profileText, notes, salary, etc).
+    // The web UI handles the no-candidate case by re-fetching the job.
+    if (session.status === "completed" && auth) {
       const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
-      return NextResponse.json({ ...session, candidate }, { headers: CORS });
+      return NextResponse.json({ ...session, candidate }, { headers: extensionCorsHeaders(req) });
     }
 
-    return NextResponse.json(session, { headers: CORS });
+    return NextResponse.json(auth ? session : publicSessionStatus(session), { headers: extensionCorsHeaders(req) });
   }
 
   // No sessionId = extension alarm / popup status query.
-  // Try Basic auth first (configured extension). If no credentials, still return
-  // sessions so the extension can open LinkedIn tabs even before setup is complete.
+  // Require Basic auth — returning all sessions to unauthenticated callers leaks
+  // session metadata (candidateName, linkedinUrl, status) across all orgs.
   const auth = await verifyExtensionAuth(req);
+  if (!auth) {
+    // Return null rather than 401 so the popup shows "not configured" gracefully
+    // rather than an error banner. The extension should prompt for credentials.
+    return NextResponse.json(null, { headers: extensionCorsHeaders(req) });
+  }
+
   const queue = await getSessionQueue();
+  const visible = queue.filter(
+    (s) => canAccessSession(s, auth)
+  );
+  return NextResponse.json(visible.length > 0 ? visible : null, { headers: extensionCorsHeaders(req) });
+}
 
-  // If authenticated, show only this user's sessions. Otherwise show the entire
-  // queue so the popup can still show processing/error/completed states without
-  // extra setup, and the extension can auto-open pending tabs.
-  const visible = auth
-    ? queue.filter((s) => !s.userId || s.userId === auth.userId || (s.orgId && auth.orgId && s.orgId === auth.orgId))
-    : queue;
+// Called by the extension as soon as content.js confirms the capture has
+// started. Advancing to "processing" immediately means the alarm-loop's
+// getPendingSessions() (which only returns "pending") won't retry mid-capture,
+// even if the service worker is killed and restarts while capture is running.
+export async function PATCH(req: Request) {
+  const auth = await verifyExtensionAuth(req);
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: extensionCorsHeaders(req) });
 
-  return NextResponse.json(visible.length > 0 ? visible : null, { headers: CORS });
+  const body = await req.json().catch(() => null) as { sessionId?: string; status?: string } | null;
+  const { sessionId, status } = body ?? {};
+
+  if (!sessionId || status !== "processing") {
+    return NextResponse.json({ error: "sessionId and status:processing required" }, { status: 400, headers: extensionCorsHeaders(req) });
+  }
+
+  const session = await findSessionInQueue((s) => s.sessionId === sessionId);
+  if (!session) return NextResponse.json({ ok: false }, { headers: extensionCorsHeaders(req) });
+
+  // Org-scope: only the user/org that created the session can advance it.
+  if (!canAccessSession(session, auth)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
+  }
+
+  // Only advance from pending → processing; never go backwards.
+  if (session.status !== "pending") {
+    return NextResponse.json({ ok: true, skipped: true }, { headers: extensionCorsHeaders(req) });
+  }
+
+  await updateSessionInQueue({ sessionId, status: "processing", message: "Extension is capturing the profile" });
+  return NextResponse.json({ ok: true }, { headers: extensionCorsHeaders(req) });
 }
 
 export async function DELETE(req: Request) {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
 
-  // Auth is best-effort for DELETE. The sessionId itself is the access control
-  // for individual deletes; bulk deletes require auth.
+  // Always require auth — sessionId is a UUID but is not a secret; allowing
+  // unauthenticated deletion would let anyone cancel captures by guessing IDs.
   const auth = await verifyAnyAuth(req).catch(() => null);
+  if (!auth) return NextResponse.json({ cleared: false }, { headers: extensionCorsHeaders(req) });
 
   if (sessionId) {
+    // Verify the session belongs to this user / org before deleting.
+    const session = await findSessionInQueue((s) => s.sessionId === sessionId);
+    if (session) {
+      if (!canAccessSession(session, auth)) {
+        return NextResponse.json({ cleared: false }, { headers: extensionCorsHeaders(req) });
+      }
+    }
     await removeSessionFromQueue(sessionId);
-    return NextResponse.json({ cleared: true }, { headers: CORS });
+    return NextResponse.json({ cleared: true }, { headers: extensionCorsHeaders(req) });
   }
 
-  // No sessionId = clear this user's sessions (requires auth for bulk clear).
-  if (!auth) return NextResponse.json({ cleared: false }, { headers: CORS });
+  // No sessionId = clear THIS user's sessions only. Previously this also
+  // cleared every session in the user's org, which let one user wipe
+  // colleagues' in-flight captures by accident. Org-wide clear is no longer
+  // exposed without an explicit sessionId.
   const queue = await getSessionQueue();
-  for (const s of queue.filter((s) => !s.userId || s.userId === auth.userId)) {
+  for (const s of queue.filter((s) => s.userId === auth.userId || (!s.userId && !s.orgId))) {
     await removeSessionFromQueue(s.sessionId);
   }
-  return NextResponse.json({ cleared: true }, { headers: CORS });
+  return NextResponse.json({ cleared: true }, { headers: extensionCorsHeaders(req) });
 }

@@ -29,6 +29,9 @@ tsconfig.tsbuildinfo
 *.log
 *.pid
 
+# Railway CLI project config
+.railway/
+
 # misc
 .DS_Store
 *.pem
@@ -40,3 +43,6 @@ pnpm-debug.log*
 # generated test/demo PDFs
 /job-pdfs/
 /scripts/generate-job-pdfs.js
+
+# Agent tool worktree snapshots (left behind by Agent + isolation="worktree")
+.claude/

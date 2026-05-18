@@ -3,124 +3,182 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
   searchLinkedInProfiles,
-  searchBingLinkedInProfiles,
   searchPDLProfiles,
+  inferEmploymentType,
   type SearchResult,
 } from "@/lib/search";
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import {
-  buildScoreBreakdown,
-  CATEGORY_WEIGHTS_V2,
   classifyDataQuality,
-  type MustHaveStatus,
-  type NiceToHaveStatus,
   type ScoreBreakdown,
 } from "@/lib/scoring";
-import { isExplicitlyOverseasLocation, isNzLocation, normalizeLocationText } from "@/lib/location";
+import {
+  buildTargetLocationLabel,
+  extractKnownLocationTargets,
+  inferCandidateLocation,
+  isExplicitlyOverseasLocation,
+  isOverseasForNzRole,
+  normalizeLocationText,
+} from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
-import { buildTalentPoolMap } from "@/lib/talent-pool";
+import { textHasTerm } from "@/lib/format";
+import {
+  buildTalentPoolMap,
+  searchTalentPoolForRole,
+  type TalentPoolEntry,
+  type TalentPoolSearchResult,
+} from "@/lib/talent-pool";
+import { getAccessibleOrgIds } from "@/lib/org-access";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
+import { buildSearchEvaluation } from "@/lib/search-evaluation";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getServerSetting } from "@/lib/settings";
+import { getJobScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
+import { reportError } from "@/lib/error-reporting";
+import { hasFullCandidateProfile } from "@/lib/candidate-profile";
+import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
+import {
+  buildProvisionalSearchScore as buildProvisionalSearchScoreLib,
+  SCORE_CUTOFF_FULL_PROFILE,
+  SCORE_CUTOFF_SNIPPET,
+} from "@/lib/provisional-scoring";
+import {
+  extractRoleAwareDistinctiveAnchors,
+  extractRoleAwareDistinctiveAnchorGroups,
+  extractStrippedComplianceAnchors,
+  extractSignalsFromRequirement,
+  extractDistinctiveSignalsFromRequirement,
+  normalizeSignalText,
+  signalMatchesText,
+  extractLegacyAnchorTerms,
+  buildScarceSkillFallbackQueries,
+} from "@/lib/requirement-signals";
+
+// Allow up to 5 minutes for large search runs. Without this, Vercel and some
+// proxy configurations cut the connection at ~30s leaving partial results.
+// The route returns immediately with a sessionId; the background work uses this
+// budget. Same value as score-all/route.ts for consistency.
+export const maxDuration = 300;
 
 const SearchSchema = z.object({
   maxResults: z.number().int().min(1).max(100).default(20),
   locationOverride: z.string().max(100).optional(),
+  // When set, overrides parsedRole.search_queries — used by saved-search re-runs.
+  queriesOverride: z.array(z.string()).max(20).optional(),
+  // When set, the saved-search's lastRunAt is stamped at start and lastResultCount
+  // is updated when the background run completes.
+  savedSearchId: z.string().optional(),
+  // When true, security clearance and NZ work-rights requirements are removed from
+  // scoring for this search run so technically-qualified candidates aren't penalised
+  // for missing clearance data that never appears on LinkedIn profiles.
+  relaxClearance: z.boolean().optional().default(false),
 });
 
-const PLACEHOLDERS = new Set([
-  "full name", "job title at company", "city, country", "unknown",
-  "n/a", "not specified", "see profile", "na",
-]);
+// Regex matching requirements that should be excluded when relaxClearance is set.
+const CLEARANCE_WORK_RIGHTS_RE = /security clearance|secret vetting|confidential vetting|nzsis|nz clearance|clearance eligib|work rights|right to work|nz citizen|nz resident|\bvisa\b|work in new zealand/i;
 
-const ORG_PATTERNS = [
-  /\b(ministry|department|government|council|authority|commission)\b/i,
-  /\b(university|college|institute|polytechnic|school|academy)\b/i,
-  /\b(ltd|limited|inc|corp|corporation|llc|pty|plc)\b/i,
-  /\b(recruitment|staffing|consulting|solutions|services|group|agency)\b/i,
-  /\b(foundation|trust|society|association|hospital|health board)\b/i,
-];
-
-function looksReal(s: string) {
-  return s.length > 2 && s.length < 100 && !/^\[.*\]$/.test(s) && !PLACEHOLDERS.has(s.trim().toLowerCase());
-}
-
-function looksLikePersonName(s: string): boolean {
-  if (!looksReal(s)) return false;
-  if (ORG_PATTERNS.some((p) => p.test(s))) return false;
-  const words = s.trim().split(/\s+/).filter(Boolean);
-  return words.length >= 2 && words.length <= 6;
-}
-
-function hasFullProfile(profileText: string | null | undefined, profileCapturedAt?: Date | null) {
-  return Boolean(profileCapturedAt || (profileText && profileText.trim().length >= 500));
-}
-
-function cleanQuery(q: string): string {
-  return q
-    .replace(/^site:linkedin\.com\/in\s*/i, "")
-    .replace(/\b\d+\+?\s*years?\b/gi, "")
-    .replace(/\blocation\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-const REQUIREMENT_STOP_WORDS = new Set([
-  "ability", "across", "and", "any", "based", "build", "building", "candidate",
-  "comfortable", "commitment", "development", "driven", "experience", "good",
-  "have", "including", "knowledge", "mindset", "must", "new", "principles",
-  "professional", "proficiency", "required", "role", "solid", "strong",
-  "understanding", "using", "with", "work", "working", "years",
-]);
-
-const TECH_ALIASES: Array<[RegExp, string[]]> = [
-  [/\bwordpress\b|content management system|\bcms\b/i, ["wordpress", "cms", "content management system"]],
-  [/\bux\b|user experience/i, ["ux", "user experience", "ui/ux"]],
-  [/web design|design principle|digital design/i, ["web design", "designer", "digital designer", "ui/ux"]],
-  [/front.?end/i, ["front-end", "frontend", "front end", "html", "css", "javascript", "react"]],
-  [/back.?end/i, ["back-end", "backend", "back end", "php", "node", "ruby", "python", "rails", ".net"]],
-  [/full.?stack|front.?end.*back.?end|back.?end.*front.?end/i, ["full-stack", "full stack", "frontend", "backend"]],
-  [/react/i, ["react", "react.js", "reactjs"]],
-  [/ruby|rails|ror/i, ["ruby", "rails", "ruby on rails", "ror"]],
-  [/python/i, ["python"]],
-  [/docker|container/i, ["docker", "container", "containerisation", "containerization"]],
-  [/typescript/i, ["typescript", "type script"]],
-  [/javascript/i, ["javascript", "js"]],
-  [/shopify/i, ["shopify"]],
-  [/squarespace/i, ["squarespace", "square space"]],
-  [/portfolio/i, ["portfolio"]],
-];
+import { looksLikePersonName, cleanQuery, dedupeQueries } from "@/lib/search-query-helpers";
+import { candidateTitleFitsRole } from "@/lib/title-family";
 
 function normaliseText(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").replace(/\s+/g, " ").trim();
+  return normalizeSignalText(value);
 }
 
 function requirementSignals(requirement: string): string[] {
-  const signals = new Set<string>();
-  for (const [pattern, aliases] of TECH_ALIASES) {
-    if (pattern.test(requirement)) aliases.forEach((alias) => signals.add(alias));
-  }
-
-  const tokens = requirement
-    .toLowerCase()
-    .match(/[a-z][a-z0-9+#.]{2,}/g) ?? [];
-  for (const token of tokens) {
-    if (!REQUIREMENT_STOP_WORDS.has(token)) signals.add(token);
-  }
-
-  return [...signals].slice(0, 8);
+  return extractSignalsFromRequirement(requirement);
 }
 
 function hasSignal(text: string, signal: string): boolean {
-  const normalisedSignal = normaliseText(signal);
-  return Boolean(normalisedSignal) && text.includes(normalisedSignal);
+  return signalMatchesText(text, signal);
 }
 
+function candidateSearchText(result: SearchResult, profileText?: string | null, candidateLocation?: string | null) {
+  return [
+    result.name,
+    result.headline,
+    candidateLocation ?? result.location,
+    result.snippet,
+    profileText ?? result.fullText,
+  ].filter(Boolean).join("\n");
+}
+
+function looksUnderqualifiedForRole(result: SearchResult, parsedRole: ParsedRole): boolean {
+  const wantedSeniority = (parsedRole.seniority_band ?? "").toLowerCase();
+  if (!/(mid|senior|lead|principal|manager|director|executive)/.test(wantedSeniority)) return false;
+
+  // Only check the job title / headline — not the whole snippet. Checking full snippet
+  // text caused false positives: "I mentor junior engineers" or "Dev Academy graduate
+  // from 2019" on a mid-career candidate's snippet would incorrectly drop them.
+  // The headline is the current role title; snippet context is too broad.
+  const titleOnly = normaliseText(result.headline ?? "");
+  return /^(junior|graduate|intern|internship|trainee|student|entry.?level|bootcamp|in training|seeking entry)/i.test(titleOnly);
+}
+
+function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole, profileText?: string | null, candidateLocation?: string | null) {
+  const anchorGroups = extractDistinctiveRequirementGroups(parsedRole);
+  const anchorTerms = extractAnchorRequirementTerms(parsedRole);
+  if (anchorGroups.length === 0 && anchorTerms.length === 0) {
+    // No distinctive technical anchors. Try the hybrid-role compliance
+    // fallback FIRST: a "Technology and Solution Support Manager" role has
+    // ISMS/ISO 27001 stripped by extractRoleAwareDistinctiveAnchors so it
+    // doesn't reject every IT-ops candidate, but a candidate WITH strong
+    // ISMS/ISO experience should still pass. We admit them via the
+    // stripped-compliance set instead of forcing them through the
+    // title-family check (where "Compliance Manager" would otherwise be
+    // rejected as security_grc vs support_ops).
+    const compliance = extractStrippedComplianceAnchors({
+      title: parsedRole.title,
+      requirements: [
+        ...(parsedRole.must_haves ?? []),
+        ...(parsedRole.knockout_criteria ?? []),
+      ],
+    });
+    if (compliance.length > 0) {
+      const text = candidateSearchText(result, profileText, candidateLocation);
+      const candidateCompliance = new Set(
+        extractDistinctiveSignalsFromRequirement(text).map((s) => s.toLowerCase()),
+      );
+      const matchesCompliance = compliance.some((anchor) => {
+        const lower = anchor.toLowerCase();
+        return candidateCompliance.has(lower) || textHasTerm(text, anchor);
+      });
+      if (matchesCompliance) return true;
+    }
+    // Otherwise fall back to title-family compatibility — same logic as
+    // before. Wrong-role-family candidates are rejected; ambiguous and
+    // clearly-compatible titles pass.
+    return candidateTitleFitsRole(parsedRole.title, result.headline);
+  }
+
+  const text = candidateSearchText(result, profileText, candidateLocation);
+  const candidateSignals = new Set(
+    extractSignalsFromRequirement(text).map((s) => s.toLowerCase()),
+  );
+
+  // Multi-anchor specialist roles are conjunctive at the group level:
+  // C++ alone must not satisfy a C++ + Sybase role. Each group can still
+  // contain tight aliases/domain peers (e.g. SCADA/RTU/metering).
+  const groups = anchorGroups.length > 0
+    ? anchorGroups
+    : anchorTerms.map((anchor) => [anchor]);
+
+  return groups.every((group) => {
+    return group.some((anchor) => {
+      const lower = anchor.toLowerCase();
+      if (candidateSignals.has(lower)) return true;
+      return textHasTerm(text, anchor);
+    });
+  });
+}
+
+// Thin wrapper that binds the local signal helpers to the extracted library
+// function. Keeps all callers in this file unchanged.
 function buildProvisionalSearchScore(
   result: SearchResult,
   parsedRole: ParsedRole,
@@ -128,106 +186,117 @@ function buildProvisionalSearchScore(
   targetLocation: string,
   locationRules: string | null | undefined,
   isRemote: boolean,
+  weights?: ScoringWeights,
 ): ScoreBreakdown {
-  const baseMustHaves = parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required;
-  const knockouts = parsedRole.knockout_criteria ?? [];
-  const mustHaves = [
-    ...baseMustHaves,
-    ...knockouts.filter((ko) => !baseMustHaves.some((mh) => mh.toLowerCase().includes(ko.toLowerCase().slice(0, 25)))),
-  ].slice(0, 14);
-  const niceToHaves = (parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : parsedRole.skills_preferred).slice(0, 6);
-  const profileText = [result.name, result.headline, candidateLocation, result.snippet].filter(Boolean).join("\n");
-  const haystack = normaliseText(profileText);
-
-  const mustHaveCoverage: MustHaveStatus[] = mustHaves.map((requirement) => {
-    if (/right to work|work rights|nz citizen|nz resident|\bvisa\b|work in new zealand/i.test(requirement)) {
-      const nzBased = Boolean(candidateLocation && isNzLocation(candidateLocation));
-      return {
-        requirement,
-        status: nzBased ? "likely" : "unknown",
-        evidence: nzBased
-          ? `Candidate appears NZ-based from the search location (${candidateLocation}); work rights still need confirmation.`
-          : "Search snippet does not verify work rights.",
-      };
-    }
-
-    const signals = requirementSignals(requirement);
-    const matched = signals.filter((signal) => hasSignal(haystack, signal));
-    return {
-      requirement,
-      status: matched.length > 0 ? "likely" : "unknown",
-      evidence: matched.length > 0
-        ? `Snippet/headline mentions ${matched.slice(0, 3).join(", ")}.`
-        : "Not verifiable from search snippet.",
-    };
-  });
-
-  const niceToHaveCoverage: NiceToHaveStatus[] = niceToHaves.map((requirement) => {
-    const signals = requirementSignals(requirement);
-    const matched = signals.filter((signal) => hasSignal(haystack, signal));
-    return {
-      requirement,
-      status: matched.length > 0 ? "likely" : "absent",
-      evidence: matched.length > 0
-        ? `Snippet/headline mentions ${matched.slice(0, 3).join(", ")}.`
-        : "Not mentioned in search snippet.",
-    };
-  });
-
-  const supported = mustHaveCoverage.filter((c) => c.status === "confirmed" || c.status === "equivalent" || c.status === "likely").length;
-  const mustHaveRatio = mustHaveCoverage.length ? supported / mustHaveCoverage.length : 0.5;
-  const titleSignals = requirementSignals(parsedRole.title);
-  const titleMatches = titleSignals.filter((signal) => hasSignal(normaliseText(`${result.headline} ${result.name}`), signal)).length;
-  const titleScore = Math.min(85, Math.max(35, 45 + titleMatches * 15));
-  const skillScore = Math.min(75, Math.round(35 + mustHaveRatio * 45));
-  const keywordScore = Math.min(80, Math.round(35 + mustHaveRatio * 50));
-  const seniorityText = normaliseText(result.headline);
-  const wantedSeniority = (parsedRole.seniority_band ?? "").toLowerCase();
-  const seniorityScore =
-    wantedSeniority.includes("junior") && /\b(senior|lead|principal|head|manager|director)\b/.test(seniorityText) ? 45 :
-    wantedSeniority.includes("senior") && /\b(junior|graduate|intern)\b/.test(seniorityText) ? 45 :
-    70;
-
-  const breakdown = buildScoreBreakdown({
-    categories: {
-      skill_fit:         { score: skillScore,     weight: CATEGORY_WEIGHTS_V2.skill_fit,         evidence: "Provisional score from LinkedIn search snippet." },
-      location_fit:      { score: candidateLocation ? 75 : 50, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
-      seniority_fit:     { score: seniorityScore, weight: CATEGORY_WEIGHTS_V2.seniority_fit,     evidence: "Seniority inferred from headline only." },
-      title_fit:         { score: titleScore,     weight: CATEGORY_WEIGHTS_V2.title_fit,         evidence: "Title fit inferred from LinkedIn headline." },
-      industry_fit:      { score: 50,             weight: CATEGORY_WEIGHTS_V2.industry_fit,      evidence: "Industry cannot be reliably assessed from a search snippet." },
-      nice_to_have_fit:  { score: 45,             weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit,  evidence: "Nice-to-haves are provisional until the full profile is captured." },
-      keyword_alignment: { score: keywordScore,   weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Keyword alignment inferred from snippet and headline." },
-    },
-    must_have_coverage: mustHaveCoverage,
-    nice_to_have_coverage: niceToHaveCoverage,
-    reasons_for: [
-      `${result.name} appears in LinkedIn search for this role.`,
-      result.headline ? `Headline: ${result.headline}.` : "Search result includes a candidate profile.",
-    ],
-    reasons_against: ["Only a LinkedIn search snippet is available; fetch the full profile for reliable scoring."],
-    missing_evidence: ["Full LinkedIn profile text", "Detailed experience history", "Confirmed work rights"],
-    recruiter_summary: "Provisional search match from a LinkedIn snippet. Fetch the full profile before treating the score as reliable.",
-    profileCharCount: profileText.length,
-  });
-
-  return applyLocationFitOverride(breakdown, candidateLocation, targetLocation, locationRules, isRemote);
+  return buildProvisionalSearchScoreLib(
+    result, parsedRole, candidateLocation, targetLocation, locationRules, isRemote, weights,
+    { requirementSignals, hasSignal, normaliseText },
+  );
 }
+
 
 const PAGE_SIZE = 10;
 const MAX_PAGES = 8;
 const MAX_PAGE_RETRIES = 2;
 const EMPTY_ROUNDS_BEFORE_STOP = 2;
-const MAX_QUERY_VARIANTS = 4;
+const MAX_QUERY_VARIANTS = 6;
+const MAX_SPECIALIST_QUERY_VARIANTS = 8;
 const SERPAPI_CONCURRENCY = 1;
-const BING_CONCURRENCY = 2;
 const SERPAPI_DELAY_MS = 600;
-const BING_DELAY_MS = 150;
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
-type SearchProvider = "serpapi" | "bing";
+function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
+  // Only must-haves and knockout criteria — nice-to-haves must not widen the
+  // source gate, or a "nice to have React" on a Salesforce role would let any
+  // React developer through regardless of Salesforce absence.
+  //
+  // Role-aware: for hybrid IT-ops roles ("Technology Support Manager", "IT
+  // Operations Manager"), ISMS / ISO 27001 are stripped from the distinctive
+  // set so they don't act as hard source-gate filters. They still inform the
+  // SCORE through TECH alias matching and the importance multiplier — they
+  // just don't gate. Pure compliance roles ("ISMS Lead", "CISO") keep the
+  // full distinctive set including ISMS / ISO 27001.
+  return extractRoleAwareDistinctiveAnchors({
+    title: parsedRole.title,
+    requirements: [
+      ...(parsedRole.must_haves ?? []),
+      ...(parsedRole.skills_required ?? []),
+      ...(parsedRole.knockout_criteria ?? []),
+    ],
+  });
+}
+
+function extractDistinctiveRequirementGroups(parsedRole: ParsedRole): string[][] {
+  return extractRoleAwareDistinctiveAnchorGroups({
+    title: parsedRole.title,
+    requirements: [
+      ...(parsedRole.must_haves ?? []),
+      ...(parsedRole.skills_required ?? []),
+      ...(parsedRole.knockout_criteria ?? []),
+    ],
+  });
+}
+
+function extractAnchorRequirementTerms(parsedRole: ParsedRole): string[] {
+  // Prefer AI-generated anchors from the parse step — these work for ANY technology.
+  if (parsedRole.anchor_terms?.length) {
+    return parsedRole.anchor_terms.slice(0, 5);
+  }
+
+  // Fallback for roles parsed before anchor_terms was added.
+  // Uses a narrow rare-tech list so common tools (Azure, SQL, .NET) don't
+  // become anchors and over-restrict the search.
+  const hardRequirements = [
+    ...(parsedRole.must_haves ?? []),
+    ...(parsedRole.skills_required ?? []),
+    ...(parsedRole.knockout_criteria ?? []),
+  ];
+  return extractLegacyAnchorTerms(hardRequirements);
+}
+
+const DB_ANCHOR_RE = /\b(sql|sybase|oracle|postgres|mysql|db2|database|rdbms|snowflake|dynamo)\b/i;
+
+function buildSearchQueries(parsedRole: ParsedRole): string[] {
+  const baseTitle = cleanQuery(parsedRole.title);
+  const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
+  const aiQueries = [...parsedRole.search_queries, ...parsedRole.google_queries];
+  const distinctiveTerms = extractDistinctiveRequirementTerms(parsedRole);
+  const anchorTerms = extractAnchorRequirementTerms(parsedRole);
+
+  const skillQueries: string[] = [];
+  if (anchorTerms.length > 0) {
+    // All anchors together — catches people who list multiple rare skills
+    skillQueries.push(anchorTerms.join(" "));
+    // Reversed order — "Sybase C++ developer" catches profiles that lead with the DB
+    if (anchorTerms.length > 1) skillQueries.push([...anchorTerms].reverse().join(" "));
+    // Title + all anchors
+    skillQueries.push(`${baseTitle || "Software Developer"} ${anchorTerms.join(" ")}`);
+    for (const term of anchorTerms) {
+      skillQueries.push(`${term} developer`);
+      // "dba" only makes sense for database anchors, not for React, JMeter, etc.
+      if (DB_ANCHOR_RE.test(term)) skillQueries.push(`${term} dba`);
+    }
+  }
+  if (distinctiveTerms.length > 0) {
+    skillQueries.push(`${baseTitle || "Software Developer"} ${distinctiveTerms.slice(0, 2).join(" ")}`);
+  }
+  if (distinctiveTerms.length > 2) {
+    skillQueries.push(distinctiveTerms.slice(0, 4).join(" "));
+  }
+
+  // Ordering: specialist skill queries first, then ALL AI-generated queries (most
+  // semantically rich — written by Claude for this specific role), then title/synonyms.
+  // AI queries were previously interleaved with synonyms and got sliced off for specialist
+  // roles; they should take precedence over mechanical synonym expansion.
+  return dedupeQueries([
+    ...skillQueries,
+    ...aiQueries,          // all AI queries before synonyms
+    baseTitle,
+    ...synonymQueries,
+  ].filter(Boolean) as string[]).slice(0, anchorTerms.length > 0 ? MAX_SPECIALIST_QUERY_VARIANTS : MAX_QUERY_VARIANTS);
+}
 
 interface SearchTaskOutcome extends SearchPageTaskResult<SearchResult> {
-  provider: SearchProvider;
   query: string;
   error?: string;
 }
@@ -244,7 +313,7 @@ function limitQueriesForAttempt(queries: string[], page: number, attempt: number
 }
 
 async function executeSearchTaskQueue(
-  tasks: Array<{ provider: SearchProvider; query: string; location: string; offset: number; resolvedKey?: string }>,
+  tasks: Array<{ query: string; location: string; offset: number; resolvedKey?: string; searchOptions?: { excludeContractTitles?: boolean } }>,
   options: { concurrency: number; delayMs: number },
 ): Promise<SearchTaskOutcome[]> {
   const outcomes: SearchTaskOutcome[] = [];
@@ -252,7 +321,7 @@ async function executeSearchTaskQueue(
   for (let i = 0; i < tasks.length; i += options.concurrency) {
     const batch = tasks.slice(i, i + options.concurrency);
     const batchOutcomes = await Promise.all(
-      batch.map((task) => executeSearchTask(task.provider, task.query, task.location, task.offset, task.resolvedKey))
+      batch.map((task) => executeSearchTask(task.query, task.location, task.offset, task.resolvedKey, task.searchOptions))
     );
     outcomes.push(...batchOutcomes);
 
@@ -280,22 +349,26 @@ function isRetryableSearchError(message: string): boolean {
   );
 }
 
+function isAuthFailure(message: string): boolean {
+  const status = message.match(/\b(\d{3})\b/)?.[1];
+  if (status && (status === "401" || status === "403")) return true;
+  const lower = message.toLowerCase();
+  return lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("forbidden");
+}
+
 async function executeSearchTask(
-  provider: SearchProvider,
   query: string,
   location: string,
   offset: number,
   resolvedKey?: string,
+  options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchTaskOutcome> {
   try {
-    const items = provider === "serpapi"
-      ? await searchLinkedInProfiles(query, location, offset, resolvedKey)
-      : await searchBingLinkedInProfiles(query, location, offset, resolvedKey);
-    return { provider, query, items, retryable: false };
+    const items = await searchLinkedInProfiles(query, location, offset, resolvedKey, options);
+    return { query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
-      provider,
       query,
       items: [],
       error: message,
@@ -316,26 +389,26 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { maxResults, locationOverride } = parsed.data;
+  const { maxResults, locationOverride, queriesOverride, savedSearchId, relaxClearance } = parsed.data;
 
   // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
   // We do NOT mutate process.env so changing a key in settings takes effect immediately
   // without requiring a server restart.
-  const [dbSerpApi, dbBing, dbPdl] = await Promise.all([
+  const [dbSerpApi, dbPdl] = await Promise.all([
     process.env.SERPAPI_API_KEY ? null : getServerSetting("SERPAPI_API_KEY"),
-    process.env.BING_API_KEY    ? null : getServerSetting("BING_API_KEY"),
     process.env.PDL_API_KEY     ? null : getServerSetting("PDL_API_KEY"),
   ]);
   const serpApiKey = process.env.SERPAPI_API_KEY || dbSerpApi || "";
-  const bingKey    = process.env.BING_API_KEY    || dbBing    || "";
   const pdlKey     = process.env.PDL_API_KEY     || dbPdl     || "";
 
   const hasSerpApi = Boolean(serpApiKey);
-  const hasBing    = Boolean(bingKey);
   const hasPDL     = Boolean(pdlKey);
 
-  if (!hasSerpApi && !hasBing && !hasPDL) {
-    return NextResponse.json({ error: "No search API configured. Add SERPAPI_API_KEY to .env.local." }, { status: 400 });
+  if (!hasSerpApi && !hasPDL) {
+    return NextResponse.json(
+      { error: "No search API configured. Set SERPAPI_API_KEY and/or PDL_API_KEY (in env, or via the Settings → API Keys panel)." },
+      { status: 400 }
+    );
   }
 
   const { job, error } = await requireJobAccess(id, auth);
@@ -353,30 +426,54 @@ export async function POST(
   }
 
   const location = parsedRole.location ?? "";
-  const locationSource = location || parsedRole.location_rules || "";
+  const locationSource = [job.location, job.location2, location, parsedRole.location_rules].filter(Boolean).join(" ");
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
     : null;
+  const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
-  const canonicalJobCity = getCityCoords(locationSource)?.name ?? "";
+  const knownTargets = extractKnownLocationTargets(job.location, job.location2, location, parsedRole.location_rules);
+  const canonicalJobCity = knownTargets[0] ?? getCityCoords(locationSource)?.name ?? "";
   const parsedSearchLocation = canonicalJobCity || locationSource;
-  const searchLocation = locationOverride?.trim() || parsedSearchLocation;
-  const targetLocation = locationOverride?.trim() || location || canonicalJobCity || locationSource;
+  // For remote NZ roles, if no city is resolved, default to "New Zealand" so queries
+  // are NZ-scoped rather than global. Without this, "remote" roles get an empty location
+  // which produces a worldwide search and floods results with offshore candidates.
+  const effectiveParsedLocation = parsedSearchLocation || (job.isRemote ? "New Zealand" : "");
+  const searchLocation = locationOverride?.trim() || effectiveParsedLocation;
+  const targetLocation = locationOverride?.trim() || buildTargetLocationLabel(job.location, job.location2, location, parsedRole.location_rules) || location || canonicalJobCity || locationSource;
 
-  // Build query pool: explicit search queries + synonym titles as standalone title searches
-  // Synonym titles are the key insight — recruiters search off real titles, not JD language
-  const synonymQueries = (parsedRole.synonym_titles ?? []).map(cleanQuery);
-  const searchQueries = [
-    parsedRole.title,
-    ...synonymQueries,
-    ...parsedRole.search_queries,
-    ...parsedRole.google_queries,
-  ]
-    .map(cleanQuery)
-    .filter(Boolean)
-    .filter((q, i, arr) => arr.indexOf(q) === i)
-    .slice(0, MAX_QUERY_VARIANTS);
+  // Detect employment type from rawJd + parsed experience/responsibilities.
+  // When the JD is explicitly permanent we exclude contractor / freelance
+  // titles from search results (Google -intitle: clauses). Ambiguous JDs
+  // (neither permanent nor contract phrasing) default to NOT excluding —
+  // recall over precision when intent isn't clear.
+  const employmentType = inferEmploymentType(
+    [job.rawJd, parsedRole.experience, ...(parsedRole.responsibilities ?? [])].filter(Boolean).join(" "),
+  );
+  const excludeContractTitles = employmentType === "permanent";
+
+  // Build query pool with reserved slots for rare hard-skill terms. For niche
+  // roles, terms like Sybase/C++ matter more than burning every slot on titles.
+  // queriesOverride wins when present so saved-search re-runs use exactly the
+  // queries the recruiter pinned, regardless of any later parsedRole changes.
+  const cleanedOverride = queriesOverride
+    ?.map((q) => (typeof q === "string" ? q.trim() : ""))
+    .filter(Boolean);
+  const searchQueries = cleanedOverride && cleanedOverride.length > 0
+    ? cleanedOverride
+    : buildSearchQueries(parsedRole);
   const targetRaw = Math.min(Math.max(maxResults * 3, maxResults + 15), 120);
+
+  // Stamp saved-search lastRunAt at start so the UI updates immediately. The
+  // result count is filled in once the background run completes.
+  if (savedSearchId) {
+    // Scope by jobId AND orgId so a caller cannot accidentally (or deliberately)
+    // stamp another org's saved search even if jobId routing were misconfigured.
+    await prisma.savedSearch.updateMany({
+      where: { id: savedSearchId, jobId: id, orgId: auth.orgId },
+      data: { lastRunAt: new Date() },
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+  }
 
   const session = await prisma.searchSession.create({
     data: {
@@ -398,25 +495,37 @@ export async function POST(
     job,
     parsedRole,
     salary,
+    weights,
     maxResults,
     targetRaw,
     searchQueries,
     searchLocation,
     targetLocation,
+    knownTargets,
     hasSerpApi,
-    hasBing,
     hasPDL,
     serpApiKey,
-    bingKey,
     pdlKey,
     isOwner: auth.isOwner,
     orgId: auth.orgId,
+    savedSearchId,
+    relaxClearance: relaxClearance ?? false,
+    excludeContractTitles,
   }).catch((err) => {
-    console.error("[search] background task crashed:", err);
+    reportError(err, { route: "search:background", jobId: id, orgId: auth.orgId });
+    // Use status "failed" — NOT "rate_limited". The previous mis-labelling
+    // caused recruiters to retry forever thinking they were being throttled
+    // when the real cause was a code-level crash. "failed" surfaces the
+    // actual error message in the session row so the user sees what broke.
+    const message = err instanceof Error ? err.message : "Search crashed";
     prisma.searchSession.update({
       where: { id: session.id },
-      data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search crashed" },
-    }).catch(() => {});
+      data: {
+        status: "failed",
+        message: `Search crashed: ${message}`,
+        evaluation: `FAIL — Search crashed unexpectedly: ${message}. This is a code-level error, not a rate limit. Reload the page and try again; if it keeps happening, contact support.`,
+      },
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
   });
 
   void recordUsage(auth.orgId, auth.userId, "search", { jobId: id, maxResults });
@@ -446,19 +555,27 @@ export async function GET(
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
-  // Mark stale sessions (running > 10 min) as failed — handles Railway restarts
-  // that kill the background promise mid-search.
+  // Mark stale sessions (running > 10 min) as crashed — handles Railway
+  // restarts that kill the background promise mid-search. We deliberately
+  // do NOT use "rate_limited" here: that label is for actual provider
+  // throttling and used to mask real crashes, sending recruiters into
+  // pointless retry loops. The frontend treats unknown statuses as
+  // "not running" and falls through to display.
   if (session.status === "running") {
     const ageMs = Date.now() - session.createdAt.getTime();
     if (ageMs > 10 * 60 * 1000) {
       session = await prisma.searchSession.update({
         where: { id: sessionId },
-        data: { status: "rate_limited", message: "Search timed out — try again." },
+        data: {
+          status: "crashed",
+          message: "Search worker died — try again.",
+          evaluation: "Search worker died — try again",
+        },
       });
     }
   }
 
-  const importedIds: string[] = JSON.parse(session.importedIds || "[]");
+  const importedIds = safeParseJson<string[]>(session.importedIds, []);
   const candidates = importedIds.length > 0
     ? await prisma.candidate.findMany({
         where: { id: { in: importedIds } },
@@ -476,40 +593,242 @@ export async function GET(
   });
 }
 
+// ── Pool-first save helper ────────────────────────────────────────────────
+// Persists pool-first criteria-search results as Candidate rows on the
+// current job. Pool candidates are pre-scored (Claude full-profile via
+// searchTalentPoolForRole) so they bypass the score+save loop.
+//
+// Returns the upserted Candidate rows so the caller can merge them into
+// the final `saved` list / importedIds / session message.
+async function persistPoolSearchResults(args: {
+  jobId: string;
+  orgId: string | null;
+  results: TalentPoolSearchResult[];
+}): Promise<Array<{ id: string; linkedinUrl: string | null; matchScore: number | null }>> {
+  const { jobId, orgId, results } = args;
+  const saved: Array<{ id: string; linkedinUrl: string | null; matchScore: number | null }> = [];
+  for (const result of results) {
+    const { hit, scoreBreakdown, candidateLocation } = result;
+    const normUrl = hit.linkedinUrl;
+    const scoreData = deriveUpdateData(scoreBreakdown);
+    try {
+      const where = normUrl
+        ? { jobId_linkedinUrl: { jobId, linkedinUrl: normUrl } }
+        : null;
+      // Manual rows (no URL) get a fresh row per job — there's no
+      // (jobId, linkedinUrl) unique key to upsert against.
+      const candidate = where
+        ? await prisma.candidate.upsert({
+            where,
+            create: {
+              jobId,
+              orgId: orgId ?? null,
+              name: hit.name,
+              headline: hit.headline,
+              location: candidateLocation,
+              linkedinUrl: normUrl,
+              profileText: hit.profileText,
+              source: "talent_pool",
+              status: "new",
+              ...(hit.profileCapturedAt ? { profileCapturedAt: hit.profileCapturedAt } : {}),
+              ...scoreData,
+            },
+            update: {
+              ...scoreData,
+            },
+          })
+        : await prisma.candidate.create({
+            data: {
+              jobId,
+              orgId: orgId ?? null,
+              name: hit.name,
+              headline: hit.headline,
+              location: candidateLocation,
+              profileText: hit.profileText,
+              source: "talent_pool",
+              status: "new",
+              ...(hit.profileCapturedAt ? { profileCapturedAt: hit.profileCapturedAt } : {}),
+              ...scoreData,
+            },
+          });
+      saved.push({
+        id: candidate.id,
+        linkedinUrl: candidate.linkedinUrl,
+        matchScore: candidate.matchScore,
+      });
+    } catch (err) {
+      console.error("[search] pool-first candidate save failed:", err);
+    }
+  }
+  return saved;
+}
+
 // ── Background search processor ───────────────────────────────────────────────
 
 async function runSearchBackground(args: {
   sessionId: string;
   jobId: string;
-  job: { orgId: string | null; parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null };
+  job: { orgId: string | null; parsedRole: string | null; salaryMin: number | null; salaryMax: number | null; isRemote: boolean; location: string | null; location2: string | null };
   parsedRole: ParsedRole;
   salary: { min: number; max: number } | null;
+  weights: ScoringWeights;
   maxResults: number;
   targetRaw: number;
   searchQueries: string[];
   searchLocation: string;
   targetLocation: string;
+  knownTargets: string[];  // all accepted cities from the parsed location (e.g. ["Wellington","Christchurch"])
   hasSerpApi: boolean;
-  hasBing: boolean;
   hasPDL: boolean;
   serpApiKey: string;
-  bingKey: string;
   pdlKey: string;
   isOwner: boolean;
   orgId: string | null;
+  savedSearchId?: string;
+  relaxClearance: boolean;
+  /** Append Google -intitle: clauses to exclude contractor / freelance
+   *  titles. Set true only when the JD is explicitly permanent. */
+  excludeContractTitles: boolean;
 }) {
-  const { sessionId, jobId, job, parsedRole, salary, maxResults, targetRaw,
-    searchQueries, searchLocation, targetLocation, hasSerpApi, hasBing, hasPDL,
-    serpApiKey, bingKey, pdlKey, isOwner, orgId } = args;
+  const { sessionId, jobId, job, parsedRole, salary, weights, maxResults, targetRaw,
+    searchQueries, searchLocation, targetLocation, knownTargets, hasSerpApi, hasPDL,
+    serpApiKey, pdlKey, isOwner, orgId, savedSearchId, relaxClearance,
+    excludeContractTitles } = args;
+
+  // When relaxClearance=true, remove clearance/work-rights requirements from scoring
+  // for this search run. Candidates aren't penalised for not listing clearance on
+  // LinkedIn — the recruiter handles eligibility verification separately.
+  const parsedRoleForScoring: ParsedRole = relaxClearance
+    ? {
+        ...parsedRole,
+        must_haves: parsedRole.must_haves.filter((r) => !CLEARANCE_WORK_RIGHTS_RE.test(r)),
+        skills_required: parsedRole.skills_required.filter((r) => !CLEARANCE_WORK_RIGHTS_RE.test(r)),
+        knockout_criteria: (parsedRole.knockout_criteria ?? []).filter((r) => !CLEARANCE_WORK_RIGHTS_RE.test(r)),
+      }
+    : parsedRole;
+
+  // Compute once at the top so we can use anchor terms in the fallback pass below.
+  const anchorTermsForFallback = extractAnchorRequirementTerms(parsedRole);
 
   try {
+    // ── Phase 0: Pool-first criteria search ────────────────────────────────
+    // Search the existing candidate pool BY JD CRITERIA before spending any
+    // LinkedIn credits. Pool candidates are scored against the CURRENT role
+    // (not their stale matchScore) and saved with source="talent_pool".
+    //
+    // - If pool fills maxResults → skip Phase 1a/1b entirely.
+    // - Otherwise → reduce the LinkedIn fetch budget by `poolSaved`.
+    // - On error → log + continue with full LinkedIn fallback.
+    const poolScopeForCriteriaSearch: string | string[] | null = isOwner
+      ? null
+      : (await getAccessibleOrgIds({ userId: "", orgId, isOwner: false })) ?? [];
+
+    // Find URLs already attached to this job so the pool-first pass doesn't
+    // re-import them. We do a small targeted query first; the broader
+    // `existingCandidates` lookup happens after LinkedIn fetch (line ~887).
+    const existingForJob = await prisma.candidate.findMany({
+      where: { jobId, linkedinUrl: { not: null } },
+      select: { linkedinUrl: true },
+    });
+    const existingJobUrls = new Set<string>();
+    for (const c of existingForJob) {
+      if (c.linkedinUrl) existingJobUrls.add(normaliseLinkedInUrl(c.linkedinUrl));
+    }
+
+    let poolSaved: Array<{ id: string; linkedinUrl: string | null; matchScore: number | null }> = [];
+    let poolExamined = 0;
+
+    try {
+      const poolSummary = await searchTalentPoolForRole({
+        parsedRole: parsedRoleForScoring,
+        job: { isRemote: job.isRemote },
+        orgScope: poolScopeForCriteriaSearch,
+        excludeLinkedInUrls: existingJobUrls,
+        maxResults,
+        weights,
+        targetLocation,
+        scoringOrgId: orgId,
+        salary,
+      });
+      poolExamined = poolSummary.examined;
+      console.log(
+        `[search] pool-first: examined ${poolSummary.examined}, pre-rank pool ${poolSummary.preRankPool}, shortlisted ${poolSummary.shortlisted}, scored ${poolSummary.scored}, returning ${poolSummary.returned}`,
+      );
+
+      poolSaved = await persistPoolSearchResults({
+        jobId,
+        orgId: job.orgId,
+        results: poolSummary.results,
+      });
+    } catch (err) {
+      console.warn("[search] pool-first criteria search failed — continuing to LinkedIn fallback", err);
+      reportError(err instanceof Error ? err : new Error(String(err)), {
+        scope: "search.poolFirstSearch",
+        jobId,
+      });
+    }
+
+    // Re-key existingJobUrls so subsequent LinkedIn passes don't double-import
+    // candidates we just brought in from the pool.
+    for (const saved of poolSaved) {
+      if (saved.linkedinUrl) existingJobUrls.add(normaliseLinkedInUrl(saved.linkedinUrl));
+    }
+
+    // Compute the remaining slot budget for LinkedIn. If the pool filled
+    // the request, we skip LinkedIn entirely AND short-circuit out of
+    // runSearchBackground after writing a session message.
+    const remainingSlots = Math.max(0, maxResults - poolSaved.length);
+    const linkedinSkipped = remainingSlots === 0;
+
+    if (linkedinSkipped) {
+      console.log(`[search] pool-first filled maxResults (${poolSaved.length}/${maxResults}) — skipping LinkedIn`);
+      const importedIds = poolSaved.map((c) => c.id);
+      const avgScore = poolSaved.length > 0
+        ? Math.round(poolSaved.reduce((s, c) => s + (c.matchScore ?? 0), 0) / poolSaved.length)
+        : null;
+      await prisma.searchSession.update({
+        where: { id: sessionId },
+        data: {
+          status: "complete",
+          collected: poolSaved.length,
+          importedIds: JSON.stringify(importedIds),
+          avgScore,
+          candidatesRejected: 0,
+          totalExamined: poolExamined,
+          evaluation: `OK — filled from talent pool (${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""}); LinkedIn search skipped to save credits.`,
+          message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn search skipped — saved external credits.`,
+        },
+      }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+      if (savedSearchId) {
+        await prisma.savedSearch.updateMany({
+          where: { id: savedSearchId, jobId, orgId },
+          data: { lastResultCount: poolSaved.length },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+      }
+      return;
+    }
+
+    // Recompute fetch budget against remaining slots so LinkedIn doesn't
+    // pull more profiles than we now need. Mirrors the formula in POST().
+    const remainingTargetRaw = Math.min(
+      Math.max(remainingSlots * 3, remainingSlots + 15),
+      120,
+    );
+
     const seenUrls = new Set<string>();
     const allRaw: SearchResult[] = [];
+    // URLs found via the scarce-skill adjacent-skill fallback (e.g. SQL Server DBA
+    // found when searching for a Sybase role). They are tracked for diagnostics only;
+    // adjacent candidates still have to pass the same source gate and score cutoff
+    // as every other specialist result.
+    const scarceSkillFallbackUrls = new Set<string>();
 
     // ── Phase 1a: PDL bulk fetch (not paginated — returns full profiles) ──────
+    // Reduced by remainingSlots so we don't fetch profiles past the slots
+    // pool-first already filled.
     if (hasPDL) {
       try {
-        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(maxResults, 25), pdlKey);
+        const pdl = await searchPDLProfiles(parsedRole.title, searchLocation, Math.min(remainingSlots, 50), pdlKey);
         for (const r of pdl) {
           if (!seenUrls.has(r.linkedinUrl)) { seenUrls.add(r.linkedinUrl); allRaw.push(r); }
         }
@@ -517,69 +836,131 @@ async function runSearchBackground(args: {
       } catch { /* ignore */ }
     }
 
-    // ── Phase 1b: SerpAPI / Bing — paginate until we have enough raw results ──
+    // ── Phase 1b: SerpAPI — paginate until we have enough raw results ──
     // Each round fires all queries for one page in parallel.
     // Retryable failures (rate limits / transient timeouts) back off and retry
     // the same page instead of ending the search early.
     const { items: collectedRaw, sawRetryableFailure: sawRetryableSearchFailure } =
       await collectPagedSearchResults<SearchResult>({
-        targetCount: targetRaw,
+        targetCount: remainingTargetRaw,
         maxPages: MAX_PAGES,
         maxPageRetries: MAX_PAGE_RETRIES,
         emptyRoundsBeforeStop: EMPTY_ROUNDS_BEFORE_STOP,
+        // Dedupe by linkedinUrl ONLY. Including matchedQuery here means the
+        // same person surfaced by two query variants counts twice toward the
+        // raw target, ending the search before we've found enough unique
+        // people. The first occurrence's matchedQuery is retained on the
+        // SearchResult itself.
         keyFn: (candidate) => candidate.linkedinUrl,
         getPage: async (page, attempt) => {
           const offset = page * PAGE_SIZE;
           const queriesForAttempt = limitQueriesForAttempt(searchQueries, page, attempt);
 
-          const buildTasks = (provider: SearchProvider, taskLocation: string, queries = queriesForAttempt) => {
-            const key = provider === "serpapi" ? serpApiKey : bingKey;
+          const buildTasks = (taskLocation: string, queries = queriesForAttempt) => {
             return queries.map((q) => ({
-              provider,
               query: q,
               location: taskLocation,
               offset,
-              resolvedKey: key,
+              resolvedKey: serpApiKey,
+              searchOptions: { excludeContractTitles },
             }));
           };
 
-          const serpTasks = hasSerpApi ? buildTasks("serpapi", searchLocation) : [];
-          const bingTasks = hasBing ? buildTasks("bing", searchLocation) : [];
-          if (serpTasks.length === 0 && bingTasks.length === 0) return null;
+          const serpTasks = hasSerpApi ? buildTasks(searchLocation) : [];
 
-          const serpOutcomes = await executeSearchTaskQueue(serpTasks, {
-            concurrency: SERPAPI_CONCURRENCY,
-            delayMs: SERPAPI_DELAY_MS,
-          });
-          const bingOutcomes = await executeSearchTaskQueue(bingTasks, {
-            concurrency: BING_CONCURRENCY,
-            delayMs: BING_DELAY_MS,
-          });
-          const primaryOutcomes = [...serpOutcomes, ...bingOutcomes];
-          const primaryItems = primaryOutcomes.flatMap((outcome) => outcome.items);
+          // When the JD explicitly accepts candidates from multiple cities (e.g.
+          // "Wellington, Christchurch"), search secondary cities in the same pass
+          // so their candidates surface alongside the primary city results.
+          // Only run on page 0 / attempt 0 to avoid runaway API usage.
+          const secondaryCities = page === 0 && attempt === 0
+            ? knownTargets.slice(1).filter(
+                (city) => normalizeLocationText(city) !== normalizeLocationText(searchLocation)
+              )
+            : [];
+          const secondarySerpTasks = hasSerpApi
+            ? secondaryCities.flatMap((city) => buildTasks(city, queriesForAttempt.slice(0, 2)))
+            : [];
+
+          if (serpTasks.length === 0 && secondarySerpTasks.length === 0) return null;
+
+          const [serpOutcomes, secondarySerpOutcomes] = await Promise.all([
+            executeSearchTaskQueue(serpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
+            executeSearchTaskQueue(secondarySerpTasks, { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS }),
+          ]);
+          const primaryOutcomes = [...serpOutcomes, ...secondarySerpOutcomes];
+          const anchorTerms = extractAnchorRequirementTerms(parsedRole);
+          const shouldRunSpecialistNzSweep =
+            page === 0 &&
+            attempt === 0 &&
+            anchorTerms.length > 0 &&
+            normalizeLocationText(searchLocation) !== "new zealand";
+
+          // "dba" only makes sense for database anchors — same rule as the per-city queries above
+          const nzSweepQueries = dedupeQueries([
+            anchorTerms.join(" "),
+            `${parsedRole.title || "Software Developer"} ${anchorTerms.join(" ")}`,
+            ...anchorTerms.flatMap((term) => [
+              `${term} developer`,
+              ...(DB_ANCHOR_RE.test(term) ? [`${term} dba`] : []),
+            ]),
+          ]).slice(0, 4);
+
+          // Specialist NZ sweep: anchor-term queries via SerpAPI only.
+          const specialistNzOutcomes = shouldRunSpecialistNzSweep
+            ? await executeSearchTaskQueue(
+                hasSerpApi ? buildTasks("New Zealand", nzSweepQueries) : [],
+                { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+              )
+            : [];
+          const primaryItems = [...primaryOutcomes, ...specialistNzOutcomes].flatMap((outcome) => outcome.items);
           const primaryRetryable = primaryOutcomes.some((outcome) => outcome.retryable);
+          const normalizedSearch = normalizeLocationText(searchLocation);
           const shouldTryNzFallback =
             page === 0 &&
             primaryItems.length === 0 &&
             !primaryRetryable &&
-            normalizeLocationText(searchLocation) !== "new zealand";
+            normalizedSearch !== "new zealand";
 
-          if (!shouldTryNzFallback) return primaryOutcomes;
+          if (!shouldTryNzFallback) return [...primaryOutcomes, ...specialistNzOutcomes];
+
+          // Step 1: try Auckland specifically before going all-NZ — it's the largest NZ
+          // talent pool and is worth a targeted pass for roles with scarce skills.
+          const isAucklandAlready = normalizedSearch === "auckland";
+          let aucklandOutcomes: typeof primaryOutcomes = [];
+          if (!isAucklandAlready) {
+            void prisma.searchSession.update({
+              where: { id: sessionId },
+              data: { message: `No results in ${searchLocation} — trying Auckland` },
+            }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+            const akQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
+            aucklandOutcomes = await executeSearchTaskQueue(
+              hasSerpApi ? buildTasks("Auckland", akQueries) : [],
+              { concurrency: SERPAPI_CONCURRENCY, delayMs: SERPAPI_DELAY_MS },
+            );
+          }
+          const aucklandItems = aucklandOutcomes.flatMap((o) => o.items);
+
+          // Step 2: broaden to all of New Zealand if Auckland also returned nothing
+          void prisma.searchSession.update({
+            where: { id: sessionId },
+            data: {
+              message: aucklandItems.length > 0
+                ? `No results in ${searchLocation} — found ${aucklandItems.length} in Auckland`
+                : `No results in ${searchLocation} or Auckland — broadening to all of New Zealand`,
+            },
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+
+          if (aucklandItems.length > 0) {
+            return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes];
+          }
 
           const fallbackQueries = queriesForAttempt.slice(0, Math.min(3, queriesForAttempt.length));
-          const fallbackSerpTasks = hasSerpApi ? buildTasks("serpapi", "New Zealand", fallbackQueries) : [];
-          const fallbackBingTasks = hasBing ? buildTasks("bing", "New Zealand", fallbackQueries) : [];
-          const fallbackOutcomes = [
-            ...(await executeSearchTaskQueue(fallbackSerpTasks, {
-              concurrency: SERPAPI_CONCURRENCY,
-              delayMs: SERPAPI_DELAY_MS,
-            })),
-            ...(await executeSearchTaskQueue(fallbackBingTasks, {
-              concurrency: BING_CONCURRENCY,
-              delayMs: BING_DELAY_MS,
-            })),
-          ];
-          return [...primaryOutcomes, ...fallbackOutcomes];
+          const fallbackSerpTasks = hasSerpApi ? buildTasks("New Zealand", fallbackQueries) : [];
+          const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
+            concurrency: SERPAPI_CONCURRENCY,
+            delayMs: SERPAPI_DELAY_MS,
+          });
+          return [...primaryOutcomes, ...specialistNzOutcomes, ...aucklandOutcomes, ...fallbackOutcomes];
         },
         sleep,
         onPage: ({ page, attempt, added, total, retryableFailures, hardFailures }) => {
@@ -602,11 +983,113 @@ async function runSearchBackground(args: {
 
     if (allRaw.length === 0) {
       if (sawRetryableSearchFailure) {
-        await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "rate_limited", message: "Rate-limited before any results were returned." } }).catch(() => {});
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "rate_limited",
+            message: "Rate-limited before any results were returned.",
+            evaluation: "FAIL — SerpAPI rate-limited. Wait a few minutes then Search Again — any candidates already imported won't duplicate.",
+          },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
         return;
       }
-      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "No profiles found." } }).catch(() => {});
-      return;
+
+      // ── Scarce-skill fallback: if anchors include rare tech (Sybase, COBOL, …)
+      // build substitute queries using adjacent-skill alternatives and try once
+      // before giving up. Sybase → SQL Server, COBOL → Java, etc.
+      const fallbackQueries = buildScarceSkillFallbackQueries(anchorTermsForFallback);
+      if (fallbackQueries.length > 0) {
+        void prisma.searchSession.update({
+          where: { id: sessionId },
+          data: { message: `No exact matches — trying adjacent skills (${anchorTermsForFallback.join(", ")} substitutes)` },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+
+        const fallbackSerpTasks = hasSerpApi
+          ? fallbackQueries.map((q) => ({
+              query: q,
+              location: "New Zealand",
+              offset: 0,
+              resolvedKey: serpApiKey,
+            }))
+          : [];
+        const fallbackOutcomes = await executeSearchTaskQueue(fallbackSerpTasks, {
+          concurrency: SERPAPI_CONCURRENCY,
+          delayMs: SERPAPI_DELAY_MS,
+        });
+
+        // Surface auth failures immediately — invalid keys look like "no results" otherwise
+        const authFailed = fallbackOutcomes.some((o) => o.error && isAuthFailure(o.error));
+        if (authFailed) {
+          await prisma.searchSession.update({
+            where: { id: sessionId },
+            data: {
+              status: "complete",
+              message: `SerpAPI key is invalid or expired.`,
+              evaluation: `FAIL — SerpAPI key rejected (401). Check Settings → API Keys and replace the key.`,
+            },
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+          return;
+        }
+
+        const fallbackResults = fallbackOutcomes.flatMap((o) => o.items);
+
+        for (const r of fallbackResults) {
+          if (!seenUrls.has(r.linkedinUrl)) {
+            seenUrls.add(r.linkedinUrl);
+            // Store the NORMALISED URL so the two downstream lookups
+            // (source-gate bypass and score-floor bypass) actually
+            // match — both lookup sites already normalise.
+            scarceSkillFallbackUrls.add(normaliseLinkedInUrl(r.linkedinUrl));
+            allRaw.push(r);
+          }
+        }
+
+        if (allRaw.length > 0) {
+          void prisma.searchSession.update({
+            where: { id: sessionId },
+            data: { message: `No exact ${anchorTermsForFallback.join("/")} matches — showing ${allRaw.length} adjacent-skill candidates` },
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+          // Fall through to Phase 2 with the adjacent-skill results
+        }
+      }
+
+      if (allRaw.length === 0) {
+        // LinkedIn / PDL turned up nothing — but pool-first may have already
+        // saved candidates. Report those rather than overwriting the message.
+        if (poolSaved.length > 0) {
+          const importedIds = poolSaved.map((c) => c.id);
+          const avgScore = Math.round(
+            poolSaved.reduce((s, c) => s + (c.matchScore ?? 0), 0) / poolSaved.length,
+          );
+          await prisma.searchSession.update({
+            where: { id: sessionId },
+            data: {
+              status: "complete",
+              collected: poolSaved.length,
+              importedIds: JSON.stringify(importedIds),
+              avgScore,
+              message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn returned no new profiles.`,
+              evaluation: `OK — ${poolSaved.length} pool candidate${poolSaved.length !== 1 ? "s" : ""}; LinkedIn produced no additional results.`,
+            },
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+          if (savedSearchId) {
+            await prisma.savedSearch.updateMany({
+              where: { id: savedSearchId, jobId, orgId },
+              data: { lastResultCount: poolSaved.length },
+            }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+          }
+          return;
+        }
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "complete",
+            message: "No profiles found.",
+            evaluation: "FAIL — No candidates found. Try: set Location to 'New Zealand', click Re-analyse to refresh search terms, or broaden requirements in the JD.",
+          },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+        return;
+      }
     }
 
     // ── Phase 2: Skip already-imported profiles ──────────────────────────────
@@ -614,14 +1097,28 @@ async function runSearchBackground(args: {
     // regional subdomains (nz.linkedin.com), tracking params (?trk=…), and
     // trailing slashes that won't match the canonical form we store.
     // Also deduplicate: two queries can return the same person under different raw URLs.
-    const normSeen = new Set<string>();
-    const allNormed = allRaw
-      .map((r) => ({ ...r, linkedinUrl: normaliseLinkedInUrl(r.linkedinUrl) }))
-      .filter((r) => {
-        if (normSeen.has(r.linkedinUrl)) return false;
-        normSeen.add(r.linkedinUrl);
-        return true;
+    const byUrl = new Map<string, SearchResult>();
+    for (const raw of allRaw) {
+      const result = { ...raw, linkedinUrl: normaliseLinkedInUrl(raw.linkedinUrl) };
+      const existing = byUrl.get(result.linkedinUrl);
+      if (!existing) {
+        byUrl.set(result.linkedinUrl, result);
+        continue;
+      }
+
+      const matchedQueries = new Set(
+        [existing.matchedQuery, result.matchedQuery].filter(Boolean) as string[]
+      );
+      byUrl.set(result.linkedinUrl, {
+        ...existing,
+        headline: existing.headline || result.headline,
+        location: existing.location || result.location,
+        snippet: [existing.snippet, result.snippet].filter(Boolean).join("\n"),
+        fullText: existing.fullText || result.fullText,
+        matchedQuery: [...matchedQueries].join("\n"),
       });
+    }
+    const allNormed = [...byUrl.values()];
 
     const existingCandidates = await prisma.candidate.findMany({
       where: { jobId: jobId, linkedinUrl: { in: allNormed.map((r) => r.linkedinUrl) } },
@@ -633,6 +1130,9 @@ async function runSearchBackground(args: {
         linkedinUrl: true,
         profileText: true,
         profileCapturedAt: true,
+        // Used downstream to preserve `jobadder_import` provenance when
+        // the same person is re-discovered via SerpAPI.
+        source: true,
       },
     });
     const existingByUrl = new Map<string, typeof existingCandidates[number]>();
@@ -645,16 +1145,42 @@ async function runSearchBackground(args: {
     // For any search result whose LinkedIn URL already has a full profile in our
     // DB (usually from a different job), reuse that profile instead of fetching
     // again. Existing snippet rows in this job are upgraded in-place.
-    const poolMap = await buildTalentPoolMap(
-      allNormed.map((r) => r.linkedinUrl),
-      isOwner ? null : orgId,
-    );
+    // Reuse profiles from any org the caller has library access to (own org +
+    // cross-org library_read grants). Owner bypasses the filter. The synthetic
+    // AuthResult only sets fields getAccessibleOrgIds reads (it keys on orgId
+    // and short-circuits owners; userId is unused by that helper).
+    const poolScope: string | string[] | null = isOwner
+      ? null
+      : (await getAccessibleOrgIds({ userId: "", orgId, isOwner: false })) ?? [];
+    // Pool reuse is a credit-saving optimisation, not a correctness
+    // requirement. If the lookup fails (DB timeout, transient pool error)
+    // proceed with an empty pool map rather than aborting the whole search —
+    // we can still score candidates against LinkedIn snippets and full PDL
+    // fetches. Reported via reportError so the failure is visible.
+    let poolMap = new Map<string, TalentPoolEntry>();
+    try {
+      poolMap = await buildTalentPoolMap(
+        allNormed.map((r) => r.linkedinUrl),
+        poolScope,
+      );
+    } catch (err) {
+      console.warn("[search] talent pool lookup failed — continuing without pool reuse", err);
+      reportError(err instanceof Error ? err : new Error(String(err)), {
+        scope: "search.talentPoolLookup",
+        jobId,
+        urlCount: allNormed.length,
+      });
+    }
     const allNew = allNormed.filter((r) => !existingByUrl.has(r.linkedinUrl));
     const upgradeExisting = allNormed.filter((r) => {
       const existing = existingByUrl.get(r.linkedinUrl);
-      return Boolean(existing && poolMap.has(r.linkedinUrl) && !hasFullProfile(existing.profileText, existing.profileCapturedAt));
+      return Boolean(existing && poolMap.has(r.linkedinUrl) && !hasFullCandidateProfile(existing));
     });
     type SearchWorkItem = { result: SearchResult; existingCandidate?: typeof existingCandidates[number] };
+    type PrioritisedSearchWorkItem = SearchWorkItem & {
+      fetchPriorityScore: number;
+      fetchPriorityReason: string;
+    };
     const workItems: SearchWorkItem[] = [
       ...upgradeExisting.map((result) => ({
         result,
@@ -666,7 +1192,33 @@ async function runSearchBackground(args: {
     console.log(`[search] talent pool: ${poolMap.size} of ${allNormed.length} found URLs have existing full profiles`);
 
     if (workItems.length === 0) {
-      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch(() => {});
+      // LinkedIn/PDL returned only profiles we already had on this job. If
+      // pool-first added new candidates, surface those — otherwise this is
+      // genuinely a "nothing new" run.
+      if (poolSaved.length > 0) {
+        const importedIds = poolSaved.map((c) => c.id);
+        const avgScore = Math.round(
+          poolSaved.reduce((s, c) => s + (c.matchScore ?? 0), 0) / poolSaved.length,
+        );
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "complete",
+            collected: poolSaved.length,
+            importedIds: JSON.stringify(importedIds),
+            avgScore,
+            message: `Found ${poolSaved.length} candidate${poolSaved.length !== 1 ? "s" : ""} from talent pool. LinkedIn results were already imported.`,
+          },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+        if (savedSearchId) {
+          await prisma.savedSearch.updateMany({
+            where: { id: savedSearchId, jobId, orgId },
+            data: { lastResultCount: poolSaved.length },
+          }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+        }
+        return;
+      }
+      await prisma.searchSession.update({ where: { id: sessionId }, data: { status: "complete", message: "All found profiles already imported." } }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
       return;
     }
 
@@ -674,37 +1226,148 @@ async function runSearchBackground(args: {
     const saved: SavedCandidate[] = [];
     let scored = 0;
     let skippedScore = 0;
+    let skippedSourceGate = 0;
+    let skippedSeniorityGate = 0;
+    let skippedOverseas = 0;
+    let skippedNameCheck = 0;
     let fromPool = 0;
 
-    // Pre-filter: drop confirmed overseas candidates and non-person names before scoring.
+    // Pre-filter: drop confirmed overseas candidates, non-person names, obvious
+    // junior mismatches, and broad-search results with no specialist stack signal.
     // NZ candidates with any location (including generic "New Zealand") pass through —
     // applyLocationFitOverride handles fine-grained location scoring after fetch.
-    const toScore = workItems
-      .filter(({ result: r }) => {
-        if (!looksLikePersonName(r.name)) return false;
-        const poolLoc = poolMap.get(r.linkedinUrl)?.location ?? "";
-        const loc = poolLoc || r.location || "";
-        if (loc && isExplicitlyOverseasLocation(loc)) return false;
+    const workItemsWithPriority = workItems.map((workItem) => {
+      const r = workItem.result;
+      const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+      const poolEntry = poolMap.get(normUrl);
+      const profileText = poolEntry?.profileText ?? r.fullText ?? null;
+      // When the structured location field is empty but the snippet/full
+      // profile clearly mentions an NZ city (e.g. an Auckland-based
+      // candidate whose LinkedIn metadata didn't populate `location`),
+      // attribute the city from the text. Prevents Wellington searches
+      // from leaking obviously-Auckland candidates through the gate.
+      const candidateLocation = inferCandidateLocation(
+        poolEntry?.location ?? r.location ?? null,
+        profileText,
+        r.snippet,
+      );
+      const priority = computeFetchPriority({
+        result: r,
+        parsedRole,
+        candidateLocation,
+        profileText,
+        isFromTalentPool: Boolean(poolEntry),
+        isRemote: job.isRemote,
+      });
+      return {
+        ...workItem,
+        fetchPriorityScore: priority.score,
+        fetchPriorityReason: serialiseFetchPriority(priority.reason),
+      };
+    });
+
+    const toScore: PrioritisedSearchWorkItem[] = workItemsWithPriority
+      .filter(({ result: r, fetchPriorityScore }) => {
+        if (!looksLikePersonName(r.name)) { skippedNameCheck++; return false; }
+        const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+        const poolEntry = poolMap.get(normUrl);
+        const poolLoc = poolMap.get(normUrl)?.location ?? "";
+        const loc = poolLoc || poolEntry?.location || r.location || "";
+        // Country gate: bare-city snippets ("Sydney" with no state/country)
+        // used to slip through because OVERSEAS_MARKERS only listed
+        // countries — OVERSEAS_CITIES (in lib/location.ts) now closes that
+        // hole. NOT scanning headline because headlines often mention past
+        // employer cities ("worked with London teams" → false positive).
+        // Post-fetch, structured location takes over via stage-2 enrichment.
+        if (loc && isExplicitlyOverseasLocation(loc)) { skippedOverseas++; return false; }
+        if (looksUnderqualifiedForRole(r, parsedRole)) {
+          skippedSeniorityGate++;
+          return false;
+        }
+        const profileText = poolEntry?.profileText ?? r.fullText ?? null;
+        if (!hasSpecialistSourceSignal(r, parsedRole, profileText, loc || null)) {
+          skippedSourceGate++;
+          return false;
+        }
+        if (!poolEntry && !r.fullText && fetchPriorityScore < 44) {
+          skippedSourceGate++;
+          return false;
+        }
         return true;
       })
-      .slice(0, Math.min(Math.max(maxResults * 3, maxResults + 15), 100));
+      .sort((a, b) => b.fetchPriorityScore - a.fetchPriorityScore)
+      .slice(0, Math.min(Math.max(remainingSlots * 3, remainingSlots + 15), 100));
 
-    console.log(`[search] ${toScore.length} candidates to score`);
+    // ── Rescue pass for niche-stack searches ────────────────────────────
+    // Trigger condition: 0 candidates passed the gate AND 100+ were rejected
+    // by the source-signal check specifically. This catches the
+    // "SilverStripe in Wellington" pattern: real candidates exist but their
+    // LinkedIn snippet (usually just a headline) doesn't visibly contain
+    // the niche anchor terms, so the strict gate filters them all out.
+    //
+    // The rescue pass re-runs the same filter without the
+    // hasSpecialistSourceSignal check — keeping country, seniority, and
+    // name filters — and caps the output to 20 so Claude scoring stays
+    // bounded. Claude is smart enough to reject genuinely wrong-stack
+    // candidates by score; the gate is too blunt for snippet-only data.
+    let rescuedFromGate = 0;
+    if (toScore.length === 0 && skippedSourceGate >= 100) {
+      const rescued = workItemsWithPriority
+        .filter(({ result: r, fetchPriorityScore }) => {
+          if (!looksLikePersonName(r.name)) return false;
+          const normUrl = normaliseLinkedInUrl(r.linkedinUrl);
+          const poolEntry = poolMap.get(normUrl);
+          const loc = poolMap.get(normUrl)?.location ?? poolEntry?.location ?? r.location ?? "";
+          if (loc && isExplicitlyOverseasLocation(loc)) return false;
+          if (looksUnderqualifiedForRole(r, parsedRole)) return false;
+          // INTENTIONALLY NOT checking hasSpecialistSourceSignal here —
+          // that's the whole point of the rescue. We do raise the
+          // fetch-priority threshold a touch (38 → 40) to skim the top
+          // of the rejected pool rather than admit every weak match.
+          if (!poolEntry && !r.fullText && fetchPriorityScore < 40) return false;
+          return true;
+        })
+        .sort((a, b) => b.fetchPriorityScore - a.fetchPriorityScore)
+        .slice(0, 20);
+      toScore.push(...rescued);
+      rescuedFromGate = rescued.length;
+      if (rescuedFromGate > 0) {
+        console.log(`[search] rescue pass: source gate filtered ${skippedSourceGate} but 0 passed strict — admitting top ${rescuedFromGate} by fetch-priority for Claude scoring`);
+        // Pull the actual anchor terms for this role so the message names
+        // THIS job's signals, not a hardcoded "PHP/Laravel/SilverStripe"
+        // that would be wrong on every non-web-dev search.
+        const anchors = extractDistinctiveRequirementTerms(parsedRole).slice(0, 3);
+        const anchorPhrase = anchors.length > 0 ? anchors.join("/") : "the required stack";
+        await prisma.searchSession.update({
+          where: { id: sessionId },
+          data: { message: `Source gate filtered ${skippedSourceGate} candidates with no visible ${anchorPhrase} signal — rescue pass admitted top ${rescuedFromGate} by fetch-priority for Claude to evaluate.` },
+        }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+      }
+    }
+
+    console.log(`[search] ${toScore.length} candidates to score (LinkedIn slots remaining: ${remainingSlots})${rescuedFromGate > 0 ? ` [${rescuedFromGate} via gate-rescue]` : ""}`);
 
     // Full profiles get Claude scoring; snippets get fast provisional scoring.
     // Batch size 3 to avoid concurrent Claude bursts when talent-pool/PDL full
     // profiles are in the result set (matches score-all concurrency).
+    // Cap at remainingSlots so pool-first saves count toward the maxResults budget.
     const BATCH = 3;
-    for (let i = 0; i < toScore.length && saved.length < maxResults; i += BATCH) {
+    for (let i = 0; i < toScore.length && saved.length < remainingSlots; i += BATCH) {
       const batch = toScore.slice(i, i + BATCH);
 
       const results = await Promise.all(
         batch.map(async (workItem) => {
           const r = workItem.result;
           const existingCandidate = workItem.existingCandidate;
+          const fetchPriorityScore = workItem.fetchPriorityScore;
+          const fetchPriorityReason = workItem.fetchPriorityReason;
           const normUrl     = normaliseLinkedInUrl(r.linkedinUrl);
           const poolEntry   = poolMap.get(normUrl);
-          const candidateLocation = poolEntry?.location ?? r.location ?? null;
+          const candidateLocation = inferCandidateLocation(
+            poolEntry?.location ?? r.location ?? null,
+            poolEntry?.profileText ?? r.fullText ?? null,
+            r.snippet,
+          );
           const searchProfileText = [r.name, r.headline, candidateLocation, r.snippet].filter(Boolean).join("\n");
           const profileText = poolEntry?.profileText ?? r.fullText ?? searchProfileText;
           const textToScore = profileText ?? `${r.name}. ${r.headline}`.trim();
@@ -713,27 +1376,27 @@ async function runSearchBackground(args: {
 
           const scoreData: Record<string, unknown> = {};
           let matchScore: number | null = null;
-          let locationFitScore: number | null = null;
+          const hasFullProfile = classifyDataQuality(profileText?.length ?? 0) === "full_profile";
           try {
-            const hasFullProfile = classifyDataQuality(profileText?.length ?? 0) === "full_profile";
             const breakdown = hasFullProfile
               ? applyLocationFitOverride(
-                  await scoreCandidateStructured(textToScore, parsedRole, salary),
+                  await scoreCandidateStructured(textToScore, parsedRoleForScoring, salary, weights, orgId),
                   candidateLocation,
                   targetLocation,
-                  parsedRole.location_rules,
+                  parsedRoleForScoring.location_rules,
                   job.isRemote,
+                  weights,
                 )
               : buildProvisionalSearchScore(
                   r,
-                  parsedRole,
+                  parsedRoleForScoring,
                   candidateLocation,
                   targetLocation,
-                  parsedRole.location_rules,
+                  parsedRoleForScoring.location_rules,
                   job.isRemote,
-                );
+                  weights,
+            );
             matchScore = breakdown.overall;
-            locationFitScore = breakdown.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(breakdown));
             if (hasFullProfile) {
               scoreData.profileTextHash = buildScoreCacheKey({
@@ -741,47 +1404,69 @@ async function runSearchBackground(args: {
                 parsedRole,
                 salary,
                 jobLocation: job.location,
+                jobLocation2: job.location2,
                 isRemote: job.isRemote,
+                weights,
               });
             }
           } catch (err) {
-            console.error(`[search] score failed for "${r.name}":`, err);
+            reportError(err, { route: "search:score", jobId, orgId, candidateUrl: r.linkedinUrl ?? "unknown" });
             const fallback = buildProvisionalSearchScore(
               r,
-              parsedRole,
+              parsedRoleForScoring,
               candidateLocation,
               targetLocation,
-              parsedRole.location_rules,
+              parsedRoleForScoring.location_rules,
               job.isRemote,
+              weights,
             );
             matchScore = fallback.overall;
-            locationFitScore = fallback.categories.location_fit.score;
             Object.assign(scoreData, deriveUpdateData(fallback));
           }
-          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, locationFitScore };
+          return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile };
         })
       );
 
       console.log(`[search] batch done — running total scored=${scored}, saved=${saved.length}`);
 
+      // ── Import-decision gate ─────────────────────────────────────────────
+      // Three filters applied in order; any failure increments skippedScore
+      // and skips to the next item. Keeping them together here makes the
+      // rejection logic easy to audit in one place.
+      const specialistRole = extractDistinctiveRequirementTerms(parsedRole).length > 0;
       for (const item of results) {
-        if (saved.length >= maxResults) break;
-        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, locationFitScore } = item;
+        if (saved.length >= remainingSlots) break;
+        const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
 
-        // Hard location cutoff: drop candidates we KNOW are far out-of-area.
-        // Only applies when candidateLocation is set — if it's empty, the AI had no location
-        // data and may have defaulted to 0 (overseas assumption). Dropping a snippet with no
-        // location info would silently discard candidates we simply can't assess yet.
-        if (!job.isRemote && candidateLocation && locationFitScore !== null && locationFitScore <= 20) {
+        // Gate 1 — country. The pre-score filter already drops candidates
+        // whose primary location string is explicitly overseas. After
+        // scoring, `candidateLocation` may have been refined by inference
+        // (e.g. profile text revealed "Sydney") — so we re-check at the
+        // country level here. We deliberately DON'T re-apply the city-
+        // distance reject (Auckland-vs-Wellington); city distance affects
+        // ranking via location_fit, but NZ-wide candidates are kept.
+        if (candidateLocation && isOverseasForNzRole(candidateLocation, job.isRemote)) {
           skippedScore++;
           continue;
         }
 
-        // Score filter is not applied during search — all snippet results surface
-        // so the recruiter can fetch profiles and get proper scores before filtering.
+        // Gate 2 — score threshold for specialist roles.
+        //   Full-profile: 45 (Claude has all the info; low score is a real "no")
+        //   Snippet:      30 (provisional scores are conservative; same as floor)
+        const scoreCutoff = hasFullProfile ? SCORE_CUTOFF_FULL_PROFILE : SCORE_CUTOFF_SNIPPET;
+        if (specialistRole && matchScore !== null && matchScore < scoreCutoff) {
+          skippedScore++;
+          continue;
+        }
 
         try {
           if (existingCandidate) {
+            // Preserve provenance: don't relabel a jobadder_import row as
+            // "serpapi" just because it was re-found via search. The
+            // import is the actual source of truth for these candidates.
+            const preservedSource = existingCandidate.source === "jobadder_import"
+              ? "jobadder_import"
+              : (isFromPool ? "talent_pool" : r.source);
             const candidate = await prisma.candidate.update({
               where: { id: existingCandidate.id },
               data: {
@@ -791,7 +1476,9 @@ async function runSearchBackground(args: {
                 linkedinUrl: normUrl,
                 profileText: profileText || null,
                 profileTextHash: null,
-                source: isFromPool ? "talent_pool" : r.source,
+                fetchPriorityScore,
+                fetchPriorityReason,
+                source: preservedSource,
                 ...(isFromPool && poolEntry?.profileCapturedAt
                   ? { profileCapturedAt: poolEntry.profileCapturedAt }
                   : {}),
@@ -816,14 +1503,24 @@ async function runSearchBackground(args: {
               linkedinUrl: normUrl,
               profileText: profileText || null,
               profileTextHash: null,
+              fetchPriorityScore,
+              fetchPriorityReason,
               source: isFromPool ? "talent_pool" : r.source,
               status: "new",
+              // Snapshot the provisional score so we can show the delta after full-profile scoring.
+              // Only set for snippet imports — pool entries with full profiles start calibrated.
+              ...(!hasFullProfile && matchScore !== null ? { provisionalScore: matchScore } : {}),
               ...(isFromPool && poolEntry?.profileCapturedAt
                 ? { profileCapturedAt: poolEntry.profileCapturedAt }
                 : {}),
               ...scoreData,
             },
-            update: scoreData, // refresh score if already exists
+            update: {
+              ...scoreData,
+              fetchPriorityScore,
+              fetchPriorityReason,
+              // Never overwrite provisionalScore — it's a permanent snapshot of the import score
+            }, // refresh score if already exists
           });
           saved.push(candidate as SavedCandidate);
           if (isFromPool) fromPool++;
@@ -833,9 +1530,48 @@ async function runSearchBackground(args: {
       }
     }
 
-    console.log(`[search] done — scored ${scored}, saved ${saved.length} (${fromPool} from pool), skipped ${skippedScore} below location threshold`);
+    // Merge pool-first criteria saves into the final result list. They were
+    // upserted before the LinkedIn pass and pre-scored by Claude, so they
+    // sit alongside the LinkedIn imports and order by matchScore.
+    const linkedinSaved = saved.length;
+    const linkedinFromPool = fromPool;             // URL-reuse pool count
+    const poolFirstSaved = poolSaved.length;       // criteria-search pool count
+    const fromPoolTotal = poolFirstSaved + linkedinFromPool;
+    const fromLinkedinTotal = linkedinSaved - linkedinFromPool;
+
+    // Hydrate poolSaved into SavedCandidate-typed rows so they merge with `saved`.
+    const poolSavedFull = poolFirstSaved > 0
+      ? await prisma.candidate.findMany({ where: { id: { in: poolSaved.map((c) => c.id) } } })
+      : [];
+    for (const c of poolSavedFull) saved.push(c as SavedCandidate);
+
+    // Background phone enrichment for everything we just saved (LinkedIn imports
+    // + pool-first criteria saves). Fire-and-forget; Firmable's per-candidate
+    // 90d cache prevents re-billing on duplicates.
+    for (const c of saved) enrichCandidateInBackground(c.id);
+
+    console.log(`[search] done — scored ${scored}, saved ${saved.length} (pool-first ${poolFirstSaved}, linkedin ${linkedinSaved}, of which url-reuse ${linkedinFromPool}), skipped ${skippedScore} below score/location threshold, ${skippedSourceGate} source-gated, ${skippedSeniorityGate} seniority-gated`);
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
+
+    // Compute self-evaluation before writing the final session row.
+    const totalExamined  = allNormed.length + poolExamined;
+    const totalFiltered  = skippedNameCheck + skippedOverseas + skippedSeniorityGate + skippedSourceGate;
+    const avgScore = sorted.length > 0
+      ? Math.round(sorted.reduce((s, c) => s + (c.matchScore ?? 0), 0) / sorted.length)
+      : null;
+    const evaluation = buildSearchEvaluation({
+      collected: sorted.length,
+      avgScore,
+      totalExamined,
+      candidatesRejected: skippedSourceGate,
+      totalFiltered,
+      sawRetryableSearchFailure,
+      // Pass the distinctive terms so the warning names the missing
+      // anchors — the recruiter can decide whether to relax the JD or
+      // accept the narrow pool.
+      distinctiveAnchors: extractDistinctiveRequirementTerms(parsedRole),
+    });
 
     const finalStatus = sawRetryableSearchFailure ? "rate_limited" : "complete";
     const importedIds = sorted.map((c) => c.id);
@@ -843,9 +1579,13 @@ async function runSearchBackground(args: {
     await prisma.searchSession.update({
       where: { id: sessionId },
       data: {
-        status:      finalStatus,
-        collected:   sorted.length,
-        importedIds: JSON.stringify(importedIds),
+        status:             finalStatus,
+        collected:          sorted.length,
+        importedIds:        JSON.stringify(importedIds),
+        avgScore,
+        candidatesRejected: skippedSourceGate,
+        totalExamined,
+        evaluation,
         message:     sorted.length === 0
           ? "No matching candidates found."
           : `Found ${sorted.length} candidate${sorted.length !== 1 ? "s" : ""}${sawRetryableSearchFailure ? " (partial — rate limited)" : ""}.`,
@@ -853,34 +1593,54 @@ async function runSearchBackground(args: {
     });
 
     if (sorted.length === 0) {
+      const filterHint = totalFiltered > 0
+        ? ` Of ${totalExamined} examined, ${totalFiltered} were filtered (source-gated: ${skippedSourceGate}, overseas: ${skippedOverseas}, seniority: ${skippedSeniorityGate}, name-check: ${skippedNameCheck}).`
+        : "";
       const reason = sawRetryableSearchFailure
-        ? "Search was rate-limited before returning results. Run search again — already-imported candidates won't be duplicated."
-        : "No matching candidates found. Try re-analysing the job description.";
+        ? `Search was rate-limited before returning results. Run search again — already-imported candidates won't be duplicated.`
+        : `No matching candidates found.${filterHint} Try re-analysing the job description or broadening the location.`;
       await prisma.searchSession.update({
         where: { id: sessionId },
         data: { status: sawRetryableSearchFailure ? "rate_limited" : "complete", message: reason },
-      }).catch(() => {});
+      }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
       return;
     }
 
-    const poolNote = fromPool > 0 ? ` (${fromPool} from talent pool, ${saved.length - fromPool} from LinkedIn)` : "";
+    const poolNote = fromPoolTotal > 0
+      ? ` (${fromPoolTotal} from talent pool${linkedinSkipped ? ", LinkedIn skipped" : `, ${fromLinkedinTotal} from LinkedIn`})`
+      : "";
     const limitNote = sawRetryableSearchFailure
       ? " Partially rate-limited — run again to find more."
       : "";
     await prisma.searchSession.update({
       where: { id: sessionId },
       data: {
-        status: sawRetryableSearchFailure ? "rate_limited" : "complete",
-        collected: sorted.length,
+        status:      sawRetryableSearchFailure ? "rate_limited" : "complete",
+        collected:   sorted.length,
         importedIds: JSON.stringify(sorted.map((c) => c.id)),
-        message: `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
+        message:     `Found ${sorted.length} candidates${poolNote}.${limitNote}`.trim(),
       },
-    }).catch(() => {});
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+
+    if (savedSearchId) {
+      await prisma.savedSearch.updateMany({
+        where: { id: savedSearchId, jobId, orgId },
+        data: { lastResultCount: sorted.length },
+      }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
+    }
   } catch (err) {
-    console.error("[search] background error:", err);
+    reportError(err, { route: "search:runBackground", jobId, orgId });
+    // status "failed" — NOT "rate_limited". See the outer-catch comment for
+    // why: code-level crashes don't recover by waiting, and the misleading
+    // "rate_limited" status caused recruiters to retry forever.
+    const message = err instanceof Error ? err.message : "Search failed";
     await prisma.searchSession.update({
       where: { id: sessionId },
-      data: { status: "rate_limited", message: err instanceof Error ? err.message : "Search failed" },
-    }).catch(() => {});
+      data: {
+        status: "failed",
+        message: `Search failed: ${message}`,
+        evaluation: `FAIL — Search hit an unexpected error: ${message}. Check Railway logs for the stack trace; this is not a rate limit.`,
+      },
+    }).catch((err) => reportError(err, { route: "jobs/[id]/search" }));
   }
 }

@@ -33,10 +33,10 @@
   ],
   "recruiter_summary": "Some relevant frontend overlap, but this is not a strong office-based Wellington match.",
   "expected": {
-    "overall": 33,
+    "overall": 36,
     "locationFit": 20,
-    "mustHavePct": 27,
-    "confidenceScore": 29,
+    "mustHavePct": 33,
+    "confidenceScore": 35,
     "confidenceLevel": "low",
     "summaryIncludes": "Based in Napier"
   }

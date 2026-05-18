@@ -21,6 +21,14 @@ const CY = 115;
 const R  = 72;  // outer polygon radius
 const LR = 100; // label radius
 
+// Pro App palette equivalents — kept as raw rgba so they can sit on inline
+// SVG attributes that don't accept Tailwind classes. Values mirror tokens in
+// tailwind.config.ts (separator strong/default, accent blue).
+const STROKE_GRID_STRONG = "rgba(255, 255, 255, 0.12)"; // separator-strong
+const STROKE_GRID        = "rgba(255, 255, 255, 0.08)"; // separator
+const ACCENT             = "#0a84ff";                    // accent
+const ACCENT_FILL        = "rgba(10, 132, 255, 0.20)";   // accent/20
+
 function polar(cx: number, cy: number, r: number, i: number, n: number) {
   const angle = (2 * Math.PI * i) / n - Math.PI / 2;
   return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
@@ -42,8 +50,8 @@ export function ScoreRadar({ dimensions }: { dimensions: RadarDimensions }) {
   const gridLevels = [0.25, 0.5, 0.75, 1];
 
   return (
-    <div className="bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl p-4 w-[260px]">
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider text-center mb-2">
+    <div className="bg-surface-raised rounded-md border border-separator p-4 w-[260px]">
+      <p className="text-2xs font-medium text-text-tertiary uppercase tracking-wider text-center mb-2">
         Match Breakdown
       </p>
       <svg viewBox="0 0 240 230" width="100%" className="overflow-visible">
@@ -55,8 +63,8 @@ export function ScoreRadar({ dimensions }: { dimensions: RadarDimensions }) {
               key={level}
               points={toPoints(pts)}
               fill="none"
-              stroke={level === 1 ? "#334155" : "#1e293b"}
-              strokeWidth={level === 1 ? 1.5 : 1}
+              stroke={level === 1 ? STROKE_GRID_STRONG : STROKE_GRID}
+              strokeWidth={1}
             />
           );
         })}
@@ -67,7 +75,7 @@ export function ScoreRadar({ dimensions }: { dimensions: RadarDimensions }) {
             key={i}
             x1={CX} y1={CY}
             x2={pt.x} y2={pt.y}
-            stroke="#1e293b"
+            stroke={STROKE_GRID}
             strokeWidth={1}
           />
         ))}
@@ -75,15 +83,15 @@ export function ScoreRadar({ dimensions }: { dimensions: RadarDimensions }) {
         {/* Score fill */}
         <polygon
           points={toPoints(scorePts)}
-          fill="rgba(59,130,246,0.20)"
-          stroke="#3b82f6"
-          strokeWidth={2}
+          fill={ACCENT_FILL}
+          stroke={ACCENT}
+          strokeWidth={1.5}
           strokeLinejoin="round"
         />
 
         {/* Vertex dots */}
         {scorePts.map((pt, i) => (
-          <circle key={i} cx={pt.x} cy={pt.y} r={3.5} fill="#3b82f6" />
+          <circle key={i} cx={pt.x} cy={pt.y} r={2.5} fill={ACCENT} />
         ))}
 
         {/* Labels */}
@@ -98,20 +106,19 @@ export function ScoreRadar({ dimensions }: { dimensions: RadarDimensions }) {
                 x={lp.x}
                 y={lp.y - 5}
                 textAnchor={anchor}
-                fill="#64748b"
-                fontSize={9}
-                fontFamily="ui-sans-serif, system-ui, sans-serif"
+                className="fill-text-secondary"
+                fontSize={10}
               >
                 {axis.label}
               </text>
               <text
                 x={lp.x}
-                y={lp.y + 8}
+                y={lp.y + 9}
                 textAnchor={anchor}
-                fill="#e2e8f0"
+                className="fill-text-primary"
                 fontSize={11}
-                fontWeight="700"
-                fontFamily="ui-sans-serif, system-ui, sans-serif"
+                fontFamily='"SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace'
+                style={{ fontVariantNumeric: "tabular-nums" }}
               >
                 {val}%
               </text>

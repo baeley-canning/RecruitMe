@@ -29,7 +29,9 @@ export function getSearchResultDisplay(result: SearchResultSummary): { tone: "su
   }
 
   return {
-    tone: "success",
-    message: result.message ?? "No new candidates found. Try re-analysing with a broader job description.",
+    tone: "warning",
+    message: result.message === "No profiles found."
+      ? "No matching LinkedIn profiles found. Try: set Location to 'New Zealand', click Re-analyse to refresh search terms, or broaden requirements in the JD."
+      : (result.message ?? "No new candidates found — they may already be imported, or try a broader location or JD."),
   };
 }

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, shell, dialog, ipcMain } = require("electron");
 const { spawn, execFileSync } = require("child_process");
+const crypto = require("crypto");
 const path = require("path");
 const net = require("net");
 const fs = require("fs");
@@ -11,76 +12,184 @@ let mainWindow = null;
 let serverProcess = null;
 let activePort = DEV_PORT;
 
-function findOperaExecutable() {
+const SUPPORTED_BROWSER_IDS = new Set(["chrome", "opera", "opera-gx", "edge", "brave"]);
+
+const MAC_BROWSER_CANDIDATES = [
+  { id: "chrome", name: "Google Chrome", path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" },
+  { id: "opera", name: "Opera", path: "/Applications/Opera.app/Contents/MacOS/Opera" },
+  { id: "opera-gx", name: "Opera GX", path: "/Applications/Opera GX.app/Contents/MacOS/Opera GX" },
+  { id: "edge", name: "Microsoft Edge", path: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" },
+  { id: "brave", name: "Brave Browser", path: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" },
+];
+
+const EXTENSION_FILES = [
+  "manifest.json",
+  "background.js",
+  "content.js",
+  "popup.html",
+  "popup.js",
+  "options.html",
+  "options.js",
+  "README.md",
+];
+const EXTENSION_RELATIVE_DIR = path.join("browser-companion", "recruitme-opera-linkedin-capture");
+
+function getBundledExtensionDir() {
+  const candidates = [
+    path.join(__dirname, "..", EXTENSION_RELATIVE_DIR),
+    path.join(app.getAppPath(), EXTENSION_RELATIVE_DIR),
+    path.join(process.resourcesPath || "", EXTENSION_RELATIVE_DIR),
+  ];
+  return candidates.find((candidate) => candidate && fs.existsSync(path.join(candidate, "manifest.json"))) ?? null;
+}
+
+function prepareExtensionFolder() {
+  const sourceDir = getBundledExtensionDir();
+  if (!sourceDir) {
+    throw new Error("Bundled RecruitMe extension folder was not found.");
+  }
+
+  const targetDir = path.join(app.getPath("userData"), "RecruitMe LinkedIn Capture Extension");
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  for (const file of EXTENSION_FILES) {
+    const source = path.join(sourceDir, file);
+    if (fs.existsSync(source)) {
+      fs.copyFileSync(source, path.join(targetDir, file));
+    }
+  }
+
+  return targetDir;
+}
+
+function normalizeBrowserId(value) {
+  return typeof value === "string" && SUPPORTED_BROWSER_IDS.has(value) ? value : null;
+}
+
+function browserPreferencePath() {
+  return path.join(app.getPath("userData"), "browser-preference.json");
+}
+
+function readPreferredBrowserId() {
+  try {
+    const raw = fs.readFileSync(browserPreferencePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    return normalizeBrowserId(parsed?.browserId);
+  } catch {
+    return null;
+  }
+}
+
+function writePreferredBrowserId(browserId) {
+  const normalized = normalizeBrowserId(browserId);
+  if (!normalized) return null;
+
+  const userDataPath = app.getPath("userData");
+  fs.mkdirSync(userDataPath, { recursive: true });
+  fs.writeFileSync(
+    browserPreferencePath(),
+    JSON.stringify({ browserId: normalized }, null, 2),
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return normalized;
+}
+
+function preferBrowser(candidates, preferredBrowserId) {
+  const preferred = normalizeBrowserId(preferredBrowserId) ?? readPreferredBrowserId();
+  if (!preferred) return candidates;
+  return [
+    ...candidates.filter((browser) => browser.id === preferred),
+    ...candidates.filter((browser) => browser.id !== preferred),
+  ];
+}
+
+function findSupportedBrowser(preferredBrowserId) {
   if (process.platform === "darwin") {
-    const macPaths = [
-      "/Applications/Opera.app/Contents/MacOS/Opera",
-      "/Applications/Opera GX.app/Contents/MacOS/Opera GX",
-    ];
-    return macPaths.find((p) => fs.existsSync(p)) ?? null;
+    return preferBrowser(MAC_BROWSER_CANDIDATES, preferredBrowserId)
+      .find((browser) => fs.existsSync(browser.path)) ?? null;
   }
 
   if (process.platform !== "win32") return null;
 
-  // Use PowerShell — it has access to Windows env/registry regardless of how Electron was launched
   try {
     const ps = `
 $found = $null
+$foundName = $null
 $lad = [Environment]::GetFolderPath('LocalApplicationData')
 $pf  = [Environment]::GetFolderPath('ProgramFiles')
 $pf86= [Environment]::GetFolderPath('ProgramFilesX86')
-$paths = @(
-  "$lad\\Programs\\Opera\\launcher.exe",
-  "$lad\\Programs\\Opera\\opera.exe",
-  "$lad\\Programs\\Opera GX\\launcher.exe",
-  "$lad\\Programs\\Opera GX\\opera.exe",
-  "$pf\\Opera\\launcher.exe",
-  "$pf\\Opera GX\\launcher.exe",
-  "$pf86\\Opera\\launcher.exe",
-  "$pf86\\Opera GX\\launcher.exe"
+$preferred = "${normalizeBrowserId(preferredBrowserId) ?? readPreferredBrowserId() ?? ""}"
+$candidates = @(
+  @{ Id = "chrome"; Name = "Google Chrome"; Paths = @("$pf\\Google\\Chrome\\Application\\chrome.exe", "$pf86\\Google\\Chrome\\Application\\chrome.exe", "$lad\\Google\\Chrome\\Application\\chrome.exe") },
+  @{ Id = "opera"; Name = "Opera"; Paths = @("$lad\\Programs\\Opera\\launcher.exe", "$lad\\Programs\\Opera\\opera.exe", "$pf\\Opera\\launcher.exe", "$pf86\\Opera\\launcher.exe") },
+  @{ Id = "opera-gx"; Name = "Opera GX"; Paths = @("$lad\\Programs\\Opera GX\\launcher.exe", "$lad\\Programs\\Opera GX\\opera.exe", "$pf\\Opera GX\\launcher.exe", "$pf86\\Opera GX\\launcher.exe") },
+  @{ Id = "edge"; Name = "Microsoft Edge"; Paths = @("$pf\\Microsoft\\Edge\\Application\\msedge.exe", "$pf86\\Microsoft\\Edge\\Application\\msedge.exe", "$lad\\Microsoft\\Edge\\Application\\msedge.exe") },
+  @{ Id = "brave"; Name = "Brave Browser"; Paths = @("$pf\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$pf86\\BraveSoftware\\Brave-Browser\\Application\\brave.exe", "$lad\\BraveSoftware\\Brave-Browser\\Application\\brave.exe") }
 )
-foreach ($p in $paths) { if (Test-Path $p) { $found = $p; break } }
-if (-not $found) {
-  $cmd = Get-Command opera.exe -ErrorAction SilentlyContinue
-  if ($cmd) { $found = $cmd.Source }
+$candidates = @($candidates | Sort-Object @{ Expression = { if ($_.Id -eq $preferred) { 0 } else { 1 } } })
+foreach ($candidate in $candidates) {
+  foreach ($p in $candidate.Paths) {
+    if (Test-Path $p) {
+      $found = $p
+      $foundName = $candidate.Name
+      break
+    }
+  }
+  if ($found) { break }
 }
 if (-not $found) {
-  $regKey = 'HKCU:\\SOFTWARE\\Clients\\StartMenuInternet\\OperaStable\\shell\\open\\command'
-  try {
-    $val = (Get-ItemProperty -Path $regKey -ErrorAction Stop).'(Default)'
-    $exe = ($val -replace '"','') -replace ' .*',''
-    if (Test-Path $exe) { $found = $exe }
-  } catch {}
+  $commands = @(
+    @{ Id = "chrome"; Name = "Google Chrome"; Command = "chrome.exe" },
+    @{ Id = "edge"; Name = "Microsoft Edge"; Command = "msedge.exe" },
+    @{ Id = "brave"; Name = "Brave Browser"; Command = "brave.exe" },
+    @{ Id = "opera"; Name = "Opera"; Command = "opera.exe" }
+  )
+  $commands = @($commands | Sort-Object @{ Expression = { if ($_.Id -eq $preferred) { 0 } else { 1 } } })
+  foreach ($entry in $commands) {
+    $cmd = Get-Command $entry.Command -ErrorAction SilentlyContinue
+    if ($cmd) {
+      $found = $cmd.Source
+      $foundName = $entry.Name
+      break
+    }
+  }
 }
-if ($found) { Write-Output $found }
+if ($found) { Write-Output ($foundName + "|" + $found) }
 `;
     const result = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], {
       encoding: "utf8", timeout: 8000,
     }).trim();
 
-    if (result && fs.existsSync(result)) {
-      console.log("[opera] found at:", result);
-      return result;
+    const [name, browserPath] = result.split("|");
+    if (name && browserPath && fs.existsSync(browserPath)) {
+      console.log("[browser] found at:", browserPath);
+      return { name, path: browserPath };
     }
-    console.warn("[opera] PowerShell search returned nothing");
+    console.warn("[browser] PowerShell search returned nothing");
   } catch (err) {
-    console.warn("[opera] PowerShell search failed:", err.message);
+    console.warn("[browser] PowerShell search failed:", err.message);
   }
   return null;
 }
 
-/** Open a URL in Opera. Returns true if Opera was found and launched, false otherwise. */
-function openInOpera(url) {
-  const exe = findOperaExecutable();
-  if (!exe) return false;
+function openInSupportedBrowser(url, preferredBrowserId) {
+  const browser = findSupportedBrowser(preferredBrowserId);
+  if (!browser) return { ok: false, browser: null };
   try {
-    const child = spawn(exe, [url], { detached: true, stdio: "ignore" });
+    const child = spawn(browser.path, [url], { detached: true, stdio: "ignore" });
     child.unref();
-    return true;
+    return { ok: true, browser: browser.name };
   } catch (err) {
-    console.error("[opera] spawn failed:", err);
-    return false;
+    console.error("[browser] spawn failed:", err);
+    return { ok: false, browser: browser.name };
   }
+}
+
+function openExtensionsPage(preferredBrowserId) {
+  const result = openInSupportedBrowser("chrome://extensions", preferredBrowserId);
+  if (result.ok) return result;
+  void shell.openExternal("chrome://extensions").catch(() => {});
+  return result;
 }
 
 // ── Port helpers ──────────────────────────────────────────────────────────────
@@ -126,6 +235,29 @@ function waitForPort(port, maxMs = 30000) {
   });
 }
 
+// ── Per-install secret ────────────────────────────────────────────────────────
+
+// Each desktop install generates its own NextAuth secret on first launch and
+// persists it under userData. Using a hardcoded secret in the bundle would
+// let anyone with the binary forge session JWTs against any install — including
+// remote servers if a user reconfigures NEXTAUTH_URL.
+function ensureNextAuthSecret() {
+  const userDataPath = app.getPath("userData");
+  const secretPath = path.join(userDataPath, "nextauth.secret");
+  try {
+    if (fs.existsSync(secretPath)) {
+      const existing = fs.readFileSync(secretPath, "utf8").trim();
+      if (existing.length >= 32) return existing;
+    }
+  } catch (err) {
+    console.warn("[secret] read failed, regenerating:", err.message);
+  }
+  const fresh = crypto.randomBytes(48).toString("base64");
+  fs.mkdirSync(userDataPath, { recursive: true });
+  fs.writeFileSync(secretPath, fresh, { encoding: "utf8", mode: 0o600 });
+  return fresh;
+}
+
 // ── Database setup ────────────────────────────────────────────────────────────
 
 function ensureDatabase() {
@@ -167,8 +299,7 @@ function startProductionServer(port, dbPath) {
     NODE_ENV: "production",
     DATABASE_URL: `file:${dbPath}`,
     NEXTAUTH_URL: `http://localhost:${port}`,
-    // Fixed secret for the desktop build — safe because server only binds to localhost
-    NEXTAUTH_SECRET: "recruitme-desktop-2024-x04NrrFE401nkGNG4bSttqYYDM8brzx",
+    NEXTAUTH_SECRET: ensureNextAuthSecret(),
   };
 
   serverProcess = spawn(process.execPath, [serverJs], {
@@ -201,6 +332,8 @@ function createWindow(port) {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
     },
   });
 
@@ -259,9 +392,27 @@ app.on("before-quit", () => {
   if (serverProcess) { serverProcess.kill(); serverProcess = null; }
 });
 
-// Opens a LinkedIn URL specifically in Opera (required for the capture extension).
-// Returns true if Opera was found and launched, false if Opera isn't installed.
+// Opens a LinkedIn URL in a supported Chromium browser so the RecruitMe extension can capture it.
 ipcMain.handle("recruitme:open-external", (_event, url) => {
-  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
-  return openInOpera(url);
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+    return { ok: false, browser: null };
+  }
+  return openInSupportedBrowser(url);
+});
+
+ipcMain.handle("recruitme:prepare-extension", async (_event, options = {}) => {
+  try {
+    const preferredBrowserId = writePreferredBrowserId(options?.browserId) ?? readPreferredBrowserId();
+    const extensionPath = prepareExtensionFolder();
+    await shell.openPath(extensionPath).catch(() => {});
+    const browser = openExtensionsPage(preferredBrowserId);
+    return { ok: true, path: extensionPath, browser: browser.browser ?? null };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      path: null,
+      browser: null,
+    };
+  }
 });

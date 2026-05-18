@@ -1,5 +1,8 @@
+import { reportError } from "./error-reporting";
 import { normaliseLinkedInUrl } from "./linkedin";
+import { isPlausibleLocation } from "./location";
 import { getCityCoords, NZ_CITIES } from "./nz-cities";
+import { recordProviderFailure, recordProviderSuccess } from "./provider-health";
 
 export interface SearchResult {
   name: string;
@@ -8,7 +11,11 @@ export interface SearchResult {
   linkedinUrl: string;
   snippet: string;
   fullText?: string; // full profile text for sources that return it (PDL)
-  source: "serpapi" | "bing" | "pdl";
+  matchedQuery?: string;
+  // "serpapi" / "pdl" cover the search providers that produce a
+  // SearchResult. Manual / extension / talent_pool / github values come
+  // from the Candidate.source field at save time.
+  source: "serpapi" | "pdl";
 }
 
 // ─── Name / org filtering ────────────────────────────────────────────────────
@@ -57,16 +64,49 @@ function buildLocationSearchTerm(location: string): string {
   return cleaned;
 }
 
-function buildLinkedInSearchQuery(query: string, location: string): string {
+// Phrases that flag a role as permanent / full-time. We exclude contract /
+// freelance / consultant titles from search results only when the role is
+// explicitly permanent. Ambiguous JDs (neither permanent nor contract
+// language) default to NOT excluding — better to surface a contractor the
+// recruiter can manually dismiss than silently lose a candidate.
+const PERMANENT_ROLE_RE =
+  /\b(?:permanent|perm\s+role|perm\s+position|full[- ]time\s+permanent|ongoing\s+role|continuing\s+role)\b/i;
+// Hints the role is genuinely contract / fixed-term — we keep contractor
+// titles in results when these appear.
+const CONTRACT_ROLE_RE =
+  /\b(?:contract\s+role|fixed[- ]term|fixed\s+term|interim|temporary|short[- ]term\s+contract|6[- ]month|9[- ]month|12[- ]month|18[- ]month|day[- ]rate|daily\s+rate|contractor)\b/i;
+
+/** Classify a job description's employment type. Returns "permanent" only
+ *  when the JD explicitly says so; "contract" when contract phrasing is
+ *  present; "unknown" otherwise. Exported for testing + reuse. */
+export function inferEmploymentType(jdOrRoleText: string | null | undefined): "permanent" | "contract" | "unknown" {
+  const text = jdOrRoleText?.trim() ?? "";
+  if (!text) return "unknown";
+  // Contract phrasing wins when both are present — contract roles often say
+  // "permanent staff would also be considered" but the role is still contract.
+  if (CONTRACT_ROLE_RE.test(text)) return "contract";
+  if (PERMANENT_ROLE_RE.test(text)) return "permanent";
+  return "unknown";
+}
+
+function buildLinkedInSearchQuery(query: string, location: string, options: { excludeContractTitles?: boolean } = {}): string {
   const locationTerm = buildLocationSearchTerm(location);
+  // Google-specific negative-intitle clauses, passed through by SerpAPI.
+  // Excluded titles: "contract", "freelancer", "consultant" (self-employed
+  // pattern), "available for hire". Senior recruiter playbook: when the
+  // JD is explicitly permanent, these are noise.
+  const exclusion = options.excludeContractTitles
+    ? ` -intitle:"contract" -intitle:"freelancer" -intitle:"freelance" -intitle:"available for hire"`
+    : "";
   return locationTerm
-    ? `site:linkedin.com/in ${query} ${locationTerm}`
-    : `site:linkedin.com/in ${query}`;
+    ? `site:linkedin.com/in ${query} ${locationTerm}${exclusion}`
+    : `site:linkedin.com/in ${query}${exclusion}`;
 }
 
 function looksLikeLocationFragment(fragment: string): boolean {
   const lower = fragment.toLowerCase();
   if (!lower || lower.length < 2 || lower.length > 80) return false;
+  if (!isPlausibleLocation(fragment)) return false;
   if (
     /\b(contact info|connections|followers|message|follow|connect|linkedin|skills|experience|education|recommendations|company|full-time|part-time|present)\b/i.test(
       fragment
@@ -141,9 +181,9 @@ function looksLikePersonName(name: string): boolean {
 }
 
 /** Parse LinkedIn profiles out of a generic list of search result items */
-function parseLinkedInResults(
+export function parseLinkedInResults(
   items: Array<{ title?: string; url?: string; link?: string; snippet?: string }>,
-  source: "serpapi" | "bing"
+  source: "serpapi"
 ): SearchResult[] {
   const results: SearchResult[] = [];
   for (const item of items) {
@@ -157,11 +197,22 @@ function parseLinkedInResults(
 
     if (!looksLikePersonName(namePart)) continue;
 
+    // Normalise the LinkedIn URL so the Phase-1 dedupe at search/route.ts:818
+    // can collapse this profile against the PDL variant (which already runs
+    // through normaliseLinkedInUrl). Skip rows whose URL can't be parsed
+    // rather than storing the raw form and leaking a duplicate.
+    let normalisedUrl: string;
+    try {
+      normalisedUrl = normaliseLinkedInUrl(link);
+    } catch {
+      continue;
+    }
+
     results.push({
       name: namePart,
       headline: headlinePart,
       location: locationPart,
-      linkedinUrl: link,
+      linkedinUrl: normalisedUrl,
       snippet: item.snippet ?? "",
       source,
     });
@@ -176,11 +227,12 @@ export async function searchLinkedInProfiles(
   location: string,
   start = 0,
   resolvedKey?: string,
+  options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchResult[]> {
   const apiKey = resolvedKey || process.env.SERPAPI_API_KEY;
   if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured");
 
-  const searchQuery = buildLinkedInSearchQuery(query, location);
+  const searchQuery = buildLinkedInSearchQuery(query, location, options);
 
   const params = new URLSearchParams({
     engine: "google",
@@ -191,51 +243,33 @@ export async function searchLinkedInProfiles(
     gl: "nz",
   });
 
-  const res = await fetch(`https://serpapi.com/search.json?${params}`);
-  if (!res.ok) throw new Error(`SerpAPI error: ${res.status} ${res.statusText}`);
+  const url = `https://serpapi.com/search.json?${params}`;
+  let res: Response;
+  try {
+    // 15s ceiling mirrors the PDL fetch below — a stalled SerpAPI shouldn't
+    // be able to consume the entire search worker budget. On AbortError we
+    // log + return [] so the search batch can still proceed with PDL/pool
+    // results rather than 500-ing the whole run.
+    res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  } catch (err) {
+    recordProviderFailure("serpapi", err instanceof Error ? err.message : String(err));
+    reportError(err, { provider: "serpapi", url });
+    if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
+      return [];
+    }
+    throw err;
+  }
+  if (!res.ok) {
+    recordProviderFailure("serpapi", `${res.status} ${res.statusText}`);
+    throw new Error(`SerpAPI error: ${res.status} ${res.statusText}`);
+  }
 
   const data = await res.json() as {
     organic_results?: Array<{ title?: string; link?: string; snippet?: string }>;
   };
 
+  recordProviderSuccess("serpapi");
   return parseLinkedInResults(data.organic_results ?? [], "serpapi");
-}
-
-// ─── Bing Web Search ──────────────────────────────────────────────────────────
-
-export async function searchBingLinkedInProfiles(
-  query: string,
-  location: string,
-  offset = 0,
-  resolvedKey?: string,
-): Promise<SearchResult[]> {
-  const apiKey = resolvedKey || process.env.BING_API_KEY;
-  if (!apiKey) throw new Error("BING_API_KEY is not configured");
-
-  const searchQuery = buildLinkedInSearchQuery(query, location);
-
-  const params = new URLSearchParams({
-    q: searchQuery,
-    count: "10",
-    offset: String(offset),
-    mkt: "en-NZ",
-    responseFilter: "Webpages",
-  });
-
-  const res = await fetch(`https://api.bing.microsoft.com/v7.0/search?${params}`, {
-    headers: { "Ocp-Apim-Subscription-Key": apiKey },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) throw new Error(`Bing API error: ${res.status}`);
-
-  const data = await res.json() as {
-    webPages?: { value?: Array<{ name?: string; url?: string; snippet?: string }> };
-  };
-
-  return parseLinkedInResults(
-    (data.webPages?.value ?? []).map((r) => ({ title: r.name, url: r.url, snippet: r.snippet })),
-    "bing"
-  );
 }
 
 // ─── People Data Labs ─────────────────────────────────────────────────────────
@@ -372,9 +406,15 @@ export async function searchPDLProfiles(
       signal: AbortSignal.timeout(15_000),
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+      recordProviderFailure("pdl", `${res.status} ${res.statusText}`);
+      return [];
+    }
 
     const data = await res.json() as { status: number; data?: PDLPerson[] };
+    // Even with empty results, the API call itself succeeded — record that
+    // so the badge stays green when PDL is configured but returns 0 hits.
+    recordProviderSuccess("pdl");
     if (!data.data?.length) return [];
 
     return data.data
@@ -394,7 +434,8 @@ export async function searchPDLProfiles(
           source: "pdl" as const,
         };
       });
-  } catch {
+  } catch (err) {
+    recordProviderFailure("pdl", err instanceof Error ? err.message : String(err));
     return [];
   }
 }

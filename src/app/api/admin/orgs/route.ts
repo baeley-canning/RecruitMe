@@ -3,12 +3,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
+import { isOwner } from "@/lib/access";
 
 type AnySession = { user?: { role?: string } } | null;
-
-function isOwner(session: AnySession) {
-  return session?.user?.role === "owner";
-}
 
 export async function GET() {
   const session = await getServerSession(authOptions) as AnySession;
@@ -69,6 +66,7 @@ export async function DELETE(req: Request) {
   await prisma.$transaction([
     prisma.user.updateMany({ where: { orgId: id }, data: { orgId: null } }),
     prisma.job.updateMany({ where: { orgId: id }, data: { orgId: null } }),
+    prisma.candidate.updateMany({ where: { orgId: id }, data: { orgId: null } }),
     prisma.org.delete({ where: { id } }),
   ]);
 

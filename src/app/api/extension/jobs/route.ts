@@ -1,20 +1,17 @@
+import { extensionCorsHeaders } from "@/lib/extension-cors";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifyExtensionAuth, jobsWhere } from "@/lib/session";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+// EXTENSION_CORS headers are computed per-request to restrict to extension origins
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS });
+export async function OPTIONS(req: Request) {
+  return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });
 }
 
 export async function GET(req: Request) {
   const auth = await verifyExtensionAuth(req);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: extensionCorsHeaders(req) });
 
   const jobs = await prisma.job.findMany({
     where: { status: "active", ...jobsWhere(auth) },
@@ -34,6 +31,6 @@ export async function GET(req: Request) {
       company: job.company,
       candidateCount: job._count.candidates,
     })),
-    { headers: CORS }
+    { headers: extensionCorsHeaders(req) }
   );
 }

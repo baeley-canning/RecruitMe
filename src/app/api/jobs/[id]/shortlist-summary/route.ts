@@ -1,24 +1,36 @@
 import { NextResponse } from "next/server";
-import { chat } from "@/lib/ai";
+import { z } from "zod";
+import { parseJson } from "@/lib/ai/chat";
+import { chatWithMaybeFailover } from "@/lib/ai/chat-with-failover";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 
-export interface CandidateSummaryInput {
-  id: string;
-  name: string;
-  headline: string | null;
-  location: string | null;
-  matchScore: number | null;
-  matchReason: string | null;
-  scoreBreakdown: string | null;
-  acceptanceScore: number | null;
-  acceptanceReason: string | null;
-  notes: string | null;
-  linkedinUrl: string | null;
-  profileText: string | null;
-}
+// String caps below bound the payload at ~50KB/candidate × 100 candidates =
+// 5MB max — the route trims profileText to 600 chars internally, but the
+// caps stop a client (buggy or hostile) from POSTing a 10MB body that ends
+// up sitting in memory before truncation.
+const CandidateSummaryInputSchema = z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().max(300),
+  headline: z.string().max(500).nullable(),
+  location: z.string().max(300).nullable(),
+  matchScore: z.number().nullable(),
+  matchReason: z.string().max(5_000).nullable(),
+  scoreBreakdown: z.string().max(20_000).nullable(),
+  acceptanceScore: z.number().nullable(),
+  acceptanceReason: z.string().max(5_000).nullable(),
+  notes: z.string().max(10_000).nullable(),
+  linkedinUrl: z.string().max(500).nullable(),
+  profileText: z.string().max(50_000).nullable(),
+});
+
+const ShortlistSummaryBodySchema = z.object({
+  candidates: z.array(CandidateSummaryInputSchema).min(1, "No candidates provided").max(100),
+});
+
+export type CandidateSummaryInput = z.infer<typeof CandidateSummaryInputSchema>;
 
 export interface CandidateSummaryResult {
   id: string;
@@ -42,12 +54,14 @@ export async function POST(
     return NextResponse.json({ error: "Job not yet analysed. Run Step 1 first." }, { status: 400 });
   }
 
-  const body = await req.json() as { candidates?: CandidateSummaryInput[] };
-  const candidates = body.candidates;
-
-  if (!candidates || candidates.length === 0) {
-    return NextResponse.json({ error: "No candidates provided" }, { status: 400 });
+  const parsed = ShortlistSummaryBodySchema.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", issues: parsed.error.issues },
+      { status: 400 }
+    );
   }
+  const { candidates } = parsed.data;
 
   // Build candidate blurbs for the prompt
   const candidateBlurbs = candidates.map((c, i) => {
@@ -80,10 +94,8 @@ export async function POST(
     // acceptanceReason is also JSON
     let acceptText = "";
     if (c.acceptanceReason) {
-      try {
-        const ar = JSON.parse(c.acceptanceReason) as { headline?: string; summary?: string };
-        acceptText = [ar.headline, ar.summary].filter(Boolean).join(" ").trim();
-      } catch { acceptText = ""; }
+      const ar = safeParseJson<{ headline?: string; summary?: string } | null>(c.acceptanceReason, null);
+      acceptText = [ar?.headline, ar?.summary].filter(Boolean).join(" ").trim();
     }
 
     return `--- CANDIDATE ${i + 1} (id: ${c.id}) ---
@@ -120,14 +132,15 @@ ${candidateBlurbs}`;
   try {
     // Allow up to 200 tokens per candidate for the output
     const tokenBudget = Math.min(4096, Math.max(1024, candidates.length * 200));
-    const text = await chat(prompt, 0.3, tokenBudget);
+    const text = await chatWithMaybeFailover(prompt, 0.3, tokenBudget);
 
-    // Extract JSON array
-    const match = text.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error("No JSON array in response");
+    // parseJson handles the brace-balancing + trailing-comma fixup that the
+    // greedy `match(/\[[\s\S]*\]/)` previously got wrong when the model
+    // emitted prose around the array.
+    const parsed = parseJson<unknown>(text);
+    if (!Array.isArray(parsed)) throw new Error("Response was not a JSON array");
 
-    const parsed = JSON.parse(match[0]) as CandidateSummaryResult[];
-    summaries = parsed.filter(
+    summaries = (parsed as CandidateSummaryResult[]).filter(
       (s): s is CandidateSummaryResult =>
         typeof s === "object" && s !== null &&
         typeof s.id === "string" &&

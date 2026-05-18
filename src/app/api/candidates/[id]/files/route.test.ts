@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import { buildScoreBreakdown, CATEGORY_WEIGHTS_V2 } from "@/lib/scoring";
 import { buildScoreCacheKey } from "@/lib/utils";
 
@@ -13,6 +14,8 @@ const dbMocks = vi.hoisted(() => ({
     candidateFile: {
       create: vi.fn(),
       findMany: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockResolvedValue({}),
     },
   },
 }));
@@ -31,11 +34,52 @@ const aiMocks = vi.hoisted(() => ({
     signals: [],
     summary: "Could be open to a relevant role.",
   }),
+  cleanCvText: vi.fn().mockImplementation((s: string) => Promise.resolve(s)),
+  extractCandidateInfo: vi.fn().mockResolvedValue({ name: "", headline: "", location: "" }),
+}));
+
+const linkedinCaptureMocks = vi.hoisted(() => ({
+  extractIdentityFromLinkedInProfileText: vi.fn(() => ({ name: null, headline: null, location: null })),
+}));
+
+const scoringConfigMocks = vi.hoisted(() => ({
+  customWeights: {
+    must_have: 0.5,
+    skill_fit: 0.2,
+    location_fit: 0.05,
+    seniority_fit: 0.05,
+    title_fit: 0.05,
+    domain_fit: 0.1,
+    nice_to_have_fit: 0.05,
+  },
+  getJobScoringWeights: vi.fn(),
+}));
+
+const usageMocks = vi.hoisted(() => ({
+  checkRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  checkSpendCap: vi.fn().mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 }),
 }));
 
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/ai", () => aiMocks);
+vi.mock("@/lib/scoring-config", () => ({
+  getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
+}));
+vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
+vi.mock("@/lib/pdf", () => ({
+  extractTextFromPdf: vi.fn().mockResolvedValue(""),
+}));
+vi.mock("@/lib/usage", () => usageMocks);
+// Encryption is unit-tested in src/lib/__tests__/cv-encryption.test.ts; here we
+// stub it so the route test focuses on the upload flow and doesn't need a key
+// or DB-backed Setting bootstrap.
+vi.mock("@/lib/cv-encryption", () => ({
+  encryptCv: vi.fn(async (plain: string) => `v1:enc(${plain.slice(0, 12)})`),
+  decryptCv: vi.fn(async (stored: string) => stored),
+  isEncrypted: (s: string) => s.startsWith("v1:"),
+  maybeMigrateLegacy: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { POST } from "./route";
 
@@ -73,9 +117,8 @@ function makeBreakdown() {
       location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Location fits." },
       seniority_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Seniority fits." },
       title_fit: { score: 70, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Title fits." },
-      industry_fit: { score: 55, weight: CATEGORY_WEIGHTS_V2.industry_fit, evidence: "Some overlap." },
+      domain_fit: { score: 62, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Some domain overlap, aligned wording." },
       nice_to_have_fit: { score: 50, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Neutral." },
-      keyword_alignment: { score: 70, weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Aligned." },
     },
     must_have_coverage: [{ requirement: "React", status: "confirmed", evidence: "Listed." }],
     nice_to_have_coverage: [],
@@ -100,8 +143,18 @@ function makeRequest() {
 describe("candidate file CV upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // vi.clearAllMocks() wipes the resolved values on the usage mocks too —
+    // re-apply the "allowed" defaults so the new spend/rate gates don't 429
+    // every test by accident.
+    usageMocks.checkRateLimit.mockResolvedValue({ allowed: true });
+    usageMocks.checkSpendCap.mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 });
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1", isOwner: false });
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.candidate.findUnique.mockResolvedValue(makeCandidate());
+    // Default: no prior files exist on the candidate, so the dup-detection
+    // check in route.ts (added to prevent silent CV reuploads from clobbering
+    // extracted fields) finds nothing and lets the upload proceed.
+    dbMocks.prisma.candidateFile.findMany.mockResolvedValue([]);
     dbMocks.prisma.candidateFile.create.mockResolvedValue({
       id: "file-1",
       type: "cv",
@@ -148,6 +201,13 @@ describe("candidate file CV upload", () => {
 
     expect(res.status).toBe(201);
     expect(body.scored).toBe(true);
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      cvText.trim(),
+      parsedRole,
+      { min: 90000, max: 120000 },
+      scoringConfigMocks.customWeights,
+      "org-1"
+    );
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         profileTextHash: buildScoreCacheKey({
@@ -156,9 +216,70 @@ describe("candidate file CV upload", () => {
           salary: { min: 90000, max: 120000 },
           jobLocation: "Wellington",
           isRemote: false,
+          weights: scoringConfigMocks.customWeights,
         }),
         scoreBreakdown: expect.stringContaining("\"version\":2"),
       }),
     }));
+  });
+
+  it("short-circuits with 429 when the daily AI spend cap is exhausted", async () => {
+    // Before the gate landed, a scripted CV-upload loop could keep firing
+    // three Claude calls per upload (extract + score + acceptance) past the
+    // cap. The guard runs before the multipart parse so no DB write fires.
+    usageMocks.checkSpendCap.mockResolvedValueOnce({ allowed: false, spentUsd: 5.12, capUsd: 5.0 });
+
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
+
+    expect(res.status).toBe(429);
+    expect(dbMocks.prisma.candidateFile.create).not.toHaveBeenCalled();
+  });
+
+  it("returns the existing row instead of 500 when a concurrent uploader wins the race on the unique (candidateId, dataHash) index", async () => {
+    aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
+    const existingRow = {
+      id: "file-existing",
+      type: "cv",
+      filename: "cv.txt",
+      mimeType: "text/plain",
+      size: cvText.length,
+      createdAt: new Date(),
+    };
+    // First findFirst is the fast-path dup check (returns null — race not yet
+    // visible). After the unique-constraint violation we look up the winner.
+    dbMocks.prisma.candidateFile.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existingRow);
+    const p2002 = new Prisma.PrismaClientKnownRequestError(
+      "Unique constraint failed on the fields: (`candidateId`,`dataHash`)",
+      { code: "P2002", clientVersion: "5.0.0" },
+    );
+    dbMocks.prisma.candidateFile.create.mockRejectedValueOnce(p2002);
+
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual(expect.objectContaining({
+      id: "file-existing",
+      duplicate: true,
+    }));
+  });
+
+  it("still returns the saved file when CV post-processing fails after upload", async () => {
+    aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
+    dbMocks.prisma.candidate.update.mockRejectedValueOnce(new Error("profileText column write failed"));
+
+    const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body).toEqual(expect.objectContaining({
+      id: "file-1",
+      filename: "cv.txt",
+      scored: false,
+      processingError: expect.stringContaining("CV uploaded"),
+    }));
+    expect(dbMocks.prisma.candidateFile.create).toHaveBeenCalled();
   });
 });

@@ -72,13 +72,11 @@ Copy `.env.example` to `.env.local`. All variables below are required unless mar
 
 | Variable | Required | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes (if using Claude) | Anthropic API key. Claude is the recommended provider. |
+| `ANTHROPIC_API_KEY` | Yes (if using Claude) | Anthropic API key. Claude is the default primary provider. |
 | `ANTHROPIC_MODEL` | No | Model ID. Default: `claude-haiku-4-5-20251001`. Use `claude-sonnet-4-6` for higher quality scoring. |
-| `AI_PROVIDER` | No | `claude` (default) \| `openai` \| `ollama`. |
-| `OPENAI_API_KEY` | If `AI_PROVIDER=openai` | OpenAI API key. |
+| `OPENAI_API_KEY` | Optional | When set alongside `ANTHROPIC_API_KEY`, OpenAI is the automatic failover when Claude fails (or vice versa if `AI_PROVIDER=openai`). When set alone, OpenAI is the sole provider. |
 | `OPENAI_MODEL` | No | Default: `gpt-4o-mini`. |
-| `OLLAMA_BASE_URL` | If `AI_PROVIDER=ollama` | e.g. `http://127.0.0.1:11434`. Local Ollama instance. |
-| `OLLAMA_MODEL` | No | Default: `llama3.2:3b`. |
+| `AI_PROVIDER` | No | `claude` (default) \| `openai`. Picks which provider is tried first when both are configured. |
 
 ### Search APIs (at least one required to use LinkedIn search)
 
@@ -150,7 +148,7 @@ src/
 │   ├── candidate-card.tsx      # Candidate accordion with score breakdown
 │   └── ...
 ├── lib/
-│   ├── ai.ts                   # Claude/OpenAI/Ollama abstraction
+│   ├── ai.ts                   # Claude/OpenAI abstraction
 │   ├── linkedin-capture.ts     # Extension session queue + profile save
 │   ├── scoring.ts              # Score breakdown types and builders
 │   ├── usage.ts                # Rate limiting + usage event logging
@@ -191,8 +189,11 @@ Each `Job` and derived data is scoped to an `orgId`. The `requireJobAccess` help
 The extension ships as a zip download from `/api/extension/download`. Source lives in `browser-companion/recruitme-opera-linkedin-capture/`.
 
 **To install locally:**
-1. Open Opera → Extensions → Load unpacked → select the folder above
-2. Open the extension popup → set server URL to `http://localhost:3000` → enter credentials → Save
+1. Open Chrome, Opera, Edge, Brave, or another Chromium browser → Extensions → Load unpacked → select the folder above
+2. Open the extension settings → set the RecruitMe server URL to the exact app origin, for example `http://localhost:3000` in dev or the desktop app's displayed `http://localhost:<port>`
+3. Enter your RecruitMe username and password → Save and test connection
+
+Desktop builds may use a free localhost port when `3000` is unavailable. The extension manifest allows any localhost port, but the saved server URL still needs to match the URL shown by the running RecruitMe app.
 
 **How it works:**
 1. The web app creates a `FetchSession` when you click "Fetch Profile"

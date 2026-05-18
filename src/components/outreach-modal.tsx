@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
+import { Modal } from "./ui/modal";
 
 interface OutreachMessage {
   linkedin: string;
@@ -43,36 +44,40 @@ export function OutreachModal({ jobId, candidateId, candidateName, onClose }: Ou
   useEffect(() => { generate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+    <Modal
+      open
+      onClose={onClose}
+      labelledBy="outreach-modal-title"
+      className="bg-surface-overlay rounded-xl shadow-overlay w-full max-w-lg max-h-[90vh] overflow-y-auto border border-separator"
+    >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-separator">
           <div>
-            <h3 className="font-semibold text-slate-900">Outreach Message</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Personalised for {candidateName}</p>
+            <h3 id="outreach-modal-title" className="text-md font-semibold text-text-primary">Outreach Message</h3>
+            <p className="text-xs text-text-secondary mt-0.5">Personalised for {candidateName}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 transition-colors">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} aria-label="Close" className="text-text-tertiary hover:text-text-primary transition-colors">
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-6 py-5">
           {loading && (
-            <div className="flex items-center gap-2 text-sm text-slate-500 py-6 justify-center">
-              <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+            <div className="flex items-center gap-2 text-md text-text-secondary py-6 justify-center">
+              <Loader2 className="w-4 h-4 animate-spin text-accent" />
               Generating personalised message…
             </div>
           )}
-          {error && <p className="text-sm text-red-600 py-4 text-center">{error}</p>}
+          {error && <p className="text-md text-danger py-4 text-center">{error}</p>}
           {data && (
             <div className="space-y-4">
-              <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
+              <div className="flex gap-1 p-1 bg-surface-sunken rounded-md border border-separator">
                 {(["linkedin", "email"] as const).map((t) => (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
                     className={cn(
-                      "flex-1 py-1.5 text-xs font-medium rounded-md transition-colors capitalize",
-                      tab === t ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      "flex-1 py-1.5 text-xs font-medium rounded transition-colors capitalize",
+                      tab === t ? "bg-surface-hover text-text-primary" : "text-text-secondary hover:text-text-primary"
                     )}
                   >
                     {t === "linkedin" ? "LinkedIn message" : "Email"}
@@ -83,15 +88,15 @@ export function OutreachModal({ jobId, candidateId, candidateName, onClose }: Ou
               {tab === "linkedin" && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-medium text-slate-500">
+                    <p className="text-xs font-medium text-text-secondary data-mono">
                       Connection request · {data.linkedin.length}/300 chars
                     </p>
                     <CopyButton text={data.linkedin} />
                   </div>
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
+                  <div className="p-3 bg-surface-sunken border border-separator rounded-md text-md text-text-primary leading-relaxed whitespace-pre-wrap">
                     {data.linkedin}
                   </div>
-                  <p className="text-xs text-slate-400 mt-2">
+                  <p className="text-xs text-text-tertiary mt-2">
                     Paste into the LinkedIn &ldquo;Add a note&rdquo; field when sending a connection request.
                   </p>
                 </div>
@@ -100,10 +105,10 @@ export function OutreachModal({ jobId, candidateId, candidateName, onClose }: Ou
               {tab === "email" && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-medium text-slate-500">Full email</p>
+                    <p className="text-xs font-medium text-text-secondary">Full email</p>
                     <CopyButton text={data.email} />
                   </div>
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
+                  <div className="p-3 bg-surface-sunken border border-separator rounded-md text-md text-text-primary leading-relaxed whitespace-pre-wrap">
                     {data.email}
                   </div>
                 </div>
@@ -111,14 +116,13 @@ export function OutreachModal({ jobId, candidateId, candidateName, onClose }: Ou
 
               <button
                 onClick={() => { setData(null); generate(); }}
-                className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                className="text-xs text-accent hover:text-accent-hover font-medium transition-colors"
               >
                 Regenerate
               </button>
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

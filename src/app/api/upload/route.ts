@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { parseJobDescription } from "@/lib/ai";
-import { deriveJobBriefUploadPrefill } from "@/lib/job-brief-prefill";
+import { deriveJobBriefUploadPrefill, deriveRegexFallbackPrefill } from "@/lib/job-brief-prefill";
 import { extractTextFromPdf } from "@/lib/pdf";
 import { getAuth, unauthorized } from "@/lib/session";
 
@@ -36,6 +36,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Supported formats: PDF, DOCX, DOC, TXT" }, { status: 400 });
   }
 
+  // Server-side MIME check — browser-supplied file.type is untrustworthy but
+  // combined with the magic-byte check below it stops obvious disguised files.
+  const allowedMimes = new Set([
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "text/plain",
+    "application/octet-stream", // some browsers send this for .docx
+  ]);
+  if (file.type && !allowedMimes.has(file.type)) {
+    return NextResponse.json({ error: "Unsupported file type" }, { status: 400 });
+  }
+
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
@@ -45,12 +58,20 @@ export async function POST(req: Request) {
     }
 
     try {
-      const parsedRole = await parseJobDescription(text);
-      const prefill = deriveJobBriefUploadPrefill(parsedRole);
+      const parsedRole = await parseJobDescription(text, { orgId: auth.orgId, userId: auth.userId });
+      // Pass jdText so deriveJobBriefUploadPrefill can fall back to regex
+      // for any field the AI returned empty (or for all fields if Claude
+      // returned a stub). Better than leaving the form blank.
+      const prefill = deriveJobBriefUploadPrefill(parsedRole, text);
       return NextResponse.json({ text, prefill });
     } catch (err) {
-      console.warn("Upload prefill parse failed:", err);
-      return NextResponse.json({ text });
+      console.warn("[upload] AI parse failed; falling back to regex prefill:", err);
+      // AI threw (network, rate limit, transient error) — try the
+      // regex-only fallback so the recruiter still gets title/location
+      // pre-filled. They click Create, the JD gets fully parsed by the
+      // background job at job-creation time anyway.
+      const prefill = deriveRegexFallbackPrefill(text);
+      return NextResponse.json({ text, prefill, prefillFallback: true });
     }
   };
 

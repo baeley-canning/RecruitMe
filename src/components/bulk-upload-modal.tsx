@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X, Upload, FileText, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Modal } from "./ui/modal";
 
 interface BulkFileEntry {
   id: string;
@@ -84,108 +85,120 @@ export function BulkUploadModal({ jobId, onClose, onComplete }: BulkUploadModalP
   const queued = files.filter((e) => e.status === "queued").length;
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[1210] p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
-          <div>
-            <h3 className="font-semibold text-slate-900">Upload CVs</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Drop PDF, DOCX, or TXT files — each CV becomes a candidate and is auto-scored
-            </p>
-          </div>
-          <button onClick={() => { if (!processing) onClose(); }} className="text-slate-400 hover:text-slate-700">
-            <X className="w-5 h-5" />
-          </button>
+    <Modal open onClose={() => { if (!processing) onClose(); }} dismissable={!processing} labelledBy="bulk-upload-title">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-separator flex-shrink-0">
+        <div>
+          <h3 id="bulk-upload-title" className="text-md font-semibold text-text-primary">Upload CVs</h3>
+          <p className="text-xs text-text-tertiary mt-0.5">
+            Drop PDF, DOCX, or TXT files — each CV becomes a candidate and is auto-scored
+          </p>
         </div>
+        <button
+          onClick={() => { if (!processing) onClose(); }}
+          className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+          aria-label="Close upload modal"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
 
-        {!processing && (
-          <div
-            className={`mx-6 mt-5 border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${
-              dragOver ? "border-blue-400 bg-blue-50" : "border-slate-200 hover:border-blue-300 hover:bg-slate-50"
-            }`}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
-            onClick={() => document.getElementById("bulk-cv-input")?.click()}
-          >
-            <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-            <p className="text-sm font-medium text-slate-600">Drop CVs here or click to browse</p>
-            <p className="text-xs text-slate-400 mt-1">PDF, DOCX, DOC, TXT · multiple files supported</p>
-            <input
-              id="bulk-cv-input"
-              type="file"
-              multiple
-              accept=".pdf,.docx,.doc,.txt"
-              className="hidden"
-              onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }}
-            />
-          </div>
-        )}
+      {!processing && (
+        <div
+          className={`mx-4 mt-4 border border-dashed rounded-md p-6 text-center transition-colors cursor-pointer ${
+            dragOver
+              ? "border-accent bg-accent-subtle"
+              : "border-separator-strong hover:border-accent hover:bg-surface-hover"
+          }`}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+          onClick={() => document.getElementById("bulk-cv-input")?.click()}
+        >
+          <Upload className="w-6 h-6 text-text-tertiary mx-auto mb-2" />
+          <p className="text-md font-medium text-text-primary">Drop CVs here or click to browse</p>
+          <p className="text-xs text-text-tertiary mt-1">PDF, DOCX, DOC, TXT · multiple files supported</p>
+          <input
+            id="bulk-cv-input"
+            type="file"
+            multiple
+            accept=".pdf,.docx,.doc,.txt"
+            className="hidden"
+            onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }}
+          />
+        </div>
+      )}
 
-        {files.length > 0 && (
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-1.5 min-h-0">
-            {files.map((entry) => (
-              <div key={entry.id} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-slate-100 bg-slate-50">
-                <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-slate-700 truncate">{entry.file.name}</p>
-                  {entry.candidateName && <p className="text-[11px] text-emerald-600">{entry.candidateName}</p>}
-                  {entry.error && <p className="text-[11px] text-red-500">{entry.error}</p>}
-                </div>
-                <div className="flex-shrink-0 flex items-center gap-1.5">
-                  {entry.status === "queued" && <span className="text-[11px] text-slate-400">Queued</span>}
-                  {entry.status === "extracting" && (
-                    <span className="text-[11px] text-blue-500 flex items-center gap-1">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Reading…
-                    </span>
-                  )}
-                  {entry.status === "scoring" && (
-                    <span className="text-[11px] text-violet-500 flex items-center gap-1">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Scoring…
-                    </span>
-                  )}
-                  {entry.status === "done" && (
-                    <span className="text-[11px] text-emerald-600 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Done
-                    </span>
-                  )}
-                  {entry.status === "error" && <span className="text-[11px] text-red-500">Failed</span>}
-                  {!processing && entry.status === "queued" && (
-                    <button onClick={() => setFiles((p) => p.filter((e) => e.id !== entry.id))}
-                      className="text-slate-300 hover:text-red-400 ml-1">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
+      {files.length > 0 && (
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1 min-h-0">
+          {files.map((entry) => (
+            <div
+              key={entry.id}
+              className="flex items-center gap-2.5 px-3 py-2 rounded border border-separator bg-surface-sunken"
+            >
+              <FileText className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-base font-medium text-text-primary truncate">{entry.file.name}</p>
+                {entry.candidateName && <p className="text-xs text-success">{entry.candidateName}</p>}
+                {entry.error && <p className="text-xs text-danger">{entry.error}</p>}
               </div>
-            ))}
-          </div>
-        )}
+              <div className="flex-shrink-0 flex items-center gap-1.5">
+                {entry.status === "queued" && <span className="text-xs text-text-tertiary">Queued</span>}
+                {entry.status === "extracting" && (
+                  <span className="text-xs text-accent flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Reading…
+                  </span>
+                )}
+                {entry.status === "scoring" && (
+                  <span className="text-xs text-llama flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Scoring…
+                  </span>
+                )}
+                {entry.status === "done" && (
+                  <span className="text-xs text-success flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Done
+                  </span>
+                )}
+                {entry.status === "error" && <span className="text-xs text-danger">Failed</span>}
+                {!processing && entry.status === "queued" && (
+                  <button
+                    onClick={() => setFiles((p) => p.filter((e) => e.id !== entry.id))}
+                    className="h-6 w-6 rounded flex items-center justify-center text-text-tertiary hover:text-danger hover:bg-surface-hover transition-colors"
+                    aria-label={`Remove ${entry.file.name} from upload queue`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
-        <div className="px-6 py-4 border-t border-slate-100 flex-shrink-0 flex items-center justify-between gap-3">
-          <div className="text-xs text-slate-400">
-            {files.length > 0 ? `${done} / ${files.length} processed` : "No files selected"}
-          </div>
-          <div className="flex items-center gap-2">
-            {!processing && (
-              <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:text-slate-900">
-                {done > 0 ? "Done" : "Cancel"}
-              </button>
-            )}
-            {queued > 0 && !processing && (
-              <Button onClick={processAll}>
-                <Upload className="w-4 h-4" />
-                Process {queued} CV{queued !== 1 ? "s" : ""}
-              </Button>
-            )}
-            {processing && (
-              <span className="text-sm text-slate-500 flex items-center gap-1.5">
-                <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> Processing…
-              </span>
-            )}
-          </div>
+      <div className="px-4 py-3 border-t border-separator flex-shrink-0 flex items-center justify-between gap-3">
+        <div className="text-xs text-text-tertiary">
+          {files.length > 0
+            ? <><span className="data-mono">{done} / {files.length}</span> processed</>
+            : "No files selected"}
+        </div>
+        <div className="flex items-center gap-2">
+          {!processing && (
+            <Button variant="ghost" size="md" onClick={onClose}>
+              {done > 0 ? "Done" : "Cancel"}
+            </Button>
+          )}
+          {queued > 0 && !processing && (
+            <Button onClick={processAll}>
+              <Upload className="w-4 h-4" />
+              Process {queued} CV{queued !== 1 ? "s" : ""}
+            </Button>
+          )}
+          {processing && (
+            <span className="text-md text-text-secondary flex items-center gap-1.5">
+              <Loader2 className="w-4 h-4 animate-spin text-accent" /> Processing…
+            </span>
+          )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -7,14 +7,39 @@ export function hashProfileText(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
-const SCORE_CACHE_VERSION = "score-context-v3";
+// Bumped when the cache key shape changes so old keys don't match.
+// v5 → v6: deterministic Stage 1 gate added — refuses to score stub captures
+// (Brendan-class failure) and injects matched signals as ground truth into
+// the Claude prompt. Every score produced before this gate is potentially
+// suspect (stub captures got 12% with fabricated reasons); bumping the
+// version invalidates cached scores so the next re-score path runs through
+// the new gate.
+// v6 → v7: per-org corrections version threaded into the key so a fresh
+// recruiter correction (audit SC4) actually invalidates the affected
+// cached scores instead of being silently ignored on cache-hit re-pulls.
+const SCORE_CACHE_VERSION = "score-context-v7-corrections";
 
 type ScoreCacheKeyInput = {
   profileText: string;
   parsedRole: unknown;
   salary: { min: number; max: number } | null;
   jobLocation?: string | null;
+  /** Optional secondary location for dual-site roles. Included in the cache
+   * key so adding/changing the second location invalidates stale scores. */
+  jobLocation2?: string | null;
   isRemote?: boolean | null;
+  // Scoring weights — when the recruiter / job overrides org defaults the
+  // resulting score changes, so the key has to include them or stale cached
+  // scores will keep showing through after a weights edit.
+  weights?: unknown;
+  // Audit SC4: per-org corrections version. Every recruiter correction bumps
+  // this counter (see recruiter-memory.getCorrectionsVersion / bumpCorrectionsVersion).
+  // Including it here means a freshly-saved correction invalidates the cache
+  // for the affected org's candidates — the next score request bypasses the
+  // cached value and re-runs scoring with the new correction context.
+  // Optional for back-compat with old callers; defaults to 0 (no corrections
+  // ever recorded) which preserves existing hashes for orgs with no history.
+  correctionsVersion?: number;
 };
 
 function stableStringify(value: unknown): string {
@@ -37,7 +62,16 @@ export function buildScoreCacheKey(input: ScoreCacheKeyInput): string {
     parsedRole: input.parsedRole,
     salary: input.salary,
     jobLocation: input.jobLocation ?? null,
+    // jobLocation2 stays out of the key when both undefined AND null so the
+    // cache stays valid for jobs that never used a secondary location. When
+    // set, it participates in the hash and changing it invalidates the cache.
+    ...(input.jobLocation2 != null ? { jobLocation2: input.jobLocation2 } : {}),
     isRemote: input.isRemote ?? false,
+    weights: input.weights ?? null,
+    // 0 → no corrections recorded for this org. We always include the field
+    // (rather than omitting on 0) so the v7 version bump uniformly invalidates
+    // all pre-v7 cached scores once and never has to be touched again.
+    correctionsVersion: input.correctionsVersion ?? 0,
   });
 
   return createHash("sha256").update(payload).digest("hex").slice(0, 24);
@@ -47,19 +81,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function scoreColor(score: number | null | undefined): string {
-  if (score == null) return "text-slate-400";
-  if (score >= 75) return "text-emerald-600";
-  if (score >= 50) return "text-amber-600";
-  return "text-red-500";
-}
-
-export function scoreBg(score: number | null | undefined): string {
-  if (score == null) return "bg-slate-100 text-slate-500";
-  if (score >= 75) return "bg-emerald-50 text-emerald-700 border border-emerald-200";
-  if (score >= 50) return "bg-amber-50 text-amber-700 border border-amber-200";
-  return "bg-red-50 text-red-700 border border-red-200";
-}
+// scoreColor/scoreBg were removed — see src/lib/score-utils.ts for the
+// canonical scoreTier / scoreTierColor / scoreTierLabel helpers used by the
+// match-score UI (the old helpers used a different 75/50 breakpoint that
+// disagreed with everywhere else in the app and had no remaining call sites).
 
 export function statusLabel(status: string): string {
   const map: Record<string, string> = {
@@ -78,17 +103,17 @@ export function statusLabel(status: string): string {
 
 export function statusBadge(status: string): string {
   const map: Record<string, string> = {
-    new:          "bg-slate-100 text-slate-600",
-    reviewing:    "bg-blue-50 text-blue-700 border border-blue-200",
-    shortlisted:  "bg-amber-50 text-amber-700 border border-amber-200",
-    contacted:    "bg-violet-50 text-violet-700 border border-violet-200",
-    interviewing: "bg-indigo-50 text-indigo-700 border border-indigo-200",
-    offer_sent:   "bg-emerald-50 text-emerald-700 border border-emerald-200",
-    hired:        "bg-green-100 text-green-800 border border-green-300",
-    declined:     "bg-orange-50 text-orange-700 border border-orange-200",
-    rejected:     "bg-red-50 text-red-600 border border-red-200",
+    new:          "bg-surface-hover text-text-secondary",
+    reviewing:    "bg-surface-hover text-text-secondary",
+    shortlisted:  "bg-accent-subtle text-accent",
+    contacted:    "bg-warning-subtle text-warning",
+    interviewing: "bg-warning-subtle text-warning",
+    offer_sent:   "bg-warning-subtle text-warning",
+    hired:        "bg-success-subtle text-success",
+    declined:     "bg-surface-hover text-text-tertiary",
+    rejected:     "bg-surface-hover text-text-tertiary",
   };
-  return map[status] ?? "bg-slate-100 text-slate-600";
+  return map[status] ?? "bg-surface-hover text-text-secondary";
 }
 
 // Ordered pipeline stages for display

@@ -2,12 +2,66 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Logic Pro / Pro Apps base layer ───────────────────────────────────────
+ * Dark by default — set on <html> so the Tailwind `dark:` variant fires
+ * for any one-off opt-outs. Body uses the surface-base + text-primary
+ * tokens directly so a missing className doesn't fall back to white.
+ */
 @layer base {
+  html {
+    color-scheme: dark;
+    background-color: #1a1a1c; /* surface.base — prevents white flash */
+  }
   * {
     box-sizing: border-box;
+    /* Subtle text rendering boost — matches macOS native antialiasing. */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   body {
-    @apply text-slate-900 antialiased;
+    @apply bg-surface-base text-text-primary;
+    font-feature-settings: "ss01", "cv01", "cv11"; /* SF Pro stylistic sets — straight 6/9, dotted 0 */
+  }
+  /* Selection — use accent at low alpha. */
+  ::selection {
+    background-color: rgba(10, 132, 255, 0.35);
+  }
+  /* Scrollbars — thin and dark, Logic Pro style. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+}
+
+@layer components {
+  /* Numeric data — scores, counts, IDs. Reach for this class anywhere
+     a number, percentage, or fixed-width identifier appears. */
+  .data-mono {
+    font-family: "SF Mono", ui-monospace, Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  /* Toolbar — top bar of any page surface. 36px tall, hairline-bottom. */
+  .toolbar {
+    @apply h-9 px-3 flex items-center gap-2 border-b border-separator bg-surface-raised;
+  }
+  /* Sidebar section label — uppercase tracking, used for "JOBS", "INBOX". */
+  .sidebar-section {
+    @apply px-3 pt-3 pb-1 text-2xs font-semibold uppercase tracking-wider text-text-tertiary;
   }
 }
 
@@ -29,5 +83,20 @@
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
+  }
+}
+
+/* Respect user's "reduce motion" OS-level setting (vestibular disorders,
+   personal preference, low-power mode). Tailwind's transition / animate
+   utilities still apply but are flattened to ~zero duration so nothing
+   visibly moves. Snappy state changes are fine; flying spinners are not. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

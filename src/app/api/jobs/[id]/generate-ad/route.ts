@@ -17,6 +17,6 @@ export async function POST(
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) return NextResponse.json({ error: "Job not parsed yet — parse it first" }, { status: 422 });
 
-  const ad = await generateJobAd(parsedRole, job.company, job.rawJd);
+  const ad = await generateJobAd(parsedRole, job.company, job.rawJd, { orgId: auth.orgId, userId: auth.userId });
   return NextResponse.json(ad);
 }

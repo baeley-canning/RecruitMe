@@ -24,6 +24,10 @@ export async function GET(
       location: true,
       message: true,
       createdAt: true,
+      evaluation: true,
+      avgScore: true,
+      candidatesRejected: true,
+      totalExamined: true,
     },
   });
 

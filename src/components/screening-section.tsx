@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Phone, Save } from "lucide-react";
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import { cn, safeParseJson } from "@/lib/utils";
 
 interface ScreeningData {
@@ -68,13 +69,13 @@ export function ScreeningSection({ candidateId, jobId, screeningData, onSaved }:
 
   const field = (label: string, key: keyof Omit<ScreeningData, "screenedAt">, multiline?: boolean) => (
     <div>
-      <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+      <label className="block text-xs font-medium text-text-secondary mb-1">{label}</label>
       {multiline ? (
         <textarea
           value={form[key] ?? ""}
           onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
           rows={2}
-          className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="w-full text-base text-text-primary bg-surface-sunken border border-separator rounded px-2.5 py-1.5 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none transition-all"
           placeholder="—"
         />
       ) : (
@@ -82,7 +83,7 @@ export function ScreeningSection({ candidateId, jobId, screeningData, onSaved }:
           type="text"
           value={form[key] ?? ""}
           onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-          className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="w-full h-7 text-base text-text-primary bg-surface-sunken border border-separator rounded px-2.5 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
           placeholder="—"
         />
       )}
@@ -90,26 +91,26 @@ export function ScreeningSection({ candidateId, jobId, screeningData, onSaved }:
   );
 
   return (
-    <div className="border border-slate-200 rounded-xl overflow-hidden">
+    <div className="rounded-md border border-separator bg-surface-raised overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-50 hover:bg-slate-100 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-surface-hover transition-colors"
       >
         <div className="flex items-center gap-2">
-          <Phone className="w-3.5 h-3.5 text-slate-400" />
-          <span className="text-xs font-medium text-slate-700">Phone Screening</span>
+          <Phone className="w-3.5 h-3.5 text-text-tertiary" />
+          <span className="text-md font-medium text-text-primary">Phone screening</span>
           {hasData && !open && (
-            <span className="text-[10px] text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">
-              Notes saved
-            </span>
+            <Badge className="bg-success-subtle text-success">Notes saved</Badge>
           )}
         </div>
-        {open ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+        {open
+          ? <ChevronUp className="w-3.5 h-3.5 text-text-tertiary" />
+          : <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />}
       </button>
 
       {open && (
-        <div className="p-3 space-y-2.5">
+        <div className="p-3 space-y-2.5 border-t border-separator">
           <div className="grid grid-cols-2 gap-2.5">
             {field("Availability", "availability")}
             {field("Notice period", "noticePeriod")}
@@ -120,7 +121,7 @@ export function ScreeningSection({ candidateId, jobId, screeningData, onSaved }:
           {field("Additional notes", "notes", true)}
 
           {parsed.screenedAt && (
-            <p className="text-[10px] text-slate-400">
+            <p className="text-xs text-text-tertiary data-mono" suppressHydrationWarning>
               Last saved {new Date(parsed.screenedAt).toLocaleString()}
             </p>
           )}
@@ -130,7 +131,7 @@ export function ScreeningSection({ candidateId, jobId, screeningData, onSaved }:
             variant="ghost"
             onClick={handleSave}
             loading={saving}
-            className={cn(saved ? "text-emerald-600" : "text-blue-600 hover:bg-blue-50")}
+            className={cn(saved && "text-success")}
           >
             {!saving && <Save className="w-3.5 h-3.5" />}
             {saved ? "Saved!" : "Save screening notes"}

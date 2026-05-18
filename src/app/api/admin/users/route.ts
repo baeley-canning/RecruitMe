@@ -4,12 +4,9 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { isOwner } from "@/lib/access";
 
 type AnySession = { user?: { role?: string; id?: string; name?: string | null } } | null;
-
-function isOwner(session: AnySession) {
-  return session?.user?.role === "owner";
-}
 
 export async function GET() {
   const session = await getServerSession(authOptions) as AnySession;
@@ -33,7 +30,8 @@ export async function GET() {
 
 const CreateUserSchema = z.object({
   username: z.string().min(2).max(50).trim(),
-  password: z.string().min(6).max(100),
+  password: z.string().min(8, "Password must be at least 8 characters").max(100)
+    .regex(/[0-9!@#$%^&*()_\-+=[\]{};':"\\|,.<>/?]/, "Password must contain at least one number or special character"),
   role: z.enum(["user", "owner"]).default("user"),
   orgId: z.string().optional(),
 });
@@ -64,6 +62,53 @@ export async function POST(req: Request) {
     select: { id: true, username: true, role: true, createdAt: true },
   });
   return NextResponse.json(user, { status: 201 });
+}
+
+const PatchUserSchema = z.object({
+  id:          z.string(),
+  username:    z.string().min(2).max(50).trim().optional(),
+  password:    z.string().min(8).max(100)
+                 .regex(/[0-9!@#$%^&*()_\-+=[\]{};':"\\|,.<>/?]/, "Password must contain at least one number or special character")
+                 .optional(),
+  role:        z.enum(["user", "owner"]).optional(),
+  orgId:       z.string().nullable().optional(),
+});
+
+export async function PATCH(req: Request) {
+  const session = await getServerSession(authOptions) as AnySession;
+  if (!isOwner(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const result = PatchUserSchema.safeParse(await req.json().catch(() => ({})));
+  if (!result.success) return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
+
+  const { id, username, password, role, orgId } = result.data;
+
+  // Can't demote yourself — would lock you out
+  if (id === session?.user?.id && role === "user") {
+    return NextResponse.json({ error: "You cannot demote your own account" }, { status: 400 });
+  }
+
+  if (username) {
+    const conflict = await prisma.user.findFirst({ where: { username, NOT: { id } } });
+    if (conflict) return NextResponse.json({ error: "Username already taken" }, { status: 409 });
+  }
+
+  const data: Record<string, unknown> = {};
+  if (username)            data.username = username;
+  if (password)            data.password = await bcrypt.hash(password, 12);
+  if (role !== undefined)  data.role     = role;
+  if (orgId !== undefined) data.orgId    = role === "owner" ? null : orgId;
+
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+  }
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data,
+    select: { id: true, username: true, role: true, orgId: true },
+  });
+  return NextResponse.json(updated);
 }
 
 const DeleteSchema = z.object({ id: z.string() });

@@ -7,7 +7,6 @@ import {
   Sparkles,
   Search,
   UserPlus,
-  ChevronRight,
   MapPin,
   Briefcase,
   Loader2,
@@ -20,19 +19,33 @@ import {
   Download,
   Upload,
   Pencil,
+  Plus,
+  RotateCcw,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
+import { showToast } from "@/components/ui/toast";
+import { confirm } from "@/components/ui/confirm-dialog";
 import { CandidateCard } from "@/components/candidate-card";
+import { orchestrateFetchProfile, cleanupAbortedAfterSuccess, buildBlankTabAdapter } from "@/lib/fetch-profile-orchestrator";
 import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
-import { FetchQueueToast } from "@/components/fetch-queue-toast";
+import { FetchQueuePanel } from "@/components/fetch-queue-panel";
+import type { FetchStatus } from "@/components/fetch-queue-panel";
 import { SearchCard } from "@/components/job/search-card";
-import { PipelineCard } from "@/components/job/pipeline-card";
-import { ClientReportModal, ClientReportButton } from "@/components/job/client-report-modal";
-import { JobAdModal } from "@/components/job/job-ad-modal";
+import { SearchFunnelCard } from "@/components/job/search-funnel-card";
+import { SavedSearchesCard } from "@/components/job/saved-searches-card";
+import { OnboardingCard } from "@/components/job/onboarding-card";
+import { JobWeightsCard } from "@/components/job/job-weights-card";
+import { TopCandidatesCard } from "@/components/job/top-candidates-card";
+import { BrowseLibraryModal } from "@/components/job/browse-library-modal";
+import { PipelineStepper, type PipelineStage } from "@/components/job/pipeline-stepper";
+import { SkillNotesSection } from "@/components/job/skill-notes-section";
+import { ParseHistoryCard } from "@/components/job/parse-history-card";
+import { ClientReportModal } from "@/components/job/client-report-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
-import { cn, statusBadge, statusLabel, safeParseJson } from "@/lib/utils";
+import { cn, statusLabel, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 
 
@@ -42,10 +55,20 @@ interface Candidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  jobAdderUrl: string | null;
+  phone: string | null;
   profileText: string | null;
+  /** Cross-job presence: this candidate's LinkedIn URL also matches one or
+   *  more OTHER active jobs in the same org. Empty array = unique to this job. */
+  otherActiveJobs?: Array<{ jobId: string; title: string; company: string | null; matchScore: number | null }>;
   profileCapturedAt: string | null;
   matchScore: number | null;
+  profileTextHash: string | null;
+  captureMetadata: string | null;
+  _count?: { contactEvents: number };
   matchReason: string | null;
+  fetchPriorityScore: number | null;
+  fetchPriorityReason: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
   scoreBreakdown: string | null;
@@ -63,22 +86,15 @@ interface Job {
   title: string;
   company: string | null;
   location: string | null;
+  location2: string | null;
   rawJd: string;
   parsedRole: string | null;
   salaryMin: number | null;
   salaryMax: number | null;
   status: string;
+  lastScoredAt: string | null;
+  lastParsedAt: string | null;
   candidates: Candidate[];
-}
-
-interface ElectronBridge {
-  platform?: string;
-  openExternal?: (url: string) => Promise<boolean>;
-}
-
-function getElectronBridge(): ElectronBridge | null {
-  if (typeof window === "undefined") return null;
-  return (window as Window & { electron?: ElectronBridge }).electron ?? null;
 }
 
 type ParsedRoleSource = ParsedRole["title_source"];
@@ -94,10 +110,10 @@ function SourceBadge({ source }: { source?: ParsedRoleSource }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        "inline-flex items-center rounded-sm px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wide",
         normalized === "explicit"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-blue-200 bg-blue-50 text-blue-700"
+          ? "bg-success-subtle text-success"
+          : "bg-accent-subtle text-accent"
       )}
     >
       {normalized === "explicit" ? "Explicit" : "Inferred"}
@@ -125,7 +141,7 @@ function HiringBriefChipSection({
 
   return (
     <div>
-      <p className={cn("text-xs font-medium uppercase tracking-wide mb-2", labelClassName ?? "text-slate-500")}>
+      <p className={cn("text-2xs font-medium uppercase tracking-wide mb-2", labelClassName ?? "text-text-tertiary")}>
         {title}
       </p>
       <div className="flex flex-wrap gap-1.5">
@@ -133,9 +149,9 @@ function HiringBriefChipSection({
           <span
             key={item}
             className={cn(
-              "px-2 py-0.5 text-xs rounded-md border",
+              "px-1.5 py-0.5 text-xs rounded-sm",
               chipClassName,
-              monospace && "font-mono"
+              monospace && "font-mono tabular-nums"
             )}
           >
             {item}
@@ -157,43 +173,103 @@ export default function JobDetailPage({
 
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState("");
-  const [showAddCandidate, setShowAddCandidate] = useState(false);
+  const [parseChanges, setParseChanges] = useState<string[]>([]);
+  // Modal open/close state consolidated into one object so toggling two at
+  // once (e.g. close A, open B) is a single setState instead of two async
+  // batches that can fire in wrong order.
+  const [modals, setModals] = useState({
+    addCandidate: false,
+    browseLibrary: false,
+    bulkUpload:    false,
+    report:        false,
+  });
+  const openModal  = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: true  })), []);
+  const closeModal = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: false })), []);
+
+  // Overflow (⋯) menu for low-frequency header actions
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const close = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) setOverflowOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [overflowOpen]);
   const [scoringId, setScoringId] = useState<string | null>(null);
-  const [fetchStatuses, setFetchStatuses] = useState<Record<string, {
-    state: "waiting" | "fetching" | "done" | "error";
-    message: string;
-  }>>({});
-  const [filter, setFilter] = useState<string>("all");
+  const [fetchStatuses, setFetchStatuses] = useState<Record<string, FetchStatus>>({});
+  const [fetchPanelDismissed, setFetchPanelDismissed] = useState(false);
+  // Each Fetch click creates its own server session immediately and the
+  // extension paces actual LinkedIn captures via its own rate limiter — so
+  // there is no client-side queue. The recruiter can have N sessions in
+  // flight; the extension grinds through them in age order.
+  // PipelineStepper-driven stage filter. "all" = no filter; a stage value
+  // narrows the candidate list to that pipeline bucket (see filteredCandidates
+  // below for the stage→status mapping). Replaces the previous string-array
+  // filter while preserving all downstream behaviour (Top Candidates, empty
+  // states, bulk select pruning).
+  const [selectedStage, setSelectedStage] = useState<PipelineStage | "all">("all");
+  // Progressive rendering — render the first N candidates initially, expand on
+  // recruiter request. Each CandidateCard is heavy (1600+ line component);
+  // rendering 500 of them on a job page creates a noticeable initial-paint
+  // delay. Capping the first batch keeps the page snappy at any scale; the
+  // "Show all" button reveals the rest when needed.
+  const RENDER_BATCH_SIZE = 50;
+  const [renderCap, setRenderCap] = useState<number>(RENDER_BATCH_SIZE);
   const [searchQuery, setSearchQuery] = useState("");
+  // Minimum match-score filter — recruiter's "call list today" lever. Default
+  // 0 = show everything. Set above 0 and the candidate list collapses to
+  // only candidates at or above that score, so the recruiter can isolate
+  // (say) the top-quartile in two clicks. Unscored candidates are always
+  // shown when minScoreFilter is 0 and hidden when it's >0.
+  const [minScoreFilter, setMinScoreFilter] = useState<number>(0);
+  // Snippet-only candidates are partial-profile data. Some recruiters want
+  // to focus on candidates with full profiles; others want the wider net.
+  // Default off (show both).
+  const [hideSnippetOnly, setHideSnippetOnly] = useState(false);
   const [rescoringAll, setRescoringAll] = useState(false);
-  const [rescoreResult, setRescoreResult] = useState<{ scored: number; skipped: number; total: number } | null>(null);
+  const [rescoreResult, setRescoreResult] = useState<{ scored: number; total: number; failedIds?: string[]; partial?: boolean } | null>(null);
+  const [rescoreProgress, setRescoreProgress] = useState<{ scored: number; total: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
-  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [salaryMin, setSalaryMin] = useState<string>("");
   const [salaryMax, setSalaryMax] = useState<string>("");
   const [editingSalary, setEditingSalary] = useState(false);
   const [savingSalary, setSavingSalary] = useState(false);
+  const [salaryError, setSalaryError] = useState("");
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [locationDraft, setLocationDraft] = useState("");
+  const [location2Draft, setLocation2Draft] = useState("");
   const [togglingStatus, setTogglingStatus] = useState(false);
-  const [showReport, setShowReport] = useState(false);
-  const [showJobAd, setShowJobAd] = useState(false);
+  const [enrichingPhones, setEnrichingPhones] = useState(false);
+  const [enrichResult, setEnrichResult] = useState<string | null>(null);
   const [editingJd, setEditingJd] = useState(false);
   const [jdDraft, setJdDraft] = useState("");
   const [savingJd, setSavingJd] = useState(false);
+  const [pendingAccepted, setPendingAccepted] = useState<Set<string>>(new Set());
+  const [pendingDismissed, setPendingDismissed] = useState<Set<string>>(new Set());
+  const [pendingReqAction, setPendingReqAction] = useState<Set<string>>(new Set());
 
   // Per-candidate fetch tracking.
   interface FetchEntry {
     sessionId: string;
     candidateId: string;
-    tab: Window | null;
     startedAt: number;
     processingStartedAt: number | null;
     lastKnownStatus: "pending" | "processing";
     done: boolean;
     pollInterval: ReturnType<typeof setInterval> | null;
+    consecutiveNetworkErrors: number;
+    // Set by handleCancelFetch when the user cancels before the session POST
+    // resolves, so the orchestrator's .then can short-circuit instead of
+    // navigating an orphan tab and starting a stale poll loop.
+    aborted: boolean;
   }
   const jobRef = useRef<Job | null>(null);
   const activeFetchesRef = useRef<Map<string, FetchEntry>>(new Map());
@@ -201,33 +277,119 @@ export default function JobDetailPage({
   const pollCandidateFetchRef = useRef<(candidateId: string) => Promise<void>>(async () => {});
   const finishFetchRef = useRef<(candidateId: string, state: "done" | "error", message: string) => void>(() => {});
 
-  const fetchJob = useCallback(async () => {
-    const res = await fetch(`/api/jobs/${id}`);
-    if (res.ok) {
-      const data = await res.json() as Job;
-      setJob(data);
-      setSalaryMin(data.salaryMin ? String(data.salaryMin / 1000) : "");
-      setSalaryMax(data.salaryMax ? String(data.salaryMax / 1000) : "");
+  const fetchJob = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`/api/jobs/${id}`, { signal });
+      if (signal?.aborted) return;
+      if (res.ok) {
+        const data = await res.json() as Job;
+        if (signal?.aborted) return;
+        setJob(data);
+        setSalaryMin(data.salaryMin ? String(data.salaryMin / 1000) : "");
+        setSalaryMax(data.salaryMax ? String(data.salaryMax / 1000) : "");
+        setFetchError(false);
+      } else {
+        setFetchError(true);
+      }
+    } catch (error) {
+      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+      setFetchError(true);
+    } finally {
+      if (signal?.aborted) return;
+      setLoading(false);
     }
-    setLoading(false);
   }, [id]);
 
   useEffect(() => {
-    fetchJob();
+    const controller = new AbortController();
+    setLoading(true);
+    setFetchError(false);
+    setJob(null);
+    void fetchJob(controller.signal);
+    return () => controller.abort();
   }, [fetchJob]);
+
+  // On mount: resume polling for any captures still in-progress. Recovers
+  // tracking state after the user refreshed the tab while the extension was
+  // partway through a profile.
+  useEffect(() => {
+    void (async () => {
+      const res = await fetch(`/api/extension/fetch-session?jobId=${encodeURIComponent(id)}`, { credentials: "include" }).catch(() => null);
+      if (!res?.ok) return;
+      const data = await res.json().catch(() => null) as {
+        sessions?: Array<{ sessionId: string; candidateId: string; status: string; message?: string; updatedAt?: string; createdAt?: string }>;
+      } | null;
+      if (!data?.sessions) return;
+      for (const s of data.sessions) {
+        if (!s.candidateId || activeFetchesRef.current.has(s.candidateId)) continue;
+        if (s.status !== "pending" && s.status !== "processing") continue;
+        // Use the SESSION's actual createdAt / updatedAt so the timeout is
+        // anchored to when the server transitioned states, not when the
+        // recruiter's tab happens to mount. Otherwise a session that's been
+        // in "processing" for 4 min server-side gets a fresh 5-min timeout
+        // every time the page reloads.
+        const serverCreatedAt = s.createdAt ? new Date(s.createdAt).getTime() : Date.now() - 60_000;
+        const serverUpdatedAt = s.updatedAt ? new Date(s.updatedAt).getTime() : serverCreatedAt;
+        const entry: FetchEntry = {
+          sessionId: s.sessionId,
+          candidateId: s.candidateId,
+          startedAt: serverCreatedAt,
+          processingStartedAt: s.status === "processing" ? serverUpdatedAt : null,
+          lastKnownStatus: s.status as "pending" | "processing",
+          done: false,
+          pollInterval: null,
+          consecutiveNetworkErrors: 0,
+          aborted: false,
+        };
+        activeFetchesRef.current.set(s.candidateId, entry);
+        setFetchStatuses((prev) => ({
+          ...prev,
+          [s.candidateId]: { state: "waiting", message: s.message ?? "Capture still running — resumed tracking", startedAt: serverCreatedAt },
+        }));
+        entry.pollInterval = setInterval(() => {
+          void pollCandidateFetchRef.current(s.candidateId);
+        }, 3000);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // Keep jobRef in sync so poll callbacks can read the latest job without stale closures.
   useEffect(() => { jobRef.current = job; }, [job]);
 
+  // Fire an immediate catchup poll on every active fetch when the tab becomes
+  // visible again. The polling interval skips while document.hidden is true
+  // (saves API quota), so without this the recruiter waits up to 2.5s after
+  // returning to the tab before the "fetching..." panel updates to "done".
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) return;
+      for (const [candidateId, entry] of activeFetchesRef.current) {
+        if (!entry.done) {
+          void pollCandidateFetchRef.current(candidateId);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  // Warn before browser-level navigation (refresh/close tab) when JD has unsaved edits.
+  useEffect(() => {
+    if (!editingJd) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [editingJd]);
+
   useEffect(() => {
     const ref = activeFetchesRef.current;
     return () => {
-      // Clean up all active sessions and poll intervals on unmount.
+      // Unmount can be a route change, refresh, or React remount while the
+      // extension is still working. Clear local timers only; the server
+      // session is recovered on the next mount via the resume effect above.
       for (const entry of ref.values()) {
         if (entry.pollInterval) clearInterval(entry.pollInterval);
-        void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
-          method: "DELETE",
-        }).catch(() => {});
       }
       ref.clear();
     };
@@ -235,9 +397,14 @@ export default function JobDetailPage({
 
   const handleSaveSalary = async () => {
     if (!job) return;
-    setSavingSalary(true);
     const min = salaryMin ? Math.round(parseFloat(salaryMin) * 1000) : null;
     const max = salaryMax ? Math.round(parseFloat(salaryMax) * 1000) : null;
+    if (min != null && max != null && min > max) {
+      setSalaryError("Minimum cannot exceed maximum");
+      return;
+    }
+    setSalaryError("");
+    setSavingSalary(true);
     const res = await fetch(`/api/jobs/${job.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -249,6 +416,56 @@ export default function JobDetailPage({
       setEditingSalary(false);
     }
     setSavingSalary(false);
+  };
+
+  const handleEnrichPhones = async () => {
+    if (!job) return;
+    setEnrichingPhones(true);
+    setEnrichResult(null);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/enrich-phones`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string; enriched?: number; message?: string };
+      if (!res.ok) {
+        setEnrichResult(data.error ?? `Enrichment failed (${res.status})`);
+      } else {
+        setEnrichResult(data.message ?? `Enriched ${data.enriched ?? 0} candidates.`);
+        // Re-fetch so the new phones show up on the cards without a manual reload.
+        await fetchJob();
+      }
+    } catch {
+      setEnrichResult("Enrichment failed — check your connection and try again.");
+    } finally {
+      setEnrichingPhones(false);
+    }
+  };
+
+  const handleSaveLocation = async () => {
+    if (!job) return;
+    setSavingLocation(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // Empty string clears location2 (recruiter removed the second city).
+        body: JSON.stringify({
+          location:  locationDraft.trim(),
+          location2: location2Draft.trim() || null,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json() as Job;
+        setJob((prev) => prev ? { ...prev, location: updated.location, location2: updated.location2 } : prev);
+        setEditingLocation(false);
+      } else {
+        showToast("Failed to save location — please try again", "error");
+      }
+    } finally {
+      setSavingLocation(false);
+    }
   };
 
   const handleSaveJd = async () => {
@@ -265,9 +482,53 @@ export default function JobDetailPage({
         setEditingJd(false);
         // Re-analyse automatically so scoring criteria reflect the updated JD
         handleParse();
+      } else {
+        showToast("Failed to save job description — please try again", "error");
       }
     } finally {
       setSavingJd(false);
+    }
+  };
+
+  const handleAcceptAlternative = async (skill: string, alternative: string) => {
+    setPendingAccepted((prev) => new Set([...prev, alternative]));
+    try {
+      const res = await fetch(`/api/jobs/${id}/skill-note-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill, action: "accept", alternative }),
+      });
+      if (res.ok) {
+        await fetchJob();
+      } else {
+        showToast("Failed to accept alternative — please try again", "error");
+      }
+    } finally {
+      setPendingAccepted((prev) => { const next = new Set(prev); next.delete(alternative); return next; });
+    }
+  };
+
+  // Dismiss is session-only — tips come back on reload or re-analyse.
+  // Clicking X just means "not right now", not "never show this again".
+  const handleDismissNote = (skill: string) => {
+    setPendingDismissed((prev) => new Set([...prev, skill]));
+  };
+
+  const handleRequirementAction = async (
+    action: "dismiss-knockout" | "restore-knockout" | "promote-visa-flag" | "demote-visa-flag",
+    item: string
+  ) => {
+    const key = `${action}:${item}`;
+    setPendingReqAction((prev) => new Set([...prev, key]));
+    try {
+      const res = await fetch(`/api/jobs/${id}/requirement-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, item }),
+      });
+      if (res.ok) await fetchJob();
+    } finally {
+      setPendingReqAction((prev) => { const next = new Set(prev); next.delete(key); return next; });
     }
   };
 
@@ -299,20 +560,61 @@ export default function JobDetailPage({
     if (!job) return;
     setParsing(true);
     setParseError("");
+    setParseChanges([]);
     try {
       const res = await fetch(`/api/jobs/${id}/parse`, { method: "POST" });
-      const data = await res.json() as { parsedRole?: ParsedRole; error?: string };
+      // .catch(() => ({})) so an empty 500 body doesn't crash res.json() —
+      // we want the recruiter to see SOMETHING after a re-analyse, never
+      // a silent spinner-stop with no banner.
+      const data = await res.json().catch(() => ({})) as {
+        parsedRole?: ParsedRole;
+        changes?: string[];
+        error?: string;
+        warning?: string;
+      };
       if (!res.ok || data.error) {
-        setParseError(data.error ?? "Parsing failed");
+        setParseError(data.error ?? `Parsing failed (HTTP ${res.status})`);
+      } else if (data.warning) {
+        // The route emits `warning` when the AI parse fell back to the
+        // regex-minimal path (Claude couldn't extract requirements but the
+        // JD itself was probably fine). Surface it — without this the
+        // recruiter just sees the spinner stop with no feedback.
+        setParseChanges([data.warning]);
+        await fetchJob();
+      } else if (data.changes?.length) {
+        setParseChanges(data.changes);
+        await fetchJob();
       } else {
+        setParseChanges(["Re-analysed — requirements are the same as before"]);
         await fetchJob();
       }
-    } catch {
-      setParseError("Parsing failed. Make sure Ollama is running.");
+    } catch (err) {
+      console.error("[parse] handleParse threw:", err);
+      setParseError(`Parsing failed — ${err instanceof Error ? err.message : "check your connection and try again"}.`);
     } finally {
       setParsing(false);
     }
   };
+
+  const handleCancelFetch = useCallback((candidateId: string) => {
+    const entry = activeFetchesRef.current.get(candidateId);
+    if (entry) {
+      // Mark aborted so the in-flight orchestrator .then bails out instead of
+      // navigating the tab and starting a polling interval.
+      entry.aborted = true;
+      if (entry.pollInterval) clearInterval(entry.pollInterval);
+    }
+    activeFetchesRef.current.delete(candidateId);
+    // Cancel the session on the server only if we actually have one — the
+    // POST may not have resolved yet, in which case the orchestrator's
+    // aborted-branch handles the eventual DELETE.
+    if (entry?.sessionId) {
+      fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
+        method: "DELETE", credentials: "include",
+      }).catch(() => {});
+    }
+    setFetchStatuses((prev) => { const next = { ...prev }; delete next[candidateId]; return next; });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleScore = useCallback(async (candidateId: string) => {
     setScoringId(candidateId);
@@ -359,36 +661,48 @@ export default function JobDetailPage({
     activeFetchesRef.current.delete(candidateId);
     void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`, {
       method: "DELETE",
+      credentials: "include",
     }).catch(() => {});
     setFetchStatuses((prev) => ({ ...prev, [candidateId]: { state, message } }));
     clearCandidateStatus(candidateId, state === "done" ? 4000 : 6000, state);
   };
 
   const pollCandidateFetch = async (candidateId: string) => {
+    // Skip when the tab is hidden — saves API quota and Railway compute when
+    // the recruiter has stepped away. The poll resumes naturally when the
+    // tab is foregrounded again.
+    if (typeof document !== "undefined" && document.hidden) return;
     const entry = activeFetchesRef.current.get(candidateId);
     if (!entry || entry.done) return;
     const now = Date.now();
+    // Pending = waiting for the extension to claim the session. If nothing
+    // happens for 3 minutes the extension probably isn't running.
+    // Processing = extension is capturing, possibly navigating to LinkedIn's
+    // /details/experience page, then saving + scoring. Allow 7 minutes.
+    const PENDING_LIMIT    = 180_000;  // 3 min
+    const PROCESSING_LIMIT = 420_000;  // 7 min
     if (entry.lastKnownStatus === "processing") {
       const processingStartedAt = entry.processingStartedAt ?? now;
-      if (now - processingStartedAt > 300_000) {
+      if (now - processingStartedAt > PROCESSING_LIMIT) {
         finishFetchRef.current(
           candidateId,
           "error",
-          "Profile reached RecruitMe but AI scoring took too long - refresh the job and re-score if needed."
+          "Capture started but took too long to finish — refresh the job to resume tracking, or re-score if the profile saved."
         );
         return;
       }
-    } else if (now - entry.startedAt > 120_000) {
+    } else if (now - entry.startedAt > PENDING_LIMIT) {
       finishFetchRef.current(
         candidateId,
         "error",
-        "Capture timed out - try again. If it keeps failing, reload the extension and check the extension popup for the real error."
+        "Capture timed out — make sure the RecruitMe LinkedIn extension is installed and try again."
       );
       return;
     }
     try {
       const res = await fetch(
-        `/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`
+        `/api/extension/fetch-session?sessionId=${encodeURIComponent(entry.sessionId)}`,
+        { credentials: "include" }
       );
       if (!res.ok) {
         if (res.status === 404) {
@@ -414,6 +728,7 @@ export default function JobDetailPage({
         candidate?: Candidate;
         error?: string;
       };
+      entry.consecutiveNetworkErrors = 0; // reset on any successful response
       if (data.status === "processing") {
         entry.lastKnownStatus = "processing";
         entry.processingStartedAt ??= Date.now();
@@ -441,132 +756,230 @@ export default function JobDetailPage({
         finishFetchRef.current(candidateId, "error", data.error ?? data.message ?? "Capture failed");
         return;
       }
-    } catch { /* network error — keep polling */ }
+    } catch {
+      // Network error — track consecutive failures; after 3 in a row pause for
+      // 30s then reset the counter so polling can resume automatically.
+      entry.consecutiveNetworkErrors = (entry.consecutiveNetworkErrors ?? 0) + 1;
+      if (entry.consecutiveNetworkErrors >= 3) {
+        entry.consecutiveNetworkErrors = 0;
+        // Brief pause to let transient network issues resolve before retrying.
+        await new Promise((r) => setTimeout(r, 30_000));
+      }
+    }
   };
 
   // Keep fn-refs current every render.
   pollCandidateFetchRef.current = pollCandidateFetch;
   finishFetchRef.current = finishFetch;
 
-  // Must NOT be async — window.open is blocked after an await.
+  // The Fetch click handler MUST NOT await before window.open — losing the
+  // user-gesture flag triggers the popup blocker. We open a blank tab inside
+  // the gesture, POST the session, then navigate the existing tab to
+  // LinkedIn. Race fix: opening LinkedIn directly meant the extension's
+  // /pending check could fire before the session existed, bailing in
+  // manual-only mode.
   const handleFetchProfile = useCallback((candidateId: string) => {
     const candidate = job?.candidates.find((c) => c.id === candidateId);
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
+    const linkedinUrl = candidate.linkedinUrl;
+    setFetchPanelDismissed(false);
 
-    const electron = getElectronBridge();
-    const useExternalBrowser = typeof electron?.openExternal === "function";
-    const tab = useExternalBrowser ? null : window.open("about:blank", `_rm-fetch-${candidateId}`);
-    if (!useExternalBrowser && !tab) {
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: { state: "error", message: "Popup blocked - allow popups for this site and try again" },
-      }));
-      clearCandidateStatus(candidateId, 6000, "error");
-      return;
-    }
+    // Reserve the active slot synchronously so a second click can't race.
+    // The `aborted` flag lets handleCancelFetch interrupt an in-flight POST
+    // — without it, cancelling mid-POST would still navigate the orphan tab
+    // and leak a polling interval against a deleted placeholder.
+    const placeholder: FetchEntry = {
+      sessionId: "",
+      candidateId,
+      startedAt: Date.now(),
+      processingStartedAt: null,
+      lastKnownStatus: "pending",
+      done: false,
+      pollInterval: null,
+      consecutiveNetworkErrors: 0,
+      aborted: false,
+    };
+    activeFetchesRef.current.set(candidateId, placeholder);
 
     setFetchStatuses((prev) => ({
       ...prev,
-      [candidateId]: { state: "waiting", message: "Queueing LinkedIn capture..." },
+      [candidateId]: { state: "waiting", message: "Starting capture...", startedAt: Date.now() },
     }));
 
-    void (async () => {
-      try {
+    // Open the blank tab inside the user gesture. NO `noopener` — Chrome and
+    // Safari return null when noopener is set, which would mean window.open
+    // gives us nothing to navigate later. We need the WindowProxy to call
+    // location.href once the session POST returns. We deliberately do NOT
+    // pass the LinkedIn URL: that's the race we're closing.
+    const win = window.open("about:blank", "_blank");
+
+    // Bind the page's React state to the testable cleanup helper.
+    const cleanupAfterCancel = (sessionId: string | null) =>
+      cleanupAbortedAfterSuccess({
+        sessionId,
+        deleteServerSession: (sid) => {
+          void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(sid)}`, {
+            method: "DELETE", credentials: "include",
+          }).catch(() => {});
+        },
+        removeFromActiveMap: () => activeFetchesRef.current.delete(candidateId),
+        clearUiStatus: () => setFetchStatuses((prev) => {
+          if (!(candidateId in prev)) return prev;
+          const next = { ...prev };
+          delete next[candidateId];
+          return next;
+        }),
+      });
+
+    void orchestrateFetchProfile({
+      linkedinUrl,
+      // buildBlankTabAdapter severs win.opener BEFORE setting location.href
+      // — see fetch-profile-orchestrator.ts. Both this caller and the unit
+      // test import the same builder, so the opener-clearing invariant
+      // can't drift between code and test.
+      openBlankTab: () => win ? buildBlankTabAdapter(win) : null,
+      postFetchSession: async () => {
         const start = await fetch("/api/extension/fetch-session", {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ jobId: id, candidateId }),
         });
-        const session = (await start.json()) as { sessionId?: string; error?: string };
-
+        const session = (await start.json()) as { sessionId?: string; error?: string; message?: string };
         if (!start.ok || !session.sessionId) {
-          try { tab?.close(); } catch { /* ignore */ }
-          setFetchStatuses((prev) => ({
-            ...prev,
-            [candidateId]: { state: "error", message: session.error ?? "Could not start capture" },
-          }));
-          clearCandidateStatus(candidateId, 6000, "error");
-          return;
+          return { ok: false as const, error: session.error ?? "Could not start capture" };
         }
-
-        if (useExternalBrowser) {
-          const opened = await electron?.openExternal?.(candidate.linkedinUrl!);
-          if (!opened) {
-            await fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(session.sessionId)}`, {
-              method: "DELETE",
-            }).catch(() => {});
-            setFetchStatuses((prev) => ({
-              ...prev,
-              [candidateId]: { state: "error", message: "Opera not found — install Opera and the RecruitMe extension (see LinkedIn Setup)" },
-            }));
-            clearCandidateStatus(candidateId, 6000, "error");
-            return;
-          }
-        } else if (tab && !tab.closed) {
-          tab.location.href = candidate.linkedinUrl!;
-        }
-
-        setFetchStatuses((prev) => ({
-          ...prev,
-          [candidateId]: {
-            state: "waiting",
-            message: useExternalBrowser
-              ? "Queued - waiting for the extension to open and capture the LinkedIn profile..."
-              : "LinkedIn tab requested - waiting for the extension to confirm capture...",
-          },
-        }));
-
-        const entry: FetchEntry = {
-          sessionId: session.sessionId,
-          candidateId,
-          tab,
-          startedAt: Date.now(),
-          processingStartedAt: null,
-          lastKnownStatus: "pending",
-          done: false,
-          pollInterval: null,
+        return {
+          ok: true as const,
+          session: { sessionId: session.sessionId, message: session.message ?? null },
         };
-        activeFetchesRef.current.set(candidateId, entry);
-        entry.pollInterval = setInterval(() => {
-          void pollCandidateFetchRef.current(candidateId);
-        }, 1000);
-      } catch {
+      },
+      isAborted: () => placeholder.aborted,
+    }).then((outcome) => {
+      if (outcome.kind === "aborted") {
+        // Cancel landed before the tab navigated. The orchestrator already
+        // closed the tab; we just clean up server-side.
+        cleanupAfterCancel(outcome.sessionId);
+        return;
+      }
+      if (outcome.kind === "popup_blocked") {
+        activeFetchesRef.current.delete(candidateId);
         setFetchStatuses((prev) => ({
           ...prev,
-          [candidateId]: { state: "error", message: "Network error starting capture" },
+          [candidateId]: { state: "error", message: "Popup blocked — allow popups for this site to fetch profiles" },
+        }));
+        clearCandidateStatus(candidateId, 8000, "error");
+        return;
+      }
+      if (outcome.kind === "session_failed") {
+        activeFetchesRef.current.delete(candidateId);
+        setFetchStatuses((prev) => ({
+          ...prev,
+          [candidateId]: { state: "error", message: outcome.message },
         }));
         clearCandidateStatus(candidateId, 6000, "error");
+        return;
       }
-    })();
-  }, [id, job]);
-
-  const handleStatusChange = useCallback(async (candidateId: string, status: string) => {
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      // Success path. Check abort BEFORE touching UI — if cancel landed
+      // between the orchestrator's last isAborted poll and this microtask,
+      // we must NOT resurrect the "waiting" UI. handleCancelFetch already
+      // cleared activeFetchesRef + fetchStatuses; cleanup here is defensive
+      // (and idempotent — guards against future caller reordering).
+      if (placeholder.aborted) {
+        cleanupAfterCancel(outcome.sessionId);
+        return;
+      }
+      placeholder.sessionId = outcome.sessionId;
+      setFetchStatuses((prev) => ({
+        ...prev,
+        [candidateId]: {
+          state: "waiting",
+          message: outcome.message,
+          startedAt: Date.now(),
+        },
+      }));
+      const interval = setInterval(() => {
+        void pollCandidateFetchRef.current(candidateId);
+      }, 2500);
+      placeholder.pollInterval = interval;
+      // Microtask race: cancel may have landed between the placeholder.aborted
+      // check above and setInterval here. If so, kill everything we just set.
+      if (placeholder.aborted) {
+        clearInterval(interval);
+        cleanupAfterCancel(outcome.sessionId);
+      }
     });
-    await fetchJob();
-  }, [fetchJob, id]);
+  }, [id, job]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleNotesChange = useCallback(async (candidateId: string, notes: string) => {
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes }),
-    });
-    await fetchJob();
-  }, [fetchJob, id]);
+  // Wrap a candidate PATCH with consistent error handling + success toast.
+  // Recruiter does these every minute; silent failures here are how lost
+  // work happens. Toast surfaces both happy-path confirmation and failures.
+  const patchCandidate = useCallback(
+    async (candidateId: string, body: Record<string, unknown>, successMessage: string) => {
+      try {
+        const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({})) as { error?: string };
+          showToast(data.error || `Save failed (${res.status}) — try again`, "error");
+          return false;
+        }
+        showToast(successMessage);
+        await fetchJob();
+        return true;
+      } catch {
+        showToast("Network error — change not saved. Check your connection and try again.", "error");
+        return false;
+      }
+    },
+    [fetchJob, id]
+  );
 
-  const handleLinkedInChange = useCallback(async (candidateId: string, linkedinUrl: string) => {
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ linkedinUrl: linkedinUrl || null }),
-    });
-    await fetchJob();
-  }, [fetchJob, id]);
+  const handleStatusChange = useCallback(
+    (candidateId: string, status: string) =>
+      patchCandidate(candidateId, { status }, `Moved to ${statusLabel(status)}`).then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleNotesChange = useCallback(
+    (candidateId: string, notes: string) =>
+      patchCandidate(candidateId, { notes }, "Notes saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleLinkedInChange = useCallback(
+    (candidateId: string, linkedinUrl: string) =>
+      patchCandidate(candidateId, { linkedinUrl: linkedinUrl || null }, "LinkedIn URL saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleJobAdderChange = useCallback(
+    (candidateId: string, jobAdderUrl: string) =>
+      patchCandidate(candidateId, { jobAdderUrl: jobAdderUrl || null }, "JobAdder URL saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleNameChange = useCallback(
+    (candidateId: string, name: string) =>
+      patchCandidate(candidateId, { name: name || null }, "Name saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleHeadlineChange = useCallback(
+    (candidateId: string, headline: string) =>
+      patchCandidate(candidateId, { headline: headline || null }, "Headline saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleLocationChange = useCallback(
+    (candidateId: string, location: string) =>
+      patchCandidate(candidateId, { location: location || null }, "Location saved").then(() => undefined),
+    [patchCandidate]
+  );
 
   const handleScreeningDataChange = useCallback((_candidateId: string, data: string) => {
     setJob((prev) => {
@@ -595,34 +1008,79 @@ export default function JobDetailPage({
   const handleRescoreAll = async () => {
     setRescoringAll(true);
     setRescoreResult(null);
+    setRescoreProgress(null);
     try {
       const res = await fetch(`/api/jobs/${id}/candidates/score-all`, { method: "POST" });
-      const data = await res.json() as { scored?: number; skipped?: number; total?: number; error?: string };
-      if (res.ok) {
-        setRescoreResult({ scored: data.scored ?? 0, skipped: data.skipped ?? 0, total: data.total ?? 0 });
-        await fetchJob();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        showToast(data.error || "Scoring failed — please try again", "error");
+        return;
       }
+      if (!res.body) return;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let streamFinished = false;
+      let lastProgress: { scored: number; total: number } | null = null;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean; failedIds?: string[] };
+              lastProgress = { scored: msg.scored, total: msg.total };
+              setRescoreProgress(lastProgress);
+              if (msg.done) {
+                setRescoreResult({ scored: msg.scored, total: msg.total, failedIds: msg.failedIds });
+                streamFinished = true;
+              }
+            } catch { /* ignore malformed lines */ }
+          }
+        }
+      } catch {
+        // Network dropped mid-stream — fall through to partial result below
+      }
+
+      // If the stream ended without a done:true message, show a partial result
+      // so the user knows something was scored (not complete silence on failure).
+      if (!streamFinished && lastProgress) {
+        setRescoreResult({ scored: lastProgress.scored, total: lastProgress.total, failedIds: [], partial: true });
+      }
+
+      await fetchJob();
     } finally {
       setRescoringAll(false);
+      setRescoreProgress(null);
     }
   };
 
   const handleDelete = useCallback(async (candidateId: string) => {
-    if (!confirm("Remove this candidate?")) return;
-    await fetch(`/api/jobs/${id}/candidates/${candidateId}`, { method: "DELETE" });
+    if (!await confirm({ message: "Remove this candidate?", danger: true, confirmLabel: "Remove" })) return;
+    const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}`, { method: "DELETE" });
+    if (!res.ok) { showToast("Delete failed — please try again", "error"); return; }
     setSelectedIds((prev) => { const next = new Set(prev); next.delete(candidateId); return next; });
     await fetchJob();
   }, [fetchJob, id]);
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Delete ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!await confirm({ title: "Bulk delete?", message: `Delete ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""}? This cannot be undone.`, danger: true, confirmLabel: "Delete all" })) return;
     setBulkDeleting(true);
-    await fetch(`/api/jobs/${id}/candidates/bulk-delete`, {
+    const res = await fetch(`/api/jobs/${id}/candidates/bulk-delete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids: [...selectedIds] }),
     });
+    if (!res.ok) {
+      showToast("Bulk delete failed — please try again", "error");
+    }
     setSelectedIds(new Set());
     setBulkDeleting(false);
     await fetchJob();
@@ -630,8 +1088,9 @@ export default function JobDetailPage({
 
   const handleBulkStatusChange = async (status: string) => {
     if (selectedIds.size === 0) return;
+    if (!await confirm({ message: `Move ${selectedIds.size} candidate${selectedIds.size > 1 ? "s" : ""} to "${statusLabel(status)}"?`, confirmLabel: "Move" })) return;
     setBulkStatusChanging(true);
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       [...selectedIds].map((candidateId) =>
         fetch(`/api/jobs/${id}/candidates/${candidateId}`, {
           method: "PATCH",
@@ -640,6 +1099,10 @@ export default function JobDetailPage({
         })
       )
     );
+    const failCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)).length;
+    if (failCount > 0) {
+      showToast(`${failCount} of ${selectedIds.size} status updates failed — refresh and retry`, "error");
+    }
     setSelectedIds(new Set());
     setBulkStatusChanging(false);
     await fetchJob();
@@ -767,8 +1230,36 @@ ${toHtml(job.rawJd)}
     : (parsedRole?.skills_preferred ?? []);
   const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
   const filteredCandidates = useMemo(() => {
+    // Terminal statuses go to the bottom of the list — recruiter doesn't want
+    // hired / rejected mixed in with the active pipeline they're still working.
+    const TERMINAL_STATUSES = new Set(["hired", "declined", "rejected"]);
     return [...jobCandidates]
-      .filter((candidate) => (filter === "all" ? true : candidate.status === filter))
+      .filter((candidate) => {
+        // Stage → status mapping (mirrors the buckets surfaced by
+        // PipelineStepper). "fetched" deliberately includes "scored" rows
+        // because the stepper renders both — clicking Fetched should still
+        // show those candidates.
+        if (selectedStage === "all") return true;
+        if (selectedStage === "fetched") {
+          return candidate.status === "new" || candidate.status === "reviewing";
+        }
+        if (selectedStage === "scored") {
+          return (
+            (candidate.status === "new" || candidate.status === "reviewing") &&
+            (candidate.matchScore ?? 0) > 0
+          );
+        }
+        if (selectedStage === "shortlisted") return candidate.status === "shortlisted";
+        if (selectedStage === "contacted") {
+          return (
+            candidate.status === "contacted" ||
+            candidate.status === "interviewing" ||
+            candidate.status === "offer_sent"
+          );
+        }
+        if (selectedStage === "hired") return candidate.status === "hired";
+        return true;
+      })
       .filter((candidate) => {
         if (!normalizedSearchQuery) return true;
         return (
@@ -778,12 +1269,72 @@ ${toHtml(job.rawJd)}
           (candidate.notes ?? "").toLowerCase().includes(normalizedSearchQuery)
         );
       })
+      .filter((candidate) => {
+        // Min-score filter. When 0, pass everything. Above 0, require a
+        // numeric matchScore at or above the threshold. UNSCORED candidates
+        // (null) are KEPT visible — adversarial-review caught that hiding
+        // them creates a false "empty list" impression when the recruiter
+        // has unscored candidates in the pipeline. They sort to the bottom
+        // by the existing tiebreakers (profile completeness, etc.) and
+        // their "needs scoring" affordance is visible on the card.
+        if (minScoreFilter <= 0) return true;
+        if (candidate.matchScore == null) return true;
+        return candidate.matchScore >= minScoreFilter;
+      })
+      .filter((candidate) => {
+        // Snippet/partial-profile filter — recruiters who only want to call
+        // candidates with verified full profiles can toggle this.
+        if (!hideSnippetOnly) return true;
+        return Boolean(candidate.profileText && candidate.profileText.length >= 2000);
+      })
       .sort((a, b) => {
+        // 1. Active before terminal — moves hired/rejected to the bottom of the
+        //    "all" view rather than mixing them with new/shortlisted candidates.
+        const aTerminal = TERMINAL_STATUSES.has(a.status) ? 1 : 0;
+        const bTerminal = TERMINAL_STATUSES.has(b.status) ? 1 : 0;
+        if (aTerminal !== bTerminal) return aTerminal - bTerminal;
+
+        // 2. Within active: candidates that haven't been fetched yet but have a
+        //    high search-priority score surface first, so the recruiter knows
+        //    "fetch these next, they look promising".
+        const aInitialLead = !a.profileCapturedAt && a.fetchPriorityScore != null;
+        const bInitialLead = !b.profileCapturedAt && b.fetchPriorityScore != null;
+        if (aInitialLead && bInitialLead) {
+          const priorityDiff = (b.fetchPriorityScore ?? -1) - (a.fetchPriorityScore ?? -1);
+          if (priorityDiff !== 0) return priorityDiff;
+        }
+        // 3. Match score desc — primary signal.
         const scoreDiff = (b.matchScore ?? -1) - (a.matchScore ?? -1);
         if (scoreDiff !== 0) return scoreDiff;
-        return (b.acceptanceScore ?? -1) - (a.acceptanceScore ?? -1);
+
+        // 4. Acceptance score desc — when match scores tie, surface the more
+        //    likely-to-accept candidate first.
+        const acceptDiff = (b.acceptanceScore ?? -1) - (a.acceptanceScore ?? -1);
+        if (acceptDiff !== 0) return acceptDiff;
+
+        // 5. Profile completeness — full profile beats placeholder.
+        const aComplete = (a.profileText ? 1 : 0) + (a.headline ? 1 : 0) + (a.location ? 1 : 0);
+        const bComplete = (b.profileText ? 1 : 0) + (b.headline ? 1 : 0) + (b.location ? 1 : 0);
+        return bComplete - aComplete;
       });
-  }, [filter, jobCandidates, normalizedSearchQuery]);
+  }, [selectedStage, jobCandidates, normalizedSearchQuery, minScoreFilter, hideSnippetOnly]);
+
+  // Prune selectedIds when candidates leave the filtered view (filter change,
+  // search filter, candidate removed). Otherwise bulk-delete or bulk-move
+  // would silently target candidates the recruiter can't see.
+  useEffect(() => {
+    const visibleIds = new Set(filteredCandidates.map((c) => c.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visibleIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredCandidates]);
+
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: jobCandidates.length };
     for (const candidate of jobCandidates) {
@@ -793,101 +1344,238 @@ ${toHtml(job.rawJd)}
   }, [jobCandidates]);
   const shortlistCount = statusCounts.shortlisted ?? 0;
 
+  // Pipeline-stepper bucket counts. "fetched" includes everything pre-shortlist
+  // (new + reviewing). "scored" is a subset of fetched with matchScore > 0
+  // (the stepper is fine rendering both — same source data, two lenses).
+  const pipelineCounts = useMemo<Record<PipelineStage, number>>(() => {
+    let fetched = 0, scored = 0, shortlisted = 0, contacted = 0, hired = 0;
+    for (const c of jobCandidates) {
+      if (c.status === "new" || c.status === "reviewing") {
+        fetched += 1;
+        if ((c.matchScore ?? 0) > 0) scored += 1;
+      } else if (c.status === "shortlisted") {
+        shortlisted += 1;
+      } else if (c.status === "contacted" || c.status === "interviewing" || c.status === "offer_sent") {
+        contacted += 1;
+      } else if (c.status === "hired") {
+        hired += 1;
+      }
+    }
+    return { fetched, scored, shortlisted, contacted, hired };
+  }, [jobCandidates]);
+  const rejectedCount =
+    (statusCounts.declined ?? 0) + (statusCounts.rejected ?? 0);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+        <Loader2 className="w-6 h-6 text-accent animate-spin" />
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="p-6 text-center">
+        <AlertCircle className="w-7 h-7 text-danger mx-auto mb-3" />
+        <p className="text-text-primary font-medium mb-1">Failed to load job</p>
+        <p className="text-text-tertiary text-sm mb-4">Check your connection and try again.</p>
+        <button
+          onClick={() => { setLoading(true); setFetchError(false); fetchJob(); }}
+          className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   if (!job) {
-    return <div className="p-8 text-center text-slate-500">Job not found.</div>;
+    return <div className="px-4 py-6 text-center text-text-tertiary">Job not found.</div>;
   }
 
-
-      // Tiebreaker: acceptance score descending — "likely open" ranks above "may consider"
-
+  const jobStatusPillClass =
+    job.status === "active"
+      ? "bg-success-subtle text-success"
+      : job.status === "closed"
+        ? "bg-surface-hover text-text-secondary"
+        : "bg-surface-hover text-text-secondary";
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-7">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h1 className="text-2xl font-bold text-slate-900">{job.title}</h1>
-            <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", statusBadge(job.status))}>
-              {statusLabel(job.status)}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 text-sm text-slate-500">
-            {job.company && (
-              <span className="flex items-center gap-1">
-                <Briefcase className="w-3.5 h-3.5" />
-                {job.company}
-              </span>
-            )}
-            {job.location && (
-              <span className="flex items-center gap-1">
-                <MapPin className="w-3.5 h-3.5" />
-                {job.location}
-              </span>
-            )}
-          </div>
+    <div className="max-w-5xl mx-auto">
+      {/* Toolbar — 36px page chrome. Title left, actions right. */}
+      <div className="toolbar -mx-4 sm:mx-0 sm:rounded-md mb-3">
+        <div className="min-w-0 flex-1 flex items-center gap-2">
+          <h1 className="text-md font-semibold text-text-primary truncate">{job.title}</h1>
+          <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded-sm text-2xs font-medium uppercase tracking-wide flex-shrink-0", jobStatusPillClass)}>
+            {statusLabel(job.status)}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExportJdPdf}
-            title="Export job description as PDF"
-            className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export JD
-          </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {shortlistCount > 0 && (
-            <>
-              <ClientReportButton shortlistCount={shortlistCount} onClick={() => setShowReport(true)} />
-              <Link
-                href={`/jobs/${id}/shortlist`}
-                className="inline-flex items-center gap-2 px-3 py-2 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors"
-              >
-                <Star className="w-4 h-4 text-amber-500" />
-                View Shortlist ({shortlistCount})
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
-            </>
-          )}
-          {job.status === "active" && (
-            <button
-              onClick={handleToggleStatus}
-              disabled={togglingStatus}
-              className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            <Link
+              href={`/jobs/${id}/shortlist`}
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded text-md font-medium text-warning bg-warning-subtle hover:bg-warning/25 transition-colors"
             >
-              {togglingStatus ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              {togglingStatus ? "Closing…" : "Close job"}
-            </button>
+              <Star className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Shortlist</span>
+              <span className="data-mono">{shortlistCount}</span>
+            </Link>
           )}
-          <Button variant="outline" onClick={() => setShowBulkUpload(true)}>
-            <Upload className="w-4 h-4" />
-            Upload CVs
+          <Button variant="secondary" size="md" onClick={() => openModal("bulkUpload")}>
+            <Upload className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Upload CVs</span>
           </Button>
-          <Button onClick={() => setShowAddCandidate(true)}>
-            <UserPlus className="w-4 h-4" />
-            Add Candidate
+          <Button variant="secondary" size="md" onClick={() => openModal("browseLibrary")}>
+            <Users className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Library</span>
           </Button>
+          <Button onClick={() => openModal("addCandidate")}>
+            <UserPlus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Add Candidate</span>
+            <span className="sm:hidden">Add</span>
+          </Button>
+          {/* Overflow ⋯ */}
+          <div className="relative" ref={overflowRef}>
+            <button
+              onClick={() => setOverflowOpen((o) => !o)}
+              className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+              title="More options"
+              aria-label="More options"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+            {overflowOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-52 bg-surface-overlay border border-separator rounded-md shadow-overlay py-1 z-20">
+                <button
+                  onClick={() => { handleExportJdPdf(); setOverflowOpen(false); }}
+                  className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-text-primary hover:bg-surface-hover"
+                >
+                  <Download className="w-3.5 h-3.5 text-text-tertiary" />
+                  Export JD as PDF
+                </button>
+                {shortlistCount > 0 && (
+                  <button
+                    onClick={() => { openModal("report"); setOverflowOpen(false); }}
+                    className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-text-primary hover:bg-surface-hover"
+                  >
+                    <Star className="w-3.5 h-3.5 text-text-tertiary" />
+                    Client report
+                  </button>
+                )}
+                <button
+                  onClick={() => { void handleEnrichPhones(); setOverflowOpen(false); }}
+                  disabled={enrichingPhones}
+                  className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-text-primary hover:bg-surface-hover disabled:opacity-50"
+                  title="Looks up phone numbers from Firmable for every candidate on this job that doesn't already have one. Skips candidates enriched in the last 90 days."
+                >
+                  {enrichingPhones
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin text-text-tertiary" />
+                    : <svg className="w-3.5 h-3.5 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.95.68l1.49 4.48a1 1 0 01-.5 1.21l-1.6.8a11 11 0 005.52 5.52l.8-1.6a1 1 0 011.21-.5l4.48 1.49a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
+                      </svg>}
+                  {enrichingPhones ? "Enriching…" : "Enrich phone numbers"}
+                </button>
+                {job.status === "active" && (
+                  <>
+                    <div className="my-1 border-t border-separator" />
+                    <button
+                      onClick={() => { handleToggleStatus(); setOverflowOpen(false); }}
+                      disabled={togglingStatus}
+                      className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-danger hover:bg-danger-subtle disabled:opacity-50"
+                    >
+                      {togglingStatus
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <X className="w-3.5 h-3.5" />}
+                      {togglingStatus ? "Closing…" : "Close job"}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* Page body */}
+      <div className="px-4 pb-6">
+      {/* Meta row — company, location (editable) */}
+      <div className="mb-3 flex items-center gap-3 text-sm text-text-secondary flex-wrap">
+        {job.company && (
+          <span className="flex items-center gap-1">
+            <Briefcase className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            {job.company}
+          </span>
+        )}
+        {editingLocation ? (
+          <span className="flex items-center gap-1.5">
+            <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            <input
+              type="text"
+              value={locationDraft}
+              onChange={(e) => setLocationDraft(e.target.value)}
+              placeholder="Primary location"
+              className="h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent w-32 transition-all"
+              autoFocus
+            />
+            <span className="text-text-tertiary">/</span>
+            <input
+              type="text"
+              value={location2Draft}
+              onChange={(e) => setLocation2Draft(e.target.value)}
+              placeholder="Second location (optional)"
+              className="h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent w-36 transition-all"
+            />
+            <button
+              onClick={handleSaveLocation}
+              disabled={savingLocation}
+              className="text-xs text-accent hover:text-accent-hover disabled:text-text-tertiary"
+            >
+              {savingLocation ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={() => setEditingLocation(false)}
+              className="text-xs text-text-tertiary hover:text-text-secondary"
+            >
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <span className="flex items-center gap-1">
+            <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-text-tertiary" />
+            {job.location || <span className="italic text-text-tertiary">No location</span>}
+            {job.location2 && <span> / {job.location2}</span>}
+            <button
+              onClick={() => {
+                setLocationDraft(job.location ?? "");
+                setLocation2Draft(job.location2 ?? "");
+                setEditingLocation(true);
+              }}
+              className="ml-1 text-2xs text-accent hover:text-accent-hover"
+              title="Edit locations"
+            >
+              edit
+            </button>
+          </span>
+        )}
+      </div>
+      {enrichResult && (
+        <div className="mb-3 text-xs text-text-secondary bg-surface-raised border border-separator rounded-md px-3 py-2 inline-flex items-center gap-2">
+          {enrichResult}
+          <button onClick={() => setEnrichResult(null)} className="text-text-tertiary hover:text-text-primary">✕</button>
+        </div>
+      )}
+
       {/* Closed job banner */}
       {job.status === "closed" && (
-        <div className="mb-5 flex items-center justify-between gap-4 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl">
-          <p className="text-sm text-slate-600">
-            This job is <span className="font-semibold text-slate-800">closed</span> — searching and scoring are disabled.
+        <div className="mb-4 flex items-center justify-between gap-4 px-3 py-2 bg-surface-raised border border-separator rounded-md">
+          <p className="text-sm text-text-secondary">
+            This job is <span className="font-medium text-text-primary">closed</span> — searching and scoring are disabled.
           </p>
           <button
             onClick={handleToggleStatus}
             disabled={togglingStatus}
-            className="text-xs text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap disabled:opacity-50"
+            className="text-xs text-accent hover:text-accent-hover font-medium whitespace-nowrap disabled:opacity-50"
           >
             {togglingStatus ? "Reopening…" : "Reopen job"}
           </button>
@@ -897,24 +1585,46 @@ ${toHtml(job.rawJd)}
       {/* AI status banner */}
       <AiStatusBanner />
 
+      {/* Onboarding stepper — first card so new users see "what next?" without
+          scrolling past the empty pipeline. Auto-dismisses once all steps tick. */}
+      <OnboardingCard
+        jobId={id}
+        hasParsedRole={Boolean(parsedRole)}
+        candidateCount={job.candidates.length}
+        scoredCount={job.candidates.filter((c) => c.matchScore !== null).length}
+      />
+
       {/* Step 1: Parse JD */}
       {!parsedRole && (
-        <Card className="mb-6">
+        <Card className="mb-4">
           <CardBody className="flex items-center justify-between">
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <Sparkles className="w-4 h-4 text-blue-600" />
+              <div className="w-8 h-8 bg-accent-subtle rounded flex items-center justify-center flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-accent" />
               </div>
               <div>
-                <p className="font-medium text-slate-900 text-sm">Step 1 — Analyse Job Description</p>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="font-medium text-text-primary text-md">Step 1 — Analyse Job Description</p>
+                <p className="text-xs text-text-secondary mt-0.5">
                   AI reads the JD and extracts what to look for in candidates.
                 </p>
                 {parseError && (
-                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-danger mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />
                     {parseError}
                   </p>
+                )}
+                {parseChanges.length > 0 && !parseError && (
+                  <div className="mt-2 p-2 bg-accent-subtle border border-separator rounded">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs font-medium text-accent">What changed</p>
+                      <button onClick={() => setParseChanges([])} className="text-2xs text-text-tertiary hover:text-text-primary">dismiss</button>
+                    </div>
+                    <ul className="space-y-0.5">
+                      {parseChanges.map((c, i) => (
+                        <li key={i} className="text-xs text-text-secondary">· {c}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             </div>
@@ -926,19 +1636,31 @@ ${toHtml(job.rawJd)}
         </Card>
       )}
 
+      {/* Pipeline stepper — primary status filter for the candidate list below. */}
+      {parsedRole && (
+        <div className="mb-3">
+          <PipelineStepper
+            counts={pipelineCounts}
+            rejectedCount={rejectedCount}
+            selectedStage={selectedStage}
+            onStageChange={setSelectedStage}
+          />
+        </div>
+      )}
+
       {/* Main layout once parsed */}
       {parsedRole && (
-        <div className="grid grid-cols-3 gap-5 mb-6">
+        <div className="mb-4">
           {/* Hiring brief */}
-          <Card className="col-span-2">
+          <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-slate-900 text-sm">Hiring Brief</h2>
+                <h2 className="font-semibold text-text-primary text-md">Hiring Brief</h2>
                 <div className="flex items-center gap-3">
                   {!editingJd && (
                     <button
                       onClick={() => { setJdDraft(job.rawJd); setEditingJd(true); }}
-                      className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1"
+                      className="text-xs text-text-tertiary hover:text-accent transition-colors flex items-center gap-1"
                     >
                       <Pencil className="w-3 h-3" />
                       Edit JD
@@ -947,7 +1669,7 @@ ${toHtml(job.rawJd)}
                   <button
                     onClick={handleParse}
                     disabled={parsing}
-                    className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1"
+                    className="text-xs text-text-tertiary hover:text-accent transition-colors flex items-center gap-1"
                   >
                     {parsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                     Re-analyse
@@ -964,19 +1686,22 @@ ${toHtml(job.rawJd)}
                     value={jdDraft}
                     onChange={(e) => setJdDraft(e.target.value)}
                     rows={16}
-                    className="w-full px-3 py-2.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono leading-relaxed resize-y"
+                    className="w-full px-3 py-2 text-sm bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus font-mono leading-relaxed resize-y transition-all"
                   />
                   <div className="flex items-center justify-end gap-2">
                     <button
-                      onClick={() => setEditingJd(false)}
-                      className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                      onClick={async () => {
+                        if (jdDraft !== job.rawJd && !await confirm({ message: "Discard unsaved changes to the job description?", confirmLabel: "Discard" })) return;
+                        setEditingJd(false);
+                      }}
+                      className="h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md border border-separator transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSaveJd}
                       disabled={savingJd || !jdDraft.trim()}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-md font-medium transition-colors"
                     >
                       {savingJd ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                       {savingJd ? "Saving…" : "Save & Re-analyse"}
@@ -986,77 +1711,80 @@ ${toHtml(job.rawJd)}
               )}
 
               {/* Meta row — seniority, location, salary */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {parsedRole.seniority_band && (
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Seniority</p>
+                      <p className="text-2xs font-medium text-text-tertiary uppercase tracking-wide">Seniority</p>
                       <SourceBadge source={senioritySource} />
                     </div>
-                    <p className="text-sm text-slate-800">{parsedRole.seniority_band}</p>
+                    <p className="text-sm text-text-primary">{parsedRole.seniority_band}</p>
                   </div>
                 )}
                 {(parsedRole.location_rules || parsedRole.location) && (
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Location / Remote</p>
+                      <p className="text-2xs font-medium text-text-tertiary uppercase tracking-wide">Location / Remote</p>
                       <SourceBadge source={locationSource} />
                     </div>
-                    <p className="text-sm text-slate-800">{parsedRole.location_rules || parsedRole.location}</p>
+                    <p className="text-sm text-text-primary">{parsedRole.location_rules || parsedRole.location}</p>
                   </div>
                 )}
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Salary (NZD)</p>
+                      <p className="text-2xs font-medium text-text-tertiary uppercase tracking-wide">Salary (NZD)</p>
                       <SourceBadge source={salarySource} />
                     </div>
                     {!editingSalary && (
-                      <button onClick={() => setEditingSalary(true)} className="text-xs text-blue-600 hover:text-blue-700">
+                      <button onClick={() => setEditingSalary(true)} className="text-xs text-accent hover:text-accent-hover">
                         {job.salaryMin || job.salaryMax ? "Edit" : "Set"}
                       </button>
                     )}
                   </div>
                   {editingSalary ? (
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative flex-1">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
-                        <input
-                          type="number"
-                          placeholder="Min (k)"
-                          value={salaryMin}
-                          onChange={(e) => setSalaryMin(e.target.value)}
-                          className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
+                    <>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="relative w-24">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary text-xs">$</span>
+                          <input
+                            type="number"
+                            placeholder="Min"
+                            value={salaryMin}
+                            onChange={(e) => setSalaryMin(e.target.value)}
+                            className="w-full h-7 pl-5 pr-2 text-md bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-all data-mono"
+                          />
+                        </div>
+                        <span className="text-text-tertiary text-sm">–</span>
+                        <div className="relative w-24">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-text-tertiary text-xs">$</span>
+                          <input
+                            type="number"
+                            placeholder="Max"
+                            value={salaryMax}
+                            onChange={(e) => setSalaryMax(e.target.value)}
+                            className="w-full h-7 pl-5 pr-2 text-md bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-all data-mono"
+                          />
+                        </div>
+                        <span className="text-text-tertiary text-xs">k NZD</span>
+                        <button onClick={handleSaveSalary} disabled={savingSalary} className="h-7 px-3 bg-accent hover:bg-accent-hover text-white text-md font-medium rounded disabled:opacity-50 transition-colors">
+                          {savingSalary ? "…" : "Save"}
+                        </button>
+                        <button onClick={() => { setEditingSalary(false); setSalaryError(""); }} className="h-7 w-7 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <span className="text-slate-400 text-sm">–</span>
-                      <div className="relative flex-1">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
-                        <input
-                          type="number"
-                          placeholder="Max (k)"
-                          value={salaryMax}
-                          onChange={(e) => setSalaryMax(e.target.value)}
-                          className="w-full pl-5 pr-2 py-1 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      </div>
-                      <span className="text-slate-400 text-xs">k</span>
-                      <button onClick={handleSaveSalary} disabled={savingSalary} className="px-2 py-1 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 disabled:opacity-50">
-                        {savingSalary ? "..." : "Save"}
-                      </button>
-                      <button onClick={() => setEditingSalary(false)} className="text-slate-400 hover:text-slate-600">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                      {salaryError && <p className="text-xs text-danger mt-1">{salaryError}</p>}
+                    </>
                   ) : (
-                    <p className="text-sm text-slate-800">
+                    <p className="text-sm text-text-primary data-mono">
                       {job.salaryMin && job.salaryMax
                         ? `$${(job.salaryMin / 1000).toFixed(0)}k – $${(job.salaryMax / 1000).toFixed(0)}k`
                         : job.salaryMin ? `From $${(job.salaryMin / 1000).toFixed(0)}k`
                         : job.salaryMax ? `Up to $${(job.salaryMax / 1000).toFixed(0)}k`
                         : parsedRole.salary_band
-                        ? <span className="text-slate-500 italic text-xs">{parsedRole.salary_band} (est.)</span>
-                        : <span className="text-slate-400 italic">Not set</span>}
+                        ? <span className="text-text-tertiary italic text-xs font-sans">{parsedRole.salary_band} (est.)</span>
+                        : <span className="text-text-tertiary italic font-sans">Not set</span>}
                     </p>
                   )}
                 </div>
@@ -1065,95 +1793,216 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Explicitly Stated"
                 items={parsedRole.explicitly_stated}
-                labelClassName="text-emerald-700"
-                chipClassName="bg-emerald-50 text-emerald-700 border-emerald-200"
+                labelClassName="text-success"
+                chipClassName="bg-success-subtle text-success"
               />
 
               <HiringBriefChipSection
                 title="Strongly Inferred"
                 items={parsedRole.strongly_inferred}
-                labelClassName="text-blue-700"
-                chipClassName="bg-blue-50 text-blue-700 border-blue-200"
+                labelClassName="text-accent"
+                chipClassName="bg-accent-subtle text-accent"
               />
 
-              {/* Knockout criteria */}
-              <HiringBriefChipSection
-                title="Knockout Criteria"
-                items={parsedRole.knockout_criteria}
-                labelClassName="text-red-600"
-                chipClassName="bg-red-50 text-red-700 border-red-200 font-medium"
-              />
+              {/* Knockout criteria — each item can be dismissed to remove it from scoring */}
+              {(parsedRole.knockout_criteria?.length ?? 0) > 0 && (() => {
+                const dismissed = parsedRole.dismissed_knockout_criteria ?? [];
+                return (
+                  <div>
+                    <p className="text-2xs font-medium uppercase tracking-wide mb-2 text-danger" title="Binary gates — candidates who fail these are excluded regardless of other qualifications. Click × to relax a requirement (treats it as informational only for this search).">Hard Requirements</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {parsedRole.knockout_criteria.map((item) => {
+                        const isDismissed = dismissed.includes(item);
+                        const pendingKey = isDismissed ? `restore-knockout:${item}` : `dismiss-knockout:${item}`;
+                        const isPending = pendingReqAction.has(pendingKey);
+                        return (
+                          <span
+                            key={item}
+                            title={isDismissed ? "Click ↺ to re-enable this as a hard requirement" : "Click × to relax — candidates without this will still be scored (not automatically excluded)"}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded-sm font-medium transition-colors",
+                              isDismissed
+                                ? "bg-surface-hover text-text-tertiary line-through"
+                                : "bg-danger-subtle text-danger"
+                            )}
+                          >
+                            {item}
+                            {isPending ? (
+                              <Loader2 className="w-2.5 h-2.5 animate-spin flex-shrink-0" />
+                            ) : isDismissed ? (
+                              <button
+                                onClick={() => handleRequirementAction("restore-knockout", item)}
+                                title="Re-enable as hard requirement"
+                                className="text-text-tertiary hover:text-danger transition-colors flex-shrink-0"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleRequirementAction("dismiss-knockout", item)}
+                                title="Relax this requirement (still shown but won't exclude candidates)"
+                                className="text-danger/60 hover:text-danger transition-colors flex-shrink-0"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Must-haves — fall back to skills_required for old jobs */}
               <HiringBriefChipSection
                 title="Must-haves"
                 items={mustHaves}
-                chipClassName="bg-violet-50 text-violet-700 border-violet-100 font-medium"
+                chipClassName="bg-accent-subtle text-accent font-medium"
               />
 
               {/* Nice-to-haves — fall back to skills_preferred */}
               <HiringBriefChipSection
                 title="Nice-to-haves"
                 items={niceToHaves}
-                chipClassName="bg-slate-100 text-slate-600 border-slate-200"
+                chipClassName="bg-surface-hover text-text-secondary"
               />
+
+              {/* AI search tips — legacy/rare tech with suggested modern alternatives.
+                  Dismissal is session-only (tips reappear on reload / re-analyse). */}
+              {(parsedRole.skill_notes?.length ?? 0) > 0 && (
+                <SkillNotesSection
+                  notes={parsedRole.skill_notes ?? []}
+                  dismissedSkills={[]}
+                  niceToHaves={niceToHaves}
+                  pendingAccepted={pendingAccepted}
+                  pendingDismissed={pendingDismissed}
+                  onAccept={handleAcceptAlternative}
+                  onDismiss={handleDismissNote}
+                />
+              )}
 
               {/* Visa / work rights — only show if not already covered by knockout criteria */}
               <HiringBriefChipSection
                 title="Application / Screening"
                 items={parsedRole.application_requirements}
-                labelClassName="text-amber-700"
-                chipClassName="bg-amber-50 text-amber-800 border-amber-200"
+                labelClassName="text-warning"
+                chipClassName="bg-warning-subtle text-warning"
               />
 
+              {/* Work Rights / visa flags — items can be promoted into must_haves */}
               {parsedRole.visa_flags?.length > 0 && (() => {
                 const knockoutText = (parsedRole.knockout_criteria ?? []).join(" ").toLowerCase();
-                const extra = parsedRole.visa_flags.filter(
+                const items = parsedRole.visa_flags.filter(
                   (f) => !knockoutText.includes(f.toLowerCase().slice(0, 12))
                 );
+                if (items.length === 0) return null;
+                const promoted = parsedRole.promoted_visa_flags ?? [];
                 return (
-                  <HiringBriefChipSection
-                    title="Work Rights"
-                    items={extra}
-                    labelClassName="text-amber-700"
-                    chipClassName="bg-amber-50 text-amber-800 border-amber-200"
-                  />
+                  <div>
+                    <p className="text-2xs font-medium uppercase tracking-wide mb-2 text-warning">Work Rights</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {items.map((item) => {
+                        const isPromoted = promoted.includes(item);
+                        const pendingKey = isPromoted ? `demote-visa-flag:${item}` : `promote-visa-flag:${item}`;
+                        const isPending = pendingReqAction.has(pendingKey);
+                        return (
+                          <span
+                            key={item}
+                            title={isPromoted ? "Enforced as a must-have — click × to relax" : "Click + to enforce as a scoring must-have"}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded-sm transition-colors",
+                              isPromoted
+                                ? "bg-accent-subtle text-accent font-medium"
+                                : "bg-warning-subtle text-warning"
+                            )}
+                          >
+                            {item}
+                            {isPending ? (
+                              <Loader2 className="w-2.5 h-2.5 animate-spin flex-shrink-0" />
+                            ) : isPromoted ? (
+                              <button
+                                onClick={() => handleRequirementAction("demote-visa-flag", item)}
+                                title="Remove from must-haves"
+                                className="text-accent/60 hover:text-accent transition-colors flex-shrink-0"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleRequirementAction("promote-visa-flag", item)}
+                                title="Enforce as a must-have in scoring"
+                                className="text-warning/60 hover:text-warning transition-colors flex-shrink-0"
+                              >
+                                <Plus className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })()}
 
               <HiringBriefChipSection
                 title="Search Expansion"
                 items={parsedRole.search_expansion}
-                labelClassName="text-slate-600"
-                chipClassName="bg-slate-50 text-slate-600 border-slate-200"
+                labelClassName="text-text-tertiary"
+                chipClassName="bg-surface-hover text-text-secondary"
               />
 
               {/* Synonym titles searched */}
               <HiringBriefChipSection
                 title="Titles Searched"
                 items={parsedRole.synonym_titles}
-                chipClassName="bg-slate-50 text-slate-500 border-slate-200"
+                chipClassName="bg-surface-hover text-text-tertiary"
                 monospace
               />
 
             </CardBody>
           </Card>
+        </div>
+      )}
 
-          <PipelineCard
-            totalCount={jobCandidates.length}
-            statusCounts={statusCounts}
-            filter={filter}
-            onFilterChange={setFilter}
+      {parsedRole && (
+        <div id="job-search-card">
+          <SearchCard
+            jobId={id}
+            parsedRole={parsedRole}
+            jobLocation={job.location}
+            jobStatus={job.status}
+            onComplete={fetchJob}
           />
         </div>
       )}
 
       {parsedRole && (
-        <SearchCard
+        <SavedSearchesCard
           jobId={id}
-          parsedRole={parsedRole}
           jobStatus={job.status}
+          defaultLocation={parsedRole.location?.trim() || job.location?.trim() || "New Zealand"}
+          defaultTarget={20}
+          defaultQueries={[...(parsedRole.search_queries ?? []), ...(parsedRole.google_queries ?? [])].slice(0, 5)}
           onComplete={fetchJob}
+        />
+      )}
+
+      {parsedRole && <SearchFunnelCard jobId={id} refreshKey={job.candidates.length} />}
+
+      {parsedRole && <JobWeightsCard jobId={id} />}
+
+      {parsedRole && <ParseHistoryCard jobId={id} />}
+
+      {/* Top matches card — surfaces best unreviewed candidates so recruiter doesn't have to scroll */}
+      {selectedStage === "all" && (
+        <TopCandidatesCard
+          candidates={jobCandidates}
+          onShortlist={(cid) => handleStatusChange(cid, "shortlisted")}
+          onView={(cid) => {
+            const el = document.getElementById(`candidate-${cid}`);
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}
         />
       )}
 
@@ -1164,7 +2013,7 @@ ${toHtml(job.rawJd)}
             {filteredCandidates.length > 0 && (
               <input
                 type="checkbox"
-                className="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer"
+                className="w-4 h-4 rounded-sm accent-accent cursor-pointer"
                 checked={filteredCandidates.length > 0 && filteredCandidates.every((c) => selectedIds.has(c.id))}
                 onChange={(e) => {
                   if (e.target.checked) setSelectedIds(new Set(filteredCandidates.map((c) => c.id)));
@@ -1173,24 +2022,26 @@ ${toHtml(job.rawJd)}
                 title="Select all"
               />
             )}
-            <h2 className="font-semibold text-slate-900">
+            <h2 className="text-md font-semibold text-text-primary">
               Candidates
               {filteredCandidates.length > 0 && (
-                <span className="ml-2 text-sm font-normal text-slate-500">
+                <span className="ml-2 text-sm font-normal text-text-secondary data-mono">
                   ({filteredCandidates.length})
                 </span>
               )}
             </h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {selectedIds.size > 0 ? (
               <>
-                <span className="text-xs font-medium text-slate-600">{selectedIds.size} selected</span>
+                <span className="text-xs font-medium text-text-secondary">
+                  <span className="data-mono">{selectedIds.size}</span> selected
+                </span>
                 <select
                   onChange={(e) => { if (e.target.value) handleBulkStatusChange(e.target.value); e.target.value = ""; }}
                   disabled={bulkStatusChanging}
                   defaultValue=""
-                  className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
+                  className="h-7 text-xs bg-surface-sunken border border-separator rounded px-2 text-text-primary focus:outline-none focus:border-accent disabled:opacity-50 transition-all"
                 >
                   <option value="" disabled>Move to…</option>
                   <option value="reviewing">Reviewing</option>
@@ -1202,29 +2053,28 @@ ${toHtml(job.rawJd)}
                   <option value="rejected">Rejected</option>
                 </select>
                 <Button
-                  size="sm"
-                  variant="outline"
+                  size="md"
+                  variant="danger"
                   onClick={handleBulkDelete}
                   loading={bulkDeleting}
                   disabled={bulkDeleting || bulkStatusChanging}
-                  className="text-red-600 border-red-200 hover:bg-red-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   {bulkDeleting ? "Deleting…" : `Delete ${selectedIds.size}`}
                 </Button>
                 <button
                   onClick={() => setSelectedIds(new Set())}
-                  className="text-xs text-slate-400 hover:text-slate-600"
+                  className="text-xs text-text-tertiary hover:text-text-primary"
                 >
                   Cancel
                 </button>
               </>
             ) : (
               <>
-                {filter !== "all" && (
+                {selectedStage !== "all" && (
                   <button
-                    onClick={() => setFilter("all")}
-                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                    onClick={() => setSelectedStage("all")}
+                    className="text-xs text-accent hover:text-accent-hover flex items-center gap-1"
                   >
                     <X className="w-3 h-3" />
                     Clear filter
@@ -1232,21 +2082,25 @@ ${toHtml(job.rawJd)}
                 )}
                 {parsedRole && job.candidates.some((c) => c.profileText) && (
                   <Button
-                    size="sm"
-                    variant="outline"
+                    size="md"
+                    variant="secondary"
                     onClick={handleRescoreAll}
                     loading={rescoringAll}
                     disabled={rescoringAll}
                     title="Re-score all candidates with current job requirements"
                   >
                     {!rescoringAll && <Sparkles className="w-3.5 h-3.5" />}
-                    {rescoringAll ? "Scoring…" : "Re-score all"}
+                    {rescoringAll
+                      ? rescoreProgress
+                        ? `Scoring ${rescoreProgress.scored} of ${rescoreProgress.total}…`
+                        : "Scoring…"
+                      : "Re-score all"}
                   </Button>
                 )}
                 {filteredCandidates.length > 0 && (
                   <Button
-                    size="sm"
-                    variant="outline"
+                    size="md"
+                    variant="secondary"
                     onClick={handleExportCsv}
                     title="Download candidates as CSV"
                   >
@@ -1254,7 +2108,7 @@ ${toHtml(job.rawJd)}
                     Export CSV
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={() => setShowAddCandidate(true)}>
+                <Button size="md" variant="secondary" onClick={() => openModal("addCandidate")}>
                   <UserPlus className="w-3.5 h-3.5" />
                   Add manually
                 </Button>
@@ -1265,83 +2119,199 @@ ${toHtml(job.rawJd)}
 
         {/* Keyword search */}
         {job.candidates.length > 0 && (
-          <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, role, location, or notes…"
-              className="w-full pl-8 pr-8 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 placeholder:text-slate-400"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+          <div className="mb-3 space-y-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by name, role, location, or notes…"
+                className="w-full h-7 pl-7 pr-7 text-md bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Quality filters — score floor + full-profile-only.
+                Designed for the "who do I call today?" workflow: set the score
+                floor to 60+, optionally hide snippet-only profiles, and the
+                list collapses to the candidates worth picking up the phone for.
+                Active filters get a "Clear filters" affordance so the recruiter
+                can't get stuck on a too-strict filter and assume the list is
+                empty. */}
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <label className="flex items-center gap-2 text-text-secondary select-none">
+                <span className="font-medium">Min match</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={90}
+                  step={5}
+                  value={minScoreFilter}
+                  onChange={(e) => setMinScoreFilter(Number(e.target.value))}
+                  className="w-32 accent-accent"
+                />
+                <span className={cn("data-mono w-9 text-right", minScoreFilter > 0 ? "text-accent font-semibold" : "text-text-tertiary")}>
+                  {minScoreFilter > 0 ? `${minScoreFilter}%` : "off"}
+                </span>
+              </label>
+
+              <label className="flex items-center gap-1.5 text-text-secondary select-none cursor-pointer ml-2">
+                <input
+                  type="checkbox"
+                  checked={hideSnippetOnly}
+                  onChange={(e) => setHideSnippetOnly(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-accent"
+                />
+                Full profiles only
+              </label>
+
+              {(minScoreFilter > 0 || hideSnippetOnly) && (
+                <button
+                  onClick={() => { setMinScoreFilter(0); setHideSnippetOnly(false); }}
+                  className="ml-auto text-accent hover:text-accent-hover underline underline-offset-2"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
           </div>
         )}
 
-        {/* Needs-profile notice — computed from live candidate list */}
+        {/* Needs-profile notice. The list-view API strips profileText (it's
+            10-50KB per candidate), so hasFullCandidateProfile would read
+            undefined and flag every candidate — even ones that have already
+            been captured. Use profileCapturedAt as the in-list signal: it's
+            set the moment extension capture stage 1 succeeds, and matches
+            what candidate-card uses to show/hide the amber Fetch button. */}
         {(() => {
-          const needsFetch = job.candidates.filter(
-            (c) => c.linkedinUrl && !c.profileCapturedAt && (!c.profileText || c.profileText.length < 500)
+          const needsFetchSet = new Set(
+            job.candidates
+              .filter(
+                (c) => c.linkedinUrl &&
+                       !c.profileCapturedAt &&
+                       fetchStatuses[c.id]?.state !== "waiting" &&
+                       fetchStatuses[c.id]?.state !== "fetching"
+              )
+              .map((c) => c.id)
           );
-          const n = needsFetch.length;
+          const n = needsFetchSet.size;
           if (n === 0) return null;
           const scrollToFirst = () => {
-            const sorted = [...needsFetch].sort((a, b) =>
-              (a.name.split(" ")[0] ?? a.name).localeCompare(b.name.split(" ")[0] ?? b.name)
-            );
-            const target = document.getElementById(`candidate-${sorted[0].id}`);
-            target?.scrollIntoView({ behavior: "smooth", block: "center" });
+            // Walk the visible list in display order so we land on the first
+            // amber Fetch button the recruiter actually sees, not the first
+            // alphabetically.
+            const target = filteredCandidates.find((c) => needsFetchSet.has(c.id))
+              ?? job.candidates.find((c) => needsFetchSet.has(c.id));
+            if (!target) return;
+            const el = document.getElementById(`candidate-${target.id}`);
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
           };
           return (
             <button
               type="button"
               onClick={scrollToFirst}
-              className="mb-3 w-full flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 hover:bg-amber-100 transition-colors text-left"
+              className="mb-3 w-full flex items-center gap-1.5 text-xs text-warning bg-warning-subtle border border-separator rounded px-3 py-2 hover:bg-warning/25 transition-colors text-left"
             >
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              {n} candidate{n > 1 ? "s" : ""} {n > 1 ? "need" : "needs"} a full profile fetch — look for the amber <strong className="mx-0.5">Fetch profile</strong> button on each card.
+              <span className="data-mono">{n}</span> candidate{n > 1 ? "s" : ""} {n > 1 ? "need" : "needs"} a full profile fetch — look for the amber <strong className="mx-0.5">Fetch profile</strong> button on each card.
             </button>
           );
         })()}
 
+        {/* Stale-score warning: requirements updated since last score-all */}
+        {job && job.lastParsedAt && job.lastScoredAt && job.candidates.length > 0 && !rescoringAll && !rescoreResult && (() => {
+          const parsedMs  = new Date(job.lastParsedAt!).getTime();
+          const scoredMs  = new Date(job.lastScoredAt!).getTime();
+          return parsedMs > scoredMs ? (
+            <div className="mb-3 flex items-center justify-between gap-3 text-xs rounded px-3 py-2 border text-warning bg-warning-subtle border-separator">
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>Requirements updated since last score — re-score all to apply new criteria.</span>
+              </div>
+              <button
+                onClick={handleRescoreAll}
+                disabled={rescoringAll}
+                className="h-6 text-xs font-medium px-3 rounded bg-warning text-text-inverse hover:bg-warning-hover disabled:opacity-50 transition-colors"
+              >
+                Re-score all now
+              </button>
+            </div>
+          ) : null;
+        })()}
+
         {/* Re-score result */}
         {rescoreResult && !rescoringAll && (
-          <div className={`mb-3 flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 border ${rescoreResult.scored === 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-emerald-700 bg-emerald-50 border-emerald-200"}`}>
-            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-            {rescoreResult.scored === 0
-              ? `All ${rescoreResult.total} candidates already up to date — no re-score needed`
-              : `Re-scored ${rescoreResult.scored} of ${rescoreResult.total} candidates${rescoreResult.skipped > 0 ? ` (${rescoreResult.skipped} unchanged)` : ""}`}
+          <div className={cn(
+            "mb-3 flex items-center gap-1.5 text-xs rounded px-3 py-2 border border-separator",
+            rescoreResult.partial
+              ? "text-warning bg-warning-subtle"
+              : "text-success bg-success-subtle"
+          )}>
+            {rescoreResult.partial
+              ? <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              : <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />}
+            {rescoreResult.partial
+              ? <span>Scored <span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> — connection dropped, re-run to finish</span>
+              : <span>Re-scored <span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> candidates</span>}
+            {!rescoreResult.partial && rescoreResult.failedIds && rescoreResult.failedIds.length > 0 && (
+              <span className="ml-2 text-warning">· <span className="data-mono">{rescoreResult.failedIds.length}</span> failed</span>
+            )}
           </div>
         )}
 
         {filteredCandidates.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-xl border border-slate-200 border-dashed">
-            <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 text-sm font-medium">
-              {filter === "all" ? "No candidates yet" : `No ${statusLabel(filter).toLowerCase()} candidates`}
+          <div className="text-center py-10 px-6 bg-surface-raised rounded-md border border-separator border-dashed">
+            <Users className="w-9 h-9 text-text-tertiary mx-auto mb-3" />
+            <p className="text-text-primary text-md font-semibold mb-1">
+              {selectedStage === "all"
+                ? (jobCandidates.length === 0 ? "No candidates yet" : "No candidates match your filter")
+                : `No candidates in ${selectedStage}`}
             </p>
-            {filter === "all" && parsedRole && (
-              <p className="text-slate-400 text-xs mt-1">
-                Click &ldquo;Search LinkedIn Now&rdquo; above to find candidates automatically, or add them manually below.
+            {selectedStage === "all" && jobCandidates.length === 0 && parsedRole && (
+              <>
+                <p className="text-text-secondary text-xs mt-1 mb-4">
+                  Find candidates from the role brief, or add them manually below.
+                </p>
+                <button
+                  onClick={() => document.getElementById("job-search-card")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+                >
+                  Find candidates
+                </button>
+              </>
+            )}
+            {selectedStage === "all" && jobCandidates.length === 0 && !parsedRole && (
+              <p className="text-text-secondary text-xs mt-1">
+                Paste a job description above and click <strong>Analyse</strong> to start.
               </p>
+            )}
+            {selectedStage !== "all" && (
+              <button
+                onClick={() => setSelectedStage("all")}
+                className="text-accent hover:text-accent-hover text-xs underline underline-offset-2 mt-2"
+              >
+                Clear filter
+              </button>
             )}
           </div>
         ) : (
-          <div className="space-y-3">
-            {filteredCandidates.map((candidate) => (
+          <div className="space-y-2">
+            {filteredCandidates.slice(0, renderCap).map((candidate) => (
               <div key={candidate.id} id={`candidate-${candidate.id}`} className="flex items-start gap-3">
                 <input
                   type="checkbox"
-                  className="mt-4 w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer flex-shrink-0"
+                  className="mt-4 w-4 h-4 rounded-sm accent-accent cursor-pointer flex-shrink-0"
                   checked={selectedIds.has(candidate.id)}
                   onChange={() => toggleSelect(candidate.id)}
+                  aria-label={`Select ${candidate.name}`}
                 />
                 <div className="flex-1 min-w-0">
                   <CandidateCard
@@ -1352,6 +2322,10 @@ ${toHtml(job.rawJd)}
                     onFetchProfile={handleFetchProfile}
                     onNotesChange={handleNotesChange}
                     onLinkedInChange={handleLinkedInChange}
+                    onJobAdderChange={handleJobAdderChange}
+                    onNameChange={handleNameChange}
+                    onHeadlineChange={handleHeadlineChange}
+                    onLocationChange={handleLocationChange}
                     onScreeningDataChange={handleScreeningDataChange}
                     onInterviewNotesChange={handleInterviewNotesChange}
                     onDelete={handleDelete}
@@ -1360,51 +2334,73 @@ ${toHtml(job.rawJd)}
                       fetchStatuses[candidate.id]?.state === "waiting" ||
                       fetchStatuses[candidate.id]?.state === "fetching"
                     }
+                    fetchQueueState={fetchStatuses[candidate.id]?.state}
+                    contactCount={candidate._count?.contactEvents ?? 0}
                   />
                 </div>
               </div>
             ))}
+            {renderCap < filteredCandidates.length && (
+              <div className="flex items-center justify-center gap-3 py-4">
+                <button
+                  onClick={() => setRenderCap((n) => n + RENDER_BATCH_SIZE)}
+                  className="h-7 px-3 text-md font-medium text-accent bg-accent-subtle hover:bg-accent/25 rounded transition-colors"
+                >
+                  Show {Math.min(RENDER_BATCH_SIZE, filteredCandidates.length - renderCap)} more
+                </button>
+                <button
+                  onClick={() => setRenderCap(filteredCandidates.length)}
+                  className="text-xs text-text-tertiary hover:text-text-primary underline underline-offset-2"
+                >
+                  Show all <span className="data-mono">{filteredCandidates.length}</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      <FetchQueueToast
-        statuses={fetchStatuses}
-        candidateNames={Object.fromEntries((job?.candidates ?? []).map((c) => [c.id, c.name]))}
-        onDismiss={() => setFetchStatuses({})}
-      />
+      {!fetchPanelDismissed && (
+        <FetchQueuePanel
+          statuses={fetchStatuses}
+          candidateNames={Object.fromEntries((job?.candidates ?? []).map((c) => [c.id, c.name]))}
+          onDismiss={() => setFetchPanelDismissed(true)}
+          onCancel={handleCancelFetch}
+        />
+      )}
 
-      {showReport && (
+      {modals.report && (
         <ClientReportModal
           jobId={id}
           jobTitle={job.title}
           jobParsedRole={job.parsedRole}
           candidates={job.candidates}
-          onClose={() => setShowReport(false)}
+          onClose={() => closeModal("report")}
         />
       )}
 
-      {showJobAd && (
-        <JobAdModal jobId={id} onClose={() => setShowJobAd(false)} />
+      {modals.bulkUpload && (
+        <BulkUploadModal jobId={id} onClose={() => closeModal("bulkUpload")} onComplete={fetchJob} />
       )}
 
-      {showBulkUpload && (
-        <BulkUploadModal jobId={id} onClose={() => setShowBulkUpload(false)} onComplete={fetchJob} />
+      {modals.browseLibrary && (
+        <BrowseLibraryModal jobId={id} onClose={() => closeModal("browseLibrary")} onComplete={fetchJob} />
       )}
 
-      {showAddCandidate && (
+      {modals.addCandidate && (
         <AddCandidateModal
           jobId={id}
           parsedRole={parsedRole}
-          onClose={() => setShowAddCandidate(false)}
+          onClose={() => closeModal("addCandidate")}
           onComplete={(createdId) => {
-            setShowAddCandidate(false);
+            closeModal("addCandidate");
             fetchJob().then(() => {
               if (createdId) handleFetchProfile(createdId);
             });
           }}
         />
       )}
+      </div>
     </div>
   );
 }

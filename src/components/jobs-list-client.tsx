@@ -48,18 +48,18 @@ export function JobsListClient({ jobs }: { jobs: JobStub[] }) {
   return (
     <div className="space-y-3">
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search jobs by title, company, or location..."
-          className="w-full pl-9 pr-9 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+          className="w-full h-8 pl-8 pr-8 text-md border border-separator rounded focus:outline-none focus:border-accent focus:shadow-focus bg-surface-sunken text-text-primary placeholder:text-text-tertiary transition-all"
         />
         {query && (
           <button
             onClick={() => setQuery("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -67,7 +67,7 @@ export function JobsListClient({ jobs }: { jobs: JobStub[] }) {
       </div>
 
       {filtered.length === 0 && query && (
-        <div className="text-center py-10 text-slate-400 text-sm">
+        <div className="text-center py-10 text-text-tertiary text-md">
           No jobs matching &ldquo;{query}&rdquo;
         </div>
       )}
@@ -93,51 +93,51 @@ export function JobsListClient({ jobs }: { jobs: JobStub[] }) {
           <Link
             key={job.id}
             href={`/jobs/${job.id}`}
-            className={`flex items-center gap-5 p-5 bg-white rounded-xl border transition-all group ${
+            className={`flex items-center gap-5 p-4 bg-surface-raised rounded-md border border-separator transition-colors group ${
               isClosed
-                ? "border-slate-200 opacity-60 hover:opacity-80"
-                : "border-slate-200 hover:border-blue-300 hover:shadow-md"
+                ? "opacity-60 hover:opacity-80 hover:bg-surface-hover"
+                : "hover:bg-surface-hover"
             }`}
           >
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-              isClosed ? "bg-slate-200" : "bg-gradient-to-br from-blue-500 to-blue-700"
+            <div className={`w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0 ${
+              isClosed ? "bg-surface-hover" : "bg-accent-subtle"
             }`}>
-              <Briefcase className={`w-6 h-6 ${isClosed ? "text-slate-500" : "text-white"}`} />
+              <Briefcase className={`w-5 h-5 ${isClosed ? "text-text-tertiary" : "text-accent"}`} />
             </div>
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-semibold text-slate-900 group-hover:text-blue-700 transition-colors truncate">
+                <h3 className="text-md font-semibold text-text-primary group-hover:text-accent transition-colors truncate">
                   {job.title}
                 </h3>
                 {isClosed ? (
-                  <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full font-medium">
+                  <span className="text-xs px-1.5 py-0.5 bg-surface-hover text-text-tertiary border border-separator rounded-sm font-medium">
                     Closed
                   </span>
                 ) : (
-                  <span className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-medium">
+                  <span className="text-xs px-1.5 py-0.5 bg-success-subtle text-success border border-separator rounded-sm font-medium">
                     Active
                   </span>
                 )}
                 {!hasBeenParsed && (
-                  <span className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
+                  <span className="text-xs px-1.5 py-0.5 bg-warning-subtle text-warning border border-separator rounded-sm font-medium">
                     Needs parsing
                   </span>
                 )}
                 {isStale && (
-                  <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full font-medium">
+                  <span className="text-xs px-1.5 py-0.5 bg-surface-hover text-text-tertiary border border-separator rounded-sm font-medium">
                     Dormant
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-3 mt-1 flex-wrap">
                 {job.company && (
-                  <span className="text-sm text-slate-500 truncate">{job.company}</span>
+                  <span className="text-md text-text-secondary truncate">{job.company}</span>
                 )}
                 {job.location && (
-                  <span className="text-sm text-slate-400">{job.location}</span>
+                  <span className="text-md text-text-tertiary">{job.location}</span>
                 )}
-                <span className="text-xs text-slate-400 flex items-center gap-1">
+                <span className="text-xs text-text-tertiary flex items-center gap-1 data-mono" suppressHydrationWarning>
                   <Clock className="w-3 h-3" />
                   {timeAgo(job.createdAt)}
                 </span>
@@ -146,25 +146,25 @@ export function JobsListClient({ jobs }: { jobs: JobStub[] }) {
               {total > 0 && (
                 <div className="flex items-center gap-3 mt-2 flex-wrap">
                   {newCount > 0 && (
-                    <span className="text-xs text-slate-500 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block" />
+                    <span className="text-xs text-text-secondary flex items-center gap-1 data-mono">
+                      <span className="w-1.5 h-1.5 rounded-full bg-text-tertiary inline-block" />
                       {newCount} new
                     </span>
                   )}
                   {shortlisted > 0 && (
-                    <span className="text-xs text-amber-600 flex items-center gap-1">
+                    <span className="text-xs text-warning flex items-center gap-1 data-mono">
                       <Star className="w-3 h-3" />
                       {shortlisted} shortlisted
                     </span>
                   )}
                   {contacted > 0 && (
-                    <span className="text-xs text-blue-600 flex items-center gap-1">
+                    <span className="text-xs text-accent flex items-center gap-1 data-mono">
                       <TrendingUp className="w-3 h-3" />
                       {contacted} in progress
                     </span>
                   )}
                   {hired > 0 && (
-                    <span className="text-xs text-emerald-600 flex items-center gap-1">
+                    <span className="text-xs text-success flex items-center gap-1 data-mono">
                       <CheckCircle2 className="w-3 h-3" />
                       {hired} hired
                     </span>
@@ -175,16 +175,16 @@ export function JobsListClient({ jobs }: { jobs: JobStub[] }) {
 
             <div className="flex items-center gap-6 flex-shrink-0 text-right">
               <div>
-                <p className="text-lg font-bold text-slate-900">{total}</p>
-                <p className="text-xs text-slate-500">Candidates</p>
+                <p className="text-lg font-semibold text-text-primary data-mono">{total}</p>
+                <p className="text-xs text-text-secondary">Candidates</p>
               </div>
               {avgScore != null && (
                 <div>
-                  <p className="text-lg font-bold text-blue-600">{avgScore}%</p>
-                  <p className="text-xs text-slate-500">Avg score</p>
+                  <p className="text-lg font-semibold text-accent data-mono">{avgScore}%</p>
+                  <p className="text-xs text-text-secondary">Avg score</p>
                 </div>
               )}
-              <TrendingUp className="w-5 h-5 text-slate-300 group-hover:text-blue-400 transition-colors" />
+              <TrendingUp className="w-4 h-4 text-text-tertiary group-hover:text-accent transition-colors" />
             </div>
           </Link>
         );

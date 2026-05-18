@@ -34,6 +34,16 @@ const dbMocks = vi.hoisted(() => ({
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({}),
     },
+    orgAccessGrant: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    org: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    // $queryRaw is the SQL length-gate for getLibraryCandidates (Bede
+    // problem fix). Tests that exercise the candidates-library GET need
+    // it stubbed so the route can reach the downstream findMany.
+    $queryRaw: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -65,7 +75,6 @@ vi.mock("@/lib/ai", () => ({
 
 vi.mock("@/lib/search", () => ({
   searchLinkedInProfiles: vi.fn(),
-  searchBingLinkedInProfiles: vi.fn(),
   searchPDLProfiles: vi.fn(),
 }));
 
@@ -164,7 +173,7 @@ describe("org isolation — job access", () => {
     // DB returns both orgs' jobs; the route must filter to org-b only.
     dbMocks.prisma.job.findMany.mockResolvedValue([JOB_A]);
 
-    const res = await getJobs();
+    const res = await getJobs(new Request("http://localhost/api/jobs"));
     await res.json();
 
     // The route filters by orgId in the Prisma where clause.
@@ -279,31 +288,49 @@ describe("org isolation — search session access", () => {
 describe("org isolation — candidates library", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it("GET /api/candidates scopes query to the caller's orgId", async () => {
+  it("GET /api/candidates scopes query to the caller's orgId (plus any cross-org grants)", async () => {
     const { GET: getCandidatesLibrary } = await import("@/app/api/candidates/route");
     sessionMocks.getAuth.mockResolvedValue(ORG_B);
+    // $queryRaw is the org-scoped length-gate pre-filter — the orgId
+    // bindings flow into it. Stub one eligible ID so findMany also runs.
+    dbMocks.prisma.$queryRaw.mockResolvedValueOnce([{ id: "cand-1" }]);
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
+    // No cross-org grants for this test — accessibleOrgIds = ["org-b"] only.
+    dbMocks.prisma.orgAccessGrant.findMany.mockResolvedValue([]);
 
-    await getCandidatesLibrary();
+    await getCandidatesLibrary(new Request("http://localhost/api/candidates"));
 
-    expect(dbMocks.prisma.candidate.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          job: expect.objectContaining({ orgId: "org-b" }),
-        }),
-      })
-    );
+    // The org constraint is now enforced primarily by the $queryRaw
+    // pre-filter (which gets the orgId array as a bound parameter) AND
+    // re-applied to the downstream findMany via buildLibraryWhere. Verify
+    // both paths carry org-b.
+    const rawCall = dbMocks.prisma.$queryRaw.mock.calls[0];
+    const rawParams = rawCall.slice(1);
+    const orgArrayParam = rawParams.find((p: unknown) => Array.isArray(p)) as string[] | undefined;
+    expect(orgArrayParam).toEqual(["org-b"]);
+
+    const callArgs = dbMocks.prisma.candidate.findMany.mock.calls[0][0] as { where: Record<string, unknown> };
+    const andClause = callArgs.where.AND as { OR: unknown[] } | undefined;
+    expect(andClause).toBeDefined();
+    expect(andClause!.OR).toEqual(expect.arrayContaining([
+      expect.objectContaining({ job: expect.objectContaining({ orgId: { in: ["org-b"] } }) }),
+      expect.objectContaining({ jobId: null, orgId: { in: ["org-b"] } }),
+    ]));
   });
 
   it("GET /api/candidates — owner sees all orgs (no orgId filter)", async () => {
     const { GET: getCandidatesLibrary } = await import("@/app/api/candidates/route");
     sessionMocks.getAuth.mockResolvedValue({ ...ORG_A, isOwner: true });
+    // Pre-filter returns one ID so findMany is exercised. Owner's raw query
+    // takes the no-org-filter branch (boolean param flips it off).
+    dbMocks.prisma.$queryRaw.mockResolvedValueOnce([{ id: "cand-1" }]);
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
 
-    await getCandidatesLibrary();
+    await getCandidatesLibrary(new Request("http://localhost/api/candidates"));
 
     const callArgs = dbMocks.prisma.candidate.findMany.mock.calls[0][0] as { where: Record<string, unknown> };
-    // Owner query should NOT include a job.orgId filter
+    // Owner query should NOT include the AND-wrapped org scoping or any job filter
+    expect(callArgs.where).not.toHaveProperty("AND");
     expect(callArgs.where).not.toHaveProperty("job");
   });
 });

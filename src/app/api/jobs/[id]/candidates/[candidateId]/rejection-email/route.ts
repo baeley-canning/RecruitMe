@@ -24,7 +24,8 @@ export async function POST(
     candidate.name,
     candidate.job.title,
     candidate.job.company,
-    candidate.notes ?? undefined
+    candidate.notes ?? undefined,
+    { orgId: auth.orgId, userId: auth.userId },
   );
 
   return NextResponse.json({ email });

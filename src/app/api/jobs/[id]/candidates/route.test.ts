@@ -24,9 +24,27 @@ const sessionMocks = vi.hoisted(() => ({
   unauthorized: vi.fn(() => new Response(null, { status: 401 })),
 }));
 
+const scoringConfigMocks = vi.hoisted(() => ({
+  customWeights: {
+    must_have: 0.5,
+    skill_fit: 0.2,
+    location_fit: 0.05,
+    seniority_fit: 0.05,
+    title_fit: 0.05,
+    domain_fit: 0.1,
+    nice_to_have_fit: 0.05,
+  },
+  getOrgScoringWeights: vi.fn(),
+  getJobScoringWeights: vi.fn(),
+}));
+
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/scoring-config", () => ({
+  getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
+  getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
+}));
 
 import { POST } from "./route";
 
@@ -37,9 +55,8 @@ function makeBreakdown() {
       location_fit: { score: 100, weight: CATEGORY_WEIGHTS_V2.location_fit, evidence: "Wellington-based." },
       seniority_fit: { score: 76, weight: CATEGORY_WEIGHTS_V2.seniority_fit, evidence: "Right experience band." },
       title_fit: { score: 78, weight: CATEGORY_WEIGHTS_V2.title_fit, evidence: "Relevant title history." },
-      industry_fit: { score: 62, weight: CATEGORY_WEIGHTS_V2.industry_fit, evidence: "Good SaaS overlap." },
+      domain_fit: { score: 66, weight: CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Good SaaS overlap, aligned wording." },
       nice_to_have_fit: { score: 40, weight: CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Some nice-to-haves." },
-      keyword_alignment: { score: 70, weight: CATEGORY_WEIGHTS_V2.keyword_alignment, evidence: "Aligned wording." },
     },
     must_have_coverage: [
       { requirement: "Ruby on Rails", status: "confirmed", evidence: "Listed explicitly." },
@@ -74,6 +91,8 @@ describe("manual candidate ingestion route", () => {
     };
     sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    scoringConfigMocks.getOrgScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
+    scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     dbMocks.prisma.job.findUnique.mockResolvedValue(job);
     dbMocks.prisma.candidate.create.mockResolvedValue({
       id: "cand-3",
@@ -113,8 +132,74 @@ describe("manual candidate ingestion route", () => {
 
     expect(res.status).toBe(201);
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
+    expect(scoringConfigMocks.getJobScoringWeights).toHaveBeenCalled();
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      null,
+      scoringConfigMocks.customWeights,
+      "org-1"
+    );
     expect(dbMocks.prisma.candidate.update.mock.calls[0][0].data.scoreBreakdown).toContain("\"version\":2");
     expect(dbMocks.prisma.candidate.update.mock.calls[0][0].data.acceptanceScore).toBe(66);
     expect(body.scoreBreakdown).toContain("\"version\":2");
+  });
+
+  it("flags scoringError on screeningData when auto-score fails (does not silently drop the score)", async () => {
+    // The fix: when scoreCandidateStructured rejects we used to swallow the
+    // error with a bare console.error, leaving the row with NO score and
+    // NO failure trail. After the fix the row must:
+    //   (a) still be created (don't lose the candidate)
+    //   (b) have matchScore: null (don't surface a stale 0)
+    //   (c) have screeningData.scoringError populated so the recruiter sees why.
+    aiMocks.scoreCandidateStructured.mockRejectedValueOnce(new Error("Claude blew up: 503"));
+    dbMocks.prisma.candidate.create.mockResolvedValueOnce({ id: "cand-fail", name: "Alex Chen" });
+
+    const req = new Request("http://localhost/api/jobs/job-1/candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profileText: "Alex Chen\nSoftware Engineer\nAbout\nFull-stack engineer with 8 years of experience building Ruby on Rails and React applications.",
+        autoScore: true,
+      }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+
+    expect(res.status).toBe(201);
+    // The row was created (a)…
+    expect(dbMocks.prisma.candidate.create).toHaveBeenCalled();
+    // …and patched with the scoringError flag (b + c). matchScore: null
+    // because deriveUpdateData never ran.
+    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
+    const updateData = dbMocks.prisma.candidate.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(updateData.matchScore).toBeNull();
+    expect(typeof updateData.screeningData).toBe("string");
+    const screening = JSON.parse(updateData.screeningData as string);
+    expect(screening.scoringError).toContain("Claude blew up");
+    expect(screening.scoringErrorAt).toBeTruthy();
+  });
+
+  it("normalizes manual LinkedIn URLs before saving", async () => {
+    const req = new Request("http://localhost/api/jobs/job-1/candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Ranjana Tyagi",
+        linkedinUrl: "https://nz.linkedin.com/in/ranjana-tyagi-3755b615/?trk=people",
+        autoScore: false,
+      }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
+
+    expect(res.status).toBe(201);
+    expect(dbMocks.prisma.candidate.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          linkedinUrl: "https://www.linkedin.com/in/ranjana-tyagi-3755b615",
+        }),
+      })
+    );
   });
 });

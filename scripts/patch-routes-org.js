@@ -22,7 +22,6 @@ const routes = [
   ["candidates/talent-pool/route.ts", null],
   ["candidates/[candidateId]/route.ts", null],
   ["candidates/[candidateId]/score/route.ts", null],
-  ["candidates/[candidateId]/fetch-profile/route.ts", null],
   ["candidates/[candidateId]/outreach/route.ts", null],
 ];
 
