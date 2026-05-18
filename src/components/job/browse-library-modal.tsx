@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { X, Loader2, Search, MapPin, CheckCircle2 } from "lucide-react";
+import { X, Loader2, Search, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
-import { ScoreBadge } from "@/components/score-badge";
+import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
 
 interface LibraryCandidate {
   id: string;
@@ -149,24 +149,19 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
                 {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-md font-medium text-text-primary truncate">{c.name}</p>
-                  <ScoreBadge score={c.matchScore} size="sm" />
-                </div>
-                {c.headline && (
-                  <p className="text-xs text-text-secondary truncate mt-0.5">{c.headline}</p>
+                <CandidateIdentityBlock
+                  name={c.name}
+                  headline={c.headline}
+                  location={c.location}
+                  score={c.matchScore}
+                  size="sm"
+                  showScore
+                />
+                {(c.job?.title || c.archivedJobTitle) && (
+                  <p className="text-xs text-text-tertiary mt-1">
+                    {c.job?.title ? `from ${c.job.title}` : `archived from ${c.archivedJobTitle}`}
+                  </p>
                 )}
-                <div className="flex items-center gap-3 mt-1 text-xs text-text-tertiary flex-wrap">
-                  {c.location && (
-                    <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.location}</span>
-                  )}
-                  {c.job?.title && (
-                    <span>from {c.job.title}</span>
-                  )}
-                  {!c.job?.title && c.archivedJobTitle && (
-                    <span>archived from {c.archivedJobTitle}</span>
-                  )}
-                </div>
               </div>
             </button>
           );

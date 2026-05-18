@@ -113,8 +113,8 @@ function CandidateBrief({
         {/* Identity + scores */}
         <div className="flex items-start justify-between gap-4 mb-3">
           <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-full bg-accent-subtle border border-separator flex items-center justify-center flex-shrink-0 text-accent font-semibold print:hidden">
-              {candidate.name.charAt(0).toUpperCase()}
+            <div className="w-9 h-9 rounded-full bg-accent-subtle flex items-center justify-center flex-shrink-0 text-accent font-semibold text-xs print:hidden">
+              {candidate.name.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()}
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
