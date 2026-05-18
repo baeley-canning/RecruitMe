@@ -843,6 +843,33 @@ await step(30, "create Archetype table", async () => {
   await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Archetype_orgId_isAntiArchetype_idx" ON "Archetype"("orgId", "isAntiArchetype")`;
 });
 
+// Step 31: Subscription model (Phase 4 — Stripe subscriptions)
+await step("create Subscription table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "Subscription" (
+      "id"                   TEXT NOT NULL,
+      "orgId"                TEXT NOT NULL,
+      "stripeCustomerId"     TEXT,
+      "stripeSubscriptionId" TEXT,
+      "stripePriceId"        TEXT,
+      "planName"             TEXT NOT NULL DEFAULT 'starter',
+      "status"               TEXT NOT NULL DEFAULT 'active',
+      "seats"                INTEGER NOT NULL DEFAULT 2,
+      "candidateLimit"       INTEGER NOT NULL DEFAULT 500,
+      "currentPeriodEnd"     TIMESTAMP(3),
+      "trialEndsAt"          TIMESTAMP(3),
+      "cancelAtPeriodEnd"    BOOLEAN NOT NULL DEFAULT false,
+      "createdAt"            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Subscription_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_orgId_key" ON "Subscription"("orgId")`;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_stripeCustomerId_key" ON "Subscription"("stripeCustomerId")`;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_stripeSubscriptionId_key" ON "Subscription"("stripeSubscriptionId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Subscription_orgId_idx" ON "Subscription"("orgId")`;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

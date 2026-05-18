@@ -676,3 +676,25 @@ model Archetype {
   @@index([orgId])
   @@index([orgId, isAntiArchetype])
 }
+
+// Stripe subscription per org. One active subscription per org at a time.
+// status mirrors Stripe: active | past_due | canceled | trialing | incomplete
+model Subscription {
+  id                  String   @id @default(cuid())
+  orgId               String   @unique
+  stripeCustomerId    String?  @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId       String?
+  planName            String   @default("starter") // starter | growth | agency
+  status              String   @default("active")  // active | past_due | canceled | trialing
+  seats               Int      @default(2)
+  candidateLimit      Int      @default(500)
+  currentPeriodEnd    DateTime?
+  trialEndsAt         DateTime?
+  cancelAtPeriodEnd   Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([stripeCustomerId])
+  @@index([orgId])
+}
