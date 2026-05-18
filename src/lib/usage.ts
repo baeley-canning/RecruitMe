@@ -32,6 +32,16 @@ const LIMITS: Record<RateLimitedType, { max: number; windowMs: number }> = {
   insight_extract:  { max: Number(process.env.RATE_LIMIT_INSIGHT_EXTRACT ?? 200), windowMs: 24 * 60 * 60 * 1000 },
 };
 
+// Secondary, shorter-window ceilings layered on top of LIMITS for types
+// where a burst is worse than a sustained rate. Critic B §6: 200 insight
+// extractions spread across a day is fine; 200 in five minutes (a
+// degenerate re-sync repeating nightly) is a cost-shape problem.
+// When a type appears here, checkRateLimit consults BOTH windows and
+// requires both to be under their respective ceilings.
+const BURST_LIMITS: Partial<Record<RateLimitedType, { max: number; windowMs: number }>> = {
+  insight_extract: { max: Number(process.env.RATE_LIMIT_INSIGHT_EXTRACT_HOUR ?? 30), windowMs: 60 * 60 * 1000 },  // 30/hr
+};
+
 /**
  * Check if an org is within rate limit for a given usage type.
  * Returns { allowed: true } or { allowed: false, retryAfterMs }.
@@ -44,26 +54,40 @@ export async function checkRateLimit(
 ): Promise<{ allowed: boolean; retryAfterMs?: number }> {
   const ownerMultiplier = orgId ? 1 : 5;
 
-  const { max, windowMs } = LIMITS[type];
-  const effectiveMax = max * ownerMultiplier;
-  const since = new Date(Date.now() - windowMs);
+  // Build the list of windows to enforce. The primary (daily/hourly per
+  // LIMITS) always applies; BURST_LIMITS layers a shorter ceiling for
+  // types that need burst protection.
+  const windows: { max: number; windowMs: number }[] = [LIMITS[type]];
+  const burst = BURST_LIMITS[type];
+  if (burst) windows.push(burst);
 
-  const count = await prisma.usageEvent.count({
-    where: { orgId: orgId ?? null, type, createdAt: { gte: since } },
-  });
+  let worstRetryAfterMs = 0;
+  let breached = false;
 
-  if (count < effectiveMax) return { allowed: true };
+  for (const { max, windowMs } of windows) {
+    const effectiveMax = max * ownerMultiplier;
+    const since = new Date(Date.now() - windowMs);
 
-  // Find the oldest event in the window to compute retry-after.
-  const oldest = await prisma.usageEvent.findFirst({
-    where: { orgId: orgId ?? null, type, createdAt: { gte: since } },
-    orderBy: { createdAt: "asc" },
-  });
-  const retryAfterMs = oldest
-    ? windowMs - (Date.now() - oldest.createdAt.getTime())
-    : windowMs;
+    const count = await prisma.usageEvent.count({
+      where: { orgId: orgId ?? null, type, createdAt: { gte: since } },
+    });
 
-  return { allowed: false, retryAfterMs: Math.max(0, retryAfterMs) };
+    if (count < effectiveMax) continue;
+
+    breached = true;
+    // Find the oldest event in this window to compute retry-after.
+    const oldest = await prisma.usageEvent.findFirst({
+      where: { orgId: orgId ?? null, type, createdAt: { gte: since } },
+      orderBy: { createdAt: "asc" },
+    });
+    const retryAfterMs = oldest
+      ? windowMs - (Date.now() - oldest.createdAt.getTime())
+      : windowMs;
+    if (retryAfterMs > worstRetryAfterMs) worstRetryAfterMs = retryAfterMs;
+  }
+
+  if (!breached) return { allowed: true };
+  return { allowed: false, retryAfterMs: Math.max(0, worstRetryAfterMs) };
 }
 
 /**
@@ -125,19 +149,24 @@ export async function recordAiCall(args: {
 
 /**
  * Sum AI spend (USD) for an org over the trailing 24h window and compare
- * against the daily cap. Owner accounts (orgId null) get the same cap —
- * we are not interested in special-casing the human admin path here; the
- * goal is "no single tenant burns more than $X/day on AI."
+ * against the daily cap. Owner accounts (orgId null) get a 5× multiplier
+ * on the effective cap — same reasoning as checkRateLimit's ownerMultiplier:
+ * the admin path needs headroom for bulk ops (e.g. score-all on a
+ * 50-candidate job repeatedly during the day) that user orgs rarely run.
+ * The returned `capUsd` reflects the EFFECTIVE cap so UI ("you've spent
+ * $X of $Y") shows the cap the caller is actually being measured against.
  */
 export async function checkSpendCap(
   orgId: string | null | undefined,
   capUsd: number = DEFAULT_DAILY_SPEND_CAP_USD,
 ): Promise<{ allowed: boolean; spentUsd: number; capUsd: number }> {
+  const ownerMultiplier = orgId ? 1 : 5;
+  const effectiveCapUsd = capUsd * ownerMultiplier;
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const agg = await prisma.usageEvent.aggregate({
     where: { orgId: orgId ?? null, type: "ai_call", createdAt: { gte: since } },
     _sum: { costUsd: true },
   });
   const spentUsd = agg._sum.costUsd ?? 0;
-  return { allowed: spentUsd < capUsd, spentUsd, capUsd };
+  return { allowed: spentUsd < effectiveCapUsd, spentUsd, capUsd: effectiveCapUsd };
 }
