@@ -511,6 +511,81 @@ await step("validate Candidate.candidateIdentityId FK", async () => {
   `;
 });
 
+// 20. Deduplicate CandidateIdentity before Prisma adds the @@unique constraints
+//     for (orgId, linkedinUrl) and (orgId, jobAdderUrl). Collapses each group
+//     of duplicates to the most-recently-updated survivor; re-points Candidate
+//     candidateIdentityId to the survivor before deleting duplicates so the
+//     ON DELETE SET NULL FK cascade never fires. Alias rows cascade-delete
+//     automatically. Idempotent: after the first clean run nothing matches.
+await step("deduplicate CandidateIdentity (linkedinUrl + jobAdderUrl)", async () => {
+  // ── linkedinUrl pass ──────────────────────────────────────────────────────
+  const repointed1 = await prisma.$executeRaw`
+    WITH ranked AS (
+      SELECT id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY "orgId", "linkedinUrl"
+          ORDER BY "updatedAt" DESC, id
+        ) AS survivor_id
+      FROM "CandidateIdentity"
+      WHERE "linkedinUrl" IS NOT NULL
+    )
+    UPDATE "Candidate"
+    SET "candidateIdentityId" = r.survivor_id
+    FROM ranked r
+    WHERE "Candidate"."candidateIdentityId" = r.id
+      AND r.id != r.survivor_id
+  `;
+  const deleted1 = await prisma.$executeRaw`
+    DELETE FROM "CandidateIdentity"
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id,
+          ROW_NUMBER() OVER (
+            PARTITION BY "orgId", "linkedinUrl"
+            ORDER BY "updatedAt" DESC, id
+          ) AS rn
+        FROM "CandidateIdentity"
+        WHERE "linkedinUrl" IS NOT NULL
+      ) t
+      WHERE rn > 1
+    )
+  `;
+
+  // ── jobAdderUrl pass ──────────────────────────────────────────────────────
+  const repointed2 = await prisma.$executeRaw`
+    WITH ranked AS (
+      SELECT id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY "orgId", "jobAdderUrl"
+          ORDER BY "updatedAt" DESC, id
+        ) AS survivor_id
+      FROM "CandidateIdentity"
+      WHERE "jobAdderUrl" IS NOT NULL
+    )
+    UPDATE "Candidate"
+    SET "candidateIdentityId" = r.survivor_id
+    FROM ranked r
+    WHERE "Candidate"."candidateIdentityId" = r.id
+      AND r.id != r.survivor_id
+  `;
+  const deleted2 = await prisma.$executeRaw`
+    DELETE FROM "CandidateIdentity"
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id,
+          ROW_NUMBER() OVER (
+            PARTITION BY "orgId", "jobAdderUrl"
+            ORDER BY "updatedAt" DESC, id
+          ) AS rn
+        FROM "CandidateIdentity"
+        WHERE "jobAdderUrl" IS NOT NULL
+      ) t
+      WHERE rn > 1
+    )
+  `;
+  console.log(`  re-pointed ${repointed1 + repointed2} candidate(s), removed ${deleted1 + deleted2} duplicate identity row(s)`);
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {
