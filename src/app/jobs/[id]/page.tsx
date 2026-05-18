@@ -460,6 +460,8 @@ export default function JobDetailPage({
         const updated = await res.json() as Job;
         setJob((prev) => prev ? { ...prev, location: updated.location, location2: updated.location2 } : prev);
         setEditingLocation(false);
+      } else {
+        showToast("Failed to save location — please try again", "error");
       }
     } finally {
       setSavingLocation(false);
@@ -480,6 +482,8 @@ export default function JobDetailPage({
         setEditingJd(false);
         // Re-analyse automatically so scoring criteria reflect the updated JD
         handleParse();
+      } else {
+        showToast("Failed to save job description — please try again", "error");
       }
     } finally {
       setSavingJd(false);
@@ -494,7 +498,11 @@ export default function JobDetailPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ skill, action: "accept", alternative }),
       });
-      if (res.ok) await fetchJob();
+      if (res.ok) {
+        await fetchJob();
+      } else {
+        showToast("Failed to accept alternative — please try again", "error");
+      }
     } finally {
       setPendingAccepted((prev) => { const next = new Set(prev); next.delete(alternative); return next; });
     }
@@ -1005,8 +1013,7 @@ export default function JobDetailPage({
       const res = await fetch(`/api/jobs/${id}/candidates/score-all`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
-        console.error("score-all failed:", data.error);
-        // rescoringAll reset happens in finally — no stuck spinner
+        showToast(data.error || "Scoring failed — please try again", "error");
         return;
       }
       if (!res.body) return;
@@ -1057,7 +1064,7 @@ export default function JobDetailPage({
   const handleDelete = useCallback(async (candidateId: string) => {
     if (!await confirm({ message: "Remove this candidate?", danger: true, confirmLabel: "Remove" })) return;
     const res = await fetch(`/api/jobs/${id}/candidates/${candidateId}`, { method: "DELETE" });
-    if (!res.ok) { alert("Delete failed — please try again."); return; }
+    if (!res.ok) { showToast("Delete failed — please try again", "error"); return; }
     setSelectedIds((prev) => { const next = new Set(prev); next.delete(candidateId); return next; });
     await fetchJob();
   }, [fetchJob, id]);
@@ -1072,7 +1079,7 @@ export default function JobDetailPage({
       body: JSON.stringify({ ids: [...selectedIds] }),
     });
     if (!res.ok) {
-      alert(`Delete failed — please try again.`);
+      showToast("Bulk delete failed — please try again", "error");
     }
     setSelectedIds(new Set());
     setBulkDeleting(false);
@@ -1094,7 +1101,7 @@ export default function JobDetailPage({
     );
     const failCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)).length;
     if (failCount > 0) {
-      alert(`${failCount} of ${selectedIds.size} updates failed — refresh and try again for those candidates.`);
+      showToast(`${failCount} of ${selectedIds.size} status updates failed — refresh and retry`, "error");
     }
     setSelectedIds(new Set());
     setBulkStatusChanging(false);
