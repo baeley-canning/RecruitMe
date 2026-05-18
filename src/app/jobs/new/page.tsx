@@ -176,12 +176,22 @@ export default function NewJobPage() {
     <div className="bg-surface-base min-h-full">
       {/* Toolbar */}
       <div className="toolbar">
-        <h1 className="text-md font-semibold text-text-primary">New job</h1>
+        <h1 className="text-md font-semibold text-text-primary" aria-describedby="new-job-subtitle">New job</h1>
         <span className="text-xs text-text-tertiary">Build a role search from a job description or hiring brief</span>
         <div className="ml-auto" />
       </div>
 
       <div className="p-5 max-w-2xl mx-auto">
+        <div className="mb-4">
+          <p id="new-job-subtitle" className="text-text-secondary text-sm">
+            Creates a job record from a finished JD and runs candidate matching against your library.
+          </p>
+          <p className="text-xs text-text-tertiary mt-1">
+            Don&apos;t have the ad written yet? Try the{" "}
+            <a href="/jobs/listing-builder" className="text-accent hover:text-accent-hover font-medium">Listing Builder</a>
+            {" "}to draft one from a rough brief.
+          </p>
+        </div>
 
         {loadedFromListing && (
           <div className="mb-4 px-3 py-2 bg-accent-subtle border border-accent/30 rounded text-sm text-accent">

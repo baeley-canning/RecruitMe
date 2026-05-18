@@ -347,13 +347,23 @@ export default function CandidateProfilesPage() {
         <Link href="/jobs" className="text-text-secondary hover:text-text-primary transition-colors">
           <ArrowLeft className="w-3.5 h-3.5" />
         </Link>
-        <h1 className="text-md font-semibold text-text-primary">Candidate Profiles</h1>
+        <h1 className="text-md font-semibold text-text-primary" aria-describedby="candidate-profiles-subtitle">Candidate Profiles</h1>
         <span className="text-xs text-text-tertiary hidden sm:inline">
           Generate client-ready Word documents tailored to the target role
         </span>
       </div>
 
       <div className="p-4 max-w-4xl mx-auto">
+        <div className="mb-4">
+          <p id="candidate-profiles-subtitle" className="text-text-secondary text-sm">
+            Pitches a candidate to a client: pick someone from your library (or upload their CV) and export a tailored .docx profile.
+          </p>
+          <p className="text-xs text-text-tertiary mt-1">
+            Looking to source candidates for a role instead? Start a{" "}
+            <Link href="/jobs/new" className="text-accent hover:text-accent-hover font-medium">new job</Link>.
+          </p>
+        </div>
+
         {/* Step indicator */}
         {step !== "source" && step !== "download" && (
           <div className="flex items-center gap-2 mb-4 text-base">

@@ -311,7 +311,7 @@ ${toHtml(listingBody)}
       {/* Toolbar */}
       <div className="toolbar">
         <Sparkles className="w-3.5 h-3.5 text-text-secondary" />
-        <h1 className="text-md font-semibold text-text-primary">Listing Builder</h1>
+        <h1 className="text-md font-semibold text-text-primary" aria-describedby="listing-builder-subtitle">Listing Builder</h1>
         <span className="text-xs text-text-tertiary">Draft the external job ad before running the search</span>
         {(title || brief || listingHeadline || listingBody) && (
           <button
@@ -326,6 +326,16 @@ ${toHtml(listingBody)}
       </div>
 
       <div className="p-4 max-w-3xl mx-auto space-y-4">
+        <div>
+          <p id="listing-builder-subtitle" className="text-text-secondary text-sm">
+            Turns a rough brief into polished ad copy (headline + body) you can copy, PDF, or send into a new job search.
+          </p>
+          <p className="text-xs text-text-tertiary mt-1">
+            Already have a finished JD? Skip ahead and{" "}
+            <a href="/jobs/new" className="text-accent hover:text-accent-hover font-medium">create the job</a>
+            {" "}directly.
+          </p>
+        </div>
         {draftRestored && (
           <div className="px-3 py-2 bg-accent-subtle border border-separator rounded flex items-center justify-between gap-3">
             <p className="text-xs text-accent">
