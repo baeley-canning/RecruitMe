@@ -71,20 +71,34 @@ async function clearCursor() {
 
 /**
  * Look up an existing CandidateIdentity by Tier 1 key inside the given org.
+ * Follows mergedIntoIdentityId so a newly-imported candidate matching a
+ * previously-merged source identity lands on the survivor instead.
  * Returns null if no match.
  */
 async function findIdentityByKey(orgId, key) {
+  let hit = null;
   if (key.kind === "linkedinUrl") {
-    return prisma.candidateIdentity.findFirst({
+    hit = await prisma.candidateIdentity.findFirst({
       where: { orgId, linkedinUrl: key.value },
     });
-  }
-  if (key.kind === "jobAdderUrl") {
-    return prisma.candidateIdentity.findFirst({
+  } else if (key.kind === "jobAdderUrl") {
+    hit = await prisma.candidateIdentity.findFirst({
       where: { orgId, jobAdderUrl: key.value },
     });
   }
-  return null;
+  if (!hit) return null;
+
+  // Follow merge chain (max 10 hops; merge cycles shouldn't exist, but
+  // cap the loop in case of corrupt data).
+  let current = hit;
+  for (let i = 0; i < 10 && current.mergedIntoIdentityId; i++) {
+    const next = await prisma.candidateIdentity.findUnique({
+      where: { id: current.mergedIntoIdentityId },
+    });
+    if (!next) break;
+    current = next;
+  }
+  return current;
 }
 
 /**
