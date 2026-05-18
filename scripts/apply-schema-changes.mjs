@@ -296,18 +296,20 @@ await step("CandidateIdentity table", async () => {
     )
   `;
   // Per-org unique constraints — same person can legitimately exist across
-  // orgs, so uniqueness is scoped. jobAdderUrl uniqueness within an org
-  // prevents parent+subsidiary sharing one JobAdder tenant from auto-merging.
-  await prisma.$executeRaw`
-    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_linkedinUrl_key"
-    ON "CandidateIdentity"("orgId", "linkedinUrl")
-    WHERE "linkedinUrl" IS NOT NULL
-  `;
-  await prisma.$executeRaw`
-    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_jobAdderUrl_key"
-    ON "CandidateIdentity"("orgId", "jobAdderUrl")
-    WHERE "jobAdderUrl" IS NOT NULL
-  `;
+  // orgs, so uniqueness is scoped. We do NOT create unique indexes here:
+  // Prisma db push adds them based on the @@unique declarations in
+  // schema.prisma. Earlier versions of this script created partial-unique
+  // indexes (WHERE "linkedinUrl" IS NOT NULL) which then collided with
+  // Prisma's non-partial expectation — db push 4xx'd six times in a row
+  // until we dropped them. Postgres treats NULLs as distinct in unique
+  // indexes by default, so a non-partial unique on (orgId, linkedinUrl)
+  // still allows many rows with NULL linkedinUrl per org.
+  //
+  // Idempotent cleanup of the broken partial-unique indexes — safe to
+  // re-run on every startup, drops the old shape so Prisma can lay down
+  // the correct one.
+  await prisma.$executeRaw`DROP INDEX IF EXISTS "CandidateIdentity_orgId_linkedinUrl_key"`;
+  await prisma.$executeRaw`DROP INDEX IF EXISTS "CandidateIdentity_orgId_jobAdderUrl_key"`;
   await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "CandidateIdentity_orgId_idx"
     ON "CandidateIdentity"("orgId")
