@@ -4,7 +4,7 @@ import { computeCostUsd } from "./ai-pricing";
 import { reportError } from "./error-reporting";
 
 /** Event types that go through the count-based rate limiter. */
-export type RateLimitedType = "search" | "score" | "score_all" | "capture" | "parse";
+export type RateLimitedType = "search" | "score" | "score_all" | "capture" | "parse" | "insight_extract";
 /** All event types persisted in UsageEvent. "ai_call" is cost-tracked
  *  separately by checkSpendCap and is NOT count-rate-limited. */
 export type UsageType = RateLimitedType | "ai_call";
@@ -18,11 +18,18 @@ const DEFAULT_DAILY_SPEND_CAP_USD = Number(process.env.AI_DAILY_SPEND_CAP_USD ??
 // Per-org rate limits: max events of that type in the rolling window.
 // Override via env vars for flexibility without deploys.
 const LIMITS: Record<RateLimitedType, { max: number; windowMs: number }> = {
-  search:    { max: Number(process.env.RATE_LIMIT_SEARCH    ?? 30),  windowMs: 60 * 60 * 1000 },  // 30/hr
-  score_all: { max: Number(process.env.RATE_LIMIT_SCORE_ALL ?? 20),  windowMs: 60 * 60 * 1000 },  // 20/hr
-  score:     { max: Number(process.env.RATE_LIMIT_SCORE     ?? 200), windowMs: 60 * 60 * 1000 },  // 200/hr
-  capture:   { max: Number(process.env.RATE_LIMIT_CAPTURE   ?? 100), windowMs: 60 * 60 * 1000 },  // 100/hr
-  parse:     { max: Number(process.env.RATE_LIMIT_PARSE     ?? 100), windowMs: 60 * 60 * 1000 },  // 100/hr
+  search:           { max: Number(process.env.RATE_LIMIT_SEARCH    ?? 30),  windowMs: 60 * 60 * 1000 },  // 30/hr
+  score_all:        { max: Number(process.env.RATE_LIMIT_SCORE_ALL ?? 20),  windowMs: 60 * 60 * 1000 },  // 20/hr
+  score:            { max: Number(process.env.RATE_LIMIT_SCORE     ?? 200), windowMs: 60 * 60 * 1000 },  // 200/hr
+  capture:          { max: Number(process.env.RATE_LIMIT_CAPTURE   ?? 100), windowMs: 60 * 60 * 1000 },  // 100/hr
+  parse:            { max: Number(process.env.RATE_LIMIT_PARSE     ?? 100), windowMs: 60 * 60 * 1000 },  // 100/hr
+  // ProfileInsight extraction back-pressure. Critic B §6 flagged that a
+  // degenerate JobAdder sync that flips one whitespace char per nightly
+  // re-import would otherwise re-extract the entire 13.5k library every
+  // day. Window is 24h (not hourly) — extractions cluster around backfill
+  // sweeps and library pulls, not steady-state traffic. Default 200/day
+  // per org.
+  insight_extract:  { max: Number(process.env.RATE_LIMIT_INSIGHT_EXTRACT ?? 200), windowMs: 24 * 60 * 60 * 1000 },
 };
 
 /**
