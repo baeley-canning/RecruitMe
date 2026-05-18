@@ -33,6 +33,8 @@ import {
   FetchPriorityBadge,
   type AcceptanceData, type FetchPriorityReason,
 } from "./candidate/score-pills";
+import { InsightBadges } from "./insight-badges";
+import type { CandidateBadgeState } from "@/lib/insight-badges";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn, statusLabel, safeParseJson } from "@/lib/utils";
@@ -1078,6 +1080,29 @@ export const CandidateCard = memo(function CandidateCard({
                 );
               })()}
               <div className="flex items-center gap-1.5">
+                {/* PR 4: ProfileInsight-aware status badges. Renders only
+                    when NEXT_PUBLIC_RECRUITME_PROFILE_INSIGHT_UI_BADGES=true;
+                    otherwise the component returns null and no DOM appears.
+                    Insight reuse + library-only states need server-resolved
+                    data (hasUsableInsight, insightWasReused) that today's
+                    candidate prop doesn't carry — passed as `false` so those
+                    badges stay off until the server-side wiring lands. The
+                    needs_rescore badge works from the existing
+                    profileTextHash convention. */}
+                <InsightBadges
+                  state={
+                    {
+                      matchScore: candidate.matchScore,
+                      scoredProfileTextHash: candidate.profileTextHash,
+                      currentProfileTextHash: candidate.profileTextHash,
+                      source: candidate.source,
+                      profileTextEmpty: !candidate.profileText || candidate.profileText.trim().length === 0,
+                      hasUsableInsight: false,
+                      insightWasReused: false,
+                      context: "job",
+                    } as CandidateBadgeState
+                  }
+                />
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
                 {!hasFetchedProfile && (
