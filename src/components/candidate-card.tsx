@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
+import { CandidateIdentityBlock } from "./candidate/identity-block";
 import type { FetchState } from "./fetch-queue-panel";
 import {
   candidateSourceLabel,
@@ -976,81 +977,49 @@ export const CandidateCard = memo(function CandidateCard({
   return (
     <div className="bg-surface-raised border border-separator rounded-md hover:bg-surface-hover transition-colors">
       {/* Header row */}
-      <div className="flex items-start gap-3 p-4">
-        {/* Avatar — 2-letter initials, consistent with library and detail page */}
-        <button
-          type="button"
-          onClick={() => setShowProfile(true)}
-          className="w-8 h-8 rounded-md bg-accent-subtle text-accent flex items-center justify-center flex-shrink-0 font-semibold text-xs hover:bg-accent/25 transition-colors flex-shrink-0"
-          title="View profile"
-        >
-          {candidate.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
-        </button>
-
-        {/* Main info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowProfile(true)}
-                  className="font-semibold text-text-primary text-md leading-snug hover:text-accent transition-colors text-left"
-                  title="View stored LinkedIn data"
+      <div className="flex items-start gap-3 px-4 pt-4">
+        {/* Identity — avatar, name, headline, location. Consistent with library / detail page. */}
+        <CandidateIdentityBlock
+          name={candidate.name}
+          headline={candidate.headline}
+          locationNode={
+            candidate.location
+              ? <LocationFitPill location={candidate.location} score={locationFitScore} compact />
+              : null
+          }
+          onAvatarClick={() => setShowProfile(true)}
+          onNameClick={() => setShowProfile(true)}
+          nameExtra={
+            <>
+              {displayableLinkedinUrl(candidate.linkedinUrl) && (
+                <a
+                  href={displayableLinkedinUrl(candidate.linkedinUrl)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-text-tertiary hover:text-accent transition-colors flex-shrink-0"
+                  title="Open LinkedIn profile"
                 >
-                  {candidate.name}
-                </button>
-                {displayableLinkedinUrl(candidate.linkedinUrl) && (
-                  <a href={displayableLinkedinUrl(candidate.linkedinUrl)!} target="_blank" rel="noopener noreferrer"
-                    className="text-text-tertiary hover:text-accent transition-colors flex-shrink-0"
-                    title="Open LinkedIn profile">
-                    <LinkedInIcon className="w-3.5 h-3.5" />
-                  </a>
-                )}
-                <JobAdderBadge url={candidate.jobAdderUrl} />
-                {candidate.sharedFromOrgName && (
-                  <span
-                    className="inline-flex items-center gap-1 text-xs font-medium text-accent bg-accent-subtle rounded-sm px-1.5 py-0.5"
-                    title={`This candidate is in ${candidate.sharedFromOrgName}'s library — read-only via your cross-org subscription`}
-                  >
-                    Shared from {candidate.sharedFromOrgName}
-                  </span>
-                )}
-              </div>
-              {candidate.headline && (
-                <p className="text-base text-text-secondary mt-0.5 line-clamp-1">
-                  {candidate.headline}
-                </p>
+                  <LinkedInIcon className="w-3.5 h-3.5" />
+                </a>
               )}
-              {candidate.location && (
-                <div className="mt-1">
-                  <LocationFitPill location={candidate.location} score={locationFitScore} compact />
-                </div>
-              )}
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setShowProfile(true)}
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium transition-colors",
-                    hasExtensionCapture
-                      ? "bg-accent-subtle text-accent hover:bg-accent/25"
-                      : "bg-surface-hover text-text-tertiary hover:bg-surface-overlay",
-                  )}
-                  title="Open stored LinkedIn capture"
+              <JobAdderBadge url={candidate.jobAdderUrl} />
+              {candidate.sharedFromOrgName && (
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-medium text-accent bg-accent-subtle rounded-sm px-1.5 py-0.5"
+                  title={`This candidate is in ${candidate.sharedFromOrgName}'s library — read-only via your cross-org subscription`}
                 >
-                  <FileText className="w-3 h-3" />
-                  {captureLabel}
-                </button>
-                {candidate.profileText && (
-                  <span className="text-xs text-text-tertiary data-mono" suppressHydrationWarning>
-                    {candidate.profileText.length.toLocaleString()} chars saved
-                  </span>
-                )}
-              </div>
-            </div>
+                  Shared from {candidate.sharedFromOrgName}
+                </span>
+              )}
+            </>
+          }
+          size="sm"
+          showScore={false}
+          className="flex-1 min-w-0"
+        />
 
-            <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+        {/* Right column — AI quality signals + score */}
+        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
               {/* Single data-quality badge replaces the previous trio (Minimal /
                   Snippet / Provisional) — shows the worst-case warning for this
                   candidate so the recruiter sees one clear signal, not clutter. */}
@@ -1210,8 +1179,29 @@ export const CandidateCard = memo(function CandidateCard({
                 <ProvenancePill source={acceptanceData?.scoredBy} context="acceptance" />
               )}
             </div>
-          </div>
         </div>
+
+      {/* Source label + profile char count — sits below the identity header */}
+      <div className="flex items-center gap-2 px-4 pb-3 mt-1 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setShowProfile(true)}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium transition-colors",
+            hasExtensionCapture
+              ? "bg-accent-subtle text-accent hover:bg-accent/25"
+              : "bg-surface-hover text-text-tertiary hover:bg-surface-overlay",
+          )}
+          title="Open stored LinkedIn capture"
+        >
+          <FileText className="w-3 h-3" />
+          {captureLabel}
+        </button>
+        {candidate.profileText && (
+          <span className="text-xs text-text-tertiary data-mono" suppressHydrationWarning>
+            {candidate.profileText.length.toLocaleString()} chars saved
+          </span>
+        )}
       </div>
 
       {/* "Bede problem" banner — surfaces JobAdder / talent-pool imports

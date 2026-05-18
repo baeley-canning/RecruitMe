@@ -156,12 +156,13 @@ function parseHeadline(headline: string | null): {
     return { title: pipeParts[0] ?? null, employer: null, skills: pipeParts.slice(1), rest: "" };
   }
 
-  // "Title at Employer" pattern — cap employer at 60 chars to avoid capturing
-  // qualifiers like "Acme Corp with 10 years" from complex headlines.
-  const atMatch = headline.match(/^(.+?)\s+at\s+(.+)$/i);
+  // "Title at Employer" pattern — stop at pipe, paren, dash, or em-dash so
+  // complex headlines like "Engineer at Acme Corp | 10 yrs" don't bleed
+  // "| 10 yrs" into the employer field.
+  const atMatch = headline.match(/^(.+?)\s+at\s+([^|(–—]+)/i);
   if (atMatch) {
     const employer = atMatch[2]?.trim() ?? null;
-    if (employer && employer.length <= 60) {
+    if (employer) {
       return { title: atMatch[1]?.trim() ?? null, employer, skills: [], rest: "" };
     }
   }
