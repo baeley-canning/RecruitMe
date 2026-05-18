@@ -9,6 +9,8 @@ import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { shouldRejectAsOverseas } from "@/lib/location";
+import { computeFingerprint } from "@/lib/archetype/fingerprint";
+import { matchCandidateToArchetypes } from "@/lib/archetype/match";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 
 export async function POST(
@@ -101,6 +103,28 @@ export async function POST(
     );
 
     const acceptanceData = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
+
+    // Archetype matching — fire-and-forget style; doesn't block the score response.
+    // Adds top archetype match to breakdown so the UI can render the badge.
+    try {
+      const fingerprint = computeFingerprint(candidate.profileText!);
+      if (fingerprint.skillVector.length > 0 && auth.orgId) {
+        const matches = await matchCandidateToArchetypes(auth.orgId, fingerprint.skillVector);
+        if (matches.length > 0) {
+          const top = matches[0];
+          breakdown.archetypeMatch = {
+            archetypeId:    top.archetypeId,
+            archetypeName:  top.archetypeName,
+            similarity:     top.similarity,
+            successRate:    top.successRate,
+            isAntiArchetype: top.isAntiArchetype,
+            warning:        top.warning,
+          };
+        }
+      }
+    } catch {
+      // Non-fatal: archetype matching failing shouldn't break scoring
+    }
 
     // Country gate runs on every re-score. Two cases:
     // (a) Re-score reveals an overseas signal that wasn't visible before

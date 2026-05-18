@@ -616,3 +616,63 @@ model CandidateTagAssignment {
   @@index([candidateId])
   @@index([tagId])
 }
+
+model CandidateFingerprint {
+  id              String   @id @default(cuid())
+  candidateId     String   @unique
+  orgId           String
+  version         Int      @default(1)
+  skillVector     String   // JSON: {skill, lastUsedYear, recency, evidence}[]
+  trajectory      String   @default("unknown") // ascending|lateral|descending|pivoting|unknown
+  avgTenureMonths Float?
+  stabilityScore  Int? // 0-100
+  domainClusters  String   @default("[]") // JSON: string[]
+  seniorityLevel  String   @default("unknown") // junior|mid|senior|lead|executive|unknown
+  archetypeMatches String? // JSON: {id, name, similarity, successRate, isAntiArchetype}[]
+  computedAt      DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgId])
+}
+
+model ArchetypePlacement {
+  id                  String   @id @default(cuid())
+  orgId               String
+  candidateId         String
+  jobId               String
+  fingerprintVector   String // JSON: SkillVector[] snapshot at outcome time
+  finalStatus         String // hired|rejected|declined|offer_sent
+  outcomeCategory     String // success|failure
+  roleTitle           String
+  roleMustHaves       String // JSON: string[]
+  matchScore          Int
+  acceptanceScore     Int?
+  recruiterCorrection Int?
+  decisionReason      String?
+  createdAt           DateTime @default(now())
+
+  @@index([orgId])
+  @@index([orgId, outcomeCategory])
+}
+
+model Archetype {
+  id                 String   @id @default(cuid())
+  orgId              String
+  name               String
+  description        String?
+  centroidVector     String // JSON: SkillVector[] centroid
+  totalPlacements    Int      @default(0)
+  successCount       Int      @default(0)
+  failureCount       Int      @default(0)
+  successRate        Float    @default(0)
+  avgMatchScore      Float?
+  antiCentroidVector String? // JSON: failure centroid
+  isAntiArchetype    Boolean  @default(false)
+  memberCount        Int      @default(0)
+  lastClusteredAt    DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([orgId, isAntiArchetype])
+}

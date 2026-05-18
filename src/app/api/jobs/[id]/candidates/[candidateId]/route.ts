@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import type { ScoreBreakdown } from "@/lib/scoring";
 
 const VALID_STATUSES = [
   "new", "reviewing", "shortlisted", "contacted",
@@ -93,6 +94,15 @@ export async function PATCH(
       },
       { isolationLevel: "Serializable" }
     );
+
+    // Fire-and-forget placement memory recording for terminal statuses.
+    const TERMINAL = new Set(["hired", "rejected", "declined"]);
+    if (body.status && TERMINAL.has(body.status) && auth.orgId) {
+      recordArchetypePlacement(candidate.id, id, auth.orgId, body.status).catch((e) =>
+        console.warn("[archetype] placement record failed:", e instanceof Error ? e.message : e)
+      );
+    }
+
     return NextResponse.json(candidate);
   }
 
@@ -102,6 +112,93 @@ export async function PATCH(
   });
 
   return NextResponse.json(candidate);
+}
+
+// ── Archetype placement memory ─────────────────────────────────────────────
+// Called asynchronously after a terminal status change. Computes the
+// candidate's career fingerprint and writes an ArchetypePlacement record
+// so the clustering engine can learn from this outcome.
+async function recordArchetypePlacement(
+  candidateId: string,
+  jobId: string,
+  orgId: string,
+  finalStatus: string
+): Promise<void> {
+  const [candidate, job] = await Promise.all([
+    prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: { profileText: true, matchScore: true, acceptanceScore: true, scoreBreakdown: true },
+    }),
+    prisma.job.findUnique({
+      where: { id: jobId },
+      select: { title: true, parsedRole: true },
+    }),
+  ]);
+
+  if (!candidate?.profileText || !job) return;
+
+  const { computeFingerprint } = await import("@/lib/archetype/fingerprint");
+  const fingerprint = computeFingerprint(candidate.profileText);
+  if (fingerprint.skillVector.length === 0) return;
+
+  const outcomeCategory = finalStatus === "hired" ? "success" : "failure";
+
+  let roleMustHaves: string[] = [];
+  if (job.parsedRole) {
+    const parsed = safeParseJson<{ must_haves?: string[] } | null>(job.parsedRole, null);
+    roleMustHaves = parsed?.must_haves ?? [];
+  }
+
+  // Track recruiter correction: compare matchScore to AI's must_have_pct
+  let recruiterCorrection: number | null = null;
+  if (candidate.scoreBreakdown && candidate.matchScore !== null) {
+    const bd = safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null);
+    if (bd) {
+      const aiScore = Math.round(bd.overall);
+      recruiterCorrection = candidate.matchScore - aiScore;
+    }
+  }
+
+  await prisma.archetypePlacement.create({
+    data: {
+      orgId,
+      candidateId,
+      jobId,
+      fingerprintVector: JSON.stringify(fingerprint.skillVector),
+      finalStatus,
+      outcomeCategory,
+      roleTitle: job.title,
+      roleMustHaves: JSON.stringify(roleMustHaves),
+      matchScore: candidate.matchScore ?? 0,
+      acceptanceScore: candidate.acceptanceScore,
+      recruiterCorrection,
+    },
+  });
+
+  // Also upsert the candidate's fingerprint record
+  await prisma.candidateFingerprint.upsert({
+    where: { candidateId },
+    create: {
+      candidateId,
+      orgId,
+      skillVector: JSON.stringify(fingerprint.skillVector),
+      trajectory: fingerprint.trajectory,
+      avgTenureMonths: fingerprint.avgTenureMonths,
+      stabilityScore: fingerprint.stabilityScore,
+      domainClusters: JSON.stringify(fingerprint.domainClusters),
+      seniorityLevel: fingerprint.seniorityLevel,
+    },
+    update: {
+      skillVector: JSON.stringify(fingerprint.skillVector),
+      trajectory: fingerprint.trajectory,
+      avgTenureMonths: fingerprint.avgTenureMonths,
+      stabilityScore: fingerprint.stabilityScore,
+      domainClusters: JSON.stringify(fingerprint.domainClusters),
+      seniorityLevel: fingerprint.seniorityLevel,
+      version: { increment: 1 },
+      computedAt: new Date(),
+    },
+  });
 }
 
 export async function DELETE(

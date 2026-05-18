@@ -764,6 +764,85 @@ await step(27, "add Job_clientId_idx if missing (idempotent)", async () => {
   await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Job_clientId_idx" ON "Job"("clientId")`;
 });
 
+// ── Step 28: Create CandidateFingerprint table ────────────────────────────
+await step(28, "create CandidateFingerprint table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateFingerprint" (
+      "id"              TEXT NOT NULL,
+      "candidateId"     TEXT NOT NULL,
+      "orgId"           TEXT NOT NULL,
+      "version"         INTEGER NOT NULL DEFAULT 1,
+      "skillVector"     TEXT NOT NULL,
+      "trajectory"      TEXT NOT NULL DEFAULT 'unknown',
+      "avgTenureMonths" DOUBLE PRECISION,
+      "stabilityScore"  INTEGER,
+      "domainClusters"  TEXT NOT NULL DEFAULT '[]',
+      "seniorityLevel"  TEXT NOT NULL DEFAULT 'unknown',
+      "archetypeMatches" TEXT,
+      "computedAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateFingerprint_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateFingerprint_candidateId_key"
+    ON "CandidateFingerprint"("candidateId")
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateFingerprint_orgId_idx" ON "CandidateFingerprint"("orgId")`;
+});
+
+// ── Step 29: Create ArchetypePlacement table ──────────────────────────────
+await step(29, "create ArchetypePlacement table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ArchetypePlacement" (
+      "id"                  TEXT NOT NULL,
+      "orgId"               TEXT NOT NULL,
+      "candidateId"         TEXT NOT NULL,
+      "jobId"               TEXT NOT NULL,
+      "fingerprintVector"   TEXT NOT NULL,
+      "finalStatus"         TEXT NOT NULL,
+      "outcomeCategory"     TEXT NOT NULL,
+      "roleTitle"           TEXT NOT NULL,
+      "roleMustHaves"       TEXT NOT NULL,
+      "matchScore"          INTEGER NOT NULL,
+      "acceptanceScore"     INTEGER,
+      "recruiterCorrection" INTEGER,
+      "decisionReason"      TEXT,
+      "createdAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "ArchetypePlacement_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ArchetypePlacement_orgId_idx" ON "ArchetypePlacement"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ArchetypePlacement_orgId_outcomeCategory_idx" ON "ArchetypePlacement"("orgId", "outcomeCategory")`;
+});
+
+// ── Step 30: Create Archetype table ──────────────────────────────────────
+await step(30, "create Archetype table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "Archetype" (
+      "id"                 TEXT NOT NULL,
+      "orgId"              TEXT NOT NULL,
+      "name"               TEXT NOT NULL,
+      "description"        TEXT,
+      "centroidVector"     TEXT NOT NULL,
+      "totalPlacements"    INTEGER NOT NULL DEFAULT 0,
+      "successCount"       INTEGER NOT NULL DEFAULT 0,
+      "failureCount"       INTEGER NOT NULL DEFAULT 0,
+      "successRate"        DOUBLE PRECISION NOT NULL DEFAULT 0,
+      "avgMatchScore"      DOUBLE PRECISION,
+      "antiCentroidVector" TEXT,
+      "isAntiArchetype"    BOOLEAN NOT NULL DEFAULT false,
+      "memberCount"        INTEGER NOT NULL DEFAULT 0,
+      "lastClusteredAt"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "createdAt"          TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"          TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Archetype_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Archetype_orgId_idx" ON "Archetype"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Archetype_orgId_isAntiArchetype_idx" ON "Archetype"("orgId", "isAntiArchetype")`;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

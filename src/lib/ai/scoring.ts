@@ -1,7 +1,7 @@
 import { parseJson, SONNET, resolveModelForDataQuality, withRetry } from "./chat";
 import { chatWithFailover, type ChatSource } from "./chat-with-failover";
 import { analyseProfileCaptureCompleteness, classifyDataQuality, runDeterministicMatch, buildStubBreakdown } from "../scoring";
-import { getRecruitingContext } from "../recruiter-memory";
+import { getRecruitingContext, getAntiArchetypeContext } from "../recruiter-memory";
 import {
   buildScoreBreakdown,
   CATEGORY_WEIGHTS_V2,
@@ -473,7 +473,11 @@ export async function scoreCandidateStructured(
   const dataQualityForContext = classifyDataQuality(profileText.length);
   let resolvedRecruiterContext = recruiterContext ?? "";
   if (!resolvedRecruiterContext && orgId && dataQualityForContext === "full_profile") {
-    resolvedRecruiterContext = await getRecruitingContext(parsedRole, orgId).catch(() => "");
+    const [baseContext, antiArchetypeContext] = await Promise.all([
+      getRecruitingContext(parsedRole, orgId).catch(() => ""),
+      getAntiArchetypeContext(profileText, orgId).catch(() => ""),
+    ]);
+    resolvedRecruiterContext = [baseContext, antiArchetypeContext].filter(Boolean).join("\n\n");
   }
 
   const dismissedKnockouts = new Set((parsedRole.dismissed_knockout_criteria ?? []).map((k) => k.toLowerCase()));
