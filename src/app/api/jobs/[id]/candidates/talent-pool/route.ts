@@ -343,7 +343,13 @@ export async function POST(
 
     const haystack = row.profileText.toLowerCase();
     if (isSpecialistRole) {
-      const hasSignal = roleTerms.some((term) => haystack.includes(term));
+      // Bug fix: previously `haystack.includes(term)` — that matches "sql"
+      // inside "nosql" / "mssql" and "php" inside "phpipam-admin", silently
+      // admitting adjacent-stack candidates to specialist roles (Critic B
+      // §1, talent-pool/route.ts:346). signalMatchesText is already used at
+      // line 350 for non-specialist roles; bringing the specialist branch
+      // in line gives both gates the same word-boundary protection.
+      const hasSignal = roleTerms.some((term) => signalMatchesText(haystack, term));
       if (!hasSignal) { skippedRequirements++; continue; }
     } else {
       const hasMustHaveSignal = mustHaveSignalSets.some(

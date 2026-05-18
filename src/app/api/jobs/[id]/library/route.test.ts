@@ -5,6 +5,10 @@ const dbMocks = vi.hoisted(() => ({
   prisma: {
     candidate: { findMany: vi.fn(), upsert: vi.fn() },
     orgAccessGrant: { findMany: vi.fn().mockResolvedValue([]) },
+    // PR 3: library POST now writes a SearchSession on every pull
+    // (regression fix — analysis history was missing library activity).
+    // Default-mock so existing tests don't need to set this per case.
+    searchSession: { create: vi.fn().mockResolvedValue({ id: "ss-1" }) },
     // $queryRaw is now the gate for the GET handler — it pre-filters
     // candidate IDs by `char_length(profileText) >= 500` (the "Bede problem"
     // fix). Tests stub the array of `{ id }` rows the SQL would return.
