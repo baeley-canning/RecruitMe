@@ -157,13 +157,18 @@ function buildCoverPage(data: ProfileDocData): (Paragraph | Table)[] {
         spacing: { after: 0 },
       })
     : new Paragraph({
+        // Deliberate brand placeholder — large brand-teal "PlaceMe" wordmark with a
+        // subtle bottom border so it reads as an intentional logo block, not a glitch.
+        // Real logo (public/placeme-logo.png|.jpg) takes precedence when present.
         alignment: AlignmentType.CENTER,
+        border: {
+          bottom: { style: BorderStyle.SINGLE, size: 6, color: TEAL, space: 4 },
+        },
         children: [
-          new TextRun({ text: "place", bold: true, size: PT(28), font: FONT, color: "808080" }),
-          new TextRun({ text: "me.", bold: true, size: PT(28), font: FONT, color: TEAL }),
-          new TextRun({ text: "  IT RECRUITMENT", size: PT(11), font: FONT, color: "808080" }),
+          new TextRun({ text: "Place", bold: true, size: PT(26), font: FONT, color: TEAL }),
+          new TextRun({ text: "Me", bold: true, size: PT(26), font: FONT, color: TEAL }),
         ],
-        spacing: { after: PT(12) },
+        spacing: { before: PT(8), after: PT(16) },
       });
 
   // "Candidate Profile" title: Calibri Bold 16pt (sz=32 in template), centered
