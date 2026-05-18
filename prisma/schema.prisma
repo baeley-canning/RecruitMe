@@ -35,9 +35,12 @@ model Job {
   parseHistory   JobParseHistory[]
   orgId          String?
   org            Org?              @relation(fields: [orgId], references: [id])
+  clientId       String?
+  client         Client?           @relation(fields: [clientId], references: [id])
 
   @@index([orgId])
   @@index([status])
+  @@index([clientId])
 }
 
 model Setting {
@@ -53,6 +56,7 @@ model Org {
   updatedAt           DateTime            @updatedAt
   users               User[]
   jobs                Job[]
+  clients             Client[]
   candidateIdentities CandidateIdentity[]
 }
 
@@ -489,4 +493,22 @@ model ReferenceCheck {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Client {
+  id             String   @id @default(cuid())
+  orgId          String
+  org            Org      @relation(fields: [orgId], references: [id])
+  name           String
+  industry       String?
+  website        String?
+  primaryContact String?
+  email          String?
+  phone          String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  jobs           Job[]
+
+  @@index([orgId])
 }

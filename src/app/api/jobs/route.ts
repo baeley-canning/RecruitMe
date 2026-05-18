@@ -24,6 +24,7 @@ export async function GET(req: Request) {
 const CreateJobSchema = z.object({
   title:     z.string().min(1, "Title is required").max(200).trim(),
   company:   z.string().max(200).trim().optional(),
+  clientId:  z.string().optional(),
   location:  z.string().max(200).trim().optional(),
   location2: z.string().max(200).trim().optional(),
   isRemote:  z.boolean().optional(),
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
   if (!result.success) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
   }
-  const { title, company, location, location2, isRemote, rawJd, salaryMin, salaryMax } = result.data;
+  const { title, company, clientId, location, location2, isRemote, rawJd, salaryMin, salaryMax } = result.data;
 
   if (salaryMin != null && salaryMax != null && salaryMin > salaryMax) {
     return NextResponse.json({ error: "Salary minimum cannot exceed maximum" }, { status: 422 });
@@ -50,6 +51,7 @@ export async function POST(req: Request) {
     data: {
       title,
       company:   company   || null,
+      clientId:  clientId  || null,
       location:  location  || null,
       location2: location2 || null,
       isRemote:  isRemote ?? false,
