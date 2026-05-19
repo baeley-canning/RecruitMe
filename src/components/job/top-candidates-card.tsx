@@ -2,12 +2,14 @@
 
 import { Star, ChevronRight, TrendingDown } from "lucide-react";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 
 interface Candidate {
   id: string;
   name: string;
   headline: string | null;
   location: string | null;
+  linkedinUrl: string | null;
   matchScore: number | null;
   status: string;
   profileCapturedAt?: string | null;
@@ -57,6 +59,7 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
               name={c.name}
               headline={c.headline}
               location={c.location}
+              photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
               score={c.matchScore}
               size="sm"
               showScore

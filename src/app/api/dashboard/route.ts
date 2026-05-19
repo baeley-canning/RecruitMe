@@ -51,6 +51,7 @@ export async function GET() {
       select: {
         id: true,
         name: true,
+        linkedinUrl: true,
         matchScore: true,
         status: true,
         profileCapturedAt: true,

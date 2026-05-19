@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 
 interface TopCandidate { id: string; name: string; headline: string | null; location: string | null; matchScore: number | null; }
 interface JobStat {
@@ -16,7 +17,7 @@ interface JobStat {
   shortlisted: number; avgScore: number | null; topCandidates: TopCandidate[];
   staleScores: boolean; needsAttention: boolean;
 }
-interface RecentCapture { id: string; name: string; matchScore: number | null; status: string; profileCapturedAt: string | null; job: { id: string; title: string } | null; }
+interface RecentCapture { id: string; name: string; linkedinUrl: string | null; matchScore: number | null; status: string; profileCapturedAt: string | null; job: { id: string; title: string } | null; }
 interface SearchSession { id: string; collected: number; avgScore: number | null; evaluation: string | null; createdAt: string; job: { id: string; title: string } | null; }
 interface DashboardData {
   jobs: JobStat[];
@@ -148,6 +149,7 @@ export default function DashboardPage() {
                       <CandidateIdentityBlock
                         name={c.name}
                         headline={c.job?.title ?? undefined}
+                        photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
                         score={c.matchScore}
                         size="sm"
                         showScore

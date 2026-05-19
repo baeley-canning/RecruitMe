@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { MapPin, Phone } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,27 +30,53 @@ function Avatar({
   size = "md",
   onClick,
   title,
+  photoUrl,
 }: {
   name: string;
   size?: "sm" | "md" | "lg";
   onClick?: () => void;
   title?: string;
+  photoUrl?: string | null;
 }) {
+  // Track per-render whether the photo 404'd / errored so we can fall back to
+  // initials. unavatar.io returns 404 when ?fallback=false and there's no
+  // match, which fires this handler cleanly.
+  const [imageFailed, setImageFailed] = useState(false);
+  const showPhoto = Boolean(photoUrl) && !imageFailed;
+
   const cls = cn(
-    "bg-accent-subtle text-accent flex items-center justify-center flex-shrink-0 font-semibold select-none",
+    "bg-accent-subtle text-accent flex items-center justify-center flex-shrink-0 font-semibold select-none overflow-hidden",
     AVATAR_CLASSES[size],
     onClick && "cursor-pointer hover:bg-accent/25 transition-colors",
+  );
+
+  // referrerPolicy="no-referrer" avoids leaking which candidate page is
+  // rendering the avatar to unavatar.io / LinkedIn's CDN.
+  // Bare <img> (not next/image): avoids having to allow-list unavatar.io in
+  // next.config; avatars are 32-56px so there's no LCP win from next/image.
+  const content = showPhoto ? (
+    <img // eslint-disable-line @next/next/no-img-element
+      src={photoUrl ?? undefined}
+      alt={name}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setImageFailed(true)}
+      className={cn("w-full h-full object-cover", AVATAR_CLASSES[size])}
+    />
+  ) : (
+    candidateInitials(name)
   );
 
   if (onClick) {
     return (
       <button type="button" onClick={onClick} className={cls} title={title}>
-        {candidateInitials(name)}
+        {content}
       </button>
     );
   }
 
-  return <div className={cls}>{candidateInitials(name)}</div>;
+  return <div className={cls}>{content}</div>;
 }
 
 export interface CandidateIdentityBlockProps {
@@ -62,6 +88,8 @@ export interface CandidateIdentityBlockProps {
   locationNode?: ReactNode;
   phone?: string | null;
   linkedinUrl?: string | null;
+  /** Optional avatar photo URL — when set, renders <img> with fallback to initials on error. */
+  photoUrl?: string | null;
   score?: number | null;
   /** Render name as a Next.js link */
   href?: string;
@@ -94,6 +122,7 @@ export function CandidateIdentityBlock({
   locationNode,
   phone,
   linkedinUrl,
+  photoUrl,
   score,
   href,
   onAvatarClick,
@@ -144,7 +173,13 @@ export function CandidateIdentityBlock({
 
   return (
     <div className={cn("flex items-start gap-3", className)}>
-      <Avatar name={name} size={size} onClick={onAvatarClick} title={onAvatarClick ? "View profile" : undefined} />
+      <Avatar
+        name={name}
+        size={size}
+        onClick={onAvatarClick}
+        title={onAvatarClick ? "View profile" : undefined}
+        photoUrl={photoUrl}
+      />
 
       <div className="flex-1 min-w-0">
         {/* Name row */}

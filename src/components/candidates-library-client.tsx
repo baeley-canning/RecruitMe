@@ -9,6 +9,7 @@ import { timeAgo } from "@/lib/utils";
 import { scoreTier } from "@/lib/score-utils";
 import { AddLibraryCandidateModal } from "@/components/add-library-candidate-modal";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +67,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
         location={c.location}
         phone={c.phone}
         linkedinUrl={c.linkedinUrl}
+        photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
         score={c.matchScore}
         size="md"
         showScore={c.matchScore !== null}

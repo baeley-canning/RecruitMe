@@ -20,6 +20,7 @@ import {
 
 import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
 import { CandidateIdentityBlock } from "./candidate/identity-block";
+import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import type { FetchState } from "./fetch-queue-panel";
 import {
   candidateSourceLabel,
@@ -987,6 +988,7 @@ export const CandidateCard = memo(function CandidateCard({
               ? <LocationFitPill location={candidate.location} score={locationFitScore} compact />
               : null
           }
+          photoUrl={getCandidatePhotoUrl({ linkedinUrl: candidate.linkedinUrl })}
           onAvatarClick={() => setShowProfile(true)}
           onNameClick={() => setShowProfile(true)}
           nameExtra={
