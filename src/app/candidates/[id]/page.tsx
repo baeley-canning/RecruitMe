@@ -9,6 +9,7 @@ import {
   Trash2,
   Download,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Briefcase,
   Loader2,
@@ -29,6 +30,8 @@ import { formatBytes } from "@/lib/format";
 import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { CVPreview } from "@/components/candidate/cv-preview";
+import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import { LinkedInIcon } from "@/components/candidate/icons";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -190,12 +193,18 @@ function FileRow({
   file,
   candidateId,
   onDeleted,
+  defaultExpanded = false,
 }: {
   file: CandidateFile;
   candidateId: string;
   onDeleted: (id: string) => void;
+  /** Default-open the inline preview. Set true for the primary CV so
+   *  recruiters see the resume immediately, matching the JobAdder UX. */
+  defaultExpanded?: boolean;
 }) {
   const [deleting, setDeleting] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const previewable = file.mimeType === "application/pdf";
 
   const handleDelete = async () => {
     if (!await confirm({ message: `Delete "${file.filename}"?`, danger: true, confirmLabel: "Delete" })) return;
@@ -205,34 +214,52 @@ function FileRow({
   };
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded border border-separator bg-surface-sunken group hover:bg-surface-hover transition-colors">
-      <Badge className={typeBadgeClass(file.type)}>{typeLabel(file.type)}</Badge>
-      <div className="flex-1 min-w-0">
-        <p className="text-base font-medium text-text-primary truncate">{file.filename}</p>
-        <p className="text-xs text-text-tertiary">
-          <span className="data-mono">{formatBytes(file.size)}</span>
-          <span className="mx-1">·</span>
-          <span suppressHydrationWarning>{timeAgo(new Date(file.createdAt))}</span>
-        </p>
+    <div>
+      <div className="flex items-center gap-2 px-3 py-2 rounded border border-separator bg-surface-sunken group hover:bg-surface-hover transition-colors">
+        {previewable ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="p-0.5 -ml-0.5 text-text-tertiary hover:text-text-secondary rounded transition-colors flex-shrink-0"
+            title={expanded ? "Hide preview" : "Show preview"}
+            aria-expanded={expanded}
+          >
+            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+        ) : (
+          <span className="w-3.5 h-3.5 flex-shrink-0" aria-hidden />
+        )}
+        <Badge className={typeBadgeClass(file.type)}>{typeLabel(file.type)}</Badge>
+        <div className="flex-1 min-w-0">
+          <p className="text-base font-medium text-text-primary truncate">{file.filename}</p>
+          <p className="text-xs text-text-tertiary">
+            <span className="data-mono">{formatBytes(file.size)}</span>
+            <span className="mx-1">·</span>
+            <span suppressHydrationWarning>{timeAgo(new Date(file.createdAt))}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <a
+            href={`/api/candidates/${candidateId}/files/${file.id}`}
+            download={file.filename}
+            className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
+            title="Download"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </a>
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-surface-hover transition-colors disabled:opacity-50"
+            title="Delete"
+          >
+            {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <a
-          href={`/api/candidates/${candidateId}/files/${file.id}`}
-          download={file.filename}
-          className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
-          title="Download"
-        >
-          <Download className="w-3.5 h-3.5" />
-        </a>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-surface-hover transition-colors disabled:opacity-50"
-          title="Delete"
-        >
-          {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-        </button>
-      </div>
+      {expanded && previewable && (
+        <CVPreview candidateId={candidateId} file={file} height={640} className="mt-2" />
+      )}
     </div>
   );
 }
@@ -472,6 +499,18 @@ export default function CandidateDetailPage({
               LinkedIn
             </a>
           )}
+          {candidate.jobAdderUrl && (
+            <a
+              href={candidate.jobAdderUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent-subtle hover:bg-accent/25 text-accent text-md border border-separator transition-colors"
+              title="Open this candidate's JobAdder record"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              JobAdder
+            </a>
+          )}
         </div>
       </div>
 
@@ -492,6 +531,7 @@ export default function CandidateDetailPage({
                     location={candidate.location}
                     phone={candidate.phone}
                     linkedinUrl={candidate.linkedinUrl}
+                    photoUrl={getCandidatePhotoUrl({ linkedinUrl: candidate.linkedinUrl })}
                     score={score}
                     size="lg"
                     showScore={score !== null}
@@ -806,6 +846,10 @@ export default function CandidateDetailPage({
                     file={f}
                     candidateId={candidate.id}
                     onDeleted={handleFileDeleted}
+                    // First CV (newest, list comes back ordered desc) is the
+                    // candidate's primary resume — default-open the preview
+                    // so the JobAdder-like "see the CV immediately" UX works.
+                    defaultExpanded={f.id === candidate.files.find((x) => x.type === "cv")?.id}
                   />
                 ))}
                 <div className="pt-2">

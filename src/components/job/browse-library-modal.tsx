@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { X, Loader2, Search, CheckCircle2 } from "lucide-react";
+import { X, Loader2, Search, CheckCircle2, ChevronDown, ChevronRight, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { CVPreview } from "@/components/candidate/cv-preview";
+import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 
 interface LibraryCandidate {
   id: string;
@@ -16,6 +18,73 @@ interface LibraryCandidate {
   createdAt: string;
   job: { title: string } | null;
   archivedJobTitle: string | null;
+}
+
+interface LibraryRowFile {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  type: string;
+}
+
+/**
+ * Per-row inline CV preview for the browse-library modal. Owns its own
+ * expand state and file-fetch lifecycle so the parent list stays simple.
+ * Lazy: no fetch until the recruiter clicks "Show CV".
+ */
+function LibraryRowCVPreview({ candidateId }: { candidateId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [files, setFiles] = useState<LibraryRowFile[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Click handler: toggle, then fetch on first open if we haven't yet.
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation(); // don't toggle row selection — preview is independent
+    if (!expanded && files === null && !loading) {
+      setLoading(true);
+      fetch(`/api/candidates/${candidateId}/files`)
+        .then((r) => r.ok ? r.json() : Promise.reject(new Error("Failed to load files")))
+        .then((data: LibraryRowFile[]) => setFiles(data))
+        .catch(() => setError("Couldn't load CV"))
+        .finally(() => setLoading(false));
+    }
+    setExpanded((v) => !v);
+  };
+
+  const cvFile = files?.find((f) => f.type === "cv" && f.mimeType === "application/pdf");
+
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="mt-1 inline-flex items-center gap-1 text-2xs text-text-tertiary hover:text-accent transition-colors"
+        aria-expanded={expanded}
+      >
+        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        <FileText className="w-3 h-3" />
+        {expanded ? "Hide CV" : "Show CV"}
+      </button>
+      {expanded && (
+        <div className="mt-2">
+          {loading && (
+            <p className="text-xs text-text-tertiary flex items-center gap-1.5">
+              <Loader2 className="w-3 h-3 animate-spin" /> Loading files…
+            </p>
+          )}
+          {error && <p className="text-xs text-warning">{error}</p>}
+          {!loading && !error && files && !cvFile && (
+            <p className="text-xs text-text-tertiary">No PDF CV attached to this candidate.</p>
+          )}
+          {cvFile && (
+            <CVPreview candidateId={candidateId} file={cvFile} height={420} />
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface BrowseLibraryModalProps {
@@ -153,6 +222,7 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
                   name={c.name}
                   headline={c.headline}
                   location={c.location}
+                  photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
                   score={c.matchScore}
                   size="sm"
                   showScore
@@ -162,6 +232,7 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
                     {c.job?.title ? `from ${c.job.title}` : `archived from ${c.archivedJobTitle}`}
                   </p>
                 )}
+                <LibraryRowCVPreview candidateId={c.id} />
               </div>
             </button>
           );

@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Download, Loader2, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Loader2, Trash2, Upload } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
 import { confirm } from "@/components/ui/confirm-dialog";
+import { CVPreview } from "./cv-preview";
 
 export interface DrawerFile {
   id: string;
@@ -29,41 +30,76 @@ function drawerTypeColor(type: string) {
   return "bg-surface-hover text-text-secondary border-separator";
 }
 
-function DrawerFileRow({ file, candidateId, onDeleted }: { file: DrawerFile; candidateId: string; onDeleted: (id: string) => void }) {
+function DrawerFileRow({
+  file,
+  candidateId,
+  onDeleted,
+  defaultExpanded = false,
+}: {
+  file: DrawerFile;
+  candidateId: string;
+  onDeleted: (id: string) => void;
+  /** Default-open the inline preview. Set true for the primary CV so
+   *  recruiters see the resume immediately without an extra click. */
+  defaultExpanded?: boolean;
+}) {
   const [deleting, setDeleting] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const handleDelete = async () => {
     if (!await confirm({ message: `Delete "${file.filename}"?`, danger: true, confirmLabel: "Delete" })) return;
     setDeleting(true);
     await fetch(`/api/candidates/${candidateId}/files/${file.id}`, { method: "DELETE" });
     onDeleted(file.id);
   };
+  // Only PDFs render inline today (per cv-preview.tsx's INLINE_SAFE_MIMES);
+  // hide the chevron for other types so the affordance only appears when
+  // it actually does something.
+  const previewable = file.mimeType === "application/pdf";
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded bg-surface-raised border border-separator group hover:bg-surface-hover transition-colors">
-      <span className={cn("px-1.5 py-0.5 rounded-sm text-2xs font-medium border flex-shrink-0", drawerTypeColor(file.type))}>
-        {drawerTypeLabel(file.type)}
-      </span>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-text-primary truncate">{file.filename}</p>
-        <p className="text-2xs text-text-tertiary data-mono" suppressHydrationWarning>{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
+    <div>
+      <div className="flex items-center gap-2 px-3 py-2 rounded bg-surface-raised border border-separator group hover:bg-surface-hover transition-colors">
+        {previewable ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="p-0.5 -ml-0.5 text-text-tertiary hover:text-text-secondary rounded transition-colors"
+            title={expanded ? "Hide preview" : "Show preview"}
+            aria-expanded={expanded}
+          >
+            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+        ) : (
+          <span className="w-3.5 h-3.5 flex-shrink-0" aria-hidden />
+        )}
+        <span className={cn("px-1.5 py-0.5 rounded-sm text-2xs font-medium border flex-shrink-0", drawerTypeColor(file.type))}>
+          {drawerTypeLabel(file.type)}
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-text-primary truncate">{file.filename}</p>
+          <p className="text-2xs text-text-tertiary data-mono" suppressHydrationWarning>{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
+        </div>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <a
+            href={`/api/candidates/${candidateId}/files/${file.id}`}
+            download={file.filename}
+            className="p-1 text-text-tertiary hover:text-accent hover:bg-surface-hover rounded transition-colors"
+            title="Download"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </a>
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="p-1 text-text-tertiary hover:text-danger hover:bg-surface-hover rounded transition-colors disabled:opacity-50"
+            title="Delete"
+          >
+            {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <a
-          href={`/api/candidates/${candidateId}/files/${file.id}`}
-          download={file.filename}
-          className="p-1 text-text-tertiary hover:text-accent hover:bg-surface-hover rounded transition-colors"
-          title="Download"
-        >
-          <Download className="w-3.5 h-3.5" />
-        </a>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="p-1 text-text-tertiary hover:text-danger hover:bg-surface-hover rounded transition-colors disabled:opacity-50"
-          title="Delete"
-        >
-          {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-        </button>
-      </div>
+      {expanded && previewable && (
+        <CVPreview candidateId={candidateId} file={file} height={520} className="mt-2" />
+      )}
     </div>
   );
 }
@@ -190,6 +226,11 @@ export function CandidateFilesSection({ candidateId }: CandidateFilesSectionProp
               file={f}
               candidateId={candidateId}
               onDeleted={(id) => setFiles((prev) => prev.filter((x) => x.id !== id))}
+              // First CV (newest, since list comes back ordered desc) is
+              // the candidate's primary resume — default-open the preview
+              // so the JobAdder-like "see the CV the moment the drawer
+              // opens" UX works without an extra click.
+              defaultExpanded={f.id === files.find((x) => x.type === "cv")?.id}
             />
           ))}
         </div>

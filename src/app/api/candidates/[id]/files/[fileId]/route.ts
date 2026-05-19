@@ -17,6 +17,26 @@ const ALLOWED_DOWNLOAD_MIMES = new Set([
   "text/plain",
 ]);
 
+// Strict subset of ALLOWED_DOWNLOAD_MIMES that we'll serve with
+// `Content-Disposition: inline` when the caller passes `?inline=1`. Why this
+// is safe to render in the user's tab:
+//   • Allow-list gated: only `application/pdf` is on it. PDFs render in a
+//     sandboxed viewer in every modern browser — no script execution.
+//   • `text/html` is intentionally NOT in ALLOWED_DOWNLOAD_MIMES at all and
+//     is doubly excluded here, so a recruiter who uploads malicious HTML
+//     can never serve it back inline.
+//   • Word docs (msword / wordprocessingml) are in the download allow-list
+//     but excluded here — browsers don't render them natively, so inline
+//     would just show a blank tab. We force download instead.
+//   • `X-Content-Type-Options: nosniff` still applies, blocking MIME
+//     confusion even if a browser tries to render something off-list.
+//   • CV bytes are AES-256-GCM encrypted at rest (decryptCv) and access is
+//     gated by requireFileAccess (org match or owner), so this endpoint
+//     can never serve a file the caller wasn't already allowed to download.
+const INLINE_SAFE_MIMES = new Set<string>([
+  "application/pdf",
+]);
+
 function safeDownloadMime(claimed: string | null | undefined): string {
   if (!claimed) return "application/octet-stream";
   return ALLOWED_DOWNLOAD_MIMES.has(claimed) ? claimed : "application/octet-stream";
@@ -39,7 +59,7 @@ async function requireFileAccess(
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string; fileId: string }> }
 ) {
   const auth = await getAuth();
@@ -62,11 +82,22 @@ export async function GET(
     void maybeMigrateLegacy(file.id, plainBase64);
   }
 
+  // Decide disposition. `?inline=1` opts into inline rendering, but only for
+  // MIME types in the INLINE_SAFE_MIMES allow-list (PDF today). Anything
+  // else — including Word docs in the broader download allow-list, and
+  // anything safeDownloadMime() flattens to octet-stream — falls back to
+  // attachment. The client can gracefully degrade to a download link when
+  // its preview component sees a non-inline-safe file.
+  const safeMime = safeDownloadMime(file.mimeType);
+  const wantsInline = new URL(req.url).searchParams.get("inline") === "1";
+  const serveInline = wantsInline && INLINE_SAFE_MIMES.has(safeMime);
+  const disposition = serveInline ? "inline" : "attachment";
+
   const buffer = Buffer.from(plainBase64, "base64");
   return new Response(buffer, {
     headers: {
-      "Content-Type": safeDownloadMime(file.mimeType),
-      "Content-Disposition": `attachment; filename="${encodeURIComponent(file.filename)}"`,
+      "Content-Type": safeMime,
+      "Content-Disposition": `${disposition}; filename="${encodeURIComponent(file.filename)}"`,
       "Content-Length": String(buffer.length),
       // Belt-and-braces: even if a browser ignores Content-Disposition and
       // tries to render inline, no-sniff blocks MIME confusion attacks.
