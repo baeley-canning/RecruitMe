@@ -202,7 +202,13 @@ async function main() {
   let totalProcessed = 0;
 
   while (true) {
+    // Filter to ONLY unclustered rows. Without this, the script re-fetches
+    // already-clustered rows on every batch and "processes" them as
+    // skipped_already — wastes time when the import is bulk-loaded with
+    // many rows sharing one createdAt timestamp (cursor can't advance
+    // past the shared timestamp, so the same batch re-appears).
     const where = {
+      candidateIdentityId: null,
       ...(cursor && lastCreatedAt ? { createdAt: { gt: lastCreatedAt } } : {}),
       ...(ORG_FILTER ? { orgId: ORG_FILTER } : {}),
     };
