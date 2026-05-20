@@ -2,17 +2,19 @@
 
 import type { BadgeDescriptor, BadgeTone, CandidateBadgeState } from "@/lib/insight-badges";
 import { decideBadges } from "@/lib/insight-badges";
-import { isInsightBadgesEnabledClient } from "@/lib/feature-flags";
 import { cn } from "@/lib/utils";
 
 /**
- * Renders the per-candidate badge row introduced in PR 4. Flag-gated by
- * `NEXT_PUBLIC_RECRUITME_PROFILE_INSIGHT_UI_BADGES`. When the flag is off
- * the component renders null — keep the existing card layout untouched
- * until the rollout is validated per plan §H.
+ * Renders the per-candidate badge row. Shipped always-on as of May 2026.
  *
- * The decision logic lives in src/lib/insight-badges.ts (pure, unit-tested);
- * this component is just visual presentation.
+ * Previously gated by NEXT_PUBLIC_RECRUITME_PROFILE_INSIGHT_UI_BADGES; the
+ * flag was removed when the badges proved valuable independent of the
+ * insight extractor rollout (library_only / scored / needs_rescore /
+ * from_jobadder render from data the candidate API already returns;
+ * insight_reused stays inactive until the extractor populates Insight rows).
+ *
+ * Decision logic lives in src/lib/insight-badges.ts (pure, unit-tested);
+ * this component is just presentation.
  */
 
 const TONE_CLASSES: Record<BadgeTone, string> = {
@@ -23,7 +25,6 @@ const TONE_CLASSES: Record<BadgeTone, string> = {
 };
 
 export function InsightBadges({ state }: { state: CandidateBadgeState }) {
-  if (!isInsightBadgesEnabledClient()) return null;
   const badges = decideBadges(state);
   if (badges.length === 0) return null;
   return (
