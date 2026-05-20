@@ -605,6 +605,16 @@ await step("Candidate.photoFileId column", async () => {
   `;
 });
 
+// 22. Drop Candidate.provisionalScore — write-only field never read by any
+//     code path. Was a snippet-import snapshot for hypothetical delta-vs-
+//     full-profile reporting that was never built. Idempotent: DROP COLUMN
+//     IF EXISTS is a no-op when already dropped.
+await step("drop Candidate.provisionalScore", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" DROP COLUMN IF EXISTS "provisionalScore"
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

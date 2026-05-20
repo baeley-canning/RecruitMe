@@ -1507,9 +1507,6 @@ async function runSearchBackground(args: {
               fetchPriorityReason,
               source: isFromPool ? "talent_pool" : r.source,
               status: "new",
-              // Snapshot the provisional score so we can show the delta after full-profile scoring.
-              // Only set for snippet imports — pool entries with full profiles start calibrated.
-              ...(!hasFullProfile && matchScore !== null ? { provisionalScore: matchScore } : {}),
               ...(isFromPool && poolEntry?.profileCapturedAt
                 ? { profileCapturedAt: poolEntry.profileCapturedAt }
                 : {}),
@@ -1519,7 +1516,6 @@ async function runSearchBackground(args: {
               ...scoreData,
               fetchPriorityScore,
               fetchPriorityReason,
-              // Never overwrite provisionalScore — it's a permanent snapshot of the import score
             }, // refresh score if already exists
           });
           saved.push(candidate as SavedCandidate);

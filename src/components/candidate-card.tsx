@@ -96,7 +96,6 @@ interface Candidate {
   profileText: string | null;
   profileCapturedAt?: string | null;
   matchScore: number | null;
-  provisionalScore?: number | null;
   profileTextHash: string | null;
   matchReason: string | null;
   fetchPriorityScore?: number | null;

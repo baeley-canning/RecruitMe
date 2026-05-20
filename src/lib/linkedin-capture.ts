@@ -461,10 +461,8 @@ function identityToCandidateUpdate(identity: IdentityData) {
   // score was computed against the same text and remains valid. When changed,
   // clear stale score fields so the candidate card shows "captured but not
   // yet scored" until stage 2 lands.
-  // Note: provisionalScore is intentionally preserved (schema-documented as
-  // "never overwritten" — it's the historical snippet-time score for delta
-  // computation). fetchPriority* fields are cleared because they were a
-  // pre-fetch ranking that no longer applies once we have a full profile.
+  // fetchPriority* fields are cleared because they were a pre-fetch ranking
+  // that no longer applies once we have a full profile.
   const scoreClears: Record<string, unknown> = identity.profileUnchanged
     ? {}
     : {
