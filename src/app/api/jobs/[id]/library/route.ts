@@ -129,6 +129,7 @@ export async function GET(
       headline: true,
       location: true,
       linkedinUrl: true,
+      photoFileId: true,
       matchScore: true,
       createdAt: true,
       job: { select: { title: true } },

@@ -10,6 +10,7 @@ interface Candidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  photoFileId?: string | null;
   matchScore: number | null;
   status: string;
   profileCapturedAt?: string | null;
@@ -59,7 +60,7 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
               name={c.name}
               headline={c.headline}
               location={c.location}
-              photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
+              photoUrl={getCandidatePhotoUrl({ candidateId: c.id, photoFileId: c.photoFileId })}
               score={c.matchScore}
               size="sm"
               showScore

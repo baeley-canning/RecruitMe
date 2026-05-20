@@ -14,6 +14,7 @@ interface LibraryCandidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  photoFileId: string | null;
   matchScore: number | null;
   createdAt: string;
   job: { title: string } | null;
@@ -222,7 +223,7 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
                   name={c.name}
                   headline={c.headline}
                   location={c.location}
-                  photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
+                  photoUrl={getCandidatePhotoUrl({ candidateId: c.id, photoFileId: c.photoFileId })}
                   score={c.matchScore}
                   size="sm"
                   showScore

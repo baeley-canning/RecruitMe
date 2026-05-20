@@ -8,6 +8,12 @@ import { decryptCv, isEncrypted, maybeMigrateLegacy } from "@/lib/cv-encryption"
 // `text/html` file would otherwise serve attacker-controlled HTML to anyone
 // who clicks the download link. Anything outside this list is forced to a
 // safe binary download type.
+//
+// image/jpeg | image/png | image/webp are on the list because recruiter-
+// uploaded candidate headshots (via /api/candidates/[id]/photo) flow through
+// this same route — same encryption, same auth check. These MIME types are
+// well-defined and browser image decoders are battle-tested; no scripting
+// surface, no plugin invocation, just pixels.
 const ALLOWED_DOWNLOAD_MIMES = new Set([
   "application/pdf",
   "application/msword",
@@ -15,13 +21,18 @@ const ALLOWED_DOWNLOAD_MIMES = new Set([
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "text/plain",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
 ]);
 
 // Strict subset of ALLOWED_DOWNLOAD_MIMES that we'll serve with
 // `Content-Disposition: inline` when the caller passes `?inline=1`. Why this
 // is safe to render in the user's tab:
-//   • Allow-list gated: only `application/pdf` is on it. PDFs render in a
-//     sandboxed viewer in every modern browser — no script execution.
+//   • Allow-list gated: PDF + jpeg/png/webp. PDFs render in a sandboxed
+//     viewer in every modern browser — no script execution. Images render
+//     through battle-tested decoders with no scripting surface and no
+//     plugin invocation; the MIME types are tightly specified.
 //   • `text/html` is intentionally NOT in ALLOWED_DOWNLOAD_MIMES at all and
 //     is doubly excluded here, so a recruiter who uploads malicious HTML
 //     can never serve it back inline.
@@ -29,12 +40,18 @@ const ALLOWED_DOWNLOAD_MIMES = new Set([
 //     but excluded here — browsers don't render them natively, so inline
 //     would just show a blank tab. We force download instead.
 //   • `X-Content-Type-Options: nosniff` still applies, blocking MIME
-//     confusion even if a browser tries to render something off-list.
-//   • CV bytes are AES-256-GCM encrypted at rest (decryptCv) and access is
+//     confusion even if a browser tries to render something off-list. The
+//     image MIMEs above are nosniff-safe — the header has no effect on
+//     image rendering for matching content, and prevents sniffing-as-HTML
+//     for anything that doesn't decode cleanly.
+//   • All bytes are AES-256-GCM encrypted at rest (decryptCv) and access is
 //     gated by requireFileAccess (org match or owner), so this endpoint
 //     can never serve a file the caller wasn't already allowed to download.
 const INLINE_SAFE_MIMES = new Set<string>([
   "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
 ]);
 
 function safeDownloadMime(claimed: string | null | undefined): string {

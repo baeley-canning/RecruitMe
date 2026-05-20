@@ -135,6 +135,11 @@ model Candidate {
   statusHistory       String? // JSON: [{status, changedAt}]
   contactedAt         DateTime?
   source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool
+  // References CandidateFile.id of the recruiter-uploaded headshot. The
+  // Avatar component fetches /api/candidates/<id>/files/<photoFileId>?inline=1
+  // to render the image (same encryption + auth path as CVs). Nullable —
+  // most candidates have no photo and the Avatar falls back to initials.
+  photoFileId         String?
   profileCapturedAt   DateTime?
   captureMetadata     String? // JSON: extension capture metadata — which deep pages were fetched, status, chars added, merge mode
 

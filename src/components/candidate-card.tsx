@@ -88,6 +88,7 @@ interface Candidate {
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
   phone?: string | null;
+  photoFileId?: string | null;
   /** Other active jobs (same org) where this candidate's LinkedIn URL also
    *  appears. Used to surface "Also on N other jobs" so the recruiter
    *  doesn't double-message. Provided by the GET /api/jobs/:id endpoint. */
@@ -988,7 +989,7 @@ export const CandidateCard = memo(function CandidateCard({
               ? <LocationFitPill location={candidate.location} score={locationFitScore} compact />
               : null
           }
-          photoUrl={getCandidatePhotoUrl({ linkedinUrl: candidate.linkedinUrl })}
+          photoUrl={getCandidatePhotoUrl({ candidateId: candidate.id, photoFileId: candidate.photoFileId })}
           onAvatarClick={() => setShowProfile(true)}
           onNameClick={() => setShowProfile(true)}
           nameExtra={

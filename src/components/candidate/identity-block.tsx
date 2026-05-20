@@ -38,9 +38,11 @@ function Avatar({
   title?: string;
   photoUrl?: string | null;
 }) {
-  // Track per-render whether the photo 404'd / errored so we can fall back to
-  // initials. unavatar.io returns 404 when ?fallback=false and there's no
-  // match, which fires this handler cleanly.
+  // Track per-render whether the photo errored so we can fall back to
+  // initials. The /api/candidates/<id>/files/<photoFileId>?inline=1 route
+  // returns 404 when the file has been deleted (or the candidate was
+  // restored without one) — that 404 fires onError and the swap happens
+  // cleanly without a broken-image glyph flash.
   const [imageFailed, setImageFailed] = useState(false);
   const showPhoto = Boolean(photoUrl) && !imageFailed;
 
@@ -50,10 +52,13 @@ function Avatar({
     onClick && "cursor-pointer hover:bg-accent/25 transition-colors",
   );
 
-  // referrerPolicy="no-referrer" avoids leaking which candidate page is
-  // rendering the avatar to unavatar.io / LinkedIn's CDN.
-  // Bare <img> (not next/image): avoids having to allow-list unavatar.io in
-  // next.config; avatars are 32-56px so there's no LCP win from next/image.
+  // referrerPolicy="no-referrer" is belt-and-braces — the photo URL is
+  // first-party (/api/candidates/...), but the policy means no Referer
+  // leaks even if a future code path swaps in a third-party photo source.
+  // Bare <img> (not next/image): the URL is dynamic per-candidate and the
+  // image is encrypted-at-rest behind an auth-gated API route, neither of
+  // which next/image's static optimiser knows how to handle. Avatars are
+  // 32-56px so there's no LCP win from next/image anyway.
   const content = showPhoto ? (
     <img // eslint-disable-line @next/next/no-img-element
       src={photoUrl ?? undefined}

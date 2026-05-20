@@ -17,7 +17,7 @@ interface JobStat {
   shortlisted: number; avgScore: number | null; topCandidates: TopCandidate[];
   staleScores: boolean; needsAttention: boolean;
 }
-interface RecentCapture { id: string; name: string; linkedinUrl: string | null; matchScore: number | null; status: string; profileCapturedAt: string | null; job: { id: string; title: string } | null; }
+interface RecentCapture { id: string; name: string; linkedinUrl: string | null; photoFileId: string | null; matchScore: number | null; status: string; profileCapturedAt: string | null; job: { id: string; title: string } | null; }
 interface SearchSession { id: string; collected: number; avgScore: number | null; evaluation: string | null; createdAt: string; job: { id: string; title: string } | null; }
 interface DashboardData {
   jobs: JobStat[];
@@ -149,7 +149,7 @@ export default function DashboardPage() {
                       <CandidateIdentityBlock
                         name={c.name}
                         headline={c.job?.title ?? undefined}
-                        photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
+                        photoUrl={getCandidatePhotoUrl({ candidateId: c.id, photoFileId: c.photoFileId })}
                         score={c.matchScore}
                         size="sm"
                         showScore

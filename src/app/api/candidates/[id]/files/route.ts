@@ -156,7 +156,11 @@ export async function POST(
   }
   // Now safe to treat as a File-like for the rest of the route.
   const upload = file as { name: string; type: string; size: number; arrayBuffer: () => Promise<ArrayBuffer> };
-  if (!["cv", "cover_letter", "other"].includes(type)) {
+  // "photo" is the recruiter-uploaded headshot type. Most uploads of that
+  // kind go through the dedicated /api/candidates/[id]/photo endpoint
+  // (which also writes Candidate.photoFileId atomically); accepting it here
+  // keeps the model symmetrical for direct callers and for the GET list.
+  if (!["cv", "cover_letter", "other", "photo"].includes(type)) {
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });
   }
   if (upload.size > MAX_FILE_SIZE) {

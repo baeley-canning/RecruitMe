@@ -595,6 +595,16 @@ await step("deduplicate CandidateIdentity (linkedinUrl + jobAdderUrl)", async ()
   `;
 });
 
+// 21. Candidate.photoFileId column — pointer to the CandidateFile row holding
+//     the recruiter-uploaded headshot. Nullable; the Avatar component falls
+//     back to initials when this is NULL. Adding a nullable TEXT column on
+//     Postgres ≥11 is metadata-only — sub-second on the 13.5k-row table.
+await step("Candidate.photoFileId column", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "photoFileId" TEXT
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

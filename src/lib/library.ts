@@ -39,6 +39,7 @@ export interface LibraryCandidateRow {
   location: string | null;
   linkedinUrl: string | null;
   phone: string | null;
+  photoFileId: string | null;
   matchScore: number | null;
   source: string;
   status: string;
@@ -202,6 +203,7 @@ export async function getLibraryCandidates(
       location: true,
       linkedinUrl: true,
       phone: true,
+      photoFileId: true,
       // profileText INTENTIONALLY NOT SELECTED. With 14k rows × ~10KB
       // profileText, including it pulled ~140 MB of useless data over the
       // wire on every library load (the field gets stripped before

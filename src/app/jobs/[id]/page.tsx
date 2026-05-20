@@ -57,6 +57,7 @@ interface Candidate {
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
   phone: string | null;
+  photoFileId: string | null;
   profileText: string | null;
   /** Cross-job presence: this candidate's LinkedIn URL also matches one or
    *  more OTHER active jobs in the same org. Empty array = unique to this job. */

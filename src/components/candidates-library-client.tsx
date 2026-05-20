@@ -29,6 +29,7 @@ interface LibraryCandidate {
   location: string | null;
   linkedinUrl: string | null;
   phone: string | null;
+  photoFileId: string | null;
   matchScore: number | null;
   source: string;
   status: string;
@@ -67,7 +68,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
         location={c.location}
         phone={c.phone}
         linkedinUrl={c.linkedinUrl}
-        photoUrl={getCandidatePhotoUrl({ linkedinUrl: c.linkedinUrl })}
+        photoUrl={getCandidatePhotoUrl({ candidateId: c.id, photoFileId: c.photoFileId })}
         score={c.matchScore}
         size="md"
         showScore={c.matchScore !== null}

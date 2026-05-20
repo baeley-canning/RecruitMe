@@ -31,6 +31,7 @@ export async function GET(
         select: {
           id: true, jobId: true, orgId: true, name: true, headline: true,
           location: true, linkedinUrl: true, source: true, status: true, phone: true,
+          photoFileId: true,
           matchScore: true, matchReason: true,
           fetchPriorityScore: true, fetchPriorityReason: true,
           acceptanceScore: true, acceptanceReason: true,

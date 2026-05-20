@@ -24,7 +24,9 @@ import {
   CalendarCheck,
   Shield,
   Heart,
+  Camera,
 } from "lucide-react";
+import { showToast } from "@/components/ui/toast";
 import { cn, timeAgo, safeParseJson } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
 import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
@@ -72,6 +74,7 @@ interface CandidateDetail {
   phone: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  photoFileId: string | null;
   profileText: string | null;
   matchScore: number | null;
   notes: string | null;
@@ -264,6 +267,115 @@ function FileRow({
   );
 }
 
+/**
+ * Recruiter-facing affordance to upload / replace / remove a candidate's
+ * headshot. The whole control is intentionally small — a single icon button
+ * that opens the system file picker, mirroring how the in-app CV upload
+ * works. The button is unconditionally visible to any logged-in user with
+ * access to the candidate; the route does the org-scoped auth check.
+ *
+ * Visible label: "Upload photo" / "Change photo" — explicit verbs do better
+ * than a camera glyph alone in usability testing.
+ */
+function PhotoUploadControl({
+  candidateId,
+  hasPhoto,
+  onPhotoChanged,
+}: {
+  candidateId: string;
+  hasPhoto: boolean;
+  onPhotoChanged: (photoFileId: string | null) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      setUploading(true);
+      try {
+        const form = new FormData();
+        form.append("file", files[0]);
+        const res = await fetch(`/api/candidates/${candidateId}/photo`, { method: "POST", body: form });
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}));
+          showToast(json.error ?? "Photo upload failed", "error");
+        } else {
+          const data = await res.json() as { photoFileId: string };
+          onPhotoChanged(data.photoFileId);
+          showToast("Photo updated", "success");
+        }
+      } catch {
+        showToast("Photo upload failed — please try again", "error");
+      } finally {
+        setUploading(false);
+        if (inputRef.current) inputRef.current.value = "";
+      }
+    },
+    [candidateId, onPhotoChanged],
+  );
+
+  const handleRemove = useCallback(async () => {
+    if (!await confirm({ message: "Remove this candidate's photo?", danger: true, confirmLabel: "Remove" })) return;
+    setRemoving(true);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/photo`, { method: "DELETE" });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        showToast(json.error ?? "Could not remove photo", "error");
+      } else {
+        onPhotoChanged(null);
+        showToast("Photo removed", "success");
+      }
+    } catch {
+      showToast("Could not remove photo", "error");
+    } finally {
+      setRemoving(false);
+    }
+  }, [candidateId, onPhotoChanged]);
+
+  return (
+    <div className="flex items-center gap-1.5 flex-shrink-0">
+      <label
+        className={cn(
+          "inline-flex items-center gap-1.5 h-7 px-2.5 rounded text-xs font-medium cursor-pointer transition-colors border border-separator",
+          uploading
+            ? "bg-surface-hover text-text-tertiary cursor-not-allowed"
+            : "bg-surface-hover hover:bg-surface-overlay text-text-secondary hover:text-text-primary",
+        )}
+        title={hasPhoto ? "Replace photo" : "Upload photo"}
+      >
+        {uploading ? (
+          <><Loader2 className="w-3 h-3 animate-spin" /> Uploading…</>
+        ) : (
+          <><Camera className="w-3 h-3" /> {hasPhoto ? "Change photo" : "Upload photo"}</>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="hidden"
+          disabled={uploading}
+          onChange={(e) => handleFile(e.target.files)}
+        />
+      </label>
+      {hasPhoto && (
+        <button
+          type="button"
+          onClick={handleRemove}
+          disabled={removing}
+          className="inline-flex items-center justify-center h-7 w-7 rounded border border-separator text-text-secondary hover:text-danger hover:bg-surface-hover transition-colors disabled:opacity-50"
+          title="Remove photo"
+          aria-label="Remove photo"
+        >
+          {removing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function UploadZone({
   candidateId,
   onUploaded,
@@ -427,6 +539,10 @@ export default function CandidateDetailPage({
     setCandidate((prev) => prev ? { ...prev, files: prev.files.filter((f) => f.id !== fileId) } : prev);
   }, []);
 
+  const handlePhotoChanged = useCallback((photoFileId: string | null) => {
+    setCandidate((prev) => prev ? { ...prev, photoFileId } : prev);
+  }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -531,13 +647,21 @@ export default function CandidateDetailPage({
                     location={candidate.location}
                     phone={candidate.phone}
                     linkedinUrl={candidate.linkedinUrl}
-                    photoUrl={getCandidatePhotoUrl({ linkedinUrl: candidate.linkedinUrl })}
+                    photoUrl={getCandidatePhotoUrl({ candidateId: candidate.id, photoFileId: candidate.photoFileId })}
                     score={score}
                     size="lg"
                     showScore={score !== null}
                     showPhone={!!candidate.phone}
                     showLinkedIn={false}
                     className="flex-1"
+                  />
+                  {/* Photo upload affordance — visible to any recruiter who
+                      can edit this candidate. The dedicated /photo route
+                      enforces the same org-scoped auth as the /files route. */}
+                  <PhotoUploadControl
+                    candidateId={candidate.id}
+                    hasPhoto={Boolean(candidate.photoFileId)}
+                    onPhotoChanged={handlePhotoChanged}
                   />
                 </div>
 

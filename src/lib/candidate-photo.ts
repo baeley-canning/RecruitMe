@@ -1,48 +1,29 @@
 /**
  * Candidate avatar photo URL helper.
  *
- * We don't store candidate photos in the DB. Instead, when a candidate has a
- * real LinkedIn URL we passively resolve a photo via unavatar.io — a free
- * proxy that returns the public profile image for a given social slug.
+ * Photos are recruiter-uploaded, encrypted at rest, and served via the existing
+ * CandidateFile infrastructure — same encryption, same per-org auth check,
+ * same inline-vs-attachment allow-list — only the `type` discriminator
+ * differs ("photo" vs "cv" / "cover_letter" / "other").
  *
- * Why `?fallback=false`:
- *   Without this flag unavatar serves a generic placeholder on miss, which
- *   would look wrong next to our initials avatar. With it, misses return
- *   404 so the <img onError> handler can swap to initials cleanly.
+ * Earlier iterations of this helper tried to resolve LinkedIn-slug avatars
+ * through unavatar.io. That stopped being viable: real recruiter URLs hit
+ * unavatar's LinkedIn route at a ~17% success rate (5 of 6 production URLs
+ * returned 404 in a hand-test on 2026-05-20). The image fell back to initials
+ * on almost every candidate, so the photo column looked identical to the
+ * pre-PR state. We dropped the network-resolution path entirely in favour of
+ * an explicit upload affordance — see /api/candidates/[id]/photo.
  *
- * What this helper does NOT do:
- *   • No network call — pure URL construction.
- *   • No JobAdder URL support — JobAdder photos are gated behind their API.
- *   • No synthetic-library-key handling beyond returning null — those rows
- *     have no LinkedIn presence to fetch from.
- *
- * Slug extraction mirrors src/lib/linkedin.ts:normaliseLinkedInUrl so the two
- * stay in sync. We don't reuse it directly because we want only the slug,
- * not the full canonical LinkedIn URL.
+ * This helper is pure URL construction — no network call, no DB read. The
+ * caller's SELECT must include candidate.photoFileId; null = "no photo set"
+ * and the Avatar component falls back to initials.
  */
 
-import { isSyntheticLibraryKey } from "./identity-merge";
-
-const LINKEDIN_SLUG_RE = /linkedin\.com\/in\/([^/?#\s]+)/i;
-
-export function getCandidatePhotoUrl(input: { linkedinUrl?: string | null }): string | null {
-  const raw = input.linkedinUrl;
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (isSyntheticLibraryKey(trimmed)) return null;
-
-  try {
-    const match = trimmed.match(LINKEDIN_SLUG_RE);
-    if (!match) return null;
-    const slug = match[1]
-      .replace(/[?#].*$/, "")
-      .replace(/\/+$/, "")
-      .toLowerCase()
-      .trim();
-    if (!slug) return null;
-    return `https://unavatar.io/linkedin/${slug}?fallback=false`;
-  } catch {
-    return null;
-  }
+export function getCandidatePhotoUrl(input: {
+  photoFileId?: string | null;
+  candidateId?: string | null;
+}): string | null {
+  if (!input.photoFileId) return null;
+  if (!input.candidateId) return null;
+  return `/api/candidates/${input.candidateId}/files/${input.photoFileId}?inline=1`;
 }
