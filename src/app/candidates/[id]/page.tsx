@@ -193,7 +193,15 @@ function LinkedInBadge({ url }: { url: string | null }) {
   );
 }
 
-function FileRow({
+/** Number of table columns — kept as a constant so the expanded preview
+ *  row's colSpan stays in sync with the header. Columns: Type, Name, Size,
+ *  Uploaded, Actions. */
+const FILE_TABLE_COLS = 5;
+
+type FileSortKey = "name" | "size" | "createdAt";
+type SortDir = "asc" | "desc";
+
+function FileTableRow({
   file,
   candidateId,
   onDeleted,
@@ -218,52 +226,188 @@ function FileRow({
   };
 
   return (
-    <div>
-      <div className="flex items-center gap-2 px-3 py-2 rounded border border-separator bg-surface-sunken group hover:bg-surface-hover transition-colors">
-        {previewable ? (
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="p-0.5 -ml-0.5 text-text-tertiary hover:text-text-secondary rounded transition-colors flex-shrink-0"
-            title={expanded ? "Hide preview" : "Show preview"}
-            aria-expanded={expanded}
-          >
-            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </button>
-        ) : (
-          <span className="w-3.5 h-3.5 flex-shrink-0" aria-hidden />
-        )}
-        <Badge className={typeBadgeClass(file.type)}>{typeLabel(file.type)}</Badge>
-        <div className="flex-1 min-w-0">
-          <p className="text-base font-medium text-text-primary truncate">{file.filename}</p>
-          <p className="text-xs text-text-tertiary">
-            <span className="data-mono">{formatBytes(file.size)}</span>
-            <span className="mx-1">·</span>
-            <span suppressHydrationWarning>{timeAgo(new Date(file.createdAt))}</span>
+    <>
+      <tr className="border-b border-separator last:border-0 hover:bg-surface-hover/40 transition-colors">
+        {/* Type column — holds chevron + type badge */}
+        <td className="py-2 px-3 align-middle">
+          <div className="flex items-center gap-1.5">
+            {previewable ? (
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="p-0.5 -ml-0.5 text-text-tertiary hover:text-text-secondary rounded transition-colors flex-shrink-0"
+                title={expanded ? "Hide preview" : "Show preview"}
+                aria-expanded={expanded}
+              >
+                {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              </button>
+            ) : (
+              <span className="w-3.5 h-3.5 flex-shrink-0" aria-hidden />
+            )}
+            <Badge className={typeBadgeClass(file.type)}>{typeLabel(file.type)}</Badge>
+          </div>
+        </td>
+        {/* Document name */}
+        <td className="py-2 px-3 align-middle min-w-0">
+          <p className="text-base font-medium text-text-primary truncate" title={file.filename}>
+            {file.filename}
           </p>
-        </div>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <a
-            href={`/api/candidates/${candidateId}/files/${file.id}`}
-            download={file.filename}
-            className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
-            title="Download"
-          >
-            <Download className="w-3.5 h-3.5" />
-          </a>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-surface-hover transition-colors disabled:opacity-50"
-            title="Delete"
-          >
-            {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-          </button>
-        </div>
-      </div>
+        </td>
+        {/* File size */}
+        <td className="py-2 px-3 align-middle text-xs text-text-secondary data-mono whitespace-nowrap">
+          {formatBytes(file.size)}
+        </td>
+        {/* Uploaded (relative time) */}
+        <td className="py-2 px-3 align-middle text-xs text-text-tertiary whitespace-nowrap">
+          <span suppressHydrationWarning>{timeAgo(new Date(file.createdAt))}</span>
+        </td>
+        {/* Actions (no header) */}
+        <td className="py-2 px-3 align-middle whitespace-nowrap text-right">
+          <div className="inline-flex items-center gap-1">
+            <a
+              href={`/api/candidates/${candidateId}/files/${file.id}`}
+              download={file.filename}
+              className="h-7 w-7 rounded inline-flex items-center justify-center text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
+              title="Download"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </a>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="h-7 w-7 rounded inline-flex items-center justify-center text-text-secondary hover:text-danger hover:bg-surface-hover transition-colors disabled:opacity-50"
+              title="Delete"
+            >
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+        </td>
+      </tr>
       {expanded && previewable && (
-        <CVPreview candidateId={candidateId} file={file} height={640} className="mt-2" />
+        <tr className="border-b border-separator last:border-0">
+          <td colSpan={FILE_TABLE_COLS} className="p-2 bg-surface-sunken">
+            <CVPreview candidateId={candidateId} file={file} height={640} />
+          </td>
+        </tr>
       )}
+    </>
+  );
+}
+
+/**
+ * JobAdder-style sortable file table. Default sort is createdAt desc so the
+ * newest upload is on top — matching the previous list ordering and keeping
+ * the "primary CV" (used for auto-expand) at row 0.
+ *
+ * Type column is intentionally not sortable: with 1-6 files the grouping
+ * adds no value and would just be one more thing for the recruiter to click.
+ */
+function FilesTable({
+  files,
+  candidateId,
+  onDeleted,
+}: {
+  files: CandidateFile[];
+  candidateId: string;
+  onDeleted: (id: string) => void;
+}) {
+  const [sortKey, setSortKey] = useState<FileSortKey>("createdAt");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const toggleSort = (key: FileSortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // Sensible defaults: name asc, size desc (biggest first), date desc (newest first)
+      setSortDir(key === "name" ? "asc" : "desc");
+    }
+  };
+
+  // Identify the primary CV BEFORE sorting so the auto-expand flag is stable
+  // across re-sorts — i.e. the newest CV stays the default-expanded one even
+  // if the recruiter sorts by name.
+  const primaryCvId = files.find((f) => f.type === "cv")?.id;
+
+  const sorted = [...files].sort((a, b) => {
+    let cmp = 0;
+    if (sortKey === "name") {
+      cmp = a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
+    } else if (sortKey === "size") {
+      cmp = a.size - b.size;
+    } else {
+      cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    }
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const sortIndicator = (key: FileSortKey) =>
+    sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+
+  const headerBase =
+    "py-2 px-3 text-left text-2xs uppercase tracking-wide text-text-tertiary font-medium";
+  const sortableHeader = cn(headerBase, "cursor-pointer hover:text-text-secondary select-none");
+
+  return (
+    <div className="overflow-x-auto rounded border border-separator">
+      <table className="w-full border-separate border-spacing-0 text-sm">
+        <thead className="bg-surface-hover">
+          <tr>
+            <th scope="col" className={headerBase}>Type</th>
+            <th
+              scope="col"
+              className={sortableHeader}
+              onClick={() => toggleSort("name")}
+              aria-sort={sortKey === "name" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+            >
+              Document Name{sortIndicator("name")}
+            </th>
+            <th
+              scope="col"
+              className={sortableHeader}
+              onClick={() => toggleSort("size")}
+              aria-sort={sortKey === "size" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+            >
+              File Size{sortIndicator("size")}
+            </th>
+            <th
+              scope="col"
+              className={sortableHeader}
+              onClick={() => toggleSort("createdAt")}
+              aria-sort={sortKey === "createdAt" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+            >
+              Uploaded{sortIndicator("createdAt")}
+            </th>
+            <th scope="col" className={cn(headerBase, "text-right")}>
+              <span className="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.length === 0 ? (
+            <tr>
+              <td
+                colSpan={FILE_TABLE_COLS}
+                className="py-4 px-3 text-xs text-text-tertiary text-center"
+              >
+                No files yet
+              </td>
+            </tr>
+          ) : (
+            sorted.map((f) => (
+              <FileTableRow
+                key={f.id}
+                file={f}
+                candidateId={candidateId}
+                onDeleted={onDeleted}
+                // Newest CV is the primary resume — default-open its preview
+                // so the JobAdder-like "see the CV immediately" UX works.
+                defaultExpanded={f.id === primaryCvId}
+              />
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1063,23 +1207,13 @@ export default function CandidateDetailPage({
                   <Badge className="ml-auto data-mono">{candidate.files.length}</Badge>
                 )}
               </CardHeader>
-              <CardBody className="p-3 space-y-1.5">
-                {candidate.files.length === 0 && (
-                  <p className="text-xs text-text-tertiary text-center py-2">No files yet</p>
-                )}
-                {candidate.files.map((f) => (
-                  <FileRow
-                    key={f.id}
-                    file={f}
-                    candidateId={candidate.id}
-                    onDeleted={handleFileDeleted}
-                    // First CV (newest, list comes back ordered desc) is the
-                    // candidate's primary resume — default-open the preview
-                    // so the JobAdder-like "see the CV immediately" UX works.
-                    defaultExpanded={f.id === candidate.files.find((x) => x.type === "cv")?.id}
-                  />
-                ))}
-                <div className="pt-2">
+              <CardBody className="p-3 space-y-3">
+                <FilesTable
+                  files={candidate.files}
+                  candidateId={candidate.id}
+                  onDeleted={handleFileDeleted}
+                />
+                <div className="pt-1">
                   <UploadZone candidateId={candidate.id} onUploaded={handleFileUploaded} />
                 </div>
               </CardBody>
