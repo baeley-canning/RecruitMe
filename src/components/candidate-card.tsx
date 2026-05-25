@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import Link from "next/link";
 import {
   ChevronDown,
   ChevronUp,
@@ -16,6 +17,7 @@ import {
   Gauge,
   AlertTriangle,
   Pencil,
+  ExternalLink,
 } from "lucide-react";
 
 import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
@@ -663,6 +665,18 @@ function ProfileDrawer({
             >
               <X className="w-4 h-4" />
             </button>
+            {/* Jumps out of the job-scoped drawer to the candidate's library
+                profile (notes, documents, full job history). Without this the
+                drawer is a dead-end when the recruiter wants the cross-job
+                view. */}
+            <Link
+              href={`/candidates/${candidate.id}`}
+              className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-accent transition-colors"
+              title="Open full candidate profile in the library"
+            >
+              View full profile
+              <ExternalLink className="w-3 h-3" />
+            </Link>
             {onFetchProfile && displayableLinkedinUrl(candidate.linkedinUrl) && (
               (fetchQueueState === "waiting" || fetchQueueState === "fetching") ? (
                 <span className="text-xs text-accent flex items-center gap-1">
