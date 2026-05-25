@@ -40,6 +40,7 @@ import { OnboardingCard } from "@/components/job/onboarding-card";
 import { JobWeightsCard } from "@/components/job/job-weights-card";
 import { TopCandidatesCard } from "@/components/job/top-candidates-card";
 import { BrowseLibraryModal } from "@/components/job/browse-library-modal";
+import { UnifiedSearchModal } from "@/components/job/unified-search-modal";
 import { PipelineStepper, type PipelineStage } from "@/components/job/pipeline-stepper";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
@@ -182,10 +183,11 @@ export default function JobDetailPage({
   // once (e.g. close A, open B) is a single setState instead of two async
   // batches that can fire in wrong order.
   const [modals, setModals] = useState({
-    addCandidate: false,
+    addCandidate:  false,
     browseLibrary: false,
     bulkUpload:    false,
     report:        false,
+    multiSearch:   false,
   });
   const openModal  = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: true  })), []);
   const closeModal = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: false })), []);
@@ -1431,6 +1433,10 @@ ${toHtml(job.rawJd)}
             <Users className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Library</span>
           </Button>
+          <Button variant="secondary" size="md" onClick={() => openModal("multiSearch")}>
+            <Search className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Search talent</span>
+          </Button>
           <Button onClick={() => openModal("addCandidate")}>
             <UserPlus className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Add Candidate</span>
@@ -2384,6 +2390,14 @@ ${toHtml(job.rawJd)}
         <BulkUploadModal jobId={id} onClose={() => closeModal("bulkUpload")} onComplete={fetchJob} />
       )}
 
+      {modals.multiSearch && (
+        <UnifiedSearchModal
+          jobId={id}
+          jobLocation={job.location ?? null}
+          onClose={() => closeModal("multiSearch")}
+          onComplete={fetchJob}
+        />
+      )}
       {modals.browseLibrary && (
         <BrowseLibraryModal jobId={id} onClose={() => closeModal("browseLibrary")} onComplete={fetchJob} />
       )}
