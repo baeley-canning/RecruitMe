@@ -145,7 +145,11 @@ export default function DashboardPage() {
               ) : (
                 <div className="divide-y divide-separator">
                   {recentCaptures.slice(0, 6).map((c) => (
-                    <div key={c.id} className="px-3 py-2.5">
+                    <Link
+                      key={c.id}
+                      href={`/candidates/${c.id}`}
+                      className="block px-3 py-2.5 hover:bg-surface-hover transition-colors"
+                    >
                       <CandidateIdentityBlock
                         name={c.name}
                         headline={c.job?.title ?? undefined}
@@ -154,7 +158,7 @@ export default function DashboardPage() {
                         size="sm"
                         showScore
                       />
-                    </div>
+                    </Link>
                   ))}
                 </div>
               )}
