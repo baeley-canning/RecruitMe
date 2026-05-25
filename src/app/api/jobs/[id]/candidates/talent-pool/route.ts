@@ -355,7 +355,19 @@ export async function POST(
       const hasMustHaveSignal = mustHaveSignalSets.some(
         (signals) => signals.some((s) => signalMatchesText(haystack, s)),
       );
-      if (!hasMustHaveSignal && !candidateTitleFitsRole(parsedRole.title, row.headline)) {
+      // When ANY must-have produces extractable signals, demand a signal hit —
+      // title-fit alone isn't enough. Reason: candidateTitleFitsRole returns
+      // true whenever EITHER side is unclassified (title-family.ts:294), so
+      // soft-skill JDs like "Quoting Specialist" (no family pattern matches)
+      // used to admit every candidate via the title-fit fallback regardless
+      // of what their CV said. We only fall back to title-fit when the JD is
+      // genuinely signal-less (parse failure or pure soft-skill prose with
+      // no role-distinctive nouns at all).
+      const hasAnyExtractableSignals = mustHaveSignalSets.some((s) => s.length > 0);
+      const admitted = hasAnyExtractableSignals
+        ? hasMustHaveSignal
+        : candidateTitleFitsRole(parsedRole.title, row.headline);
+      if (!admitted) {
         skippedRequirements++;
         continue;
       }

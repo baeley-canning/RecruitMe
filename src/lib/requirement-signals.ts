@@ -430,6 +430,11 @@ export const REQUIREMENT_STOP_WORDS = new Set([
   "practice","world","class","real","hands",
   // Temporal / quantitative
   "months","least","minimum","plus","graduate",
+  // Soft-skill / generic-business words that surface in non-tech JDs (Quoting Specialist class)
+  "written","verbal","manage","time","volume","under","able","business",
+  "approach","competing","priorities","accuracy","organised","organized",
+  "calm","pressure","reliable","consistent","repetitive","designed",
+  "delivered","defined","within","while","repeatable",
 ]);
 
 /**

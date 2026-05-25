@@ -443,3 +443,50 @@ describe("requirement signal extraction", () => {
     });
   });
 });
+
+describe("extractSignalsFromRequirement — soft-skill / generic English words are dropped", () => {
+  it("drops generic verbs and adjectives that surfaced in the Quoting Specialist regression", () => {
+    // These are all common English words that appeared in soft-skill JD
+    // must-haves like 'Strong written and verbal communication skills' or
+    // 'Ability to manage repetitive, high-volume work'. None of them carry
+    // role-specific signal — they appear in every CV. Letting them through
+    // would re-open the bug where any dev/PM profile matches any soft-skill JD.
+    const genericWords = [
+      "written", "verbal", "manage", "managing", "time", "volume",
+      "under", "able", "business", "approach", "competing", "priorities",
+      "accuracy", "organised", "organized", "calm", "pressure", "reliable",
+      "consistent", "repetitive", "designed", "delivered", "defined",
+      "within", "while", "repeatable",
+    ];
+    for (const word of genericWords) {
+      const signals = extractSignalsFromRequirement(word);
+      expect(signals, `expected stop-word "${word}" to be dropped`).not.toContain(word);
+    }
+  });
+
+  it("Quoting Specialist must-haves produce only the role-distinctive signal 'quoting' (and aliases)", () => {
+    // The 8 soft-skill must-haves below, after stop-word filtering, should
+    // leave essentially nothing except 'quoting' / 'quoter' from must-have #5.
+    // This is the desired behaviour — non-distinctive prose contributes no
+    // false-positive signal, so only candidates whose profiles mention
+    // 'quoting' or 'quoter' get admitted to a Quoting Specialist role.
+    const mustHaves = [
+      "Strong written and verbal communication skills",
+      "High attention to detail and accuracy",
+      "Ability to manage repetitive, high-volume work while maintaining quality",
+      "Comfortable working within defined processes and systems",
+      "Highly organised with strong time-management skills",
+      "Reliable, consistent, and process-driven approach",
+      "Calm under pressure and able to manage competing priorities",
+    ];
+    const all = new Set<string>();
+    for (const req of mustHaves) {
+      for (const s of extractSignalsFromRequirement(req)) all.add(s);
+    }
+    // No remaining signal should be a generic English word.
+    const genericLeak = ["manage", "time", "able", "under", "business", "written", "verbal", "organised", "calm", "pressure", "competing", "priorities"];
+    for (const word of genericLeak) {
+      expect(all, `generic word "${word}" should not appear in signals`).not.toContain(word);
+    }
+  });
+});

@@ -380,3 +380,309 @@ describe("talent-pool prefilter widens when must-have signals are thin (3-5)", (
     expect(terms).not.toContain("procurement");
   });
 });
+
+// ── Soft-skill JD regression (Quoting Specialist class) ─────────────────────
+// Real-world bug: a "Quoting Specialist" JD with 8 verbatim must-haves like
+// "Strong written and verbal communication skills" and "High attention to
+// detail and accuracy" pulled 10 random devs/PMs from the library because
+// every long profile mentions "communication", "detail", "organised", and
+// "manages priorities" somewhere. The signal extractor needs to strip these
+// generic soft-skill tokens (parallel work extends REQUIREMENT_STOP_WORDS).
+// These tests pin the fix end-to-end: only profiles with role-distinctive
+// anchors (e.g. "quoting", "IT Quoter", "office management", ".NET", "SAFe")
+// should pass the prefilter; generic soft-skill matches must NOT.
+describe("talent-pool — soft-skill JD must-have regression (Quoting Specialist class)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionMocks.getAuth.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
+      id: "cand-new",
+      createdAt: new Date(),
+      ...create,
+    }));
+  });
+
+  it("Quoting Specialist rejects unrelated devs/PMs from library", async () => {
+    const quotingJob = {
+      id: "job-quoting",
+      isRemote: false,
+      parsedRole: JSON.stringify({
+        title: "Quoting Specialist",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        must_haves: [
+          "Strong written and verbal communication skills",
+          "High attention to detail and accuracy",
+          "Ability to manage repetitive, high-volume work while maintaining quality",
+          "Comfortable working within defined processes and systems",
+          "Experience with quoting tools or similar business software (e.g. IT Quoter or equivalent)",
+          "Highly organised with strong time-management skills",
+          "Reliable, consistent, and process-driven approach",
+          "Calm under pressure and able to manage competing priorities",
+        ],
+        nice_to_haves: [],
+        knockout_criteria: [],
+        skills_required: [
+          "Strong written and verbal communication skills",
+          "High attention to detail and accuracy",
+          "Ability to manage repetitive, high-volume work while maintaining quality",
+          "Comfortable working within defined processes and systems",
+          "Experience with quoting tools or similar business software (e.g. IT Quoter or equivalent)",
+          "Highly organised with strong time-management skills",
+          "Reliable, consistent, and process-driven approach",
+          "Calm under pressure and able to manage competing priorities",
+        ],
+        skills_preferred: [],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+    };
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: quotingJob, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(quotingJob);
+    dbMocks.prisma.candidate.findMany.mockReset();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "quoting-coord-1",
+          name: "Alex Chen",
+          headline: "Quoting Coordinator at TechFlow Ltd",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/quoting-coord-1",
+          source: "jobadder_import",
+          profileText: "Alex Chen\nQuoting Coordinator at TechFlow Ltd\nWellington, New Zealand\n\nExperience\nFour years preparing IT hardware and software quotes using IT Quoter and equivalent quoting tools. Processes 80-120 quotes per week with high accuracy. Coordinates with vendors and account managers. Highly organised, reliable, and consistent. Strong attention to detail and accurate documentation of every line item. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "middleware-dev-1",
+          name: "Jordan Park",
+          headline: "Senior Developer at Middleware NZ",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/middleware-dev-1",
+          source: "jobadder_import",
+          profileText: "Jordan Park\nSenior Developer at Middleware NZ\nWellington, New Zealand\n\nExperience\nSenior backend developer working with .NET and PostgreSQL. Manages backend systems and APIs written in TypeScript and C#. Organised team player with strong communication skills and attention to detail in code reviews. Comfortable working within defined engineering processes and CI/CD systems. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "pm-1",
+          name: "Sam Lee",
+          headline: "Project Manager",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/pm-1",
+          source: "jobadder_import",
+          profileText: "Sam Lee\nProject Manager\nWellington, New Zealand\n\nExperience\nSeven years coordinating cross-functional teams across engineering, design, and operations. Well-organised, manages competing priorities calmly under pressure, and brings strong communication and attention to detail to every program. Reliable, consistent, and process-driven approach to delivery. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+    const req = new Request("http://localhost/api/jobs/job-quoting/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 10 }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-quoting" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.count).toBe(1);
+    const upsertCalls = dbMocks.prisma.candidate.upsert.mock.calls;
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0][0].create.name).toBe("Alex Chen");
+  });
+
+  it("Office Manager (adjacent soft-skill role) rejects backend dev", async () => {
+    const officeJob = {
+      id: "job-office",
+      isRemote: false,
+      parsedRole: JSON.stringify({
+        title: "Office Manager",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        must_haves: [
+          "Strong organisational and time-management skills",
+          "Professional communication and interpersonal skills",
+          "Experience with office management software",
+          "Attention to detail in administrative tasks",
+        ],
+        nice_to_haves: [],
+        knockout_criteria: [],
+        skills_required: [
+          "Strong organisational and time-management skills",
+          "Professional communication and interpersonal skills",
+          "Experience with office management software",
+          "Attention to detail in administrative tasks",
+        ],
+        skills_preferred: [],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+    };
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: officeJob, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(officeJob);
+    dbMocks.prisma.candidate.findMany.mockReset();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "office-mgr-1",
+          name: "Riley Smith",
+          headline: "Office Manager at BuildCorp",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/office-mgr-1",
+          source: "jobadder_import",
+          profileText: "Riley Smith\nOffice Manager at BuildCorp\nWellington, New Zealand\n\nExperience\nSix years in office management running reception, scheduling, supplier coordination, and admin operations for a 60-person engineering firm. Uses office management software daily for bookings, expenses, and facilities. Detail-focused, interpersonal communicator, and highly organised. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "backend-dev-1",
+          name: "Casey Wu",
+          headline: "Backend Developer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/backend-dev-1",
+          source: "jobadder_import",
+          profileText: "Casey Wu\nBackend Developer\nWellington, New Zealand\n\nExperience\nSenior backend engineer working in Python and AWS. Detail-oriented code reviews, strong communication in standups, manages complex deployments across multiple production environments. Reliable, consistent, and process-driven approach to release engineering. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+    const req = new Request("http://localhost/api/jobs/job-office/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 10 }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-office" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.count).toBe(1);
+    const upsertCalls = dbMocks.prisma.candidate.upsert.mock.calls;
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0][0].create.name).toBe("Riley Smith");
+  });
+
+  it("Senior .NET Developer (control) still admits a .NET dev", async () => {
+    const dotnetJob = {
+      id: "job-dotnet",
+      isRemote: false,
+      parsedRole: JSON.stringify({
+        title: "Senior .NET Developer",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        must_haves: [".NET / C#", "SQL Server", "Entity Framework"],
+        nice_to_haves: ["Azure", "Microservices"],
+        knockout_criteria: [],
+        skills_required: [".NET", "C#", "SQL Server", "Entity Framework"],
+        skills_preferred: ["Azure", "Microservices"],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+    };
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: dotnetJob, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(dotnetJob);
+    dbMocks.prisma.candidate.findMany.mockReset();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "dotnet-dev-1",
+          name: "Morgan Lee",
+          headline: ".NET Software Engineer",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/dotnet-dev-1",
+          source: "jobadder_import",
+          profileText: "Morgan Lee\n.NET Software Engineer\nWellington, New Zealand\n\nExperience\nSenior .NET / C# developer with seven years building enterprise systems on SQL Server and Entity Framework. Designed and shipped Azure cloud deployments and microservices architectures for finance and logistics products. Comfortable with CI/CD, containerised builds, and high-throughput backend services. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+    const req = new Request("http://localhost/api/jobs/job-dotnet/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 10 }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-dotnet" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.count).toBe(1);
+    const upsertCalls = dbMocks.prisma.candidate.upsert.mock.calls;
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0][0].create.name).toBe("Morgan Lee");
+  });
+
+  it("Single-must-have SAFe role admits SAFe-certified, rejects non-certified agile coach", async () => {
+    const safeJob = {
+      id: "job-safe",
+      isRemote: false,
+      parsedRole: JSON.stringify({
+        title: "SAFe Scrum Master",
+        location: "Wellington",
+        location_rules: "Wellington office",
+        must_haves: ["SAFe certification"],
+        nice_to_haves: [],
+        knockout_criteria: [],
+        skills_required: ["SAFe"],
+        skills_preferred: [],
+      }),
+      salaryMin: null,
+      salaryMax: null,
+    };
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: safeJob, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(safeJob);
+    dbMocks.prisma.candidate.findMany.mockReset();
+    dbMocks.prisma.candidate.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "safe-sm-1",
+          name: "Dev Johnson",
+          headline: "Certified SAFe Scrum Master",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/safe-sm-1",
+          source: "jobadder_import",
+          profileText: "Dev Johnson\nCertified SAFe Scrum Master\nWellington, New Zealand\n\nExperience\nCertified SAFe Scrum Master with four years of PI planning facilitation across multiple Agile Release Trains. Agile coach and Release Train Engineer for a 120-person technology group. Runs system demos, inspect-and-adapt workshops, and cross-team dependency mapping. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "agile-coach-1",
+          name: "Pat Brown",
+          headline: "Agile Coach",
+          location: "Wellington, New Zealand",
+          linkedinUrl: null,
+          jobAdderUrl: "https://app.jobadder.com/candidates/agile-coach-1",
+          source: "jobadder_import",
+          profileText: "Pat Brown\nAgile Coach\nWellington, New Zealand\n\nExperience\nAgile coach with five years coordinating sprints, strong communication, manages priorities, detail-oriented work, and stakeholder management across product, engineering, and design groups. Facilitates retrospectives, backlog refinement, and team health workshops at scale. ".repeat(3),
+          profileCapturedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+    const req = new Request("http://localhost/api/jobs/job-safe/candidates/talent-pool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxResults: 10 }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-safe" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.count).toBe(1);
+    const upsertCalls = dbMocks.prisma.candidate.upsert.mock.calls;
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0][0].create.name).toBe("Dev Johnson");
+  });
+});
