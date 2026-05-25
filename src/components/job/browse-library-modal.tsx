@@ -227,6 +227,7 @@ export function BrowseLibraryModal({ jobId, onComplete, onClose }: BrowseLibrary
                   score={c.matchScore}
                   size="sm"
                   showScore
+                  scoreFormat="tier"
                 />
                 {(c.job?.title || c.archivedJobTitle) && (
                   <p className="text-xs text-text-tertiary mt-1">

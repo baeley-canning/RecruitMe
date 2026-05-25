@@ -72,6 +72,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
         score={c.matchScore}
         size="md"
         showScore={c.matchScore !== null}
+        scoreFormat="tier"
         showPhone={!!c.phone}
         showLinkedIn={false}
         nameClassName="group-hover:text-accent transition-colors"

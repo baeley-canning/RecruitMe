@@ -64,6 +64,7 @@ export function TopCandidatesCard({ candidates, onShortlist, onView }: TopCandid
               score={c.matchScore}
               size="sm"
               showScore
+              scoreFormat="tier"
               className="flex-1 min-w-0"
             />
 

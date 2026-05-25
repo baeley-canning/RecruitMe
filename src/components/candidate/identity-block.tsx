@@ -4,9 +4,54 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { MapPin, Phone } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { scoreTier, scoreTierColor } from "@/lib/score-utils";
+import { scoreTier, scoreTierColor, type ScoreTier } from "@/lib/score-utils";
 import { LinkedInIcon } from "./icons";
 import { displayableLinkedinUrl } from "./helpers";
+
+// JobAdder-style tier-word labels for match scores. Mirrors the local
+// TIER_STYLE map in src/app/candidates/[id]/page.tsx so labels stay
+// consistent across surfaces. Kept here (not in score-utils) because
+// score-utils is used by server code that has no need for UI copy.
+const TIER_LABEL: Record<ScoreTier, string> = {
+  strong: "Strong match",
+  fair:   "Good match",
+  weak:   "Moderate match",
+  poor:   "Weak match",
+};
+
+// Tier text colours matching the detail-page TIER_STYLE palette
+// (strong→success, fair→accent, weak→warning, poor→tertiary). The
+// scoreTierColor() helper returns *background* pills — for the inline
+// tier-word label we want just the text colour.
+const TIER_TEXT: Record<ScoreTier, string> = {
+  strong: "text-success",
+  fair:   "text-accent",
+  weak:   "text-warning",
+  poor:   "text-text-tertiary",
+};
+
+/**
+ * Pure helper — exported so it can be unit-tested without rendering React.
+ *
+ * Returns the string + colour class the IdentityBlock should display for
+ * a given (score, format) pair. Returns null when there's nothing to show.
+ *
+ * - format="number": returns "{score}%" with the existing pill colours
+ *   (background-tinted, matches pre-refactor look).
+ * - format="tier" : returns "{Tier match} · {score}" with just text colour
+ *   (no background pill — tier-word labels read better unboxed).
+ */
+export function formatScoreLabel(
+  score: number | null | undefined,
+  format: "number" | "tier" = "number",
+): { text: string; colorClass: string; isTier: boolean } | null {
+  if (score == null) return null;
+  const tier = scoreTier(score, "match");
+  if (format === "tier") {
+    return { text: `${TIER_LABEL[tier]} · ${score}`, colorClass: TIER_TEXT[tier], isTier: true };
+  }
+  return { text: `${score}%`, colorClass: scoreTierColor(tier), isTier: false };
+}
 
 export function candidateInitials(name: string): string {
   return name
@@ -106,6 +151,10 @@ export interface CandidateIdentityBlockProps {
   nameExtra?: ReactNode;
   size?: "sm" | "md" | "lg";
   showScore?: boolean;
+  /** When "tier", render score as JobAdder-style tier-word label
+   *  ("Strong match · 75") instead of bare "75%". Default "number"
+   *  preserves the pre-refactor look on every untouched surface. */
+  scoreFormat?: "number" | "tier";
   showPhone?: boolean;
   showLinkedIn?: boolean;
   /** Extra classes merged onto the name element, e.g. "group-hover:text-accent transition-colors" */
@@ -135,13 +184,13 @@ export function CandidateIdentityBlock({
   nameExtra,
   size = "md",
   showScore = true,
+  scoreFormat = "number",
   showPhone = false,
   showLinkedIn = false,
   nameClassName,
   className,
 }: CandidateIdentityBlockProps) {
-  const tier = score != null ? scoreTier(score, "match") : null;
-  const scoreColor = tier ? scoreTierColor(tier) : "";
+  const scoreLabel = formatScoreLabel(score, scoreFormat);
   const displayUrl = displayableLinkedinUrl(linkedinUrl ?? null);
 
   const nameCls = cn("font-semibold text-text-primary line-clamp-1", nameClassName);
@@ -205,9 +254,19 @@ export function CandidateIdentityBlock({
               </a>
             )}
           </div>
-          {showScore && score != null && (
-            <span className={cn("text-xs font-medium px-1.5 py-0.5 rounded-sm flex-shrink-0 data-mono", scoreColor)}>
-              {score}%
+          {showScore && scoreLabel && (
+            <span
+              className={cn(
+                "text-xs font-medium flex-shrink-0",
+                // Tier-word labels read better without a background pill —
+                // they're already verbose ("Strong match · 75"). The numeric
+                // variant keeps the pre-refactor padded pill for back-compat.
+                scoreLabel.isTier
+                  ? scoreLabel.colorClass
+                  : cn("px-1.5 py-0.5 rounded-sm data-mono", scoreLabel.colorClass),
+              )}
+            >
+              {scoreLabel.text}
             </span>
           )}
         </div>

@@ -1017,6 +1017,7 @@ export const CandidateCard = memo(function CandidateCard({
           }
           size="sm"
           showScore={false}
+          scoreFormat="tier"
           className="flex-1 min-w-0"
         />
 
