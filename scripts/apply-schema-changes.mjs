@@ -615,6 +615,19 @@ await step("drop Candidate.provisionalScore", async () => {
   `;
 });
 
+// 23. Candidate.suitability — recruiter-set marker mirroring JobAdder's
+//     Suitability field. "preferred" / "excluded" / null. Nullable column
+//     add is metadata-only in Postgres ≥11. The library list + multi-source
+//     search use it to gate recommendations.
+await step("Candidate.suitability column", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "suitability" TEXT
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_suitability_idx" ON "Candidate"("suitability") WHERE "suitability" IS NOT NULL
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

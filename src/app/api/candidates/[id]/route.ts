@@ -88,6 +88,11 @@ export async function GET(
 
 const PatchSchema = z.object({
   notes: z.string().max(10_000).optional(),
+  // Recruiter Suitability marker mirroring JobAdder. Three valid states:
+  //   "preferred" — boost in search results / shortlist preferences
+  //   "excluded" — hide from search results
+  //   null       — neutral (clears any prior setting)
+  suitability: z.enum(["preferred", "excluded"]).nullable().optional(),
 });
 
 export async function PATCH(

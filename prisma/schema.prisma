@@ -134,6 +134,11 @@ model Candidate {
   statusHistory       String? // JSON: [{status, changedAt}]
   contactedAt         DateTime?
   source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool
+  // Recruiter-set marker. "preferred" → boost in shortlists; "excluded" →
+  // hide from search results. Mirrors JobAdder's Suitability field. Null is
+  // the default neutral state. Library list + multi-source search will use
+  // this to gate cross-job recommendations.
+  suitability         String?   // "preferred" | "excluded" | null
   // References CandidateFile.id of the recruiter-uploaded headshot. The
   // Avatar component fetches /api/candidates/<id>/files/<photoFileId>?inline=1
   // to render the image (same encryption + auth path as CVs). Nullable —

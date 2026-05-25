@@ -79,6 +79,7 @@ interface CandidateDetail {
   matchScore: number | null;
   notes: string | null;
   screeningData: string | null;
+  suitability: "preferred" | "excluded" | null;
   source: string;
   status: string;
   profileCapturedAt: string | null;
@@ -491,6 +492,80 @@ function DetailRow({
   );
 }
 
+/**
+ * Three-state segmented control for Candidate.suitability. Click a button to
+ * set; click an active button to clear back to neutral. Optimistic update via
+ * the passed onChange.
+ */
+function SuitabilityControl({
+  value,
+  onChange,
+}: {
+  value: "preferred" | "excluded" | null;
+  onChange: (next: "preferred" | "excluded" | null) => void;
+}) {
+  const buttonCls = (active: boolean, tone: "preferred" | "excluded") =>
+    cn(
+      "inline-flex items-center gap-1 px-2 py-1 rounded-sm text-xs font-medium border transition-colors",
+      active
+        ? tone === "preferred"
+          ? "bg-success-subtle text-success border-success/30"
+          : "bg-danger-subtle text-danger border-danger/30"
+        : "bg-surface-raised text-text-tertiary border-separator hover:bg-surface-hover",
+    );
+  return (
+    <div className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onChange(value === "excluded" ? null : "excluded")}
+        className={buttonCls(value === "excluded", "excluded")}
+        title="Exclude this candidate from future search results"
+      >
+        Exclude
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange(value === "preferred" ? null : "preferred")}
+        className={buttonCls(value === "preferred", "preferred")}
+        title="Mark as preferred — boosted in shortlist suggestions"
+      >
+        Prefer
+      </button>
+      {value === null && (
+        <span className="text-2xs text-text-tertiary ml-1">neither</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Variant of DetailRow that ALWAYS renders, showing an "Add X" / "Not set"
+ * placeholder when the value/children are absent. JobAdder-style — recruiter
+ * sees which fields exist even when empty. Used inside the 2-column Profile
+ * Details grid below.
+ */
+function DetailField({
+  label,
+  value,
+  children,
+  emptyLabel = "Not set",
+}: {
+  label: string;
+  value?: string | null;
+  children?: React.ReactNode;
+  emptyLabel?: string;
+}) {
+  const hasContent = Boolean(value || children);
+  return (
+    <div className="py-2 border-b border-separator last:border-0">
+      <p className="text-2xs text-text-tertiary uppercase tracking-wide mb-1">{label}</p>
+      <div className={cn("text-sm", hasContent ? "text-text-primary" : "text-text-tertiary italic")}>
+        {hasContent ? (children ?? value) : emptyLabel}
+      </div>
+    </div>
+  );
+}
+
 export default function CandidateDetailPage({
   params,
 }: {
@@ -543,6 +618,17 @@ export default function CandidateDetailPage({
     setCandidate((prev) => prev ? { ...prev, photoFileId } : prev);
   }, []);
 
+  const handleSuitabilityChange = useCallback(async (next: "preferred" | "excluded" | null) => {
+    if (!candidate) return;
+    // Optimistic update — flips the segmented control immediately.
+    setCandidate((prev) => prev ? { ...prev, suitability: next } : prev);
+    await fetch(`/api/candidates/${candidate.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ suitability: next }),
+    });
+  }, [candidate]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -562,13 +648,6 @@ export default function CandidateDetailPage({
 
   const { title, employer, skills, rest } = parseHeadline(candidate.headline);
   const screening = safeParseJson<ScreeningData>(candidate.screeningData, {});
-  // Only show the "Profile details" card if there's at least one concrete field to display.
-  const hasProfileDetails = !!(
-    employer || title || candidate.phone ||
-    displayableLinkedinUrl(candidate.linkedinUrl) ||
-    candidate.jobAdderUrl ||
-    (!employer && !title && candidate.headline)
-  );
   const score = candidate.matchScore;
   const tier = score !== null ? scoreTier(score) : null;
   const allJobs = [
@@ -707,48 +786,72 @@ export default function CandidateDetailPage({
               </Card>
             )}
 
-            {/* ── Profile details ─────────────────────────────────────────── */}
-            {hasProfileDetails && <Card>
+            {/* ── Profile details (JobAdder-style 2-column field grid) ────── */}
+            <Card>
               <CardHeader>
                 <h2 className="text-md font-semibold text-text-primary">Profile details</h2>
               </CardHeader>
-              <CardBody className="py-0">
-                {employer && (
-                  <DetailRow icon={Briefcase} label="Current employer" value={employer} />
-                )}
-                {title && (
-                  <DetailRow icon={Briefcase} label="Current title" value={title} />
-                )}
-                {candidate.phone && (
-                  <DetailRow icon={Phone} label="Phone">
-                    <a href={`tel:${candidate.phone}`} className="text-accent hover:text-accent-hover transition-colors">
-                      {candidate.phone}
-                    </a>
-                  </DetailRow>
-                )}
-                {displayableLinkedinUrl(candidate.linkedinUrl) && (
-                  <DetailRow icon={Globe} label="LinkedIn">
-                    <LinkedInBadge url={candidate.linkedinUrl} />
-                  </DetailRow>
-                )}
-                {candidate.jobAdderUrl && (
-                  <DetailRow icon={Globe} label="JobAdder">
-                    <a
-                      href={candidate.jobAdderUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-accent hover:text-accent-hover transition-colors"
-                    >
-                      Open in JobAdder
-                    </a>
-                  </DetailRow>
-                )}
-                {/* Fallback if no structured fields parsed but headline exists */}
-                {!employer && !title && candidate.headline && (
-                  <DetailRow icon={Briefcase} label="Headline" value={candidate.headline} />
-                )}
+              <CardBody>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                  {/* ─── Left column: contact + employment ───────────────── */}
+                  <div>
+                    <DetailField label="Current employer" value={employer} emptyLabel="Not extracted" />
+                    <DetailField label="Current title" value={title} emptyLabel="Not extracted" />
+                    <DetailField label="Phone">
+                      {candidate.phone ? (
+                        <a href={`tel:${candidate.phone}`} className="text-accent hover:text-accent-hover transition-colors">
+                          {candidate.phone}
+                        </a>
+                      ) : null}
+                    </DetailField>
+                    <DetailField label="Location" value={candidate.location} emptyLabel="Not set" />
+                    <DetailField label="Source" value={candidate.source.replace(/_/g, " ")} />
+                  </div>
+
+                  {/* ─── Right column: links + recruiter markers ─────────── */}
+                  <div>
+                    <DetailField label="LinkedIn" emptyLabel="Not linked">
+                      {displayableLinkedinUrl(candidate.linkedinUrl)
+                        ? <LinkedInBadge url={candidate.linkedinUrl} />
+                        : null}
+                    </DetailField>
+                    <DetailField label="JobAdder" emptyLabel="Not linked">
+                      {candidate.jobAdderUrl ? (
+                        <a
+                          href={candidate.jobAdderUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent hover:text-accent-hover transition-colors"
+                        >
+                          Open in JobAdder ↗
+                        </a>
+                      ) : null}
+                    </DetailField>
+                    <DetailField label="Suitability">
+                      <SuitabilityControl
+                        value={candidate.suitability}
+                        onChange={handleSuitabilityChange}
+                      />
+                    </DetailField>
+                    {/* Match score against the candidate's current job (if any) — uses
+                        the existing TIER_STYLE palette so colours stay consistent with
+                        the score-bar visualisation below. Phase 1 #3 (tier-word badges
+                        everywhere) lands the same treatment across pipeline cards. */}
+                    <DetailField label="Match score" emptyLabel="No score yet">
+                      {score !== null && tier ? (
+                        <span className={cn("inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-surface-hover", tier.text)}>
+                          {tier.label} · {score}%
+                        </span>
+                      ) : null}
+                    </DetailField>
+                    {/* Fallback if no structured employer/title but headline exists */}
+                    {!employer && !title && candidate.headline && (
+                      <DetailField label="Headline" value={candidate.headline} />
+                    )}
+                  </div>
+                </div>
               </CardBody>
-            </Card>}
+            </Card>
 
             {/* ── Screening data ──────────────────────────────────────────── */}
             {hasScreeningData && (
