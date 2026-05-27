@@ -30,6 +30,7 @@
  */
 
 import { normaliseLinkedInUrl } from "./linkedin";
+import { normaliseSeekUrl } from "./seek";
 
 /** Synthetic key the talent-pool route writes into Candidate.linkedinUrl
  *  when a JobAdder row has no real LinkedIn URL. Format: `library:<srcId>`. */
@@ -43,23 +44,31 @@ export function isSyntheticLibraryKey(value: string | null | undefined): boolean
 /** Identity-merge keys the Tier 1 auto-merger considers. */
 export type IdentityMergeKey =
   | { kind: "linkedinUrl"; value: string }
-  | { kind: "jobAdderUrl"; value: string };
+  | { kind: "jobAdderUrl"; value: string }
+  | { kind: "seekUrl"; value: string };
 
 /**
- * Tier 1 merge-key extraction. Returns null for rows that have neither a
- * real LinkedIn URL nor a JobAdder URL — those candidates go straight to a
- * fresh CandidateIdentity row and are NOT eligible for auto-merge.
+ * Tier 1 merge-key extraction. Returns null for rows that have no real
+ * LinkedIn / JobAdder / SEEK URL — those candidates go straight to a fresh
+ * CandidateIdentity row and are NOT eligible for auto-merge.
  *
- * Precedence: LinkedIn URL beats JobAdder URL. Reason: LinkedIn URLs are
- * cross-platform and stable across ATS migrations; JobAdder URLs are
- * tenant-local. A row with both keys should cluster on its LinkedIn URL so
- * a future re-import via a different ATS still matches.
+ * Precedence: LinkedIn URL > JobAdder URL > SEEK URL. Reason: LinkedIn URLs
+ * are cross-platform and stable across ATS migrations; JobAdder and SEEK
+ * URLs are tenant/board-local. A row with several keys should cluster on its
+ * LinkedIn URL so a future re-import via a different source still matches.
+ * SEEK sits last because a SEEK profile/advertiser URL is the most
+ * board-local of the three.
+ *
+ * `seekUrl` is optional on the input so existing two-key callers (the
+ * multi-search aggregator, the clustering script's older rows) keep working
+ * unchanged.
  *
  * Synthetic `library:<srcId>` keys are rejected — see module docstring.
  */
 export function identityMergeKey(row: {
   linkedinUrl: string | null | undefined;
   jobAdderUrl: string | null | undefined;
+  seekUrl?: string | null | undefined;
 }): IdentityMergeKey | null {
   const link = row.linkedinUrl?.trim() ?? "";
   if (link && !isSyntheticLibraryKey(link)) {
@@ -68,6 +77,10 @@ export function identityMergeKey(row: {
   const ja = row.jobAdderUrl?.trim() ?? "";
   if (ja) {
     return { kind: "jobAdderUrl", value: normaliseJobAdderUrl(ja) };
+  }
+  const seek = row.seekUrl?.trim() ?? "";
+  if (seek) {
+    return { kind: "seekUrl", value: normaliseSeekUrl(seek) };
   }
   return null;
 }

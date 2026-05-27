@@ -54,6 +54,26 @@ model Org {
   users               User[]
   jobs                Job[]
   candidateIdentities CandidateIdentity[]
+  scraperTokens       ScraperApiToken[]
+}
+
+// Bearer tokens for headless ingest clients (the mini-PC scraper pulling
+// JobAdder/LinkedIn/SEEK profiles). Distinct from User Basic-auth: a scraper
+// is a machine, not a person, and gets a revocable, org-scoped, rate-limit-
+// tunable credential. Only the SHA-256 hash of the token is stored; the
+// plaintext is shown once at creation and never persisted.
+model ScraperApiToken {
+  id         String    @id @default(cuid())
+  orgId      String?   // null = owner-scope (ingest into any org), mirrors auth model elsewhere
+  org        Org?      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  label      String    // human label, e.g. "thinkcentre-scraper"
+  tokenHash  String    @unique // SHA-256 hex of the bearer token; plaintext never stored
+  lastUsedAt DateTime?
+  revokedAt  DateTime? // set to disable without deleting (keeps audit trail)
+  expiresAt  DateTime? // optional hard expiry
+  createdAt  DateTime  @default(now())
+
+  @@index([orgId])
 }
 
 // Cross-org library access grant. When org A buys a higher-tier subscription
@@ -115,6 +135,7 @@ model Candidate {
   location            String?
   linkedinUrl         String?
   jobAdderUrl         String? // JobAdder candidate profile URL — set manually until API integration
+  seekUrl             String? // SEEK profile URL — set manually now, by the mini-PC scraper later. Identity key (lowest precedence after LinkedIn + JobAdder).
   phone               String? // Primary contact phone — set by Firmable enrichment (preferred mobile; falls back to first available). UI display field.
   firmableData        String? // JSON: full Firmable People response (other phones, emails, deliverability flags). Source-of-truth for "what else did the lookup return".
   firmableEnrichedAt  DateTime? // Last successful Firmable lookup; gates the 90-day re-enrichment check.
@@ -133,7 +154,7 @@ model Candidate {
   status              String    @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
   statusHistory       String? // JSON: [{status, changedAt}]
   contactedAt         DateTime?
-  source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool
+  source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool | jobadder_import | seek | scraper
   // Recruiter-set marker. "preferred" → boost in shortlists; "excluded" →
   // hide from search results. Mirrors JobAdder's Suitability field. Null is
   // the default neutral state. Library list + multi-source search will use
@@ -158,6 +179,11 @@ model Candidate {
 
   @@unique([jobId, linkedinUrl])
   @@index([linkedinUrl]) // talent pool cross-job URL lookups
+  // NOTE: the Candidate.seekUrl index is a PARTIAL index (WHERE seekUrl IS
+  // NOT NULL) created in scripts/apply-schema-changes.mjs step 24 — NOT
+  // declared here, so `prisma db push` doesn't try to replace it with a
+  // non-partial index of the same name (the conflict we hit with an earlier
+  // partial index). Same pattern as the suitability index.
   @@index([orgId])
   @@index([status])
   @@index([orgId, createdAt]) // timeline queries in candidates library
@@ -385,6 +411,7 @@ model CandidateIdentity {
   primaryPhone         String? // E.164 normalised when available
   linkedinUrl          String? // Canonical (current) LinkedIn URL; previous values move to alias rows
   jobAdderUrl          String? // Canonical (current) JobAdder URL; previous values move to alias rows
+  seekUrl              String? // Canonical (current) SEEK URL; previous values move to alias rows
   // When a merge collapses this identity into a survivor, the merger sets this.
   // Queries follow this chain to find the canonical identity. Splits (unmerge)
   // null this back out and write a tombstone CandidateIdentityMerge row.
@@ -404,6 +431,9 @@ model CandidateIdentity {
   // that share one JobAdder tenant — never collapse jobAdderUrl across orgs.
   @@unique([orgId, linkedinUrl])
   @@unique([orgId, jobAdderUrl])
+  // seekUrl uniqueness within an org, same rationale as jobAdderUrl: never
+  // collapse a SEEK URL across orgs (two tenants can share a SEEK board).
+  @@unique([orgId, seekUrl])
   @@index([orgId])
   @@index([orgId, primaryEmail])
   @@index([mergedIntoIdentityId])
@@ -416,7 +446,7 @@ model CandidateIdentityAlias {
   id         String            @id @default(cuid())
   identityId String
   identity   CandidateIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
-  kind       String // 'linkedinUrl' | 'email' | 'phone' | 'jobAdderUrl'
+  kind       String // 'linkedinUrl' | 'email' | 'phone' | 'jobAdderUrl' | 'seekUrl'
   value      String
   source     String // 'extraction' | 'recruiter' | 'system' (clustering script)
   validFrom  DateTime          @default(now())

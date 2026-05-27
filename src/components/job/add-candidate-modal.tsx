@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, AlertCircle, X, CheckCircle2, Paperclip, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
+import { isSeekProfileUrl } from "@/lib/seek";
 import type { ParsedRole } from "@/lib/ai";
 
 interface AddCandidateModalProps {
@@ -14,7 +15,7 @@ interface AddCandidateModalProps {
 }
 
 export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: AddCandidateModalProps) {
-  const [form, setForm] = useState({ linkedinUrl: "", profileText: "" });
+  const [form, setForm] = useState({ linkedinUrl: "", seekUrl: "", profileText: "" });
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [pdfUploading, setPdfUploading] = useState(false);
@@ -37,15 +38,17 @@ export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: Ad
 
   const handleAdd = async () => {
     const url = form.linkedinUrl.trim();
+    const seek = form.seekUrl.trim();
     const text = form.profileText.trim();
     if (!url && !text) { setError("Paste a LinkedIn URL or some profile text."); return; }
+    if (seek && !isSeekProfileUrl(seek)) { setError("Enter a valid SEEK profile URL."); return; }
     setAdding(true);
     setError("");
     try {
       const res = await fetch(`/api/jobs/${jobId}/candidates`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ linkedinUrl: url || undefined, profileText: text || undefined, autoScore: Boolean(text) }),
+        body: JSON.stringify({ linkedinUrl: url || undefined, seekUrl: seek || undefined, profileText: text || undefined, autoScore: Boolean(text) }),
       });
       const created = await res.json().catch(() => ({})) as { id?: string; error?: string };
       if (!res.ok) {
@@ -77,6 +80,14 @@ export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: Ad
           <label className="block text-md font-medium text-text-primary mb-1.5">LinkedIn URL</label>
           <input type="url" value={form.linkedinUrl} onChange={(e) => setForm((f) => ({ ...f, linkedinUrl: e.target.value }))}
             placeholder="https://linkedin.com/in/username" autoFocus
+            className="w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+          />
+        </div>
+
+        <div>
+          <label className="block text-md font-medium text-text-primary mb-1.5">SEEK URL <span className="text-text-tertiary font-normal">(optional)</span></label>
+          <input type="url" value={form.seekUrl} onChange={(e) => setForm((f) => ({ ...f, seekUrl: e.target.value }))}
+            placeholder="https://talent.seek.com.au/profile/..."
             className="w-full h-7 px-2.5 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
           />
         </div>

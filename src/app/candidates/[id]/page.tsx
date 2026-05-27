@@ -74,6 +74,7 @@ interface CandidateDetail {
   phone: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  seekUrl: string | null;
   photoFileId: string | null;
   profileText: string | null;
   matchScore: number | null;
@@ -109,6 +110,9 @@ const SOURCE_LABEL: Record<string, string> = {
   extension: "LinkedIn extension",
   talent_pool: "Talent pool",
   jobadder_import: "JobAdder import",
+  seek_import: "SEEK import",
+  seek: "SEEK",
+  scraper: "Scraper import",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -850,6 +854,18 @@ export default function CandidateDetailPage({
               JobAdder
             </a>
           )}
+          {candidate.seekUrl && /^https?:\/\//i.test(candidate.seekUrl) && (
+            <a
+              href={candidate.seekUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-warning-subtle hover:bg-warning/25 text-warning text-md border border-separator transition-colors"
+              title="Open this candidate's SEEK profile"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              SEEK
+            </a>
+          )}
         </div>
       </div>
 
@@ -968,6 +984,18 @@ export default function CandidateDetailPage({
                           className="text-accent hover:text-accent-hover transition-colors"
                         >
                           Open in JobAdder ↗
+                        </a>
+                      ) : null}
+                    </DetailField>
+                    <DetailField label="SEEK" emptyLabel="Not linked">
+                      {candidate.seekUrl && /^https?:\/\//i.test(candidate.seekUrl) ? (
+                        <a
+                          href={candidate.seekUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent hover:text-accent-hover transition-colors"
+                        >
+                          Open in SEEK ↗
                         </a>
                       ) : null}
                     </DetailField>

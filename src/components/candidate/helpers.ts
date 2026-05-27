@@ -20,6 +20,8 @@ export function candidateSourceLabel(candidate: CandidateLike) {
   if (candidate.source === "pdl") return "People Data Labs";
   if (candidate.source === "serpapi") return "SerpAPI snippet";
   if (candidate.source === "jobadder_import") return "JobAdder import";
+  if (candidate.source === "seek") return "SEEK";
+  if (candidate.source === "scraper") return "Scraper import";
   return candidate.source ? candidate.source.replace(/_/g, " ") : "Manual";
 }
 

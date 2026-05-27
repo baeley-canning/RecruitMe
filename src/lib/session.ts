@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
@@ -166,6 +167,49 @@ export async function verifyExtensionAuth(req: Request): Promise<AuthResult | nu
     orgId: user.orgId ?? null,
     isOwner: user.role === "owner",
   };
+}
+
+/**
+ * Result of a successful headless-scraper bearer-token auth. Deliberately
+ * smaller than AuthResult — there's no User behind a scraper token, just an
+ * org scope (null = owner-scope, may ingest into any org) and the token row's
+ * id for audit/troubleshooting.
+ */
+export interface ScraperAuthResult {
+  orgId: string | null;
+  tokenId: string;
+}
+
+/**
+ * Validate the `Authorization: Bearer <token>` header sent by the user's
+ * own headless scraper (mini-PC pulling their own candidate data). Returns
+ * a ScraperAuthResult or null if the token is missing / unknown / revoked /
+ * expired.
+ *
+ * The plaintext token is never stored — we look up by sha256 hex of it,
+ * matching the hash written by scripts/create-scraper-token.mjs.
+ */
+export async function verifyScraperAuth(req: Request): Promise<ScraperAuthResult | null> {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+
+  const token = authHeader.slice(7).trim();
+  if (!token) return null;
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+  const row = await prisma.scraperApiToken.findUnique({ where: { tokenHash } });
+  if (!row) return null;
+  if (row.revokedAt != null) return null;
+  if (row.expiresAt != null && row.expiresAt < new Date()) return null;
+
+  // Fire-and-forget last-used stamp — don't block the request on it, and
+  // don't let a failed write reject an otherwise valid token.
+  prisma.scraperApiToken
+    .update({ where: { id: row.id }, data: { lastUsedAt: new Date() } })
+    .catch(() => {});
+
+  return { orgId: row.orgId, tokenId: row.id };
 }
 
 /** WHERE clause for listing jobs the caller is allowed to see. */

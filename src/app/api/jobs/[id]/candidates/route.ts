@@ -9,6 +9,7 @@ import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { isSeekProfileUrl, normaliseSeekUrl } from "@/lib/seek";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { reportError } from "@/lib/error-reporting";
@@ -36,6 +37,8 @@ const CreateCandidateSchema = z.object({
   headline:    z.string().max(500).trim().optional(),
   location:    z.string().max(200).trim().optional(),
   linkedinUrl: z.string().url().max(500).optional().or(z.literal("")),
+  // SEEK profile URL — optional; must be a real SEEK profile URL when present.
+  seekUrl:     z.string().max(500).refine((v) => isSeekProfileUrl(v), { message: "Must be a valid SEEK profile URL" }).optional().or(z.literal("")),
   profileText: z.string().max(50_000).optional(),
   autoScore:   z.boolean().optional(),
 });
@@ -54,6 +57,7 @@ export async function POST(
   }
   const body = result.data;
   const linkedinUrl = body.linkedinUrl ? normaliseLinkedInUrl(body.linkedinUrl) : null;
+  const seekUrl = body.seekUrl ? normaliseSeekUrl(body.seekUrl) : null;
 
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
@@ -92,6 +96,7 @@ export async function POST(
       headline: headline || null,
       location: location || null,
       linkedinUrl,
+      seekUrl,
       profileText: body.profileText?.trim() || null,
       source: "manual",
       status: overseas.reject ? "rejected" : "new",

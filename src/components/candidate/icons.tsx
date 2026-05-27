@@ -44,3 +44,33 @@ export function JobAdderBadge({ url, className }: { url: string | null; classNam
   }
   return <span className={base} aria-label="Not linked in JobAdder">JA</span>;
 }
+
+// SEEK "SK" badge — shows when a candidate has a SEEK profile URL attached.
+// Mirrors JobAdderBadge exactly: only render as a link if the URL is http(s)
+// (guarded by the same isSafeHref check); anything else gets the muted
+// placeholder so a javascript:/data: URL can't execute on click.
+export function SeekBadge({ url, className }: { url: string | null; className?: string }) {
+  const safeUrl = url && isSafeHref(url) ? url : null;
+  const base = cn(
+    "inline-flex items-center justify-center w-5 h-5 rounded text-[9px] font-bold leading-none border transition-all",
+    safeUrl
+      ? "bg-warning text-text-inverse border-warning cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-warning/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      : "bg-surface-hover text-text-tertiary border-separator hover:text-warning",
+    className,
+  );
+  if (safeUrl) {
+    return (
+      <a
+        href={safeUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={base}
+        title="Open in SEEK"
+        aria-label="Open in SEEK"
+      >
+        SK
+      </a>
+    );
+  }
+  return <span className={base} aria-label="Not linked in SEEK">SK</span>;
+}

@@ -20,7 +20,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-import { LinkedInIcon, JobAdderBadge } from "./candidate/icons";
+import { LinkedInIcon, JobAdderBadge, SeekBadge } from "./candidate/icons";
 import { CandidateIdentityBlock } from "./candidate/identity-block";
 import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import type { FetchState } from "./fetch-queue-panel";
@@ -42,6 +42,7 @@ import type { CandidateBadgeState } from "@/lib/insight-badges";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn, statusLabel, safeParseJson } from "@/lib/utils";
+import { isSeekProfileUrl } from "@/lib/seek";
 import { scoreTier, type ScoreTier } from "@/lib/score-utils";
 
 // Solid-fill progress-bar colour per match-score tier. This panel renders the
@@ -89,6 +90,7 @@ interface Candidate {
   location: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  seekUrl: string | null;
   phone?: string | null;
   photoFileId?: string | null;
   /** Other active jobs (same org) where this candidate's LinkedIn URL also
@@ -167,6 +169,7 @@ interface CandidateCardProps {
   onNotesChange: (id: string, notes: string) => void;
   onLinkedInChange?: (id: string, url: string) => void;
   onJobAdderChange?: (id: string, url: string) => void;
+  onSeekChange?: (id: string, url: string) => void;
   onNameChange?: (id: string, name: string) => void;
   onHeadlineChange?: (id: string, headline: string) => void;
   onLocationChange?: (id: string, location: string) => void;
@@ -335,6 +338,7 @@ function ProfileDrawer({
   onClose,
   onLinkedInChange,
   onJobAdderChange,
+  onSeekChange,
   onNameChange,
   onHeadlineChange,
   onLocationChange,
@@ -348,6 +352,7 @@ function ProfileDrawer({
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
   onJobAdderChange?: (id: string, url: string) => void;
+  onSeekChange?: (id: string, url: string) => void;
   onNameChange?: (id: string, name: string) => void;
   onHeadlineChange?: (id: string, headline: string) => void;
   onLocationChange?: (id: string, location: string) => void;
@@ -411,6 +416,27 @@ function ProfileDrawer({
       setJobAdderSaveError("Failed to save — try again");
     }
   }, [candidate.id, jobAdderInput, onJobAdderChange]);
+
+  // SEEK URL edit — mirrors the JobAdder pattern. Empty string clears the
+  // link; a non-empty value must be a real SEEK profile URL (validated with
+  // isSeekProfileUrl) before we hit the PATCH route.
+  const [editingSeek, setEditingSeek] = useState(false);
+  const [seekInput, setSeekInput] = useState(candidate.seekUrl ?? "");
+  const [seekSaveError, setSeekSaveError] = useState<string | null>(null);
+  const handleSaveSeek = useCallback(async () => {
+    const trimmed = seekInput.trim();
+    if (trimmed && !isSeekProfileUrl(trimmed)) {
+      setSeekSaveError("Enter a valid SEEK profile URL");
+      return;
+    }
+    try {
+      await onSeekChange?.(candidate.id, trimmed);
+      setEditingSeek(false);
+      setSeekSaveError(null);
+    } catch {
+      setSeekSaveError("Failed to save — try again");
+    }
+  }, [candidate.id, seekInput, onSeekChange]);
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(candidate.name);
@@ -491,6 +517,9 @@ function ProfileDrawer({
               {!editingJobAdder && (
                 <JobAdderBadge url={candidate.jobAdderUrl} className="w-3.5 h-3.5 text-[8px]" />
               )}
+              {!editingSeek && (
+                <SeekBadge url={candidate.seekUrl} className="w-3.5 h-3.5 text-[8px]" />
+              )}
             </div>
             {/* LinkedIn edit */}
             {editingLinkedIn ? (
@@ -552,6 +581,14 @@ function ProfileDrawer({
                     {candidate.jobAdderUrl ? "Edit JobAdder" : "Add JobAdder"}
                   </button>
                 )}
+                {onSeekChange && (
+                  <button
+                    onClick={() => { setSeekInput(candidate.seekUrl ?? ""); setSeekSaveError(null); setEditingSeek(true); }}
+                    className="text-xs text-text-tertiary hover:text-accent underline underline-offset-2 transition-colors flex-shrink-0"
+                  >
+                    {candidate.seekUrl ? "Edit SEEK" : "Add SEEK"}
+                  </button>
+                )}
               </div>
             )}
             {editingJobAdder && (
@@ -572,6 +609,27 @@ function ProfileDrawer({
                   <button onClick={handleSaveJobAdder} className="text-xs text-accent font-medium hover:text-accent-hover">Save</button>
                   <button onClick={() => { setEditingJobAdder(false); setJobAdderSaveError(null); }} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
                   {jobAdderSaveError && <span className="text-xs text-danger">{jobAdderSaveError}</span>}
+                </div>
+              </div>
+            )}
+            {editingSeek && (
+              <div className="mt-1.5">
+                <input
+                  type="url"
+                  value={seekInput}
+                  onChange={(e) => setSeekInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveSeek();
+                    if (e.key === "Escape") { setEditingSeek(false); setSeekSaveError(null); }
+                  }}
+                  placeholder="https://talent.seek.com.au/profile/..."
+                  className="w-full h-7 text-md px-2.5 rounded bg-surface-sunken border border-separator text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+                  autoFocus
+                />
+                <div className="flex gap-2 mt-1 items-center">
+                  <button onClick={handleSaveSeek} className="text-xs text-accent font-medium hover:text-accent-hover">Save</button>
+                  <button onClick={() => { setEditingSeek(false); setSeekSaveError(null); }} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
+                  {seekSaveError && <span className="text-xs text-danger">{seekSaveError}</span>}
                 </div>
               </div>
             )}
@@ -827,6 +885,7 @@ export const CandidateCard = memo(function CandidateCard({
   onNotesChange,
   onLinkedInChange,
   onJobAdderChange,
+  onSeekChange,
   onNameChange,
   onHeadlineChange,
   onLocationChange,
@@ -851,6 +910,9 @@ export const CandidateCard = memo(function CandidateCard({
   const [editingJobAdder, setEditingJobAdder] = useState(false);
   const [jobAdderInput, setJobAdderInput] = useState(candidate.jobAdderUrl ?? "");
   const [jobAdderSaveError, setJobAdderSaveError] = useState<string | null>(null);
+  const [editingSeek, setEditingSeek] = useState(false);
+  const [seekInput, setSeekInput] = useState(candidate.seekUrl ?? "");
+  const [seekSaveError, setSeekSaveError] = useState<string | null>(null);
   const [outreachOpen, setOutreachOpen] = useState(false);
   const [rejectionOpen, setRejectionOpen] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
@@ -989,6 +1051,21 @@ export const CandidateCard = memo(function CandidateCard({
     }
   };
 
+  const handleSaveSeek = async () => {
+    const trimmed = seekInput.trim();
+    if (trimmed && !isSeekProfileUrl(trimmed)) {
+      setSeekSaveError("Enter a valid SEEK profile URL");
+      return;
+    }
+    try {
+      await onSeekChange?.(candidate.id, trimmed);
+      setEditingSeek(false);
+      setSeekSaveError(null);
+    } catch {
+      setSeekSaveError("Failed to save — try again");
+    }
+  };
+
   return (
     <div className="bg-surface-raised border border-separator rounded-md hover:bg-surface-hover transition-colors">
       {/* Header row */}
@@ -1019,6 +1096,7 @@ export const CandidateCard = memo(function CandidateCard({
                 </a>
               )}
               <JobAdderBadge url={candidate.jobAdderUrl} />
+              <SeekBadge url={candidate.seekUrl} />
               {candidate.sharedFromOrgName && (
                 <span
                   className="inline-flex items-center gap-1 text-xs font-medium text-accent bg-accent-subtle rounded-sm px-1.5 py-0.5"
@@ -1451,6 +1529,43 @@ export const CandidateCard = memo(function CandidateCard({
             )}
           </div>
 
+          {/* SEEK URL */}
+          {onSeekChange && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <SeekBadge url={null} className="w-3.5 h-3.5 text-[8px]" />
+                  <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide">SEEK</p>
+                </div>
+                {!editingSeek && (
+                  <button onClick={() => { setSeekInput(candidate.seekUrl ?? ""); setSeekSaveError(null); setEditingSeek(true); }}
+                    className="text-xs text-warning hover:text-warning-hover">
+                    {candidate.seekUrl ? "Edit" : "Link"}
+                  </button>
+                )}
+              </div>
+              {editingSeek ? (
+                <div>
+                  <input type="url" value={seekInput} onChange={(e) => setSeekInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleSaveSeek(); if (e.key === "Escape") { setEditingSeek(false); setSeekSaveError(null); } }}
+                    placeholder="https://talent.seek.com.au/profile/..." autoFocus
+                    className="w-full h-7 text-base bg-surface-raised border border-separator rounded px-2.5 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-warning focus:shadow-focus transition-all"
+                  />
+                  <div className="flex gap-2 mt-1.5">
+                    <button onClick={handleSaveSeek} className="text-xs text-warning font-medium hover:text-warning-hover">Save</button>
+                    <button onClick={() => { setEditingSeek(false); setSeekSaveError(null); }} className="text-xs text-text-tertiary hover:text-text-primary">Cancel</button>
+                  </div>
+                  {seekSaveError && <p className="text-xs text-danger mt-1">{seekSaveError}</p>}
+                </div>
+              ) : candidate.seekUrl && /^https?:\/\//i.test(candidate.seekUrl) ? (
+                <a href={candidate.seekUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-warning hover:underline truncate block max-w-full">{candidate.seekUrl}</a>
+              ) : (
+                <p className="text-xs text-text-tertiary">Not linked — paste the SEEK profile URL to link</p>
+              )}
+            </div>
+          )}
+
           {/* Status timeline */}
           <CandidateStatusHistory statusHistory={candidate.statusHistory} />
 
@@ -1657,6 +1772,7 @@ export const CandidateCard = memo(function CandidateCard({
           onClose={() => setShowProfile(false)}
           onLinkedInChange={onLinkedInChange}
           onJobAdderChange={onJobAdderChange}
+          onSeekChange={onSeekChange}
           onNameChange={onNameChange}
           onHeadlineChange={onHeadlineChange}
           onLocationChange={onLocationChange}

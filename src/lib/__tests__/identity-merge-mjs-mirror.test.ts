@@ -21,8 +21,10 @@ import {
   identityMergeKey as identityMergeKeyMjs,
   isSyntheticLibraryKey as isSyntheticLibraryKeyMjs,
   normaliseJobAdderUrl as normaliseJobAdderUrlMjs,
+  normaliseSeekUrl as normaliseSeekUrlMjs,
   mergeKeyToString as mergeKeyToStringMjs,
 } from "../../../scripts/_identity-merge.mjs";
+import { normaliseSeekUrl as normaliseSeekUrlTs } from "../seek";
 
 describe("identity-merge .mjs mirror parity", () => {
   const ROWS = [
@@ -35,6 +37,12 @@ describe("identity-merge .mjs mirror parity", () => {
     { linkedinUrl: null, jobAdderUrl: null },
     { linkedinUrl: "  https://linkedin.com/in/whitespace  ", jobAdderUrl: null },
     { linkedinUrl: null, jobAdderUrl: "HTTPS://Acme.JobAdder.com/c/MixedCase?utm=x" },
+    // SEEK-only rows — lowest precedence, only used when LinkedIn + JobAdder absent.
+    { linkedinUrl: null, jobAdderUrl: null, seekUrl: "https://talent.seek.com.au/profile/AbC123?utm=x" },
+    { linkedinUrl: null, jobAdderUrl: null, seekUrl: "  https://www.seek.co.nz/profile/xyz/  " },
+    // Precedence checks: SEEK must NOT win when a higher key exists.
+    { linkedinUrl: "https://linkedin.com/in/jane", jobAdderUrl: null, seekUrl: "https://seek.com.au/profile/1" },
+    { linkedinUrl: "library:src-1", jobAdderUrl: "https://acme.jobadder.com/c/9", seekUrl: "https://seek.com.au/profile/2" },
   ];
 
   for (const row of ROWS) {
@@ -63,11 +71,24 @@ describe("identity-merge .mjs mirror parity", () => {
     }
   });
 
+  it("normaliseSeekUrl matches", () => {
+    const cases = [
+      "https://talent.seek.com.au/profile/AbC123?utm=foo",
+      "https://www.seek.co.nz/profile/xyz/",
+      "HTTPS://Seek.Com.AU/profile/MixedCase",
+      "  https://seek.com.au/profile/spaces  ",
+    ];
+    for (const c of cases) {
+      expect(normaliseSeekUrlMjs(c)).toBe(normaliseSeekUrlTs(c));
+    }
+  });
+
   it("mergeKeyToString matches", () => {
     const cases: Array<Parameters<typeof mergeKeyToStringTs>[0]> = [
       null,
       { kind: "linkedinUrl", value: "https://www.linkedin.com/in/x" },
       { kind: "jobAdderUrl", value: "https://acme.jobadder.com/c/1" },
+      { kind: "seekUrl", value: "https://seek.com.au/profile/1" },
     ];
     for (const c of cases) {
       expect(mergeKeyToStringMjs(c)).toBe(mergeKeyToStringTs(c));

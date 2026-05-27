@@ -33,10 +33,19 @@ export function normaliseJobAdderUrl(raw) {
   return noTrailing.replace(/^(https?:\/\/[^/]+)/i, (match) => match.toLowerCase());
 }
 
+// Mirror of normaliseSeekUrl from src/lib/seek.ts — keep byte-identical
+// behaviour; the parity test pins them together.
+export function normaliseSeekUrl(raw) {
+  const trimmed = raw.trim();
+  const noQuery = trimmed.replace(/[?#].*$/, "");
+  const noTrailing = noQuery.replace(/\/$/, "");
+  return noTrailing.replace(/^(https?:\/\/[^/]+)/i, (match) => match.toLowerCase());
+}
+
 /**
- * Tier 1 merge-key extraction. Precedence: LinkedIn URL beats JobAdder URL.
- * Synthetic `library:<srcId>` LinkedIn placeholders are rejected — they
- * identify a source library row, not a person.
+ * Tier 1 merge-key extraction. Precedence: LinkedIn URL > JobAdder URL >
+ * SEEK URL. Synthetic `library:<srcId>` LinkedIn placeholders are rejected —
+ * they identify a source library row, not a person.
  */
 export function identityMergeKey(row) {
   const link = (row.linkedinUrl ?? "").trim();
@@ -46,6 +55,10 @@ export function identityMergeKey(row) {
   const ja = (row.jobAdderUrl ?? "").trim();
   if (ja) {
     return { kind: "jobAdderUrl", value: normaliseJobAdderUrl(ja) };
+  }
+  const seek = (row.seekUrl ?? "").trim();
+  if (seek) {
+    return { kind: "seekUrl", value: normaliseSeekUrl(seek) };
   }
   return null;
 }

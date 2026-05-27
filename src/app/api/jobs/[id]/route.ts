@@ -37,7 +37,7 @@ export async function GET(
           acceptanceScore: true, acceptanceReason: true,
           profileCapturedAt: true, profileTextHash: true,
           captureMetadata: true,
-          jobAdderUrl: true, notes: true, createdAt: true, updatedAt: true,
+          jobAdderUrl: true, seekUrl: true, notes: true, createdAt: true, updatedAt: true,
           archivedJobTitle: true, archivedJobCompany: true,
           // Count + most recent event for the hover tooltip on the contact dot
           _count: { select: { contactEvents: true } },

@@ -628,6 +628,30 @@ await step("Candidate.suitability column", async () => {
   `;
 });
 
+// 24. SEEK provenance columns — Candidate.seekUrl + CandidateIdentity.seekUrl.
+//     Nullable TEXT adds are metadata-only on Postgres ≥11. Set manually now
+//     (paste-a-SEEK-URL affordance) and by the mini-PC scraper later; also a
+//     Tier-1 identity key (lowest precedence after LinkedIn + JobAdder).
+//
+//     The non-unique Candidate index is created here. The
+//     CandidateIdentity @@unique([orgId, seekUrl]) constraint and the
+//     ScraperApiToken table are intentionally LEFT to `prisma db push`
+//     (runs right after this script in start-production.mjs): seekUrl starts
+//     all-NULL so the unique index builds without dedup, and creating the
+//     constraint manually here risks the partial-index naming conflict we
+//     hit before. Let Prisma own its generated index names.
+await step("Candidate.seekUrl + CandidateIdentity.seekUrl columns", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "seekUrl" TEXT
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_seekUrl_idx" ON "Candidate"("seekUrl") WHERE "seekUrl" IS NOT NULL
+  `;
+  await prisma.$executeRaw`
+    ALTER TABLE "CandidateIdentity" ADD COLUMN IF NOT EXISTS "seekUrl" TEXT
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

@@ -57,6 +57,7 @@ interface Candidate {
   location: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  seekUrl: string | null;
   phone: string | null;
   photoFileId: string | null;
   profileText: string | null;
@@ -963,6 +964,12 @@ export default function JobDetailPage({
   const handleJobAdderChange = useCallback(
     (candidateId: string, jobAdderUrl: string) =>
       patchCandidate(candidateId, { jobAdderUrl: jobAdderUrl || null }, "JobAdder URL saved").then(() => undefined),
+    [patchCandidate]
+  );
+
+  const handleSeekChange = useCallback(
+    (candidateId: string, seekUrl: string) =>
+      patchCandidate(candidateId, { seekUrl: seekUrl || null }, "SEEK URL saved").then(() => undefined),
     [patchCandidate]
   );
 
@@ -2330,6 +2337,7 @@ ${toHtml(job.rawJd)}
                     onNotesChange={handleNotesChange}
                     onLinkedInChange={handleLinkedInChange}
                     onJobAdderChange={handleJobAdderChange}
+                    onSeekChange={handleSeekChange}
                     onNameChange={handleNameChange}
                     onHeadlineChange={handleHeadlineChange}
                     onLocationChange={handleLocationChange}

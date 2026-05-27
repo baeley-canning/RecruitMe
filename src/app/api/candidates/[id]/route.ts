@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { isSeekProfileUrl, normaliseSeekUrl } from "@/lib/seek";
 import { getAuth, unauthorized } from "@/lib/session";
 
 async function requireCandidateLibraryAccess(
@@ -93,6 +94,14 @@ const PatchSchema = z.object({
   //   "excluded" — hide from search results
   //   null       — neutral (clears any prior setting)
   suitability: z.enum(["preferred", "excluded"]).nullable().optional(),
+  // SEEK profile URL — empty string clears the link, a non-empty value must
+  // be a real SEEK profile URL. Normalised before persisting.
+  seekUrl: z
+    .string()
+    .max(500)
+    .refine((v) => isSeekProfileUrl(v), { message: "Must be a valid SEEK profile URL" })
+    .optional()
+    .or(z.literal("")),
 });
 
 export async function PATCH(
@@ -109,9 +118,15 @@ export async function PATCH(
   const result = PatchSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
 
+  const { seekUrl, ...rest } = result.data;
+  const data: Record<string, unknown> = {
+    ...rest,
+    ...(seekUrl !== undefined && { seekUrl: seekUrl ? normaliseSeekUrl(seekUrl) : null }),
+  };
+
   const updated = await prisma.candidate.update({
     where: { id },
-    data: result.data,
+    data,
   });
   return NextResponse.json(updated);
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { isSeekProfileUrl, normaliseSeekUrl } from "@/lib/seek";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 
 const VALID_STATUSES = [
@@ -19,6 +20,13 @@ const httpsHttpUrl = z
   .max(500)
   .refine((v) => /^https?:\/\//i.test(v), { message: "Must be an http(s) URL" });
 
+// SEEK URL is stricter than a generic http(s) URL — it must be a real SEEK
+// profile host (validated via isSeekProfileUrl). Empty string clears the link.
+const seekProfileUrl = z
+  .string()
+  .max(500)
+  .refine((v) => isSeekProfileUrl(v), { message: "Must be a valid SEEK profile URL" });
+
 const PatchCandidateSchema = z.object({
   status:        z.enum(VALID_STATUSES).optional(),
   notes:         z.string().max(10_000).optional(),
@@ -27,6 +35,7 @@ const PatchCandidateSchema = z.object({
   location:      z.string().max(200).trim().optional(),
   linkedinUrl:   httpsHttpUrl.optional().or(z.literal("")),
   jobAdderUrl:   httpsHttpUrl.optional().or(z.literal("")),
+  seekUrl:       seekProfileUrl.optional().or(z.literal("")),
   screeningData:   z.string().optional(), // JSON string
   interviewNotes:  z.string().optional(), // JSON string
 });
@@ -48,6 +57,9 @@ export async function PATCH(
   const linkedinUrl = body.linkedinUrl !== undefined
     ? body.linkedinUrl ? normaliseLinkedInUrl(body.linkedinUrl) : null
     : undefined;
+  const seekUrl = body.seekUrl !== undefined
+    ? body.seekUrl ? normaliseSeekUrl(body.seekUrl) : null
+    : undefined;
 
   // Build base update
   const data: Record<string, unknown> = {
@@ -57,6 +69,7 @@ export async function PATCH(
     ...(body.location      !== undefined && { location: body.location }),
     ...(linkedinUrl        !== undefined && { linkedinUrl }),
     ...(body.jobAdderUrl   !== undefined && { jobAdderUrl: body.jobAdderUrl || null }),
+    ...(seekUrl            !== undefined && { seekUrl }),
     ...(body.screeningData  !== undefined && { screeningData: body.screeningData }),
     ...(body.interviewNotes !== undefined && { interviewNotes: body.interviewNotes }),
   };
