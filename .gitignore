@@ -60,3 +60,4 @@ pnpm-debug.log*
 scraper-worker/sessions/
 scraper-worker/.env
 scraper-worker/dist/
+scraper-worker/node_modules/
