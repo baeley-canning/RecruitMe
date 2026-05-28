@@ -628,6 +628,76 @@ await step("Candidate.suitability column", async () => {
   `;
 });
 
+// 24. CandidateIdentity.seekUrl — Tier 1 identity merge key for SEEK Talent.
+//     Partial unique index (WHERE "seekUrl" IS NOT NULL) so multiple NULL rows
+//     per org are fine — Postgres treats NULLs as distinct in unique indexes,
+//     but we use the same pre-create-index pattern as linkedinUrl/jobAdderUrl.
+await step("CandidateIdentity.seekUrl column + unique index", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "CandidateIdentity" ADD COLUMN IF NOT EXISTS "seekUrl" TEXT
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_seekUrl_key"
+    ON "CandidateIdentity"("orgId", "seekUrl")
+    WHERE "seekUrl" IS NOT NULL
+  `;
+});
+
+// 25. ProfileInsight multi-platform columns.
+//     sourceInputHash: combined-input hash for multi-platform extractions.
+//     contributingPlatforms: JSON array tracking which platform each row came from.
+//     Both are nullable/defaulted so existing rows keep working unchanged.
+await step("ProfileInsight multi-platform columns", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "ProfileInsight"
+      ADD COLUMN IF NOT EXISTS "sourceInputHash"       TEXT,
+      ADD COLUMN IF NOT EXISTS "contributingPlatforms" TEXT NOT NULL DEFAULT '[]'
+  `;
+  // Backfill: copy existing hash into sourceInputHash for existing rows.
+  await prisma.$executeRaw`
+    UPDATE "ProfileInsight"
+    SET "sourceInputHash" = "sourceProfileTextHash"
+    WHERE "sourceInputHash" IS NULL
+  `;
+});
+
+// 26. ScrapeJob table — external scraper worker job queue.
+//     The scraper worker polls GET /api/scraper/jobs and posts results via
+//     PATCH /api/scraper/jobs/[id]. Railway hosts the queue; the worker
+//     runs on local hardware with a residential/carrier IP.
+await step("ScrapeJob table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ScrapeJob" (
+      "id"          TEXT         NOT NULL,
+      "orgId"       TEXT         NOT NULL,
+      "platform"    TEXT         NOT NULL,
+      "profileUrl"  TEXT         NOT NULL,
+      "status"      TEXT         NOT NULL DEFAULT 'pending',
+      "result"      TEXT,
+      "error"       TEXT,
+      "retryCount"  INTEGER      NOT NULL DEFAULT 0,
+      "candidateId" TEXT,
+      "identityId"  TEXT,
+      "requestedBy" TEXT,
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "ScrapeJob_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ScrapeJob_orgId_status_idx"
+    ON "ScrapeJob"("orgId", "status")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ScrapeJob_orgId_platform_idx"
+    ON "ScrapeJob"("orgId", "platform")
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ScrapeJob_status_createdAt_idx"
+    ON "ScrapeJob"("status", "createdAt")
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

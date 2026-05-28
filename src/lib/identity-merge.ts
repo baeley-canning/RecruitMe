@@ -43,6 +43,7 @@ export function isSyntheticLibraryKey(value: string | null | undefined): boolean
 /** Identity-merge keys the Tier 1 auto-merger considers. */
 export type IdentityMergeKey =
   | { kind: "linkedinUrl"; value: string }
+  | { kind: "seekUrl"; value: string }
   | { kind: "jobAdderUrl"; value: string };
 
 /**
@@ -59,17 +60,34 @@ export type IdentityMergeKey =
  */
 export function identityMergeKey(row: {
   linkedinUrl: string | null | undefined;
+  seekUrl?: string | null | undefined;
   jobAdderUrl: string | null | undefined;
 }): IdentityMergeKey | null {
   const link = row.linkedinUrl?.trim() ?? "";
   if (link && !isSyntheticLibraryKey(link)) {
     return { kind: "linkedinUrl", value: normaliseLinkedInUrl(link) };
   }
+  const seek = row.seekUrl?.trim() ?? "";
+  if (seek) {
+    return { kind: "seekUrl", value: normaliseSeekUrl(seek) };
+  }
   const ja = row.jobAdderUrl?.trim() ?? "";
   if (ja) {
     return { kind: "jobAdderUrl", value: normaliseJobAdderUrl(ja) };
   }
   return null;
+}
+
+/**
+ * Normalise a SEEK Talent profile URL — strip query/fragment, collapse
+ * trailing slash, lowercase scheme+host (NOT the path, since SEEK candidate
+ * IDs may be case-sensitive in some tenants).
+ */
+export function normaliseSeekUrl(raw: string): string {
+  const trimmed = raw.trim();
+  const noQuery = trimmed.replace(/[?#].*$/, "");
+  const noTrailing = noQuery.replace(/\/$/, "");
+  return noTrailing.replace(/^(https?:\/\/[^/]+)/i, (match) => match.toLowerCase());
 }
 
 /**

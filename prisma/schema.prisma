@@ -133,7 +133,7 @@ model Candidate {
   status              String    @default("new") // new | reviewing | shortlisted | contacted | interviewing | offer_sent | hired | declined | rejected
   statusHistory       String? // JSON: [{status, changedAt}]
   contactedAt         DateTime?
-  source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool
+  source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool | seek_scraper | jobadder_scraper
   // Recruiter-set marker. "preferred" → boost in shortlists; "excluded" →
   // hide from search results. Mirrors JobAdder's Suitability field. Null is
   // the default neutral state. Library list + multi-source search will use
@@ -385,6 +385,7 @@ model CandidateIdentity {
   primaryPhone         String? // E.164 normalised when available
   linkedinUrl          String? // Canonical (current) LinkedIn URL; previous values move to alias rows
   jobAdderUrl          String? // Canonical (current) JobAdder URL; previous values move to alias rows
+  seekUrl              String? // Canonical (current) SEEK Talent profile URL; previous values move to alias rows
   // When a merge collapses this identity into a survivor, the merger sets this.
   // Queries follow this chain to find the canonical identity. Splits (unmerge)
   // null this back out and write a tombstone CandidateIdentityMerge row.
@@ -404,6 +405,7 @@ model CandidateIdentity {
   // that share one JobAdder tenant — never collapse jobAdderUrl across orgs.
   @@unique([orgId, linkedinUrl])
   @@unique([orgId, jobAdderUrl])
+  @@unique([orgId, seekUrl])
   @@index([orgId])
   @@index([orgId, primaryEmail])
   @@index([mergedIntoIdentityId])
@@ -468,10 +470,12 @@ model ProfileInsight {
   promptVersion         String // e.g. "insight-v1.0" — bumped on prompt edits
   extractedBy           String // "claude" | "openai" | "deterministic"
   modelId               String // exact model id at extraction time
-  sourceProfileTextHash String // SHA-256 of normalised profileText that was the input
-  sourceCandidateId     String? // which Candidate row was the longest-text source
-  extractedAt           DateTime          @default(now())
-  supersededAt          DateTime?
+  sourceProfileTextHash  String // SHA-256 of normalised profileText that was the input (single-platform legacy)
+  sourceInputHash        String? // SHA-256 of combined multi-platform input; replaces sourceProfileTextHash for new rows
+  contributingPlatforms  String  @default("[]") // JSON: [{platform, candidateId, charCount}]
+  sourceCandidateId      String? // which Candidate row was the longest-text source
+  extractedAt            DateTime          @default(now())
+  supersededAt           DateTime?
 
   // Idempotency: re-running the extractor with the same inputs is a no-op.
   @@unique([orgId, identityId, sourceProfileTextHash, extractionVersion])
@@ -498,4 +502,29 @@ model ReferenceCheck {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Scraper job queue. The external scraper worker (running on a local machine)
+// polls GET /api/scraper/jobs for pending rows, claims them, then posts
+// results back via PATCH /api/scraper/jobs/[id]. Railway hosts this table;
+// the scraper worker is a separate Node.js process that runs anywhere with
+// a carrier/residential IP.
+model ScrapeJob {
+  id          String    @id @default(cuid())
+  orgId       String
+  platform    String    // "linkedin" | "seek" | "jobadder"
+  profileUrl  String    // the URL being scraped
+  status      String    @default("pending") // pending | processing | completed | failed
+  result      String?   // JSON: { profileText, name, headline, location, seekUrl?, linkedinUrl? }
+  error       String?
+  retryCount  Int       @default(0)
+  candidateId String?   // set after ingestion creates/updates a Candidate row
+  identityId  String?   // set after identity resolution runs
+  requestedBy String?   // userId who triggered the scrape; null = system-initiated
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([orgId, status])
+  @@index([orgId, platform])
+  @@index([status, createdAt]) // worker poll query
 }

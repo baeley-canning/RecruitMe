@@ -55,3 +55,8 @@ pnpm-debug.log*
 # Kept locally for reference; not part of the app. TODO: delete once the
 # iPhone-side issue it captured is fully closed out.
 /iphone-diagnostics/
+
+# Scraper worker sessions (encrypted but still sensitive)
+scraper-worker/sessions/
+scraper-worker/.env
+scraper-worker/dist/
