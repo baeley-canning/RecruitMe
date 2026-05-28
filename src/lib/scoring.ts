@@ -33,9 +33,11 @@ export interface ProfileCaptureWarning {
 // ─── Evidence item types ───────────────────────────────────────────────────────
 
 export interface MustHaveStatus {
-  requirement:  string;
-  status:       MustHaveCoverageStatus;
-  evidence:     string;
+  requirement:    string;
+  status:         MustHaveCoverageStatus;
+  evidence:       string;
+  last_used_year?: number | null; // populated by fingerprint when available
+  recency_score?:  number | null; // 0-1; when < 0.4 confirmed scores are capped
 }
 
 export interface NiceToHaveStatus {
@@ -93,6 +95,14 @@ export interface ScoreBreakdown {
    * either way — the field exists so the UI can render a provenance pill.
    */
   scoredBy?: "claude" | "openai";
+  archetypeMatch?: {
+    archetypeId: string;
+    archetypeName: string;
+    similarity: number;
+    successRate: number;
+    isAntiArchetype: boolean;
+    warning?: string;
+  };
 }
 
 // ─── Category weights — v3 (must sum to 1.0) ───────────────────────────────────
@@ -556,7 +566,17 @@ export function computeMustHavePct(
   let totalWeight = 0;
   for (const c of scoringCoverage) {
     const importance = getMustHaveImportance(c.requirement);
-    totalPoints += pointTable[c.status] * importance;
+    let points = pointTable[c.status];
+    // Recency cap: confirmed skills used >5 years ago score at most 75 points.
+    // Prevents "used Java 12 years ago" from scoring identically to "current Java".
+    if (
+      c.recency_score != null &&
+      c.recency_score < 0.4 &&
+      (c.status === "confirmed" || c.status === "equivalent")
+    ) {
+      points = Math.min(points, 75);
+    }
+    totalPoints += points * importance;
     totalWeight += importance;
   }
 

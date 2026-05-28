@@ -1089,6 +1089,28 @@ export const CandidateCard = memo(function CandidateCard({
                     } as CandidateBadgeState
                   }
                 />
+                {/* Archetype badge — shown when archetype matching data is present */}
+                {breakdown?.archetypeMatch && (() => {
+                  const am = breakdown.archetypeMatch!;
+                  const isWarning = !!am.warning;
+                  const pct = Math.round(am.successRate * 100);
+                  const label = am.isAntiArchetype
+                    ? `⚠ Anti-archetype`
+                    : `${am.archetypeName} (${pct}%)`;
+                  const colour = isWarning || am.isAntiArchetype
+                    ? "text-warning bg-warning-subtle border border-warning/30"
+                    : "text-success bg-success-subtle border border-success/30";
+                  const title = am.warning
+                    ?? `Archetype: ${am.archetypeName} — ${pct}% placement success rate (${Math.round(am.similarity * 100)}% profile match)`;
+                  return (
+                    <span
+                      title={title}
+                      className={`text-2xs font-semibold rounded-sm px-1 py-0.5 hidden sm:inline-block cursor-help max-w-[160px] truncate ${colour}`}
+                    >
+                      {label}
+                    </span>
+                  );
+                })()}
                 {/* Confidence badge — only when breakdown is present */}
                 {breakdown && <ConfidenceBadge breakdown={breakdown} />}
                 {!hasFetchedProfile && (

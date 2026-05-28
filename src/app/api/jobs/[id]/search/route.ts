@@ -1546,6 +1546,28 @@ async function runSearchBackground(args: {
     // 90d cache prevents re-billing on duplicates.
     for (const c of saved) enrichCandidateInBackground(c.id);
 
+    // ── Scraper queue hook ──────────────────────────────────────────────────
+    // For snippet-only imports (no profileText), enqueue a LinkedIn profile scrape
+    // so the scraper-worker can fetch the full profile in the background.
+    // GATED: only runs when SCRAPER_ENABLED=true env var is set on Railway.
+    // The scraper-worker (scraper-worker/src/index.ts) picks these up and posts
+    // results back to PATCH /api/scraper/jobs/[id], which triggers AI scoring
+    // via the same pipeline as extension imports.
+    if (process.env.SCRAPER_ENABLED === "true" && orgId) {
+      const { enqueueScrapeJob } = await import("@/lib/scrape-queue");
+      for (const c of saved) {
+        if (!c.profileText && c.linkedinUrl) {
+          enqueueScrapeJob(orgId, "linkedin", "profile", {
+            url:         c.linkedinUrl,
+            candidateId: c.id,
+            jobId,
+          }, 0).catch((err) =>
+            console.warn("[search] scrape enqueue failed:", err instanceof Error ? err.message : err),
+          );
+        }
+      }
+    }
+
     console.log(`[search] done — scored ${scored}, saved ${saved.length} (pool-first ${poolFirstSaved}, linkedin ${linkedinSaved}, of which url-reuse ${linkedinFromPool}), skipped ${skippedScore} below score/location threshold, ${skippedSourceGate} source-gated, ${skippedSeniorityGate} seniority-gated`);
 
     const sorted = saved.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));

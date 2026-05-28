@@ -349,3 +349,23 @@ export async function getRecruitingContext(
 
   return lines.join("\n");
 }
+
+// ── Anti-archetype context ────────────────────────────────────────────────────
+// Computes the candidate's career fingerprint and looks up org archetypes.
+// Returns warning text to inject into the scoring prompt, or "" if none.
+export async function getAntiArchetypeContext(
+  profileText: string,
+  orgId: string,
+): Promise<string> {
+  if (!profileText || profileText.length < 100 || !orgId) return "";
+  try {
+    const { computeFingerprint } = await import("./archetype/fingerprint");
+    const { matchCandidateToArchetypes, buildAntiArchetypeWarning } = await import("./archetype/match");
+    const fingerprint = computeFingerprint(profileText);
+    if (fingerprint.skillVector.length === 0) return "";
+    const matches = await matchCandidateToArchetypes(orgId, fingerprint.skillVector);
+    return buildAntiArchetypeWarning(matches);
+  } catch {
+    return "";
+  }
+}

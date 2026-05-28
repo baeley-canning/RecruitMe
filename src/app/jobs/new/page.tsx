@@ -42,6 +42,8 @@ export default function NewJobPage() {
 
   const [title, setTitle] = useState("");
   const [company, setCompany] = useState("");
+  const [clientId, setClientId] = useState<string>("");
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [location, setLocation] = useState("");
   const [location2, setLocation2] = useState("");
   const [isRemote, setIsRemote] = useState(false);
@@ -56,6 +58,10 @@ export default function NewJobPage() {
   const [dragging, setDragging] = useState(false);
   const [loadedFromListing, setLoadedFromListing] = useState(false);
   const [autofilledFromUpload, setAutofilledFromUpload] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/clients").then(r => r.ok ? r.json() : []).then(setClients).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const raw = window.sessionStorage.getItem(LISTING_SEED_KEY);
@@ -151,7 +157,8 @@ export default function NewJobPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
-          company: company.trim(),
+          company: company.trim() || undefined,
+          clientId: clientId || undefined,
           location: location.trim(),
           location2: location2.trim() || undefined,
           isRemote,
@@ -224,6 +231,31 @@ export default function NewJobPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">
+                Client
+              </label>
+              {clients.length > 0 ? (
+                <select
+                  value={clientId}
+                  onChange={(e) => {
+                    setClientId(e.target.value);
+                    const c = clients.find(x => x.id === e.target.value);
+                    if (c && !company.trim()) setCompany(c.name);
+                  }}
+                  className={SELECT_BASE}
+                >
+                  <option value="">— no client —</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-text-tertiary pt-1.5">
+                  No clients yet — <a href="/clients" className="text-accent hover:underline">add one first</a>
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
                 Company
               </label>
               <input
@@ -234,6 +266,8 @@ export default function NewJobPage() {
                 className={INPUT_BASE}
               />
             </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">
                 Location

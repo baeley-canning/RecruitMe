@@ -35,9 +35,12 @@ model Job {
   parseHistory   JobParseHistory[]
   orgId          String?
   org            Org?              @relation(fields: [orgId], references: [id])
+  clientId       String?
+  client         Client?           @relation(fields: [clientId], references: [id])
 
   @@index([orgId])
   @@index([status])
+  @@index([clientId])
 }
 
 model Setting {
@@ -53,6 +56,7 @@ model Org {
   updatedAt           DateTime            @updatedAt
   users               User[]
   jobs                Job[]
+  clients             Client[]
   candidateIdentities CandidateIdentity[]
 }
 
@@ -155,6 +159,8 @@ model Candidate {
   fetchSessions    FetchSession[]
   scoreCorrections ScoreCorrection[]
   contactEvents    ContactEvent[]
+  submissions      Submission[]
+  tagAssignments   CandidateTagAssignment[]
 
   @@unique([jobId, linkedinUrl])
   @@index([linkedinUrl]) // talent pool cross-job URL lookups
@@ -504,11 +510,208 @@ model ReferenceCheck {
   updatedAt DateTime @updatedAt
 }
 
+model Client {
+  id             String   @id @default(cuid())
+  orgId          String
+  org            Org      @relation(fields: [orgId], references: [id])
+  name           String
+  industry       String?
+  website        String?
+  primaryContact String?
+  email          String?
+  phone          String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  jobs           Job[]
+  submissions    Submission[]
+  placements     Placement[]
+
+  @@index([orgId])
+}
+
+model Submission {
+  id             String    @id @default(cuid())
+  orgId          String
+  jobId          String
+  clientId       String?
+  candidateId    String
+  submittedAt    DateTime  @default(now())
+  submittedBy    String? // userId
+  matchScore     Int? // snapshot at time of submission
+  cvVersion      String?
+  notes          String?
+  status         String    @default("sent") // sent|viewed|interested|rejected|on_hold
+  clientFeedback String?
+  feedbackAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([jobId])
+  @@index([candidateId])
+  @@index([clientId])
+}
+
+model Placement {
+  id              String    @id @default(cuid())
+  orgId           String
+  clientId        String?
+  jobId           String?
+  candidateId     String
+  submissionId    String?
+  placedAt        DateTime  @default(now())
+  startDate       DateTime?
+  salaryPlaced    Int?
+  feeType         String    @default("percentage") // fixed|percentage
+  feePct          Float?
+  feeAmount       Int?
+  invoiceRef      String?
+  invoicedAt      DateTime?
+  paidAt          DateTime?
+  guaranteeMonths Int?
+  guaranteeExpiry DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([clientId])
+  @@index([jobId])
+  @@index([candidateId])
+}
+
+model Reminder {
+  id          String    @id @default(cuid())
+  orgId       String
+  userId      String?
+  candidateId String?
+  jobId       String?
+  clientId    String?
+  placementId String?
+  type        String    @default("follow_up") // follow_up|guarantee_check|client_feedback|custom
+  dueAt       DateTime
+  note        String?
+  dismissed   Boolean   @default(false)
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([orgId])
+  @@index([orgId, dismissed, dueAt])
+}
+
+model CandidateTag {
+  id          String                   @id @default(cuid())
+  orgId       String
+  label       String
+  color       String                   @default("#6366f1")
+  createdAt   DateTime                 @default(now())
+  assignments CandidateTagAssignment[]
+
+  @@unique([orgId, label])
+  @@index([orgId])
+}
+
+model CandidateTagAssignment {
+  candidateId String
+  tagId       String
+  createdAt   DateTime     @default(now())
+  tag         CandidateTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  candidate   Candidate    @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@id([candidateId, tagId])
+  @@index([candidateId])
+  @@index([tagId])
+}
+
+model CandidateFingerprint {
+  id              String   @id @default(cuid())
+  candidateId     String   @unique
+  orgId           String
+  version         Int      @default(1)
+  skillVector     String   // JSON: {skill, lastUsedYear, recency, evidence}[]
+  trajectory      String   @default("unknown") // ascending|lateral|descending|pivoting|unknown
+  avgTenureMonths Float?
+  stabilityScore  Int? // 0-100
+  domainClusters  String   @default("[]") // JSON: string[]
+  seniorityLevel  String   @default("unknown") // junior|mid|senior|lead|executive|unknown
+  archetypeMatches String? // JSON: {id, name, similarity, successRate, isAntiArchetype}[]
+  computedAt      DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orgId])
+}
+
+model ArchetypePlacement {
+  id                  String   @id @default(cuid())
+  orgId               String
+  candidateId         String
+  jobId               String
+  fingerprintVector   String // JSON: SkillVector[] snapshot at outcome time
+  finalStatus         String // hired|rejected|declined|offer_sent
+  outcomeCategory     String // success|failure
+  roleTitle           String
+  roleMustHaves       String // JSON: string[]
+  matchScore          Int
+  acceptanceScore     Int?
+  recruiterCorrection Int?
+  decisionReason      String?
+  createdAt           DateTime @default(now())
+
+  @@index([orgId])
+  @@index([orgId, outcomeCategory])
+}
+
+model Archetype {
+  id                 String   @id @default(cuid())
+  orgId              String
+  name               String
+  description        String?
+  centroidVector     String // JSON: SkillVector[] centroid
+  totalPlacements    Int      @default(0)
+  successCount       Int      @default(0)
+  failureCount       Int      @default(0)
+  successRate        Float    @default(0)
+  avgMatchScore      Float?
+  antiCentroidVector String? // JSON: failure centroid
+  isAntiArchetype    Boolean  @default(false)
+  memberCount        Int      @default(0)
+  lastClusteredAt    DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([orgId, isAntiArchetype])
+}
+
+// ScrapeJob — job queue for the scraper-worker service (Phase: Mobile Scraper).
+//
+// HOW IT WORKS (for AI handoff):
+//   Railway creates ScrapeJob rows; a standalone scraper-worker process (running
+//   on a Raspberry Pi with 4G or on Fly.io with residential proxies) polls
+//   GET /api/scraper/jobs to claim them, scrapes the target, then PATCHes the
+//   result back. Candidates with profileText=null (snippet-only imports) get a
+//   "profile" job auto-created so they can be enriched in the background.
+//
+// STATUS FLOW: pending → processing → done | error
+// RETRY: retryCount < 3 → requeued as pending; ≥ 3 → permanent error
+// AUTH: worker authenticates with an ApiKey (Bearer token) scoped to the org
 // Scraper job queue. The external scraper worker (running on a local machine)
 // polls GET /api/scraper/jobs for pending rows, claims them, then posts
 // results back via PATCH /api/scraper/jobs/[id]. Railway hosts this table;
 // the scraper worker is a separate Node.js process that runs anywhere with
 // a carrier/residential IP.
+//
+// STATUS FLOW: pending → processing → completed | failed
+// RETRY: retryCount < 3 → requeued as pending; ≥ 3 → permanent failed
+// AUTH: x-scraper-secret header (shared secret in SCRAPER_SECRET env var)
+
 model ScrapeJob {
   id          String    @id @default(cuid())
   orgId       String
@@ -527,4 +730,43 @@ model ScrapeJob {
   @@index([orgId, status])
   @@index([orgId, platform])
   @@index([status, createdAt]) // worker poll query
+}
+
+
+// API keys for Score-as-a-Service (P6-2). Agency plan only.
+// keyHash is SHA-256 of the raw key — raw key shown once at creation only.
+model ApiKey {
+  id        String    @id @default(cuid())
+  orgId     String
+  name      String
+  keyHash   String    @unique
+  prefix    String
+  lastUsed  DateTime?
+  rateLimit Int       @default(100)
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([orgId])
+}
+
+// Stripe subscription per org. One active subscription per org at a time.
+// status mirrors Stripe: active | past_due | canceled | trialing | incomplete
+model Subscription {
+  id                  String   @id @default(cuid())
+  orgId               String   @unique
+  stripeCustomerId    String?  @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId       String?
+  planName            String   @default("starter") // starter | growth | agency
+  status              String   @default("active")  // active | past_due | canceled | trialing
+  seats               Int      @default(2)
+  candidateLimit      Int      @default(500)
+  currentPeriodEnd    DateTime?
+  trialEndsAt         DateTime?
+  cancelAtPeriodEnd   Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([stripeCustomerId])
+  @@index([orgId])
 }

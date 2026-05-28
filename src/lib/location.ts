@@ -1,4 +1,5 @@
 import { distanceKm, findCity, getCityCoords, getMetroName, NZ_CITIES } from "./nz-cities";
+import { isAuLocation, assessAuLocationFit } from "./au-cities";
 
 const NZ_MARKERS = ["new zealand", "aotearoa"];
 const OVERSEAS_MARKERS = [
@@ -688,6 +689,22 @@ export function assessLocationFit(
       score: remoteFriendly ? 55 : 45,
       evidence: "Candidate location is not clearly stated in the available profile data.",
     };
+  }
+
+  // ── AU job path — use Australian distance scoring instead of overseas gate ──
+  if (isAuLocation(targetRaw)) {
+    const auAssessment = assessAuLocationFit(candidateRaw, targetRaw);
+    if (auAssessment) {
+      return auAssessment;
+    }
+    // Candidate location not in AU data — treat as unknown
+    if (!isAuLocation(candidateRaw)) {
+      return {
+        score: remoteFriendly ? 45 : 25,
+        evidence: `Candidate location (${candidateRaw}) is outside the required AU market.`,
+      };
+    }
+    return { score: 50, evidence: "Australian location — distance not computable from available data." };
   }
 
   if (isExplicitlyOverseasLocation(candidateRaw)) {

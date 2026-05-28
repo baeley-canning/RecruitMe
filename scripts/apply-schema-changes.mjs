@@ -595,77 +595,286 @@ await step("deduplicate CandidateIdentity (linkedinUrl + jobAdderUrl)", async ()
   `;
 });
 
-// 21. Candidate.photoFileId column — pointer to the CandidateFile row holding
-//     the recruiter-uploaded headshot. Nullable; the Avatar component falls
-//     back to initials when this is NULL. Adding a nullable TEXT column on
-//     Postgres ≥11 is metadata-only — sub-second on the 13.5k-row table.
-await step("Candidate.photoFileId column", async () => {
+// ── Step 21: Create Client table ─────────────────────────────────────────
+await step(21, "create Client table", async () => {
   await prisma.$executeRaw`
-    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "photoFileId" TEXT
+    CREATE TABLE IF NOT EXISTS "Client" (
+      "id"             TEXT NOT NULL,
+      "orgId"          TEXT NOT NULL,
+      "name"           TEXT NOT NULL,
+      "industry"       TEXT,
+      "website"        TEXT,
+      "primaryContact" TEXT,
+      "email"          TEXT,
+      "phone"          TEXT,
+      "notes"          TEXT,
+      "createdAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Client_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "Client_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Org"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Client_orgId_idx" ON "Client"("orgId")
   `;
 });
 
-// 22. Drop Candidate.provisionalScore — write-only field never read by any
-//     code path. Was a snippet-import snapshot for hypothetical delta-vs-
-//     full-profile reporting that was never built. Idempotent: DROP COLUMN
-//     IF EXISTS is a no-op when already dropped.
-await step("drop Candidate.provisionalScore", async () => {
+// ── Step 22: Add clientId FK to Job ──────────────────────────────────────
+await step(22, "add clientId to Job", async () => {
   await prisma.$executeRaw`
-    ALTER TABLE "Candidate" DROP COLUMN IF EXISTS "provisionalScore"
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'Job' AND column_name = 'clientId'
+      ) THEN
+        ALTER TABLE "Job" ADD COLUMN "clientId" TEXT;
+        ALTER TABLE "Job" ADD CONSTRAINT "Job_clientId_fkey"
+          FOREIGN KEY ("clientId") REFERENCES "Client"("id")
+          ON DELETE SET NULL ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Job_clientId_idx" ON "Job"("clientId")
   `;
 });
 
-// 23. Candidate.suitability — recruiter-set marker mirroring JobAdder's
-//     Suitability field. "preferred" / "excluded" / null. Nullable column
-//     add is metadata-only in Postgres ≥11. The library list + multi-source
-//     search use it to gate recommendations.
-await step("Candidate.suitability column", async () => {
+// ── Step 23: Create Submission table ─────────────────────────────────────
+await step(23, "create Submission table", async () => {
   await prisma.$executeRaw`
-    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "suitability" TEXT
+    CREATE TABLE IF NOT EXISTS "Submission" (
+      "id"             TEXT NOT NULL,
+      "orgId"          TEXT NOT NULL,
+      "jobId"          TEXT NOT NULL,
+      "clientId"       TEXT,
+      "candidateId"    TEXT NOT NULL,
+      "submittedAt"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "submittedBy"    TEXT,
+      "matchScore"     INTEGER,
+      "cvVersion"      TEXT,
+      "notes"          TEXT,
+      "status"         TEXT NOT NULL DEFAULT 'sent',
+      "clientFeedback" TEXT,
+      "feedbackAt"     TIMESTAMP(3),
+      "createdAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Submission_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "Submission_candidateId_fkey" FOREIGN KEY ("candidateId") REFERENCES "Candidate"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "Submission_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE SET NULL ON UPDATE CASCADE
+    )
   `;
-  await prisma.$executeRaw`
-    CREATE INDEX IF NOT EXISTS "Candidate_suitability_idx" ON "Candidate"("suitability") WHERE "suitability" IS NOT NULL
-  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_orgId_idx" ON "Submission"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_jobId_idx" ON "Submission"("jobId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_candidateId_idx" ON "Submission"("candidateId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Submission_clientId_idx" ON "Submission"("clientId")`;
 });
 
-// 24. CandidateIdentity.seekUrl — Tier 1 identity merge key for SEEK Talent.
-//     Partial unique index (WHERE "seekUrl" IS NOT NULL) so multiple NULL rows
-//     per org are fine — Postgres treats NULLs as distinct in unique indexes,
-//     but we use the same pre-create-index pattern as linkedinUrl/jobAdderUrl.
-await step("CandidateIdentity.seekUrl column + unique index", async () => {
+// ── Step 24: Create Placement table ──────────────────────────────────────
+await step(24, "create Placement table", async () => {
   await prisma.$executeRaw`
-    ALTER TABLE "CandidateIdentity" ADD COLUMN IF NOT EXISTS "seekUrl" TEXT
+    CREATE TABLE IF NOT EXISTS "Placement" (
+      "id"              TEXT NOT NULL,
+      "orgId"           TEXT NOT NULL,
+      "clientId"        TEXT,
+      "jobId"           TEXT,
+      "candidateId"     TEXT NOT NULL,
+      "submissionId"    TEXT,
+      "placedAt"        TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "startDate"       TIMESTAMP(3),
+      "salaryPlaced"    INTEGER,
+      "feeType"         TEXT NOT NULL DEFAULT 'percentage',
+      "feePct"          DOUBLE PRECISION,
+      "feeAmount"       INTEGER,
+      "invoiceRef"      TEXT,
+      "invoicedAt"      TIMESTAMP(3),
+      "paidAt"          TIMESTAMP(3),
+      "guaranteeMonths" INTEGER,
+      "guaranteeExpiry" TIMESTAMP(3),
+      "notes"           TEXT,
+      "createdAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Placement_pkey" PRIMARY KEY ("id"),
+      CONSTRAINT "Placement_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE SET NULL ON UPDATE CASCADE
+    )
   `;
-  await prisma.$executeRaw`
-    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_seekUrl_key"
-    ON "CandidateIdentity"("orgId", "seekUrl")
-    WHERE "seekUrl" IS NOT NULL
-  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_orgId_idx" ON "Placement"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_clientId_idx" ON "Placement"("clientId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_jobId_idx" ON "Placement"("jobId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Placement_candidateId_idx" ON "Placement"("candidateId")`;
 });
 
-// 25. ProfileInsight multi-platform columns.
-//     sourceInputHash: combined-input hash for multi-platform extractions.
-//     contributingPlatforms: JSON array tracking which platform each row came from.
-//     Both are nullable/defaulted so existing rows keep working unchanged.
-await step("ProfileInsight multi-platform columns", async () => {
+// ── Step 25: Create Reminder table ───────────────────────────────────────
+await step(25, "create Reminder table", async () => {
   await prisma.$executeRaw`
-    ALTER TABLE "ProfileInsight"
-      ADD COLUMN IF NOT EXISTS "sourceInputHash"       TEXT,
-      ADD COLUMN IF NOT EXISTS "contributingPlatforms" TEXT NOT NULL DEFAULT '[]'
+    CREATE TABLE IF NOT EXISTS "Reminder" (
+      "id"          TEXT NOT NULL,
+      "orgId"       TEXT NOT NULL,
+      "userId"      TEXT,
+      "candidateId" TEXT,
+      "jobId"       TEXT,
+      "clientId"    TEXT,
+      "placementId" TEXT,
+      "type"        TEXT NOT NULL DEFAULT 'follow_up',
+      "dueAt"       TIMESTAMP(3) NOT NULL,
+      "note"        TEXT,
+      "dismissed"   BOOLEAN NOT NULL DEFAULT false,
+      "dismissedAt" TIMESTAMP(3),
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Reminder_pkey" PRIMARY KEY ("id")
+    )
   `;
-  // Backfill: copy existing hash into sourceInputHash for existing rows.
-  await prisma.$executeRaw`
-    UPDATE "ProfileInsight"
-    SET "sourceInputHash" = "sourceProfileTextHash"
-    WHERE "sourceInputHash" IS NULL
-  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Reminder_orgId_idx" ON "Reminder"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Reminder_orgId_dismissed_dueAt_idx" ON "Reminder"("orgId", "dismissed", "dueAt")`;
 });
 
-// 26. ScrapeJob table — external scraper worker job queue.
+// ── Step 26: Create CandidateTag + CandidateTagAssignment tables ──────────
+await step(26, "create CandidateTag and CandidateTagAssignment tables", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateTag" (
+      "id"        TEXT NOT NULL,
+      "orgId"     TEXT NOT NULL,
+      "label"     TEXT NOT NULL,
+      "color"     TEXT NOT NULL DEFAULT '#6366f1',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateTag_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateTag_orgId_label_key" ON "CandidateTag"("orgId", "label")
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateTag_orgId_idx" ON "CandidateTag"("orgId")`;
+
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateTagAssignment" (
+      "candidateId" TEXT NOT NULL,
+      "tagId"       TEXT NOT NULL,
+      "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateTagAssignment_pkey" PRIMARY KEY ("candidateId", "tagId"),
+      CONSTRAINT "CandidateTagAssignment_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "CandidateTag"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "CandidateTagAssignment_candidateId_fkey" FOREIGN KEY ("candidateId") REFERENCES "Candidate"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateTagAssignment_candidateId_idx" ON "CandidateTagAssignment"("candidateId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateTagAssignment_tagId_idx" ON "CandidateTagAssignment"("tagId")`;
+});
+
+// ── Step 27: Add bulk-status route helper index ───────────────────────────
+await step(27, "add Job_clientId_idx if missing (idempotent)", async () => {
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Job_clientId_idx" ON "Job"("clientId")`;
+});
+
+// ── Step 28: Create CandidateFingerprint table ────────────────────────────
+await step(28, "create CandidateFingerprint table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateFingerprint" (
+      "id"              TEXT NOT NULL,
+      "candidateId"     TEXT NOT NULL,
+      "orgId"           TEXT NOT NULL,
+      "version"         INTEGER NOT NULL DEFAULT 1,
+      "skillVector"     TEXT NOT NULL,
+      "trajectory"      TEXT NOT NULL DEFAULT 'unknown',
+      "avgTenureMonths" DOUBLE PRECISION,
+      "stabilityScore"  INTEGER,
+      "domainClusters"  TEXT NOT NULL DEFAULT '[]',
+      "seniorityLevel"  TEXT NOT NULL DEFAULT 'unknown',
+      "archetypeMatches" TEXT,
+      "computedAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateFingerprint_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateFingerprint_candidateId_key"
+    ON "CandidateFingerprint"("candidateId")
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "CandidateFingerprint_orgId_idx" ON "CandidateFingerprint"("orgId")`;
+});
+
+// ── Step 29: Create ArchetypePlacement table ──────────────────────────────
+await step(29, "create ArchetypePlacement table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ArchetypePlacement" (
+      "id"                  TEXT NOT NULL,
+      "orgId"               TEXT NOT NULL,
+      "candidateId"         TEXT NOT NULL,
+      "jobId"               TEXT NOT NULL,
+      "fingerprintVector"   TEXT NOT NULL,
+      "finalStatus"         TEXT NOT NULL,
+      "outcomeCategory"     TEXT NOT NULL,
+      "roleTitle"           TEXT NOT NULL,
+      "roleMustHaves"       TEXT NOT NULL,
+      "matchScore"          INTEGER NOT NULL,
+      "acceptanceScore"     INTEGER,
+      "recruiterCorrection" INTEGER,
+      "decisionReason"      TEXT,
+      "createdAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "ArchetypePlacement_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ArchetypePlacement_orgId_idx" ON "ArchetypePlacement"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ArchetypePlacement_orgId_outcomeCategory_idx" ON "ArchetypePlacement"("orgId", "outcomeCategory")`;
+});
+
+// ── Step 30: Create Archetype table ──────────────────────────────────────
+await step(30, "create Archetype table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "Archetype" (
+      "id"                 TEXT NOT NULL,
+      "orgId"              TEXT NOT NULL,
+      "name"               TEXT NOT NULL,
+      "description"        TEXT,
+      "centroidVector"     TEXT NOT NULL,
+      "totalPlacements"    INTEGER NOT NULL DEFAULT 0,
+      "successCount"       INTEGER NOT NULL DEFAULT 0,
+      "failureCount"       INTEGER NOT NULL DEFAULT 0,
+      "successRate"        DOUBLE PRECISION NOT NULL DEFAULT 0,
+      "avgMatchScore"      DOUBLE PRECISION,
+      "antiCentroidVector" TEXT,
+      "isAntiArchetype"    BOOLEAN NOT NULL DEFAULT false,
+      "memberCount"        INTEGER NOT NULL DEFAULT 0,
+      "lastClusteredAt"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "createdAt"          TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"          TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Archetype_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Archetype_orgId_idx" ON "Archetype"("orgId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Archetype_orgId_isAntiArchetype_idx" ON "Archetype"("orgId", "isAntiArchetype")`;
+});
+
+// Step 31: Subscription model (Phase 4 — Stripe subscriptions)
+await step("create Subscription table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "Subscription" (
+      "id"                   TEXT NOT NULL,
+      "orgId"                TEXT NOT NULL,
+      "stripeCustomerId"     TEXT,
+      "stripeSubscriptionId" TEXT,
+      "stripePriceId"        TEXT,
+      "planName"             TEXT NOT NULL DEFAULT 'starter',
+      "status"               TEXT NOT NULL DEFAULT 'active',
+      "seats"                INTEGER NOT NULL DEFAULT 2,
+      "candidateLimit"       INTEGER NOT NULL DEFAULT 500,
+      "currentPeriodEnd"     TIMESTAMP(3),
+      "trialEndsAt"          TIMESTAMP(3),
+      "cancelAtPeriodEnd"    BOOLEAN NOT NULL DEFAULT false,
+      "createdAt"            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Subscription_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_orgId_key" ON "Subscription"("orgId")`;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_stripeCustomerId_key" ON "Subscription"("stripeCustomerId")`;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_stripeSubscriptionId_key" ON "Subscription"("stripeSubscriptionId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Subscription_orgId_idx" ON "Subscription"("orgId")`;
+});
+
+// Step 32: ScrapeJob table — external scraper worker job queue.
 //     The scraper worker polls GET /api/scraper/jobs and posts results via
 //     PATCH /api/scraper/jobs/[id]. Railway hosts the queue; the worker
 //     runs on local hardware with a residential/carrier IP.
-await step("ScrapeJob table", async () => {
+await step("create ScrapeJob table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "ScrapeJob" (
       "id"          TEXT         NOT NULL,
@@ -683,18 +892,79 @@ await step("ScrapeJob table", async () => {
       "updatedAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "ScrapeJob_pkey" PRIMARY KEY ("id")
     )
-  `;
-  await prisma.$executeRaw`
+  \`;
+  await prisma.$executeRaw\`
     CREATE INDEX IF NOT EXISTS "ScrapeJob_orgId_status_idx"
     ON "ScrapeJob"("orgId", "status")
-  `;
-  await prisma.$executeRaw`
+  \`;
+  await prisma.$executeRaw\`
     CREATE INDEX IF NOT EXISTS "ScrapeJob_orgId_platform_idx"
     ON "ScrapeJob"("orgId", "platform")
-  `;
-  await prisma.$executeRaw`
+  \`;
+  await prisma.$executeRaw\`
     CREATE INDEX IF NOT EXISTS "ScrapeJob_status_createdAt_idx"
     ON "ScrapeJob"("status", "createdAt")
+  \`;
+});
+
+// Step 33: ApiKey model (Phase 6 — Score-as-a-Service API)
+await step("create ApiKey table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ApiKey" (
+      "id"        TEXT         NOT NULL,
+      "orgId"     TEXT         NOT NULL,
+      "name"      TEXT         NOT NULL,
+      "keyHash"   TEXT         NOT NULL,
+      "prefix"    TEXT         NOT NULL,
+      "lastUsed"  TIMESTAMP(3),
+      "rateLimit" INTEGER      NOT NULL DEFAULT 100,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "revokedAt" TIMESTAMP(3),
+      CONSTRAINT "ApiKey_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "ApiKey_keyHash_key" ON "ApiKey"("keyHash")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ApiKey_orgId_idx" ON "ApiKey"("orgId")`;
+});
+
+// Step 34: Candidate.photoFileId column
+await step("Candidate.photoFileId column", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "photoFileId" TEXT
+  `;
+});
+
+// Step 35: Drop Candidate.provisionalScore
+await step("drop Candidate.provisionalScore", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" DROP COLUMN IF EXISTS "provisionalScore"
+  `;
+});
+
+// Step 36: CandidateIdentity.seekUrl + partial unique index
+await step("CandidateIdentity.seekUrl", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "CandidateIdentity" ADD COLUMN IF NOT EXISTS "seekUrl" TEXT
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_seekUrl_key"
+    ON "CandidateIdentity"("orgId", "seekUrl")
+    WHERE "seekUrl" IS NOT NULL
+  `;
+});
+
+// Step 37: ProfileInsight multi-platform columns
+await step("ProfileInsight.sourceInputHash + contributingPlatforms", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "ProfileInsight" ADD COLUMN IF NOT EXISTS "sourceInputHash" TEXT
+  `;
+  await prisma.$executeRaw`
+    ALTER TABLE "ProfileInsight" ADD COLUMN IF NOT EXISTS "contributingPlatforms" TEXT NOT NULL DEFAULT '[]'
+  `;
+  await prisma.$executeRaw`
+    UPDATE "ProfileInsight"
+    SET "sourceInputHash" = "sourceProfileTextHash"
+    WHERE "sourceInputHash" IS NULL AND "sourceProfileTextHash" IS NOT NULL
   `;
 });
 

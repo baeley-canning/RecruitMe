@@ -22,6 +22,7 @@ import {
 import { ScoreBadge } from "@/components/score-badge";
 import { ShareShortlistButton } from "@/components/job/share-shortlist-button";
 import { ClientReportModal } from "@/components/job/client-report-modal";
+import { SubmitToClientModal } from "@/components/job/submit-to-client-modal";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { cn, safeParseJson } from "@/lib/utils";
 import { scoreTier } from "@/lib/score-utils";
@@ -98,10 +99,12 @@ function CandidateBrief({
   candidate,
   rank,
   onRemove,
+  onSubmit,
 }: {
   candidate: Candidate;
   rank: number;
   onRemove: (id: string) => void;
+  onSubmit: (c: Candidate) => void;
 }) {
   const match = safeParseJson<MatchData | null>(candidate.matchReason, null);
   const breakdown = safeParseJson<ScoreBreakdown | null>(candidate.scoreBreakdown, null);
@@ -245,12 +248,20 @@ function CandidateBrief({
               View LinkedIn profile
             </a>
           ) : <span />}
-          <button
-            onClick={() => onRemove(candidate.id)}
-            className="text-xs text-text-tertiary hover:text-danger transition-colors"
-          >
-            Remove from shortlist
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onSubmit(candidate)}
+              className="text-xs text-accent hover:text-accent-hover font-medium transition-colors"
+            >
+              Submit to client
+            </button>
+            <button
+              onClick={() => onRemove(candidate.id)}
+              className="text-xs text-text-tertiary hover:text-danger transition-colors"
+            >
+              Remove from shortlist
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -266,6 +277,7 @@ export default function ShortlistPage({
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
   const [showClientReport, setShowClientReport] = useState(false);
+  const [submittingCandidate, setSubmittingCandidate] = useState<Candidate | null>(null);
 
   const fetchJob = async () => {
     const res = await fetch(`/api/jobs/${id}`);
@@ -438,6 +450,7 @@ export default function ShortlistPage({
               candidate={candidate}
               rank={i + 1}
               onRemove={handleRemove}
+              onSubmit={setSubmittingCandidate}
             />
           ))}
         </div>
@@ -457,6 +470,13 @@ export default function ShortlistPage({
         jobParsedRole={job.parsedRole}
         candidates={shortlisted.map((c) => ({ ...c, profileText: null }))}
         onClose={() => setShowClientReport(false)}
+      />
+    )}
+    {submittingCandidate && (
+      <SubmitToClientModal
+        jobId={id}
+        candidate={submittingCandidate}
+        onClose={() => setSubmittingCandidate(null)}
       />
     )}
     </>

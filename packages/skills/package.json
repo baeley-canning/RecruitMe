@@ -1,0 +1,32 @@
+{
+  "name": "@recruitme/skills",
+  "version": "0.1.0",
+  "description": "NZ IT skills taxonomy graph — directed skill relationships for recruitment matching",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test src/__tests__/*.test.ts"
+  },
+  "keywords": [
+    "recruitment",
+    "skills",
+    "taxonomy",
+    "NZ",
+    "IT",
+    "tech",
+    "job-matching"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
