@@ -633,13 +633,16 @@ await step("Candidate.suitability column", async () => {
 //     (paste-a-SEEK-URL affordance) and by the mini-PC scraper later; also a
 //     Tier-1 identity key (lowest precedence after LinkedIn + JobAdder).
 //
-//     The non-unique Candidate index is created here. The
-//     CandidateIdentity @@unique([orgId, seekUrl]) constraint and the
-//     ScraperApiToken table are intentionally LEFT to `prisma db push`
-//     (runs right after this script in start-production.mjs): seekUrl starts
-//     all-NULL so the unique index builds without dedup, and creating the
-//     constraint manually here risks the partial-index naming conflict we
-//     hit before. Let Prisma own its generated index names.
+//     The CandidateIdentity @@unique([orgId, seekUrl]) constraint is created
+//     HERE, with Prisma's exact generated name, NOT left to `prisma db push`.
+//     Reason (regression fix): db push treats ADDING any unique constraint as
+//     a potential-data-loss op and refuses without --accept-data-loss — which
+//     start-production.mjs does NOT pass. Leaving it to db push made every
+//     deploy fail its healthcheck and roll back (the seekUrl unique was the
+//     sole blocker). Creating it here first means db push sees it already
+//     exists and no-ops it. Same approach as the linkedinUrl/jobAdderUrl
+//     uniques. Safe to build unconditionally: seekUrl starts all-NULL and
+//     Postgres treats NULLs as distinct in unique indexes.
 await step("Candidate.seekUrl + CandidateIdentity.seekUrl columns", async () => {
   await prisma.$executeRaw`
     ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "seekUrl" TEXT
@@ -649,6 +652,11 @@ await step("Candidate.seekUrl + CandidateIdentity.seekUrl columns", async () => 
   `;
   await prisma.$executeRaw`
     ALTER TABLE "CandidateIdentity" ADD COLUMN IF NOT EXISTS "seekUrl" TEXT
+  `;
+  // Name MUST match Prisma's @@unique([orgId, seekUrl]) convention
+  // (<Table>_<col1>_<col2>_key) so db push recognises it and skips the add.
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateIdentity_orgId_seekUrl_key" ON "CandidateIdentity"("orgId", "seekUrl")
   `;
 });
 
