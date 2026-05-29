@@ -41,6 +41,8 @@ import { getServerSetting } from "@/lib/settings";
 import { getJobScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { reportError } from "@/lib/error-reporting";
+import { enqueueScrapeJob } from "@/lib/scrape-queue";
+import { isScraperEnabled } from "@/lib/feature-flags";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
 import {
@@ -1434,6 +1436,9 @@ async function runSearchBackground(args: {
       // and skips to the next item. Keeping them together here makes the
       // rejection logic easy to audit in one place.
       const specialistRole = extractDistinctiveRequirementTerms(parsedRole).length > 0;
+      // Auto-enqueue scrape jobs for snippet-only LinkedIn rows so the worker
+      // back-fills the full profile. Flag checked once, not per-item.
+      const scraperOn = isScraperEnabled();
       for (const item of results) {
         if (saved.length >= remainingSlots) break;
         const { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile } = item;
@@ -1487,6 +1492,9 @@ async function runSearchBackground(args: {
             });
             saved.push(candidate as SavedCandidate);
             if (isFromPool) fromPool++;
+            if (scraperOn && normUrl && !hasFullProfile && job.orgId) {
+              void enqueueScrapeJob({ orgId: job.orgId, platform: "linkedin", profileUrl: normUrl, candidateId: candidate.id });
+            }
             continue;
           }
 
@@ -1520,6 +1528,9 @@ async function runSearchBackground(args: {
           });
           saved.push(candidate as SavedCandidate);
           if (isFromPool) fromPool++;
+          if (scraperOn && normUrl && !hasFullProfile && job.orgId) {
+            void enqueueScrapeJob({ orgId: job.orgId, platform: "linkedin", profileUrl: normUrl, candidateId: candidate.id });
+          }
         } catch (err) {
           console.error("[search] candidate save failed:", err);
         }
