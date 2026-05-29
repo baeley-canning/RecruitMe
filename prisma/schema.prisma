@@ -35,9 +35,12 @@ model Job {
   parseHistory   JobParseHistory[]
   orgId          String?
   org            Org?              @relation(fields: [orgId], references: [id])
+  clientId       String? // CRM: which client this job is for (Stage 1, flag-gated)
+  client         Client?           @relation(fields: [clientId], references: [id])
 
   @@index([orgId])
   @@index([status])
+  @@index([clientId])
 }
 
 model Setting {
@@ -55,6 +58,7 @@ model Org {
   jobs                Job[]
   candidateIdentities CandidateIdentity[]
   scraperTokens       ScraperApiToken[]
+  clients             Client[]
 }
 
 // Bearer tokens for headless ingest clients (the mini-PC scraper pulling
@@ -99,6 +103,133 @@ model ScrapeJob {
   @@index([orgId, status])
   @@index([orgId, platform])
   @@index([status, createdAt]) // worker poll query
+}
+
+// ── CRM (Stage 1, flag-gated FEATURES_CRM_ENABLED) ─────────────────────────
+// Recruitment-client records + candidate→client submissions + placement/fee
+// tracking. All additive; no unique constraints.
+model Client {
+  id             String       @id @default(cuid())
+  orgId          String
+  org            Org          @relation(fields: [orgId], references: [id])
+  name           String
+  industry       String?
+  website        String?
+  primaryContact String?
+  email          String?
+  phone          String?
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  jobs           Job[]
+  submissions    Submission[]
+  placements     Placement[]
+
+  @@index([orgId])
+}
+
+model Submission {
+  id             String    @id @default(cuid())
+  orgId          String
+  jobId          String
+  clientId       String?
+  candidateId    String
+  submittedAt    DateTime  @default(now())
+  submittedBy    String? // userId
+  matchScore     Int? // snapshot at time of submission
+  cvVersion      String?
+  notes          String?
+  status         String    @default("sent") // sent|viewed|interested|rejected|on_hold
+  clientFeedback String?
+  feedbackAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([jobId])
+  @@index([candidateId])
+  @@index([clientId])
+}
+
+model Placement {
+  id              String    @id @default(cuid())
+  orgId           String
+  clientId        String?
+  jobId           String?
+  candidateId     String
+  submissionId    String?
+  placedAt        DateTime  @default(now())
+  startDate       DateTime?
+  salaryPlaced    Int?
+  feeType         String    @default("percentage") // fixed|percentage
+  feePct          Float?
+  feeAmount       Int?
+  invoiceRef      String?
+  invoicedAt      DateTime?
+  paidAt          DateTime?
+  guaranteeMonths Int?
+  guaranteeExpiry DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([clientId])
+  @@index([jobId])
+  @@index([candidateId])
+}
+
+// ── Reminders + Tags (Stage 2, flag-gated FEATURES_REMINDERS_ENABLED) ──────
+model Reminder {
+  id          String    @id @default(cuid())
+  orgId       String
+  userId      String?
+  candidateId String?
+  jobId       String?
+  clientId    String?
+  placementId String?
+  type        String    @default("follow_up") // follow_up|guarantee_check|client_feedback|custom
+  dueAt       DateTime
+  note        String?
+  dismissed   Boolean   @default(false)
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([orgId])
+  @@index([orgId, dismissed, dueAt])
+}
+
+model CandidateTag {
+  id          String                   @id @default(cuid())
+  orgId       String
+  label       String
+  color       String                   @default("#6366f1")
+  createdAt   DateTime                 @default(now())
+  assignments CandidateTagAssignment[]
+
+  // NOTE: this @@unique is created in apply-schema-changes.mjs (raw SQL,
+  // Prisma's generated name CandidateTag_orgId_label_key) NOT by db push —
+  // db push refuses to add a unique constraint without --accept-data-loss.
+  @@unique([orgId, label])
+  @@index([orgId])
+}
+
+model CandidateTagAssignment {
+  candidateId String
+  tagId       String
+  createdAt   DateTime     @default(now())
+  tag         CandidateTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  candidate   Candidate    @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@id([candidateId, tagId])
+  @@index([candidateId])
+  @@index([tagId])
 }
 
 // Cross-org library access grant. When org A buys a higher-tier subscription
@@ -201,6 +332,8 @@ model Candidate {
   fetchSessions    FetchSession[]
   scoreCorrections ScoreCorrection[]
   contactEvents    ContactEvent[]
+  submissions      Submission[]
+  tagAssignments   CandidateTagAssignment[]
 
   @@unique([jobId, linkedinUrl])
   @@index([linkedinUrl]) // talent pool cross-job URL lookups

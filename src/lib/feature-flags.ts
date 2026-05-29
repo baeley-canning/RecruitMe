@@ -42,3 +42,21 @@ export function isIdentityMergeUiEnabled(): boolean {
 export function isScraperEnabled(): boolean {
   return readBool("RECRUITME_SCRAPER_ENABLED", false);
 }
+
+/** CRM: clients / submissions / placements (triage Stage 1). Off by default.
+ *  Set FEATURES_CRM_ENABLED=true to expose the clients + placements features. */
+export function isCrmEnabled(): boolean {
+  return readBool("FEATURES_CRM_ENABLED", false);
+}
+
+/** Reminders + candidate tags (triage Stage 2). Off by default.
+ *  Set FEATURES_REMINDERS_ENABLED=true to activate. */
+export function isRemindersEnabled(): boolean {
+  return readBool("FEATURES_REMINDERS_ENABLED", false);
+}
+
+/** White-label theming (triage Stage 4). Off by default.
+ *  Set FEATURES_WHITE_LABEL_ENABLED=true to activate. */
+export function isWhiteLabelEnabled(): boolean {
+  return readBool("FEATURES_WHITE_LABEL_ENABLED", false);
+}

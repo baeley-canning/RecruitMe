@@ -660,6 +660,33 @@ await step("Candidate.seekUrl + CandidateIdentity.seekUrl columns", async () => 
   `;
 });
 
+// 25. CandidateTag table + its @@unique([orgId, label]) — created here (raw
+//     SQL, Prisma's generated names) NOT by db push, which refuses to ADD a
+//     unique constraint without --accept-data-loss (same class of failure as
+//     the seekUrl regression). The other CRM/reminders tables (Client,
+//     Submission, Placement, Reminder, CandidateTagAssignment) carry no NEW
+//     unique constraints, so db push creates those additively on a fresh DB.
+//     Prod is already fully migrated (via prisma migrate diff apply), so all
+//     of this is a no-op there. Flag-gated FEATURES_CRM/REMINDERS_ENABLED.
+await step("CandidateTag table + unique (CRM/reminders Stage)", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidateTag" (
+      "id" TEXT NOT NULL,
+      "orgId" TEXT NOT NULL,
+      "label" TEXT NOT NULL,
+      "color" TEXT NOT NULL DEFAULT '#6366f1',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CandidateTag_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidateTag_orgId_idx" ON "CandidateTag"("orgId")
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "CandidateTag_orgId_label_key" ON "CandidateTag"("orgId", "label")
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {
