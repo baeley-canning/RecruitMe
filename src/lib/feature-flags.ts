@@ -36,3 +36,9 @@ export function isProfileInsightWriteEnabled(): boolean {
 export function isIdentityMergeUiEnabled(): boolean {
   return readBool("RECRUITME_IDENTITY_MERGE_UI_ENABLED", false);
 }
+
+/** Scraper worker API — gates GET/POST/PATCH /api/scraper/jobs endpoints.
+ *  Off by default; set RECRUITME_SCRAPER_ENABLED=true when the worker is live. */
+export function isScraperEnabled(): boolean {
+  return readBool("RECRUITME_SCRAPER_ENABLED", false);
+}
