@@ -596,7 +596,7 @@ await step("deduplicate CandidateIdentity (linkedinUrl + jobAdderUrl)", async ()
 });
 
 // ── Step 21: Create Client table ─────────────────────────────────────────
-await step(21, "create Client table", async () => {
+await step("create Client table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "Client" (
       "id"             TEXT NOT NULL,
@@ -620,7 +620,7 @@ await step(21, "create Client table", async () => {
 });
 
 // ── Step 22: Add clientId FK to Job ──────────────────────────────────────
-await step(22, "add clientId to Job", async () => {
+await step("add clientId to Job", async () => {
   await prisma.$executeRaw`
     DO $$ BEGIN
       IF NOT EXISTS (
@@ -640,7 +640,7 @@ await step(22, "add clientId to Job", async () => {
 });
 
 // ── Step 23: Create Submission table ─────────────────────────────────────
-await step(23, "create Submission table", async () => {
+await step("create Submission table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "Submission" (
       "id"             TEXT NOT NULL,
@@ -670,7 +670,7 @@ await step(23, "create Submission table", async () => {
 });
 
 // ── Step 24: Create Placement table ──────────────────────────────────────
-await step(24, "create Placement table", async () => {
+await step("create Placement table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "Placement" (
       "id"              TEXT NOT NULL,
@@ -704,7 +704,7 @@ await step(24, "create Placement table", async () => {
 });
 
 // ── Step 25: Create Reminder table ───────────────────────────────────────
-await step(25, "create Reminder table", async () => {
+await step("create Reminder table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "Reminder" (
       "id"          TEXT NOT NULL,
@@ -729,7 +729,7 @@ await step(25, "create Reminder table", async () => {
 });
 
 // ── Step 26: Create CandidateTag + CandidateTagAssignment tables ──────────
-await step(26, "create CandidateTag and CandidateTagAssignment tables", async () => {
+await step("create CandidateTag and CandidateTagAssignment tables", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "CandidateTag" (
       "id"        TEXT NOT NULL,
@@ -760,12 +760,12 @@ await step(26, "create CandidateTag and CandidateTagAssignment tables", async ()
 });
 
 // ── Step 27: Add bulk-status route helper index ───────────────────────────
-await step(27, "add Job_clientId_idx if missing (idempotent)", async () => {
+await step("add Job_clientId_idx if missing (idempotent)", async () => {
   await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "Job_clientId_idx" ON "Job"("clientId")`;
 });
 
 // ── Step 28: Create CandidateFingerprint table ────────────────────────────
-await step(28, "create CandidateFingerprint table", async () => {
+await step("create CandidateFingerprint table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "CandidateFingerprint" (
       "id"              TEXT NOT NULL,
@@ -792,7 +792,7 @@ await step(28, "create CandidateFingerprint table", async () => {
 });
 
 // ── Step 29: Create ArchetypePlacement table ──────────────────────────────
-await step(29, "create ArchetypePlacement table", async () => {
+await step("create ArchetypePlacement table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "ArchetypePlacement" (
       "id"                  TEXT NOT NULL,
@@ -817,7 +817,7 @@ await step(29, "create ArchetypePlacement table", async () => {
 });
 
 // ── Step 30: Create Archetype table ──────────────────────────────────────
-await step(30, "create Archetype table", async () => {
+await step("create Archetype table", async () => {
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "Archetype" (
       "id"                 TEXT NOT NULL,
@@ -892,19 +892,19 @@ await step("create ScrapeJob table", async () => {
       "updatedAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "ScrapeJob_pkey" PRIMARY KEY ("id")
     )
-  \`;
-  await prisma.$executeRaw\`
+  `;
+  await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "ScrapeJob_orgId_status_idx"
     ON "ScrapeJob"("orgId", "status")
-  \`;
-  await prisma.$executeRaw\`
+  `;
+  await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "ScrapeJob_orgId_platform_idx"
     ON "ScrapeJob"("orgId", "platform")
-  \`;
-  await prisma.$executeRaw\`
+  `;
+  await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "ScrapeJob_status_createdAt_idx"
     ON "ScrapeJob"("status", "createdAt")
-  \`;
+  `;
 });
 
 // Step 33: ApiKey model (Phase 6 — Score-as-a-Service API)
