@@ -124,7 +124,10 @@ async function main() {
     ? { server: process.env.HTTP_PROXY }
     : undefined;
 
-  const browser = await chromium.launch({ headless: true });
+  // Headless by default. Run once with HEADLESS=false to clear the first
+  // LinkedIn/SEEK login challenge in a visible browser; the encrypted session
+  // then persists and subsequent runs work headless unattended.
+  const browser = await chromium.launch({ headless: process.env.HEADLESS !== "false" });
   const context = await browser.newContext({
     viewport,
     userAgent: MOBILE_USER_AGENT,
