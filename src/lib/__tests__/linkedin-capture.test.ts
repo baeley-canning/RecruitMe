@@ -44,6 +44,64 @@ English
     expect(cleaned).not.toContain("Select language");
   });
 
+  it("strips connection-prompt chrome and activity lines while keeping the real profile", () => {
+    // Mirrors the real post-first-fix sample: LinkedIn renders the
+    // Highlights / "Get introduced" / mutual-connection / "Message top
+    // connections" block ABOVE the About + Experience, plus follower counts
+    // and an activity post line. All of that must go; About/Experience stays.
+    const dirtyCapture = `
+Sachin Mohanan
+Senior Software Engineer at Datacom
+Wellington, New Zealand
+Highlights
+Han, Teresa and 1 other mutual connection
+Get introduced to Sachin
+Ask your mutual connections to help you start a conversation.
+Message top connections
+Now is a great time to start a conversation.
+Introduce myself
+Rebecca Livingston and Ritu Gupta are mutual connections
+1,056 followers
+342 connections
+1mo • We are hiring across our platform engineering teams
+About
+Highlights of my career include leading the platform team and connecting teams across 3 offices.
+Experience
+Senior Software Engineer
+Datacom
+Jan 2020 - Present
+`;
+
+    const cleaned = sanitizeCapturedLinkedInText(dirtyCapture);
+
+    // Real profile content survives.
+    expect(cleaned).toContain("Sachin Mohanan");
+    expect(cleaned).toContain("Senior Software Engineer at Datacom");
+    expect(cleaned).toContain("Wellington, New Zealand");
+    expect(cleaned).toContain("About");
+    expect(cleaned).toContain("Experience");
+    expect(cleaned).toContain("Datacom");
+    // An About sentence that merely *contains* "Highlights"/"connecting" is kept.
+    expect(cleaned).toContain("Highlights of my career include leading the platform team");
+
+    // Connection-prompt chrome + counts + activity line are all gone.
+    expect(cleaned).not.toMatch(/^Highlights$/m);
+    expect(cleaned).not.toContain("Han, Teresa and 1 other mutual connection");
+    expect(cleaned).not.toContain("Get introduced to Sachin");
+    expect(cleaned).not.toContain("Ask your mutual connections to help you start a conversation.");
+    expect(cleaned).not.toContain("Message top connections");
+    expect(cleaned).not.toContain("Now is a great time to start a conversation.");
+    expect(cleaned).not.toMatch(/^Introduce myself$/m);
+    expect(cleaned).not.toContain("are mutual connections");
+    expect(cleaned).not.toContain("1,056 followers");
+    expect(cleaned).not.toContain("342 connections");
+    expect(cleaned).not.toContain("We are hiring across our platform engineering teams");
+    // None of the prompt-chrome regexes the owner flagged should survive.
+    expect(cleaned).not.toMatch(
+      /(Now is a great time to start a conversation|are mutual connections|Introduce myself)/
+    );
+  });
+
   it("keeps real section content while dropping show-all placeholders", () => {
     const structuredCapture = `
 Jane Doe

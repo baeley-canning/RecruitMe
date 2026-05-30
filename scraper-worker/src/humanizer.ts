@@ -31,16 +31,21 @@ export async function humanType(locator: Locator, text: string): Promise<void> {
   }
 }
 
-/** Pick a realistic mobile viewport. */
+/** Pick a realistic desktop viewport. Desktop (not mobile) because both the
+ *  login flow (#username/#password) and the profile scraper
+ *  (.scaffold-layout__main) target LinkedIn's DESKTOP DOM. A mobile UA serves
+ *  the mobile site where those selectors don't exist. */
 export function randomViewport(): { width: number; height: number } {
   const viewports = [
-    { width: 390, height: 844 },  // iPhone 14
-    { width: 412, height: 915 },  // Pixel 7
-    { width: 393, height: 852 },  // iPhone 15 Pro
-    { width: 375, height: 812 },  // iPhone X
+    { width: 1366, height: 768 },
+    { width: 1280, height: 800 },
+    { width: 1440, height: 900 },
+    { width: 1536, height: 864 },
   ];
   return viewports[Math.floor(Math.random() * viewports.length)];
 }
 
-export const MOBILE_USER_AGENT =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+/** Desktop Chrome UA (matches the bundled Chromium 148) so LinkedIn serves the
+ *  desktop site the login + scraper selectors expect. */
+export const DESKTOP_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";

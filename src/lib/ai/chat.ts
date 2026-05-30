@@ -6,7 +6,7 @@ import { recordAiCall } from "../usage";
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude and OpenAI so all AI functions stay clean.
 
-export type ChatProvider = "claude" | "openai";
+export type ChatProvider = "claude" | "openai" | "ollama";
 
 export interface ChatOptions {
   provider?: ChatProvider;
@@ -153,8 +153,44 @@ export async function chat(
     return response.choices[0]?.message?.content ?? "";
   }
 
-  // Unreachable — ChatProvider is now narrowed to "claude" | "openai" and
-  // both branches return above. Kept as an exhaustive-check throw so a
+  // ── Ollama (local LLM on the mini-PC, OpenAI-compatible endpoint) ──
+  // Same OpenAI SDK, just different baseURL and a dummy API key. Model
+  // defaults to qwen2.5:1.5b — the Apache-2.0 1.5B that fits in ~1.6 GB
+  // RAM and runs at ~6-10 tok/s on the i3-5010U. Override per-call with
+  // options.model = "llama3.2:3b" etc.
+  if (provider === "ollama") {
+    const baseURL = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434/v1";
+    const client = new OpenAI({ baseURL, apiKey: "ollama" });
+    const model  = options?.model ?? process.env.OLLAMA_MODEL ?? "qwen2.5:1.5b";
+
+    const messages = options?.system
+      ? [{ role: "system" as const, content: options.system }, { role: "user" as const, content: prompt }]
+      : [{ role: "user" as const, content: prompt }];
+    const response = await client.chat.completions.create({
+      model,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+    });
+
+    // Local LLM has no per-token cost, but recording tokens for parity
+    // with hosted providers keeps the cost dashboard accurate (model name
+    // prefix "qwen…" / "llama…" is the signal it was free).
+    if (response.usage) {
+      void recordAiCall({
+        orgId:        options?.orgId,
+        userId:       options?.userId,
+        model,
+        inputTokens:  response.usage.prompt_tokens,
+        outputTokens: response.usage.completion_tokens,
+        meta:         options?.costTag ? { tag: options.costTag, provider: "ollama" } : { provider: "ollama" },
+      });
+    }
+    return response.choices[0]?.message?.content ?? "";
+  }
+
+  // Unreachable — ChatProvider is now narrowed to "claude" | "openai" | "ollama"
+  // and all branches return above. Kept as an exhaustive-check throw so a
   // future provider added to the union surfaces here at compile time.
   throw new Error(`Unsupported AI provider: ${provider as string}`);
 }

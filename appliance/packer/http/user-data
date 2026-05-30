@@ -1,0 +1,38 @@
+#cloud-config
+# Ubuntu 24.04 autoinstall for the RecruitMe Box base image.
+#
+# Minimal install — Packer'\''s shell provisioners take over for the
+# actual RecruitMe software stack. This just gets us a bootable Ubuntu
+# with SSH, the `ubuntu` user, and English locale.
+
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  network:
+    version: 2
+    ethernets:
+      any:
+        match:
+          name: "en*"
+        dhcp4: true
+  identity:
+    hostname: recruitme-box
+    username: ubuntu
+    # Default ubuntu password — wiped by the Packer build before sealing.
+    password: "$6$rounds=4096$saltsalt$N3DSh1jM5IFFqqr5KqvIuYbBdmI./TR9DvHWxIxlJZ7nQk.ZQO.aoYqK9c5IIB8/u5h2eUmaV92y67BLfHRGl1"
+  ssh:
+    install-server: true
+    allow-pw: true
+  packages:
+    - openssh-server
+    - curl
+  storage:
+    layout:
+      name: direct
+  user-data:
+    disable_root: true
+  late-commands:
+    - echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/ubuntu-nopasswd
+    - chmod 440 /target/etc/sudoers.d/ubuntu-nopasswd

@@ -1,0 +1,11 @@
+[Unit]
+Description=RecruitMe Box → seller candidate-pool sync
+Wants=postgresql.service
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/recruitme/appliance/pool-sync/sync.mjs
+User=recruitme
+EnvironmentFile=/etc/recruitme/box.env
+EnvironmentFile=/etc/recruitme/app.env

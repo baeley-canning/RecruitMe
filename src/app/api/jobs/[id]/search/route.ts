@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import {
-  searchLinkedInProfiles,
   searchPDLProfiles,
   inferEmploymentType,
   type SearchResult,
@@ -42,7 +41,7 @@ import { getJobScoringWeights, type ScoringWeights } from "@/lib/scoring-config"
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { reportError } from "@/lib/error-reporting";
 import { enqueueScrapeJob } from "@/lib/scrape-queue";
-import { isScraperEnabled } from "@/lib/feature-flags";
+import { isScraperEnabled, isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
 import {
@@ -205,7 +204,6 @@ const MAX_QUERY_VARIANTS = 6;
 const MAX_SPECIALIST_QUERY_VARIANTS = 8;
 const SERPAPI_CONCURRENCY = 1;
 const SERPAPI_DELAY_MS = 600;
-const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function extractDistinctiveRequirementTerms(parsedRole: ParsedRole): string[] {
   // Only must-haves and knockout criteria — nice-to-haves must not widen the
@@ -335,22 +333,6 @@ async function executeSearchTaskQueue(
   return outcomes;
 }
 
-function isRetryableSearchError(message: string): boolean {
-  const status = message.match(/\b(\d{3})\b/)?.[1];
-  if (status && RETRYABLE_STATUS_CODES.has(Number(status))) return true;
-
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("timed out") ||
-    lower.includes("timeout") ||
-    lower.includes("network") ||
-    lower.includes("fetch failed") ||
-    lower.includes("temporarily unavailable") ||
-    lower.includes("too many requests") ||
-    lower.includes("rate limit")
-  );
-}
-
 function isAuthFailure(message: string): boolean {
   const status = message.match(/\b(\d{3})\b/)?.[1];
   if (status && (status === "401" || status === "403")) return true;
@@ -365,18 +347,12 @@ async function executeSearchTask(
   resolvedKey?: string,
   options: { excludeContractTitles?: boolean } = {},
 ): Promise<SearchTaskOutcome> {
-  try {
-    const items = await searchLinkedInProfiles(query, location, offset, resolvedKey, options);
-    return { query, items: items.map((item) => ({ ...item, matchedQuery: query })), retryable: false };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      query,
-      items: [],
-      error: message,
-      retryable: isRetryableSearchError(message),
-    };
-  }
+  // SerpAPI removed (Phase K) — LinkedIn discovery is scraper-only via the
+  // durable SearchRun + ScrapeJob pipeline. This task is now a no-op kept so
+  // the legacy sweep's plumbing compiles; `hasSerpApi` is always false below,
+  // so it's never actually scheduled. Args retained for signature stability.
+  void query; void location; void offset; void resolvedKey; void options;
+  return { query, items: [], retryable: false };
 }
 
 export async function POST(
@@ -396,19 +372,20 @@ export async function POST(
   // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
   // We do NOT mutate process.env so changing a key in settings takes effect immediately
   // without requiring a server restart.
-  const [dbSerpApi, dbPdl] = await Promise.all([
-    process.env.SERPAPI_API_KEY ? null : getServerSetting("SERPAPI_API_KEY"),
-    process.env.PDL_API_KEY     ? null : getServerSetting("PDL_API_KEY"),
-  ]);
-  const serpApiKey = process.env.SERPAPI_API_KEY || dbSerpApi || "";
-  const pdlKey     = process.env.PDL_API_KEY     || dbPdl     || "";
+  const dbPdl = process.env.PDL_API_KEY ? null : await getServerSetting("PDL_API_KEY");
+  const pdlKey = process.env.PDL_API_KEY || dbPdl || "";
 
-  const hasSerpApi = Boolean(serpApiKey);
+  // SerpAPI removed (Phase K). These stay as always-false/empty so the
+  // legacy SerpAPI sweep below compiles but never schedules a task; LinkedIn
+  // discovery now flows through the scraper (durable /search + the
+  // job-context multi route's priority-100 enqueue).
+  const serpApiKey = "";
+  const hasSerpApi = false;
   const hasPDL     = Boolean(pdlKey);
 
-  if (!hasSerpApi && !hasPDL) {
+  if (!hasPDL && !isScraperDiscoveryEnabled()) {
     return NextResponse.json(
-      { error: "No search API configured. Set SERPAPI_API_KEY and/or PDL_API_KEY (in env, or via the Settings → API Keys panel)." },
+      { error: "No search source configured. Set PDL_API_KEY, or enable the scraper (SCRAPER_DISCOVERY_ENABLED)." },
       { status: 400 }
     );
   }

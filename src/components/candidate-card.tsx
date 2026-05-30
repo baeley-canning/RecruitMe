@@ -26,6 +26,7 @@ import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import type { FetchState } from "./fetch-queue-panel";
 import {
   candidateSourceLabel,
+  candidateSourceBadge,
   getRadarDimensions,
   displayableLinkedinUrl,
 } from "./candidate/helpers";
@@ -92,6 +93,8 @@ interface Candidate {
   jobAdderUrl: string | null;
   seekUrl: string | null;
   phone?: string | null;
+  /** Contact email — surfaced on the identity block + collapsed contact row (Phase E1). */
+  email?: string | null;
   photoFileId?: string | null;
   /** Other active jobs (same org) where this candidate's LinkedIn URL also
    *  appears. Used to surface "Also on N other jobs" so the recruiter
@@ -660,22 +663,42 @@ function ProfileDrawer({
                 )}
               </div>
             )}
-            {/* Phone (from Firmable enrichment). tel: link so recruiter can
-                click-to-call from mobile / desktop softphones. */}
-            {candidate.phone && (
-              <a
-                href={`tel:${candidate.phone.replace(/[^+\d]/g, "")}`}
-                className="inline-flex items-center gap-1 mt-1.5 text-xs text-text-secondary hover:text-accent transition-colors"
-                title="Click to call"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.95.68l1.49 4.48a1 1 0 01-.5 1.21l-1.6.8a11 11 0 005.52 5.52l.8-1.6a1 1 0 011.21-.5l4.48 1.49a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
-                </svg>
-                <span className="data-mono">{candidate.phone}</span>
-              </a>
+            {/* Phone + email (Firmable enrichment / JobAdder import). Click-to-call
+                and mailto links are the recruiter's one-click outreach paths. */}
+            {(candidate.phone || candidate.email) && (
+              <div className="mt-1.5 flex items-center gap-3 flex-wrap text-xs text-text-secondary">
+                {candidate.phone && (
+                  <a
+                    href={`tel:${candidate.phone.replace(/[^+\d]/g, "")}`}
+                    className="inline-flex items-center gap-1 hover:text-accent transition-colors"
+                    title="Click to call"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.95.68l1.49 4.48a1 1 0 01-.5 1.21l-1.6.8a11 11 0 005.52 5.52l.8-1.6a1 1 0 011.21-.5l4.48 1.49a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
+                    </svg>
+                    <span className="data-mono">{candidate.phone}</span>
+                  </a>
+                )}
+                {candidate.email && (
+                  <a
+                    href={`mailto:${candidate.email}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center gap-1 hover:text-accent transition-colors min-w-0"
+                    title={candidate.email}
+                  >
+                    <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    <span className="truncate max-w-[220px]">{candidate.email}</span>
+                  </a>
+                )}
+              </div>
             )}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <Badge className={candidate.source === "extension" ? "bg-accent-subtle text-accent" : "bg-surface-hover text-text-secondary"}>
+              {/* Per-source coloured badge (Phase E4). The helper picks the
+                  brand-aligned tint (orange JobAdder, green SEEK, etc.) so
+                  scanning a long pipeline by source is instant. */}
+              <Badge className={candidateSourceBadge({ source: candidate.source, profileText: null }).className}>
                 {captureLabel}
               </Badge>
               {capturedAt && (
@@ -1074,6 +1097,8 @@ export const CandidateCard = memo(function CandidateCard({
         <CandidateIdentityBlock
           name={candidate.name}
           headline={candidate.headline}
+          email={candidate.email}
+          phone={candidate.phone}
           locationNode={
             candidate.location
               ? <LocationFitPill location={candidate.location} score={locationFitScore} compact />

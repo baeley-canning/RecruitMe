@@ -1,6 +1,9 @@
 import type { Page } from "patchright";
 import { humanScroll, randomDelay } from "../humanizer.js";
 import { log } from "../util/log.js";
+// Reuse the SSRF allow-list guard (and RateLimitError) from the LinkedIn
+// scraper so both profile scrapers enforce the same host policy.
+import { RateLimitError, assertAllowedProfileUrl } from "./linkedin.js";
 
 export interface SeekProfile {
   profileText: string;
@@ -12,13 +15,17 @@ export interface SeekProfile {
 }
 
 export async function scrapeSeekProfile(url: string, page: Page): Promise<SeekProfile> {
+  assertAllowedProfileUrl(url);
   log.info(`seek: scraping ${url}`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await randomDelay(1000, 2000);
 
   const currentUrl = page.url();
-  if (currentUrl.includes("/login") || currentUrl.includes("/signin")) {
-    throw new Error("SEEK session expired — re-authentication required");
+  if (currentUrl.includes("/login") || currentUrl.includes("/signin") || /authenticate\.seek\.com|\/oauth\//i.test(currentUrl)) {
+    // `seek_challenge:` prefix → API flags the SearchRun's seek source needs-reauth.
+    // RateLimitError (not a bare Error) keeps it consistent with the other
+    // scrapers so the worker's auth-challenge classification catches it.
+    throw new RateLimitError("seek_challenge: session expired — re-authentication required");
   }
 
   const pageHeight = await page.evaluate(() => document.body.scrollHeight);
@@ -36,8 +43,12 @@ export async function scrapeSeekProfile(url: string, page: Page): Promise<SeekPr
         .filter(Boolean)
         .join("\n");
 
+    // Page <title> as a fallback when DOM selectors miss (class names drift).
+    const titleName = (document.title || "")
+      .replace(/\s*[|–\-].*$/, "")
+      .trim() || null;
     // SEEK Talent profile layout selectors (approximated — may need tuning).
-    const name = getText('[data-testid="candidate-name"], h1, .candidate-name');
+    const name = getText('[data-testid="candidate-name"], h1, .candidate-name') ?? titleName;
     const headline = getText('[data-testid="candidate-headline"], .candidate-headline');
     const location = getText('[data-testid="candidate-location"], .candidate-location');
 

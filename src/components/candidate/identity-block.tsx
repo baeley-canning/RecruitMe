@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { MapPin, Phone } from "lucide-react";
+import { Mail, MapPin, Phone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { scoreTier, scoreTierColor, type ScoreTier } from "@/lib/score-utils";
 import { LinkedInIcon } from "./icons";
@@ -137,6 +137,8 @@ export interface CandidateIdentityBlockProps {
   /** Custom location node — use this to pass <LocationFitPill> in job context. */
   locationNode?: ReactNode;
   phone?: string | null;
+  /** Plain-text email — renders as a `mailto:` link next to phone. */
+  email?: string | null;
   linkedinUrl?: string | null;
   /** Optional avatar photo URL — when set, renders <img> with fallback to initials on error. */
   photoUrl?: string | null;
@@ -156,6 +158,8 @@ export interface CandidateIdentityBlockProps {
    *  preserves the pre-refactor look on every untouched surface. */
   scoreFormat?: "number" | "tier";
   showPhone?: boolean;
+  /** Render email next to phone when an email is present. Default true. */
+  showEmail?: boolean;
   showLinkedIn?: boolean;
   /** Extra classes merged onto the name element, e.g. "group-hover:text-accent transition-colors" */
   nameClassName?: string;
@@ -175,6 +179,7 @@ export function CandidateIdentityBlock({
   location,
   locationNode,
   phone,
+  email,
   linkedinUrl,
   photoUrl,
   score,
@@ -186,6 +191,7 @@ export function CandidateIdentityBlock({
   showScore = true,
   scoreFormat = "number",
   showPhone = false,
+  showEmail = true,
   showLinkedIn = false,
   nameClassName,
   className,
@@ -276,8 +282,8 @@ export function CandidateIdentityBlock({
           <p className="text-xs text-text-secondary line-clamp-1 mt-0.5">{headline}</p>
         )}
 
-        {/* Location + phone */}
-        {(locationEl || (showPhone && phone)) && (
+        {/* Location + phone + email */}
+        {(locationEl || (showPhone && phone) || (showEmail && email)) && (
           <div className="flex items-center gap-3 mt-1 flex-wrap">
             {locationEl}
             {showPhone && phone && (
@@ -288,6 +294,17 @@ export function CandidateIdentityBlock({
               >
                 <Phone className="w-3 h-3 flex-shrink-0" />
                 <span>{phone}</span>
+              </a>
+            )}
+            {showEmail && email && (
+              <a
+                href={`mailto:${email}`}
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center gap-1 text-xs text-text-tertiary hover:text-accent transition-colors min-w-0"
+                title={email}
+              >
+                <Mail className="w-3 h-3 flex-shrink-0" />
+                <span className="truncate max-w-[200px]">{email}</span>
               </a>
             )}
           </div>

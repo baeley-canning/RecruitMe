@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import {
   X,
   Loader2,
@@ -41,7 +41,20 @@ interface SearchResponse {
     deduped: number;
     total: number;
   };
+  /** Phase H — IDs of priority scraper jobs the client should poll. */
+  liveJobs?: Array<{ id: string; platform: "linkedin" | "seek" }>;
   errors?: { library?: string; linkedin?: string };
+}
+
+// Phase H — per-job status response from /api/scraper/jobs/[id]/status.
+interface LiveJobStatus {
+  id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  platform: string;
+  searchQuery: string | null;
+  error: string | null;
+  urls: string[] | null;
+  elapsedMs: number;
 }
 
 interface RowFile {
@@ -191,6 +204,12 @@ export function UnifiedSearchModal({
   const [searchError, setSearchError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
+  // Phase H — live scraper status. Keyed by job id; updates as the
+  // poll loop ticks. UI reads liveJobStatuses[id] to show pills like
+  // "LinkedIn live · 14 urls" while scraping is in progress.
+  const [liveJobStatuses, setLiveJobStatuses] = useState<Record<string, LiveJobStatus>>({});
+  const pollAbortRef = useRef<AbortController | null>(null);
+
   // Selection state — keyed by UnifiedResult.id (stable across results).
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
@@ -235,12 +254,84 @@ export function UnifiedSearchModal({
       }
       const data = (await res.json()) as SearchResponse;
       setResponse(data);
+      // Seed status map so the UI shows "queued" pills immediately while the
+      // first poll cycle is in flight. The useEffect below drives the rest.
+      setLiveJobStatuses(
+        Object.fromEntries(
+          (data.liveJobs ?? []).map((j) => [j.id, {
+            id: j.id,
+            status: "pending" as const,
+            platform: j.platform,
+            searchQuery: query.trim(),
+            error: null,
+            urls: null,
+            elapsedMs: 0,
+          }]),
+        ),
+      );
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : "Search failed");
     } finally {
       setSearching(false);
     }
   };
+
+  // Phase H — poll active scraper jobs until each settles.
+  //
+  // Cancels the prior poll loop whenever the user re-searches. Each tick
+  // queries the IDs that are still pending/processing; once all are settled
+  // the loop exits. Backs off (3s → 5s) as wall time grows so we don't
+  // hammer the box for slow scrapes.
+  useEffect(() => {
+    const inflight = Object.values(liveJobStatuses).filter(
+      (s) => s.status === "pending" || s.status === "processing",
+    );
+    if (inflight.length === 0) return;
+
+    pollAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    pollAbortRef.current = ctrl;
+
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    const tick = async () => {
+      while (!cancelled && !ctrl.signal.aborted) {
+        const stillRunning = Object.values(liveJobStatuses).filter(
+          (s) => s.status === "pending" || s.status === "processing",
+        );
+        if (stillRunning.length === 0) return;
+        const results = await Promise.all(
+          stillRunning.map((s) =>
+            fetch(`/api/scraper/jobs/${s.id}/status`, { signal: ctrl.signal })
+              .then((r) => (r.ok ? r.json() as Promise<LiveJobStatus> : null))
+              .catch(() => null),
+          ),
+        );
+        if (cancelled || ctrl.signal.aborted) return;
+        setLiveJobStatuses((prev) => {
+          const next = { ...prev };
+          for (const r of results) if (r) next[r.id] = r;
+          return next;
+        });
+        const stillRunningAfter = results.some(
+          (r) => r && (r.status === "pending" || r.status === "processing"),
+        );
+        if (!stillRunningAfter) return;
+        // Backoff: 3s for first 30s, then 5s.
+        const wait = Date.now() - startedAt < 30_000 ? 3_000 : 5_000;
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
+    // We intentionally depend only on the keys of liveJobStatuses — each
+    // tick reads the latest values via the setLiveJobStatuses callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Object.keys(liveJobStatuses).join(",")]);
 
   const toggleRow = (id: string) => {
     setSelected((prev) => {
@@ -435,6 +526,37 @@ export function UnifiedSearchModal({
                   </>
                 )}
               </p>
+            )}
+
+            {/* Phase H — live scraper status pills. One per active scraper job
+                enqueued at priority=100. Shown only while the job hasn't
+                settled (pending/processing); on completion the URL count is
+                displayed; on failure the error string. */}
+            {Object.values(liveJobStatuses).length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {Object.values(liveJobStatuses).map((s) => {
+                  const isInflight = s.status === "pending" || s.status === "processing";
+                  const tone = isInflight
+                    ? "bg-warning-subtle text-warning"
+                    : s.status === "completed"
+                    ? "bg-success-subtle text-success"
+                    : "bg-danger-subtle text-danger";
+                  const label = isInflight
+                    ? `${s.platform} live · ${s.status}…`
+                    : s.status === "completed"
+                    ? `${s.platform} live · ${s.urls?.length ?? 0} url${s.urls?.length === 1 ? "" : "s"}`
+                    : `${s.platform} live · ${s.error || "failed"}`;
+                  return (
+                    <span
+                      key={s.id}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-2xs font-medium ${tone}`}
+                      title={`Job ${s.id} · ${Math.round(s.elapsedMs / 1000)}s`}
+                    >
+                      {label}
+                    </span>
+                  );
+                })}
+              </div>
             )}
 
             {/* No results */}

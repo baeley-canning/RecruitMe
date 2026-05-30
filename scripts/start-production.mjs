@@ -1,6 +1,49 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { dirname } from "node:path";
 import process from "node:process";
+
+// Cold-start guard: `prisma db push` drops the Postgres-only generated
+// `searchTsv` column on every boot, and step 3 then recomputes it over ~14k
+// rows (~50s) — a stall on EVERY restart, not just deploys. Step 1
+// (apply-schema) already ensures searchTsv exists via ADD COLUMN IF NOT EXISTS,
+// and on an UNCHANGED Prisma schema `db push` has no real work to do (it only
+// re-drops searchTsv). So we skip steps 2+3 when prisma/schema.prisma is
+// byte-identical to what we last fully applied. Fail-safe: any uncertainty
+// (no marker, unreadable, hash mismatch, read error) → run the full sequence,
+// i.e. exactly today's behavior. The marker lives OUTSIDE the rsync'd app tree
+// so a deploy doesn't reset it; a schema-changing deploy naturally mismatches.
+const SCHEMA_HASH_FILE =
+  process.env.SCHEMA_HASH_FILE ??
+  `${process.env.HOME ?? "/home/baeley"}/.recruitme/schema-state.sha256`;
+
+function currentSchemaHash() {
+  try {
+    return createHash("sha256").update(readFileSync("prisma/schema.prisma")).digest("hex");
+  } catch {
+    return null; // can't hash → treat as changed (run full sequence)
+  }
+}
+
+function schemaUnchanged(hash) {
+  if (!hash) return false;
+  try {
+    return existsSync(SCHEMA_HASH_FILE) && readFileSync(SCHEMA_HASH_FILE, "utf8").trim() === hash;
+  } catch {
+    return false;
+  }
+}
+
+function recordSchemaHash(hash) {
+  if (!hash) return;
+  try {
+    mkdirSync(dirname(SCHEMA_HASH_FILE), { recursive: true });
+    writeFileSync(SCHEMA_HASH_FILE, hash);
+  } catch (err) {
+    console.warn(`[startup] could not write schema-hash marker (non-fatal): ${err.message}`);
+  }
+}
 
 function run(label, command, args) {
   const result = spawnSync(command, args, {
@@ -48,17 +91,36 @@ const prismaBin = process.platform === "win32"
 // (candidate dedup, adding lastScoredAt + UsageEvent). Idempotent raw SQL.
 await runRequiredWithRetry("apply schema changes", process.execPath, ["scripts/apply-schema-changes.mjs"]);
 
-// Step 2: Sync any remaining schema drift (safe now that unique constraints are clean)
-if (existsSync(prismaBin)) {
-  const dbPushArgs = ["db", "push", "--skip-generate"];
-  if (process.env.ALLOW_STARTUP_DB_DATA_LOSS === "true") {
-    console.warn("[startup] ALLOW_STARTUP_DB_DATA_LOSS=true; prisma db push may apply destructive changes");
-    dbPushArgs.push("--accept-data-loss");
-  }
-  await runRequiredWithRetry("sync database schema", prismaBin, dbPushArgs);
+// Steps 2+3: sync Prisma schema drift, then re-apply our raw-SQL steps to
+// recreate the searchTsv column db push drops. SKIPPED on an unchanged schema
+// (a plain restart) — see the cold-start guard note above. On a changed schema
+// (a deploy) this runs exactly as before.
+const schemaHash = currentSchemaHash();
+if (schemaUnchanged(schemaHash)) {
+  console.log("[startup] prisma schema unchanged since last apply — skipping db push + FTS rebuild (fast restart)");
 } else {
-  console.error("[startup] Prisma CLI not found; cannot sync database schema");
-  process.exit(1);
+  // Step 2: Sync remaining schema drift. `--accept-data-loss` is REQUIRED: the
+  // Postgres-only `Candidate.searchTsv` generated tsvector column can't be
+  // represented in Prisma's schema, so db push drops it (Postgres recomputes
+  // it from name/headline/location/profileText — no real data lost). Step 3
+  // recreates it.
+  if (existsSync(prismaBin)) {
+    const dbPushArgs = ["db", "push", "--skip-generate", "--accept-data-loss"];
+    await runRequiredWithRetry("sync database schema", prismaBin, dbPushArgs);
+  } else {
+    console.error("[startup] Prisma CLI not found; cannot sync database schema");
+    process.exit(1);
+  }
+
+  // Step 3: Re-apply our raw-SQL schema steps. Most are no-ops (`IF NOT EXISTS`
+  // everywhere); the one that matters is step 29, which recreates the searchTsv
+  // generated column + GIN index that db push just dropped.
+  await runRequiredWithRetry("re-apply post-push schema steps", process.execPath, ["scripts/apply-schema-changes.mjs"]);
+
+  // Mark this schema as fully applied so the next plain restart can fast-path.
+  // Written only AFTER both steps succeed (a crash mid-apply leaves it stale →
+  // next boot re-runs the full sequence, which is safe).
+  recordSchemaHash(schemaHash);
 }
 
 await runRequiredWithRetry("seed owner account", process.execPath, ["prisma/seed.js"]);

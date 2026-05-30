@@ -1,0 +1,9 @@
+[Unit]
+Description=RecruitMe Box self-update
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/recruitme-update
+TimeoutStartSec=900
+StandardOutput=journal

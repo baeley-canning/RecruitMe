@@ -21,7 +21,6 @@ import { cn } from "@/lib/utils";
 export type ProviderName =
   | "claude"
   | "openai"
-  | "serpapi"
   | "pdl"
   | "firmable"
   | "github";
@@ -46,7 +45,6 @@ export interface ProviderHealth {
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   claude:   "Claude",
   openai:   "GPT",
-  serpapi:  "SerpAPI",
   pdl:      "PDL",
   firmable: "Firmable",
   github:   "GitHub",
@@ -144,11 +142,10 @@ export function ProviderBadgeRow({
   providers: ProviderHealth[];
   showUnconfigured?: boolean;
 }) {
-  // Order: AI providers first (Claude/GPT), then SerpAPI search, then
-  // enrichment + GitHub. Keeps related providers visually grouped.
+  // Order: AI providers first (Claude/GPT), then enrichment + GitHub.
+  // Keeps related providers visually grouped.
   const order: ProviderName[] = [
     "claude", "openai",
-    "serpapi",
     "pdl", "firmable", "github",
   ];
   const sorted = [...providers].sort(

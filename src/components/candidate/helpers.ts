@@ -8,21 +8,53 @@ type CandidateLike = {
   profileText: string | null | undefined;
 };
 
-export function candidateSourceLabel(candidate: CandidateLike) {
+/**
+ * Source-badge metadata for a candidate — both the human-readable label and
+ * the Tailwind classes that distinguish sources visually (Phase E). Distinct
+ * colours per source family so a recruiter scanning the library can spot at
+ * a glance which candidates came from where:
+ *
+ *   blue   — LinkedIn (extension capture)
+ *   orange — JobAdder (matches the JobAdder brand chip)
+ *   green  — SEEK (matches the SEEK green)
+ *   violet — internal talent pool
+ *   cyan   — third-party APIs (SerpAPI / PDL)
+ *   gray   — manual / generic scraper / unknown
+ */
+export function candidateSourceBadge(candidate: CandidateLike): { label: string; className: string } {
   const profileChars = candidate.profileText?.trim().length ?? 0;
+  const NEUTRAL = "bg-surface-hover text-text-secondary";
+  const LINKEDIN = "bg-accent-subtle text-accent";
+  const JOBADDER = "bg-warning-subtle text-warning";
+  const SEEK_CL = "bg-success-subtle text-success";
+  const POOL = "bg-purple-subtle text-purple";
+  const API_CL = "bg-info-subtle text-info";
+
   if (candidate.source === "extension") {
-    if (profileChars > 0 && profileChars < 500) return "LinkedIn partial capture";
-    if (profileChars >= 500 && profileChars < 2000) return "LinkedIn partial profile";
-    return "LinkedIn extension";
+    if (profileChars > 0 && profileChars < 500)
+      return { label: "LinkedIn partial capture", className: LINKEDIN };
+    if (profileChars >= 500 && profileChars < 2000)
+      return { label: "LinkedIn partial profile", className: LINKEDIN };
+    return { label: "LinkedIn extension", className: LINKEDIN };
   }
-  if (candidate.source === "talent_pool") return "Talent pool";
-  if (candidate.source === "bookmarklet") return "LinkedIn capture";
-  if (candidate.source === "pdl") return "People Data Labs";
-  if (candidate.source === "serpapi") return "SerpAPI snippet";
-  if (candidate.source === "jobadder_import") return "JobAdder import";
-  if (candidate.source === "seek") return "SEEK";
-  if (candidate.source === "scraper") return "Scraper import";
-  return candidate.source ? candidate.source.replace(/_/g, " ") : "Manual";
+  if (candidate.source === "bookmarklet") return { label: "LinkedIn capture", className: LINKEDIN };
+  if (candidate.source === "talent_pool") return { label: "Talent pool", className: POOL };
+  if (candidate.source === "pdl") return { label: "People Data Labs", className: API_CL };
+  if (candidate.source === "serpapi") return { label: "LinkedIn search", className: API_CL }; // historical rows only
+  if (candidate.source === "scraper") return { label: "LinkedIn (scraped)", className: LINKEDIN };
+  if (candidate.source === "jobadder_import") return { label: "JobAdder import", className: JOBADDER };
+  if (candidate.source === "jobadder_scraped") return { label: "JobAdder", className: JOBADDER };
+  if (candidate.source === "seek") return { label: "SEEK", className: SEEK_CL };
+  if (candidate.source === "seek_scraper") return { label: "SEEK", className: SEEK_CL };
+  return {
+    label: candidate.source ? candidate.source.replace(/_/g, " ") : "Manual",
+    className: NEUTRAL,
+  };
+}
+
+/** Backward-compatible label-only accessor — existing callers stay unchanged. */
+export function candidateSourceLabel(candidate: CandidateLike): string {
+  return candidateSourceBadge(candidate).label;
 }
 
 export function profileSourceSummary(candidate: CandidateLike) {
@@ -42,7 +74,7 @@ export function profileSourceSummary(candidate: CandidateLike) {
   if (!candidate.profileText) {
     return "No LinkedIn profile text has been stored yet.";
   }
-  if (candidate.source === "serpapi" && candidate.profileText.length < 500) {
+  if ((candidate.source === "serpapi" || candidate.source === "scraper") && candidate.profileText.length < 500) {
     return "This is still only the search snippet, not the full LinkedIn capture.";
   }
   return `Stored from ${candidateSourceLabel(candidate).toLowerCase()}.`;

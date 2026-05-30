@@ -1,0 +1,20 @@
+{
+  "name": "recruitme-admin-portal",
+  "version": "0.1.0",
+  "description": "Seller-side fleet monitor for deployed RecruitMe boxes",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.mjs",
+    "start": "node src/server.mjs",
+    "build": "echo 'no build step — vanilla node'"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0",
+    "better-sqlite3": "^11.5.0"
+  }
+}

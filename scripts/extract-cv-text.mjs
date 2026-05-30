@@ -32,10 +32,10 @@ import {
 const require = createRequire(import.meta.url);
 const prisma = new PrismaClient();
 
-// Detect macOS textutil at startup — handles legacy .doc files for free.
-// On Linux / Windows this resolves to null and .doc files stay bucketed
-// as unsupported (their current behaviour).
-const TEXTUTIL_PATH = await detectBin("textutil");
+// Detect a legacy-.doc converter at startup. macOS ships `textutil`;
+// Linux mini-PC has `soffice` (LibreOffice) installed for the same job.
+// Either is fine — we pick whichever exists. If neither, .doc files stay
+// bucketed as unsupported (their original behaviour).
 async function detectBin(name) {
   return new Promise((resolve) => {
     const p = spawn("which", [name]);
@@ -45,6 +45,9 @@ async function detectBin(name) {
     p.on("error", () => resolve(null));
   });
 }
+const TEXTUTIL_PATH   = await detectBin("textutil");
+const SOFFICE_PATH    = await detectBin("soffice");
+const DOC_CONVERTER   = TEXTUTIL_PATH ? "textutil" : (SOFFICE_PATH ? "soffice" : null);
 
 const args = parseArgs(process.argv.slice(2));
 const LIMIT       = args.limit ? Number(args.limit) : null;
@@ -102,25 +105,30 @@ async function extractDocx(buffer) {
   return result.value ?? "";
 }
 
-// Legacy .doc (pre-2007 binary format). mammoth + pdf-parse both refuse;
-// macOS textutil reads it natively. We spawn one short-lived process per
-// file, with a temp-file round-trip because textutil's -stdin path is
-// flaky on binary input.
-async function extractDocViaTextutil(buffer) {
-  if (!TEXTUTIL_PATH) throw new Error("textutil not available (macOS only)");
+// Legacy .doc (pre-2007 binary format). mammoth + pdf-parse both refuse.
+// macOS textutil reads it natively; on Linux we shell out to LibreOffice
+// (--headless --convert-to txt) which produces the same output. Temp-file
+// round trip in both cases because both tools are flaky on stdin.
+async function extractDocViaConverter(buffer) {
+  if (!DOC_CONVERTER) throw new Error("no .doc converter available (need textutil or soffice)");
   const dir  = await mkdtemp(path.join(tmpdir(), "cv-doc-"));
   const docPath = path.join(dir, "in.doc");
   const txtPath = path.join(dir, "in.txt");
   try {
     await writeFile(docPath, buffer);
     await new Promise((resolve, reject) => {
-      const p = spawn(TEXTUTIL_PATH, ["-convert", "txt", docPath, "-output", txtPath]);
+      const p = DOC_CONVERTER === "textutil"
+        ? spawn(TEXTUTIL_PATH, ["-convert", "txt", docPath, "-output", txtPath])
+        : spawn(SOFFICE_PATH, ["--headless", "--convert-to", "txt:Text", "--outdir", dir, docPath]);
       let stderr = "";
       p.stderr.on("data", (d) => { stderr += d.toString(); });
-      p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`textutil exit ${code}: ${stderr.trim()}`)));
+      p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`${DOC_CONVERTER} exit ${code}: ${stderr.trim()}`)));
       p.on("error", reject);
     });
-    return await readFile(txtPath, "utf-8");
+    // LibreOffice writes to {basename}.txt regardless of --outdir naming;
+    // textutil obeys -output. Resolve both: look for in.txt first.
+    const resolved = txtPath;
+    return await readFile(resolved, "utf-8");
   } finally {
     // rm -rf the whole temp dir — `unlink` left the directory itself behind,
     // and on SIGKILL the temp files would have leaked CV bytes onto /tmp.
@@ -149,8 +157,8 @@ async function extractFromFile(file) {
     case "docx":       return { text: await extractDocx(buf), kind };
     case "txt":        return { text: buf.toString("utf-8"),  kind };
     case "doc_legacy":
-      if (!TEXTUTIL_PATH) throw new Error("legacy .doc needs textutil (macOS) — run this on macOS");
-      return { text: await extractDocViaTextutil(buf), kind };
+      if (!DOC_CONVERTER) throw new Error("legacy .doc needs textutil (macOS) or soffice (Linux)");
+      return { text: await extractDocViaConverter(buf), kind };
     default:           throw new Error(`unsupported file type — mimeType="${file.mimeType}" filename="${file.filename}"`);
   }
 }
@@ -199,7 +207,7 @@ async function withDbRetry(fn, label) {
 async function main() {
   console.log(`[extract] mode: ${DRY_RUN ? "DRY RUN (no writes)" : "live"} concurrency=${CONCURRENCY}${LIMIT ? ` limit=${LIMIT}` : ""}${ORG_FILTER ? ` org=${ORG_FILTER}` : ""}`);
   console.log(`[extract] headline rewrite: ${COMMIT_HEADLINE && !DRY_RUN ? "ENABLED (will overwrite obviously-wrong headlines)" : "dry-run (pass --commit to enable writes)"}`);
-  console.log(`[extract] legacy .doc support: ${TEXTUTIL_PATH ? `enabled via ${TEXTUTIL_PATH}` : "DISABLED (textutil not found — .doc files will be skipped)"}`);
+  console.log(`[extract] legacy .doc support: ${DOC_CONVERTER ? `enabled via ${DOC_CONVERTER} (${TEXTUTIL_PATH || SOFFICE_PATH})` : "DISABLED (no converter found — .doc files will be skipped)"}`);
 
   // Pull candidate IDs + file metadata only — NOT the file bytes. Loading
   // 12k × ~270KB base64 strings in one query crashes Prisma's Rust→JS

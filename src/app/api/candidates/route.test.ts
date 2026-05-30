@@ -56,7 +56,7 @@ describe("candidates library API", () => {
         location: "Wellington",
         linkedinUrl: "https://www.linkedin.com/in/snippet/",
         matchScore: 61,
-        source: "serpapi",
+        source: "scraper",
         status: "new",
         profileCapturedAt: null,
         createdAt: now,

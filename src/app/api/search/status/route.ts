@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSetting } from "@/lib/settings";
 import { getAuth, unauthorized } from "@/lib/session";
+import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 
 async function checkClaudeKey(apiKey: string): Promise<"ok" | "invalid" | "error"> {
   try {
@@ -31,10 +32,7 @@ export async function GET() {
   const auth = await getAuth();
   if (!auth) return unauthorized();
 
-  const [serpapi, pdl] = await Promise.all([
-    getServerSetting("SERPAPI_API_KEY"),
-    getServerSetting("PDL_API_KEY"),
-  ]);
+  const pdl = await getServerSetting("PDL_API_KEY");
 
   // AI provider status
   const provider = process.env.AI_PROVIDER ?? "claude";
@@ -52,15 +50,15 @@ export async function GET() {
     }
   }
 
-  // SerpAPI keys are not tested here — making a live test request on every
-  // page load would add latency and consume quota. We return "configured" (key present,
-  // not verified) vs false (not configured). If a search returns 401/403, the search
-  // session will be marked with "invalid key" to surface the real cause.
+  // SerpAPI removed (Phase K). Search availability = PDL configured OR the
+  // local scraper enabled (LinkedIn/SEEK discovery via the durable /search
+  // pipeline). PDL key presence isn't live-tested to avoid quota burn.
+  const scraper = isScraperDiscoveryEnabled();
   return NextResponse.json({
-    available: Boolean(serpapi),
+    available: Boolean(pdl) || scraper,
     sources: {
-      serpapi: serpapi ? "configured" : false,
-      pdl:     pdl     ? "configured" : false,
+      pdl:     pdl ? "configured" : false,
+      scraper: scraper ? "enabled" : false,
     },
     ai: {
       provider,

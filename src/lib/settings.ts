@@ -2,7 +2,6 @@ import { prisma } from "./db";
 
 const ENV_KEYS: Record<string, string | undefined> = {
   PDL_API_KEY:     process.env.PDL_API_KEY,
-  SERPAPI_API_KEY: process.env.SERPAPI_API_KEY,
   APIFY_API_KEY:   process.env.APIFY_API_KEY,
 };
 

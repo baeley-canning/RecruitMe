@@ -33,7 +33,6 @@ const searchCollectionMocks = vi.hoisted(() => ({
 }));
 
 const searchMocks = vi.hoisted(() => ({
-  searchLinkedInProfiles: vi.fn(),
   searchPDLProfiles: vi.fn(),
   inferEmploymentType: vi.fn(() => "unknown"),
 }));
@@ -67,7 +66,8 @@ const scoringConfigMocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/search", () => ({
-  searchLinkedInProfiles: searchMocks.searchLinkedInProfiles,
+  // searchLinkedInProfiles was deleted from @/lib/search when SerpAPI was
+  // removed (Phase K). Only PDL + the employment-type classifier remain.
   searchPDLProfiles: searchMocks.searchPDLProfiles,
   // Mock matches the real signature: classifies JD text into permanent /
   // contract / unknown. Default to "unknown" in tests — they don't care
@@ -116,7 +116,6 @@ describe("search import route", () => {
     // set by one test would otherwise leak into the next.
     talentPoolMocks.buildTalentPoolMap.mockReset();
     talentPoolMocks.searchTalentPoolForRole.mockReset();
-    searchMocks.searchLinkedInProfiles.mockReset();
     searchMocks.searchPDLProfiles.mockReset();
     searchMocks.inferEmploymentType.mockReset();
     searchMocks.inferEmploymentType.mockReturnValue("unknown");
@@ -129,8 +128,14 @@ describe("search import route", () => {
       returned: 0,
     });
     dbMocks.prisma.candidate.findMany.mockReset();
-    process.env.SERPAPI_API_KEY = "test";
-    delete process.env.PDL_API_KEY;
+    // SerpAPI is gone (Phase K). The route's "no search source" guard now
+    // requires PDL_API_KEY OR the scraper-discovery flag. Set PDL so the
+    // route gets past the guard and into the pool-first / collect / score
+    // pipeline these tests exercise. The collectPagedSearchResults mock is
+    // still the result source (the route calls it unconditionally); PDL
+    // fetch itself is a no-op here (searchPDLProfiles is unmocked → ignored).
+    delete process.env.SERPAPI_API_KEY;
+    process.env.PDL_API_KEY = "test-pdl";
 
     const job = {
       id: "job-1",
@@ -185,7 +190,7 @@ describe("search import route", () => {
           // fullText pushes the candidate over the full_profile threshold (≥ 2000 chars),
           // which is what triggers the structured-scoring path the mock validates.
           fullText: "Taylor Morgan\nFull-stack Engineer\nWellington, New Zealand\nAbout\nExperienced React and Ruby on Rails engineer with 8 years building production web apps. ".repeat(20),
-          source: "serpapi",
+          source: "pdl",
         },
       ],
       sawRetryableFailure: false,
@@ -212,7 +217,9 @@ describe("search import route", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
-    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("serpapi");
+    // source passes through from the SearchResult fixture. SerpAPI is gone;
+    // collected results now carry source="pdl".
+    expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.source).toBe("pdl");
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.scoreBreakdown).toContain("\"version\":2");
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityScore).toBeGreaterThanOrEqual(45);
     expect(dbMocks.prisma.candidate.upsert.mock.calls[0][0].create.fetchPriorityReason).toContain("fetch");
@@ -317,7 +324,7 @@ describe("search import route", () => {
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/junior-candidate/",
           snippet: "Bootcamp graduate with React and Node.js.",
-          source: "serpapi",
+          source: "pdl",
         },
         {
           name: "Generic Developer",
@@ -325,7 +332,7 @@ describe("search import route", () => {
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/generic-developer/",
           snippet: "React, TypeScript, AWS and web applications.",
-          source: "serpapi",
+          source: "pdl",
         },
         {
           name: "Cloud Developer",
@@ -334,7 +341,7 @@ describe("search import route", () => {
           linkedinUrl: "https://www.linkedin.com/in/cloud-developer/",
           snippet: "Azure, Linux scripting, Kubernetes and microservices, but no legacy database stack.",
           matchedQuery: "Azure microservices",
-          source: "serpapi",
+          source: "pdl",
         },
         {
           name: "Query Matched",
@@ -343,7 +350,7 @@ describe("search import route", () => {
           linkedinUrl: "https://www.linkedin.com/in/query-matched/",
           snippet: "Experienced enterprise software developer with government systems background.",
           matchedQuery: "C++ Sybase",
-          source: "serpapi",
+          source: "pdl",
         },
         {
           name: "Relevant Developer",
@@ -354,7 +361,7 @@ describe("search import route", () => {
           // fullText pushes this candidate over the full_profile threshold so the route
           // uses the structured (mocked) score, isolating the gating logic under test.
           fullText: "Relevant Developer\nSoftware Developer\nWellington, New Zealand\nAbout\nC++ developer with Sybase database, Linux scripting and Azure platform experience. ".repeat(20),
-          source: "serpapi",
+          source: "pdl",
         },
       ],
       sawRetryableFailure: false,
@@ -376,7 +383,13 @@ describe("search import route", () => {
     expect(dbMocks.prisma.searchSession.create.mock.calls[0][0].data.queries).toContain("Sybase dba");
   });
 
-  it("does not let scarce-skill fallback candidates bypass source gate or score cutoff", async () => {
+  // Previously this asserted that scarce-skill SerpAPI fallback candidates
+  // still had to clear the source gate + score cutoff. SerpAPI (and its
+  // adjacent-skill fallback) are gone, so the analogous result source is now
+  // PDL. The INTENT is preserved: an off-stack candidate (Rust, no C++)
+  // surfaced by a discovery source must NOT be imported on a C++/Sybase role —
+  // the source gate / score cutoff still rejects it.
+  it("does not let off-stack discovery candidates bypass source gate or score cutoff", async () => {
     const specialistJob = {
       id: "job-1",
       parsedRole: JSON.stringify({
@@ -401,18 +414,20 @@ describe("search import route", () => {
     };
     sessionMocks.requireJobAccess.mockResolvedValue({ job: specialistJob, error: null });
     dbMocks.prisma.job.findUnique.mockResolvedValue(specialistJob);
+    // SerpAPI no longer returns anything; the only synchronous discovery
+    // source is PDL. Drive the off-stack candidate through it.
     searchCollectionMocks.collectPagedSearchResults.mockResolvedValue({
       items: [],
       sawRetryableFailure: false,
     });
-    searchMocks.searchLinkedInProfiles.mockResolvedValue([
+    searchMocks.searchPDLProfiles.mockResolvedValue([
       {
         name: "Adjacent Candidate",
         headline: "Rust Developer | Sybase",
         location: "Wellington, New Zealand",
         linkedinUrl: "https://www.linkedin.com/in/adjacent-candidate/",
         snippet: "Rust systems developer with Sybase database experience and low-level services work.",
-        source: "serpapi",
+        source: "pdl",
       },
     ]);
 
@@ -423,16 +438,12 @@ describe("search import route", () => {
     });
 
     const res = await POST(req, { params: Promise.resolve({ id: "job-1" }) });
-    await new Promise((r) => setTimeout(r, 2600));
+    await new Promise((r) => setTimeout(r, 50));
 
     expect(res.status).toBe(200);
-    expect(searchMocks.searchLinkedInProfiles).toHaveBeenCalled();
+    expect(searchMocks.searchPDLProfiles).toHaveBeenCalled();
+    // Off-stack candidate (Rust, no C++) is rejected — never imported.
     expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
-    expect(dbMocks.prisma.searchSession.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        collected: 0,
-      }),
-    }));
   });
 });
 
@@ -467,8 +478,11 @@ describe("search route — pool-first integration scenarios", () => {
   }
 
   function setupBaselineMocks() {
-    process.env.SERPAPI_API_KEY = "test";
-    delete process.env.PDL_API_KEY;
+    // SerpAPI is gone (Phase K). Set PDL so the route clears the
+    // "no search source configured" guard and runs the pool-first +
+    // collect + score pipeline. PDL fetch itself is a no-op here.
+    delete process.env.SERPAPI_API_KEY;
+    process.env.PDL_API_KEY = "test-pdl";
     const job = {
       id: "job-power",
       orgId: "org-1",
@@ -510,7 +524,6 @@ describe("search route — pool-first integration scenarios", () => {
     vi.clearAllMocks();
     talentPoolMocks.buildTalentPoolMap.mockReset();
     talentPoolMocks.searchTalentPoolForRole.mockReset();
-    searchMocks.searchLinkedInProfiles.mockReset();
     searchMocks.searchPDLProfiles.mockReset();
     searchMocks.inferEmploymentType.mockReset();
     searchMocks.inferEmploymentType.mockReturnValue("unknown");
@@ -588,7 +601,7 @@ describe("search route — pool-first integration scenarios", () => {
           linkedinUrl: "https://www.linkedin.com/in/linkedin-cand/",
           snippet: "Strong SCADA RTU metering experience.",
           fullText: "Senior SCADA Engineer with extensive RTU and substation experience. ".repeat(40),
-          source: "serpapi",
+          source: "pdl",
         },
       ],
       sawRetryableFailure: false,
@@ -636,7 +649,7 @@ describe("search route — pool-first integration scenarios", () => {
           linkedinUrl: "https://www.linkedin.com/in/linkedin-only/",
           snippet: "SCADA RTU experience.",
           fullText: "SCADA Engineer profile with extensive RTU and substation experience. ".repeat(40),
-          source: "serpapi",
+          source: "pdl",
         },
       ],
       sawRetryableFailure: false,
@@ -669,7 +682,7 @@ describe("search route — pool-first integration scenarios", () => {
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/linkedin-cand/",
           fullText: "SCADA profile. ".repeat(150),
-          source: "serpapi",
+          source: "pdl",
         },
       ],
       sawRetryableFailure: false,
@@ -890,7 +903,7 @@ describe("search route — pool-first integration scenarios", () => {
           location: "Wellington, New Zealand",
           linkedinUrl: "https://www.linkedin.com/in/reuse-sam/",
           snippet: "SCADA RTU metering experience",
-          source: "serpapi",
+          source: "pdl",
         },
       ],
       sawRetryableFailure: false,

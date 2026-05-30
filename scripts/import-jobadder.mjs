@@ -29,9 +29,17 @@
 import { PrismaClient } from "@prisma/client";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 const prisma = new PrismaClient();
+
+// One batch id per script run — every Candidate row created in this import
+// gets stamped with it so the library filter chip can show "Show only this
+// batch". Re-runs of the importer create a new batch id (the dedupe-on-
+// jobAdderUrl check skips already-imported rows, so this only matters for
+// truly-new rows produced in this run).
+const BATCH_ID = randomUUID();
 
 // ─── CLI parsing ───────────────────────────────────────────────────────────
 
@@ -231,9 +239,11 @@ async function importRow(row, orgId, cvIndex, stats) {
     linkedinUrl,
     jobAdderUrl,
     phone:       row.mobile?.trim() || row.phone?.trim() || null,
+    email:       row.email?.trim() || null,
     firmableData: buildFirmableData(row),
     notes:       buildNotes(row),
     source:      "jobadder_import",
+    importBatchId: BATCH_ID,
   };
 
   if (DRY_RUN) {

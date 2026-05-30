@@ -13,7 +13,6 @@ describe("providerHealth — state derivation", () => {
     // Configure every provider so we exercise the non-"unconfigured" branches.
     process.env.ANTHROPIC_API_KEY = "test";
     process.env.OPENAI_API_KEY = "test";
-    process.env.SERPAPI_API_KEY = "test";
     process.env.PDL_API_KEY = "test";
     process.env.FIRMABLE_API_KEY = "test";
     process.env.GITHUB_TOKEN = "test";
@@ -28,17 +27,17 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("unconfigured providers report state=unconfigured", () => {
-    delete process.env.SERPAPI_API_KEY;
+    delete process.env.PDL_API_KEY;
     delete process.env.FIRMABLE_API_KEY;
     const snap = snapshotProviderHealth();
-    expect(snap.find((p) => p.name === "serpapi")!.state).toBe("unconfigured");
+    expect(snap.find((p) => p.name === "pdl")!.state).toBe("unconfigured");
     expect(snap.find((p) => p.name === "firmable")!.state).toBe("unconfigured");
     expect(snap.find((p) => p.name === "claude")!.state).toBe("untested");
   });
 
   it("recordProviderSuccess flips state to healthy", () => {
-    recordProviderSuccess("serpapi");
-    const serp = snapshotProviderHealth().find((p) => p.name === "serpapi");
+    recordProviderSuccess("pdl");
+    const serp = snapshotProviderHealth().find((p) => p.name === "pdl");
     expect(serp!.state).toBe("healthy");
     expect(serp!.lastSuccessAt).not.toBeNull();
     expect(serp!.consecutiveFailures).toBe(0);
@@ -89,8 +88,8 @@ describe("providerHealth — state derivation", () => {
 
   it("trims very long failure reasons to ~200 chars", () => {
     const longReason = "x".repeat(1000);
-    recordProviderFailure("serpapi", longReason);
-    const snap = snapshotProviderHealth().find((p) => p.name === "serpapi")!;
+    recordProviderFailure("pdl", longReason);
+    const snap = snapshotProviderHealth().find((p) => p.name === "pdl")!;
     expect(snap.lastFailureReason!.length).toBeLessThanOrEqual(200);
   });
 
@@ -105,8 +104,8 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("'quota exceeded' phrasing also counts as fatal", () => {
-    recordProviderFailure("serpapi", "quota exceeded for this account");
-    expect(snapshotProviderHealth().find((p) => p.name === "serpapi")!.state).toBe("down");
+    recordProviderFailure("pdl", "quota exceeded for this account");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
   });
 
   it("401/403 auth failures flip immediately to down", () => {
@@ -154,9 +153,9 @@ describe("providerHealth — state derivation", () => {
   // Tightened patterns require the fatal word to appear in context.
 
   it("does NOT flag 'load balancer timeout' as fatal (bare 'balance' false positive)", () => {
-    recordProviderFailure("serpapi", "load balancer timeout after 30s");
+    recordProviderFailure("pdl", "load balancer timeout after 30s");
     // One non-fatal failure → degraded, not down
-    expect(snapshotProviderHealth().find((p) => p.name === "serpapi")!.state).toBe("degraded");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("degraded");
   });
 
   it("does NOT flag '401-byte response from upstream' as fatal (bare '401' false positive)", () => {
@@ -170,8 +169,8 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("DOES flag 'account suspended' as fatal", () => {
-    recordProviderFailure("serpapi", "account suspended due to billing issue");
-    expect(snapshotProviderHealth().find((p) => p.name === "serpapi")!.state).toBe("down");
+    recordProviderFailure("pdl", "account suspended due to billing issue");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
   });
 
   it("DOES flag 'subscription expired' as fatal", () => {

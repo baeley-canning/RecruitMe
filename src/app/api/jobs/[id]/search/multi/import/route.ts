@@ -217,13 +217,13 @@ async function importOne(
         // the real profile. Mirrors the search route's snippet-import
         // behaviour.
         profileText: row.snippet,
-        source: "serpapi",
+        source: "scraper",
         status: "new",
       },
       update: {
         // Preserve any existing profileText / scoring — re-import shouldn't
         // wipe data. Only updates the source tag.
-        source: "serpapi",
+        source: "scraper",
       },
     });
     return { resultId: row.id, status: "attached", candidateId: upserted.id };

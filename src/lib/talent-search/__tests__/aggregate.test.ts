@@ -17,8 +17,8 @@
 
 import { describe, expect, it } from "vitest";
 import { aggregateSources } from "../aggregate";
+import type { LinkedInSearchResult } from "../aggregate";
 import type { LibrarySearchResult } from "../library";
-import type { LinkedInSearchResult } from "../linkedin";
 
 // --- Fixture builders --------------------------------------------------
 
@@ -36,6 +36,7 @@ function lib(overrides: Partial<LibrarySearchResult> = {}): LibrarySearchResult 
     profileTextSnippet: "Senior engineer with 8 years experience.",
     candidateIdentityId: "ident-1",
     createdAt: new Date("2026-01-01T00:00:00Z"),
+    relevance: 0,
     ...overrides,
   };
 }

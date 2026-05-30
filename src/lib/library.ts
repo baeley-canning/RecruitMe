@@ -39,9 +39,14 @@ export interface LibraryCandidateRow {
   location: string | null;
   linkedinUrl: string | null;
   phone: string | null;
+  email: string | null;
   photoFileId: string | null;
   matchScore: number | null;
   source: string;
+  /** Bulk-import batch id when the row was created in a batch (Phase E). */
+  importBatchId: string | null;
+  /** Deep-link to the candidate's JobAdder record (for the "Open in JobAdder" button). */
+  jobAdderUrl: string | null;
   status: string;
   notes: string | null;
   profileCapturedAt: Date | null;
@@ -170,8 +175,15 @@ export async function getLibraryCandidates(
     SELECT c.id
     FROM "Candidate" c
     LEFT JOIN "Job" j ON j.id = c."jobId"
-    WHERE c."profileText" IS NOT NULL
-      AND char_length(c."profileText") >= ${LIBRARY_PROFILE_MIN_CHARS}
+    WHERE (
+        -- Substantive profileText (the canonical "we have content on this person").
+        (c."profileText" IS NOT NULL AND char_length(c."profileText") >= ${LIBRARY_PROFILE_MIN_CHARS})
+        -- Source-whitelisted rows: manual entries and JobAdder imports
+        -- carry their content as files or in JobAdder itself, not in
+        -- profileText. Mirrors buildLibraryWhere's stated whitelist —
+        -- without this, the 13k JobAdder library was invisible.
+        OR c."source" IN ('manual', 'jobadder_import')
+      )
       AND (
         ${!useOrgFilter}::boolean
         OR j."orgId" = ANY(${orgIdsParam}::text[])
@@ -202,8 +214,11 @@ export async function getLibraryCandidates(
       headline: true,
       location: true,
       linkedinUrl: true,
+      jobAdderUrl: true,
       phone: true,
+      email: true,
       photoFileId: true,
+      importBatchId: true,
       // profileText INTENTIONALLY NOT SELECTED. With 14k rows × ~10KB
       // profileText, including it pulled ~140 MB of useless data over the
       // wire on every library load (the field gets stripped before

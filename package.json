@@ -11,6 +11,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:db": "SMOKE_DB=1 vitest run src/lib/__tests__/smoke-db.integration.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",

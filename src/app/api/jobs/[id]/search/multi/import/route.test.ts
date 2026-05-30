@@ -159,7 +159,7 @@ describe("POST /search/multi/import — LinkedIn-only path", () => {
 
     expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(1);
     const call = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
-    expect(call.create.source).toBe("serpapi");
+    expect(call.create.source).toBe("scraper");
     expect(call.create.status).toBe("new");
     expect(call.create.profileText).toBe("Snippet text from SerpAPI");
     expect(call.create.headline).toBe("Engineer");
@@ -167,7 +167,7 @@ describe("POST /search/multi/import — LinkedIn-only path", () => {
     expect(call.create.jobId).toBe("job-1");
     expect(call.create.orgId).toBe("org-A");
     // Re-import preserves existing data — update only re-tags source.
-    expect(call.update).toEqual({ source: "serpapi" });
+    expect(call.update).toEqual({ source: "scraper" });
   });
 
   it("normalises the LinkedIn URL before upsert (idempotency)", async () => {

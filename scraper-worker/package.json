@@ -10,10 +10,12 @@
     "dev": "tsx --env-file=.env src/index.ts"
   },
   "dependencies": {
-    "patchright": "^1.49.1"
+    "patchright": "^1.49.1",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

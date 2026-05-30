@@ -1,0 +1,10 @@
+[Unit]
+Description=RecruitMe Box nightly update check (03:00 local + jitter)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=3600   # spread fleet update load across the 3-4am window
+
+[Install]
+WantedBy=timers.target

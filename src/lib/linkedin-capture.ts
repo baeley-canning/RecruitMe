@@ -88,6 +88,27 @@ const CAPTURE_NOISE_LINE_PATTERNS = [
   /^\d+ mutual connections?$/i,
   /^you(?:'re| are) connected$/i,
   /^\d+ connections? in common$/i,
+  // Connection-prompt chrome. LinkedIn renders this block (Highlights →
+  // "Get introduced to X" → mutual-connection lines → "Message top
+  // connections") ABOVE the real About/Experience, so these are NOISE to
+  // skip per-line, NOT a STOP — stopping here would truncate the whole
+  // profile. Anchored ^…$ so a real About sentence merely *containing* these
+  // words (e.g. "Highlights of my career…", "…across 3 offices.") is kept.
+  /^highlights$/i,
+  /^get introduced to .+$/i,
+  /^ask your mutual connections to help you start a conversation\.?$/i,
+  /^message top connections$/i,
+  /^now is a great time to start a conversation\.?$/i,
+  /^introduce myself$/i,
+  // "Han, Teresa and 1 other mutual connection" / "X and Y are mutual connections".
+  /^.{2,80} and \d+ others? mutual connection$/i,
+  /^.{2,80} and .{2,40} are mutual connections$/i,
+  // Comma-grouped counts ("1,056 followers", "342 connections") that the
+  // bare-\d+ patterns above miss because of the thousands separator.
+  /^[\d,]+\+?\s+followers$/i,
+  /^[\d,]+\+?\s+connections?$/i,
+  // LinkedIn activity/post lines: "1mo • We are hiring…", "2w • …", "3d • …".
+  /^\d+\s*(?:mo|w|d|h|m|yr|y)\b.*[·•]/i,
 ];
 
 function normalizeCaptureLine(value: string) {

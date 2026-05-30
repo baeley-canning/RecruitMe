@@ -43,6 +43,15 @@ export function isScraperEnabled(): boolean {
   return readBool("RECRUITME_SCRAPER_ENABLED", false);
 }
 
+/** Phase B: scraper-side LinkedIn search discovery — when on, multi-source
+ *  search opportunistically enqueues background search jobs so the worker
+ *  grows the local library from its own LinkedIn searches (the flywheel).
+ *  Off by default until pacing is dialled in. The worker has the same flag
+ *  (SCRAPER_DISCOVERY_ENABLED) on its end; toggle BOTH together. */
+export function isScraperDiscoveryEnabled(): boolean {
+  return readBool("SCRAPER_DISCOVERY_ENABLED", false);
+}
+
 /** CRM: clients / submissions / placements (triage Stage 1). Off by default.
  *  Set FEATURES_CRM_ENABLED=true to expose the clients + placements features. */
 export function isCrmEnabled(): boolean {

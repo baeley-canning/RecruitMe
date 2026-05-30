@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, Github, Menu } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, Github, Menu, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isOwner as sessionIsOwner } from "@/lib/access";
 import { useState, useEffect } from "react";
@@ -29,7 +29,6 @@ interface KeyStatus {
 
 const KEY_LABELS: Record<string, { label: string; hint: string }> = {
   PDL_API_KEY:     { label: "People Data Labs Key", hint: "Candidate search & enrichment — 100 free calls/month" },
-  SERPAPI_API_KEY: { label: "SerpAPI Key", hint: "Google LinkedIn search — 100 searches/month free" },
 };
 
 function SettingsModal({ onClose }: { onClose: () => void }) {
@@ -163,6 +162,7 @@ const NAV_ITEMS: ReadonlyArray<{
 }> = [
   { href: "/dashboard",           icon: LayoutDashboard,    label: "Dashboard",          match: (p) => p === "/dashboard" },
   { href: "/jobs/listing-builder",icon: FileText,           label: "Listing Builder",    match: (p) => p === "/jobs/listing-builder" },
+  { href: "/search",              icon: Search,             label: "Search",             match: (p) => p === "/search" || p.startsWith("/search/") },
   { href: "/candidates",          icon: Library,            label: "Candidates Library", match: (p) => p === "/candidates" || p.startsWith("/candidates/") },
   { href: "/github-search",       icon: Github,             label: "GitHub Search",      match: (p) => p.startsWith("/github-search") },
   { href: "/linkedin-setup",      icon: Bookmark,           label: "LinkedIn Setup",     match: (p) => p === "/linkedin-setup" },

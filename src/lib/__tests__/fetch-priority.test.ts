@@ -45,7 +45,7 @@ describe("computeFetchPriority", () => {
         linkedinUrl: "https://www.linkedin.com/in/taylor-morgan/",
         snippet: "Senior developer with C++, Sybase database, Linux scripting and Azure delivery experience.",
         matchedQuery: "C++ Sybase developer Wellington",
-        source: "serpapi",
+        source: "pdl",
       },
     });
 
@@ -65,7 +65,7 @@ describe("computeFetchPriority", () => {
         linkedinUrl: "https://www.linkedin.com/in/jamie-smith/",
         snippet: "Bootcamp graduate with React projects and a desire to learn.",
         matchedQuery: "software developer",
-        source: "serpapi",
+        source: "pdl",
       },
     });
 
@@ -84,7 +84,7 @@ describe("computeFetchPriority", () => {
         linkedinUrl: "https://www.linkedin.com/in/query-only/",
         snippet: "Experienced enterprise developer with government delivery background.",
         matchedQuery: "C++ Sybase Linux developer Wellington",
-        source: "serpapi",
+        source: "pdl",
       },
     });
 
@@ -103,7 +103,7 @@ describe("computeFetchPriority", () => {
         linkedinUrl: "https://www.linkedin.com/in/matched-query-only/",
         snippet: "Builds React and TypeScript applications.",
         matchedQuery: "C++ Sybase",
-        source: "serpapi",
+        source: "pdl",
       },
     });
 
@@ -122,7 +122,7 @@ describe("computeFetchPriority", () => {
         location: "Wellington, New Zealand",
         linkedinUrl: "https://www.linkedin.com/in/taylor-morgan/",
         snippet: "Senior Software Developer in Wellington.",
-        source: "serpapi",
+        source: "pdl",
       },
     });
 
@@ -150,7 +150,7 @@ describe("computeFetchPriority", () => {
         linkedinUrl: "https://www.linkedin.com/in/morgan-lee/",
         snippet: "Senior developer with stakeholder management, solutions delivery and analytical problem solving.",
         matchedQuery: "software developer Wellington",
-        source: "serpapi",
+        source: "pdl",
       },
     });
 

@@ -3,12 +3,15 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Search, Users, FileText, Briefcase, Star, UserPlus } from "lucide-react";
+import { Search, Users, Briefcase, Star, UserPlus, FileText } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { timeAgo } from "@/lib/utils";
+import { timeAgo, cn } from "@/lib/utils";
 import { scoreTier } from "@/lib/score-utils";
 import { AddLibraryCandidateModal } from "@/components/add-library-candidate-modal";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { candidateSourceBadge } from "@/components/candidate/helpers";
+import { FileSummaryChip } from "@/components/candidate/file-summary-chip";
+import { JobAdderBadge } from "@/components/candidate/icons";
 import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,10 +31,13 @@ interface LibraryCandidate {
   headline: string | null;
   location: string | null;
   linkedinUrl: string | null;
+  jobAdderUrl: string | null;
   phone: string | null;
+  email: string | null;
   photoFileId: string | null;
   matchScore: number | null;
   source: string;
+  importBatchId: string | null;
   status: string;
   notes: string | null;
   sharedFromOrgName: string | null;
@@ -43,19 +49,8 @@ interface LibraryCandidate {
   files: CandidateFile[];
 }
 
-const SOURCE_LABEL: Record<string, string> = {
-  manual: "Manual",
-  serpapi: "Search",
-  pdl: "PDL",
-  extension: "LinkedIn",
-  talent_pool: "Talent Pool",
-  jobadder_import: "JobAdder",
-};
-
 function CandidateCard({ c }: { c: LibraryCandidate }) {
-  const hasCV = c.files.some((f) => f.type === "cv");
-  const hasCoverLetter = c.files.some((f) => f.type === "cover_letter");
-
+  const sourceBadge = candidateSourceBadge({ source: c.source, profileText: null });
   return (
     <Link
       href={`/candidates/${c.id}`}
@@ -67,6 +62,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
         headline={c.headline}
         location={c.location}
         phone={c.phone}
+        email={c.email}
         linkedinUrl={c.linkedinUrl}
         photoUrl={getCandidatePhotoUrl({ candidateId: c.id, photoFileId: c.photoFileId })}
         score={c.matchScore}
@@ -94,19 +90,8 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
           </span>
         </Badge>
 
-        {/* Profile captured */}
-        <Badge className="bg-success-subtle text-success">
-          <span className="w-1.5 h-1.5 rounded-full bg-success inline-block mr-1" />
-          Profile
-        </Badge>
-
-        {/* CV */}
-        {hasCV && (
-          <Badge className="bg-accent-subtle text-accent">
-            <FileText className="w-2.5 h-2.5 mr-1" />
-            CV
-          </Badge>
-        )}
+        {/* File counts (Phase E3) — replaces the old yes/no CV+Cover badges */}
+        <FileSummaryChip files={c.files} />
 
         {/* No LinkedIn URL — may be duplicate */}
         {!c.linkedinUrl && (
@@ -118,17 +103,16 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
           </span>
         )}
 
-        {/* Cover letter */}
-        {hasCoverLetter && (
-          <Badge className="bg-warning-subtle text-warning">
-            <FileText className="w-2.5 h-2.5 mr-1" />
-            Cover
-          </Badge>
+        {/* Open in JobAdder (Phase E5) — pushed left of the source pill */}
+        {c.jobAdderUrl && (
+          <span className="ml-auto inline-flex" onClick={(e) => e.stopPropagation()}>
+            <JobAdderBadge url={c.jobAdderUrl} />
+          </span>
         )}
 
-        {/* Source */}
-        <Badge className="ml-auto">
-          {SOURCE_LABEL[c.source] ?? c.source}
+        {/* Source — colored per provenance (Phase E4) */}
+        <Badge className={cn(c.jobAdderUrl ? "" : "ml-auto", sourceBadge.className)}>
+          {sourceBadge.label}
         </Badge>
       </div>
 
@@ -180,17 +164,56 @@ export function CandidatesLibraryClient({ candidates: initialCandidates, initial
     }
   };
 
+  // Import-batch filter (Phase E4). Null = no filter, show all batches.
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [batches, setBatches] = useState<Array<{ batchId: string; count: number; latestAt: string; source: string }>>([]);
+  useEffect(() => {
+    fetch("/api/candidates/import-batches")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d: { batches: typeof batches }) => setBatches(d.batches))
+      .catch(() => {/* chip row stays empty if the call fails; not user-facing */});
+  }, []);
+
+  // ── Server-side boolean search (Phase F) ───────────────────────────────
+  // When the search box is non-empty, hit /api/candidates/library/search
+  // (Postgres FTS via Candidate.searchTsv). Replaces the prior client-side
+  // substring filter, which only saw the rows already in memory — useless
+  // at 14k+ rows. Empty query falls back to the SSR-loaded recency list.
+  const [searchResults, setSearchResults] = useState<LibraryCandidate[] | null>(null);
+  const [searchingServer, setSearchingServer] = useState(false);
+  const [parseErrors, setParseErrors] = useState<string[]>([]);
+  useEffect(() => {
+    const q = deferred.trim();
+    if (!q) {
+      setSearchResults(null);
+      setParseErrors([]);
+      return;
+    }
+    let cancelled = false;
+    setSearchingServer(true);
+    fetch(`/api/candidates/library/search?q=${encodeURIComponent(q)}&limit=200`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d: { candidates: LibraryCandidate[]; parsed?: { hasErrors: boolean; errors: string[] } }) => {
+        if (cancelled) return;
+        setSearchResults(d.candidates);
+        setParseErrors(d.parsed?.hasErrors ? d.parsed.errors : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSearchResults([]);
+        setParseErrors([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSearchingServer(false);
+      });
+    return () => { cancelled = true; };
+  }, [deferred]);
+
   const filtered = useMemo(() => {
-    const q = deferred.toLowerCase().trim();
-    if (!q) return candidates;
-    return candidates.filter((c) =>
-      c.name.toLowerCase().includes(q) ||
-      c.headline?.toLowerCase().includes(q) ||
-      c.location?.toLowerCase().includes(q) ||
-      (c.job?.title ?? c.archivedJobTitle ?? "").toLowerCase().includes(q) ||
-      (c.job?.company ?? c.archivedJobCompany ?? "").toLowerCase().includes(q)
-    );
-  }, [candidates, deferred]);
+    let rows = searchResults ?? candidates;
+    if (selectedBatchId) rows = rows.filter((c) => c.importBatchId === selectedBatchId);
+    return rows;
+  }, [candidates, searchResults, selectedBatchId]);
 
   // Single-pass reducer for stats — was 3 separate full-array scans (every
   // keystroke triggered ~42k iterations through 14k candidates). Now ~14k.
@@ -276,17 +299,72 @@ export function CandidatesLibraryClient({ candidates: initialCandidates, initial
         </Card>
       </div>
 
-      {/* Search */}
-      <div className="relative mb-4">
+      {/* Search — Phase F boolean FTS via /api/candidates/library/search.
+          Accepts the same syntax as the multi-source job search:
+            (java OR python) AND senior NOT junior "machine learning"
+          Hits Postgres' searchTsv tsvector when non-empty, falls back to
+          the SSR-loaded recency list otherwise. */}
+      <div className="relative mb-1">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name, headline, location, or job…"
-          className="w-full h-8 pl-8 pr-3 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
+          placeholder={`Search — try  (java OR python) AND senior NOT junior  "machine learning"`}
+          className="w-full h-8 pl-8 pr-16 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus transition-all"
         />
+        {searchingServer && (
+          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-2xs text-text-tertiary uppercase tracking-wide">Searching…</span>
+        )}
       </div>
+      {parseErrors.length > 0 && (
+        <p className="text-xs text-warning mb-2">
+          Query issue{parseErrors.length === 1 ? "" : "s"}: {parseErrors.join("; ")}
+        </p>
+      )}
+      <div className="mb-3" />
+
+      {/* Import-batch filter chips (Phase E4). One pill per recent batch +
+          an "All" reset. Hidden entirely if no batches have been recorded. */}
+      {batches.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+          <span className="text-2xs text-text-tertiary mr-1 uppercase tracking-wide">Imported batch:</span>
+          <button
+            type="button"
+            onClick={() => setSelectedBatchId(null)}
+            className={cn(
+              "inline-flex items-center h-6 px-2 rounded-sm text-xs font-medium transition-colors",
+              selectedBatchId === null
+                ? "bg-accent text-text-inverse"
+                : "bg-surface-hover text-text-secondary hover:bg-surface-raised",
+            )}
+          >
+            All
+          </button>
+          {batches.map((b) => {
+            const sourceBadge = candidateSourceBadge({ source: b.source, profileText: null });
+            const isSel = selectedBatchId === b.batchId;
+            return (
+              <button
+                key={b.batchId}
+                type="button"
+                onClick={() => setSelectedBatchId(isSel ? null : b.batchId)}
+                title={`${b.count.toLocaleString()} candidates · ${timeAgo(new Date(b.latestAt))}`}
+                className={cn(
+                  "inline-flex items-center gap-1.5 h-6 px-2 rounded-sm text-xs font-medium transition-colors",
+                  isSel
+                    ? "bg-accent text-text-inverse"
+                    : cn(sourceBadge.className, "hover:opacity-80"),
+                )}
+              >
+                <span>{sourceBadge.label}</span>
+                <span className="opacity-70">· {b.count.toLocaleString()}</span>
+                <span className="opacity-70" suppressHydrationWarning>· {timeAgo(new Date(b.latestAt))}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Results count */}
       {search && (

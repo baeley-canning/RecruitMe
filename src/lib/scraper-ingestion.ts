@@ -20,6 +20,15 @@ import { randomUUID } from "crypto";
 import { prisma } from "./db";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { normaliseSeekUrl } from "./seek";
+// The scraper used to save the raw LinkedIn page innerText as profileText —
+// which includes the "People also viewed" sidebar, Connect/Message buttons,
+// "X is a mutual connection", and connection prompts (the SERP-looking junk).
+// Run it through the SAME cleaner the browser-extension capture path uses so
+// scraped profiles match the curated standard instead of dumping page chrome.
+import {
+  sanitizeCapturedLinkedInText,
+  extractIdentityFromLinkedInProfileText,
+} from "./linkedin-capture";
 import {
   identityMergeKey,
   mergeKeyToString,
@@ -37,9 +46,15 @@ export interface IngestArgs {
   name?: string | null;
   headline?: string | null;
   location?: string | null;
+  /** Contact email captured by the scraper (Phase E). */
+  email?: string | null;
+  /** Contact phone captured by the scraper. */
+  phone?: string | null;
   /** Cross-platform: SEEK scrape may also return the candidate's LinkedIn URL. */
   linkedinUrl?: string | null;
   seekUrl?: string | null;
+  /** Phase E — group rows created in the same operation for filter chips. */
+  importBatchId?: string | null;
 }
 
 export interface IngestResult {
@@ -83,6 +98,24 @@ function platformToIdentityField(platform: ScraperPlatform): {
 }
 
 export async function ingestScraperResult(args: IngestArgs): Promise<IngestResult> {
+  // Clean LinkedIn page-dump cruft (sidebar / buttons / prompts) before it ever
+  // becomes a candidate's profileText. LinkedIn-only: SEEK isn't deep-scraped
+  // and JobAdder goes to the archive, so this cleaner (LinkedIn-tuned) only
+  // applies here.
+  if (args.platform === "linkedin" && args.profileText) {
+    args.profileText = sanitizeCapturedLinkedInText(args.profileText);
+    // The LinkedIn scraper often doesn't forward result.headline even though the
+    // headline IS in the profile (search card + first body lines), so scraped
+    // candidates landed with an empty Candidate.headline. The extension capture
+    // path already solves this with extractIdentityFromLinkedInProfileText; reuse
+    // it here to back-fill the headline from the just-sanitised profileText when
+    // the scraper passed none. (Same proven extractor → same headline quality.)
+    if (!args.headline) {
+      const derived = extractIdentityFromLinkedInProfileText(args.profileText);
+      if (derived.headline) args.headline = derived.headline;
+    }
+  }
+
   const key = resolveKey(args);
   const normalisedUrl = normaliseProfileUrl(args.platform, args.profileUrl);
   const source = platformToSource(args.platform);
@@ -250,10 +283,13 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
       name: args.name ?? "Unknown",
       headline: args.headline ?? null,
       location: args.location ?? null,
+      email: args.email ?? null,
+      phone: args.phone ?? null,
       profileText: args.profileText || null,
       profileCapturedAt: args.profileText ? new Date() : null,
       source,
       candidateIdentityId: identity.id,
+      importBatchId: args.importBatchId ?? null,
     };
 
     if (args.platform === "linkedin") {

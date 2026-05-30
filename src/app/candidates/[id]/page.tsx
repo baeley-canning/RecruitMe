@@ -13,17 +13,10 @@ import {
   ChevronUp,
   Briefcase,
   Loader2,
-  Check,
   X,
-  StickyNote,
   AlertTriangle,
   Phone,
   Globe,
-  DollarSign,
-  Clock,
-  CalendarCheck,
-  Shield,
-  Heart,
   Camera,
 } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
@@ -32,6 +25,7 @@ import { formatBytes } from "@/lib/format";
 import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { ScreeningSummary } from "@/components/candidate/screening-summary";
 import { CVPreview } from "@/components/candidate/cv-preview";
 import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import { LinkedInIcon } from "@/components/candidate/icons";
@@ -72,6 +66,7 @@ interface CandidateDetail {
   headline: string | null;
   location: string | null;
   phone: string | null;
+  email: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
   seekUrl: string | null;
@@ -90,6 +85,8 @@ interface CandidateDetail {
   archivedJobCompany: string | null;
   files: CandidateFile[];
   otherJobs: OtherJob[];
+  /** JSON: {date,interviewer,format,impression,technical,culture,recommendation,updatedAt} */
+  interviewNotes: string | null;
 }
 
 const TIER_STYLE: Record<ScoreTier, { text: string; fill: string; label: string }> = {
@@ -614,32 +611,6 @@ function UploadZone({
   );
 }
 
-// A single labelled detail row — icon + label + value
-function DetailRow({
-  icon: Icon,
-  label,
-  value,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value?: string | null;
-  children?: React.ReactNode;
-}) {
-  if (!value && !children) return null;
-  return (
-    <div className="flex items-start gap-3 py-2.5 border-b border-separator last:border-0">
-      <div className="flex items-center gap-1.5 w-36 flex-shrink-0 text-xs text-text-tertiary mt-0.5">
-        <Icon className="w-3.5 h-3.5 flex-shrink-0" />
-        <span>{label}</span>
-      </div>
-      <div className="flex-1 min-w-0 text-sm text-text-primary">
-        {children ?? value}
-      </div>
-    </div>
-  );
-}
-
 /**
  * Three-state segmented control for Candidate.suitability. Click a button to
  * set; click an active button to clear back to neutral. Optimistic update via
@@ -805,14 +776,6 @@ export default function CandidateDetailPage({
     ...candidate.otherJobs,
   ];
   const hasCV = candidate.files.some((f) => f.type === "cv");
-  const hasScreeningData = !!(
-    screening.availability ||
-    screening.salaryExpectation ||
-    screening.visaStatus ||
-    screening.noticePeriod ||
-    screening.motivations ||
-    screening.notes
-  );
 
   return (
     <div className="min-h-screen bg-surface-base">
@@ -885,6 +848,7 @@ export default function CandidateDetailPage({
                     headline={rest || title || candidate.headline}
                     location={candidate.location}
                     phone={candidate.phone}
+                    email={candidate.email}
                     linkedinUrl={candidate.linkedinUrl}
                     photoUrl={getCandidatePhotoUrl({ candidateId: candidate.id, photoFileId: candidate.photoFileId })}
                     score={score}
@@ -964,6 +928,13 @@ export default function CandidateDetailPage({
                         </a>
                       ) : null}
                     </DetailField>
+                    <DetailField label="Email">
+                      {candidate.email ? (
+                        <a href={`mailto:${candidate.email}`} className="text-accent hover:text-accent-hover transition-colors break-all">
+                          {candidate.email}
+                        </a>
+                      ) : null}
+                    </DetailField>
                     <DetailField label="Location" value={candidate.location} emptyLabel="Not set" />
                     <DetailField label="Source" value={candidate.source.replace(/_/g, " ")} />
                   </div>
@@ -1025,39 +996,19 @@ export default function CandidateDetailPage({
               </CardBody>
             </Card>
 
-            {/* ── Screening data ──────────────────────────────────────────── */}
-            {hasScreeningData && (
-              <Card>
-                <CardHeader>
-                  <h2 className="text-md font-semibold text-text-primary">Screening notes</h2>
-                  {screening.screenedAt && (
-                    <span className="ml-auto text-xs text-text-tertiary" suppressHydrationWarning>
-                      Screened {timeAgo(new Date(screening.screenedAt))}
-                    </span>
-                  )}
-                </CardHeader>
-                <CardBody className="py-0">
-                  {screening.salaryExpectation && (
-                    <DetailRow icon={DollarSign} label="Salary expectation" value={screening.salaryExpectation} />
-                  )}
-                  {screening.availability && (
-                    <DetailRow icon={CalendarCheck} label="Availability" value={screening.availability} />
-                  )}
-                  {screening.noticePeriod && (
-                    <DetailRow icon={Clock} label="Notice period" value={screening.noticePeriod} />
-                  )}
-                  {screening.visaStatus && (
-                    <DetailRow icon={Shield} label="Visa / work rights" value={screening.visaStatus} />
-                  )}
-                  {screening.motivations && (
-                    <DetailRow icon={Heart} label="Motivations" value={screening.motivations} />
-                  )}
-                  {screening.notes && (
-                    <DetailRow icon={StickyNote} label="Screening notes" value={screening.notes} />
-                  )}
-                </CardBody>
-              </Card>
-            )}
+            {/* ── Screening summary (Phase E2) ──────────────────────────────
+                Consolidates the old "Screening notes" card + the standalone
+                "Notes" card + the previously-invisible interviewNotes JSON
+                into one card with a 4-tile glance + expandable long-form rows. */}
+            <ScreeningSummary
+              screening={screening}
+              interviewNotes={candidate.interviewNotes}
+              notes={notes}
+              setNotes={setNotes}
+              onSaveNotes={saveNotes}
+              notesStatus={notesStatus}
+              setNotesStatus={setNotesStatus}
+            />
 
             {/* ── Match score ─────────────────────────────────────────────── */}
             {tier && score !== null && (
@@ -1132,39 +1083,6 @@ export default function CandidateDetailPage({
               </Card>
             )}
 
-            {/* ── Notes ──────────────────────────────────────────────────── */}
-            <Card>
-              <CardHeader className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <StickyNote className="w-3.5 h-3.5 text-text-tertiary" />
-                  <h2 className="text-md font-semibold text-text-primary">Notes</h2>
-                </div>
-                {notesStatus !== "idle" && (
-                  <span
-                    className={cn(
-                      "text-xs flex items-center gap-1",
-                      notesStatus === "saved" ? "text-success" : "text-text-tertiary",
-                    )}
-                  >
-                    {notesStatus === "saving" ? (
-                      <><Loader2 className="w-3 h-3 animate-spin" />Saving…</>
-                    ) : (
-                      <><Check className="w-3 h-3" />Saved</>
-                    )}
-                  </span>
-                )}
-              </CardHeader>
-              <CardBody>
-                <textarea
-                  value={notes}
-                  onChange={(e) => { setNotes(e.target.value); setNotesStatus("idle"); }}
-                  onBlur={saveNotes}
-                  rows={4}
-                  placeholder="Add notes about this candidate…"
-                  className="w-full text-base text-text-primary bg-surface-sunken border border-separator rounded px-3 py-2 placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus resize-none transition-all"
-                />
-              </CardBody>
-            </Card>
           </div>
 
           {/* RIGHT — contact/meta, documents, jobs */}

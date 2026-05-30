@@ -288,7 +288,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
               </p>
               <div className="space-y-2">
                 {[
-                  { label: "SerpAPI", required: true, env: "SERPAPI_API_KEY", desc: "Searches Google for LinkedIn profiles. 100 searches/month free.", url: "https://serpapi.com" },
+                  { label: "People Data Labs", required: false, env: "PDL_API_KEY", desc: "Candidate search + enrichment. 100 free calls/month. LinkedIn/SEEK discovery uses the local scraper — no key needed.", url: "https://peopledatalabs.com" },
                 ].map(({ label, required, env, desc, url }) => (
                   <div key={env} className="flex items-start gap-3 p-3 bg-surface-sunken rounded border border-separator">
                     <div>

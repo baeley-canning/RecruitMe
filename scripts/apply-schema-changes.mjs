@@ -22,7 +22,44 @@ async function step(label, fn) {
 
 // 1. Deduplicate candidates on (jobId, linkedinUrl) so the unique index can exist.
 //    Only deduplicates rows where BOTH jobId and linkedinUrl are non-null.
+//
+//    SAFETY GUARD: this DELETE runs on EVERY boot/deploy. A regression in the
+//    DISTINCT ON keep-set could silently wipe real candidates. So before the
+//    destructive DELETE we dry-run the exact same NOT IN predicate as a SELECT
+//    count, and ABORT (throw — no delete) if the would-delete count is
+//    implausibly large (> 5% of the table OR > 500 rows). A legitimate dedupe
+//    pass removes a handful of true duplicates; anything at that scale means
+//    the keep-set is broken and a human must investigate before data is lost.
 await step("deduplicate candidates", async () => {
+  const [{ total, would_delete }] = await prisma.$queryRaw`
+    SELECT
+      (SELECT COUNT(*) FROM "Candidate")::int AS total,
+      (
+        SELECT COUNT(*)::int FROM "Candidate"
+        WHERE "linkedinUrl" IS NOT NULL
+          AND "jobId" IS NOT NULL
+          AND id NOT IN (
+            SELECT DISTINCT ON ("jobId", "linkedinUrl") id
+            FROM "Candidate"
+            WHERE "linkedinUrl" IS NOT NULL
+              AND "jobId" IS NOT NULL
+            ORDER BY "jobId", "linkedinUrl",
+                     COALESCE("matchScore", -1) DESC,
+                     "updatedAt" DESC
+          )
+      ) AS would_delete
+  `;
+  const MAX_ROWS = 500;
+  const MAX_FRACTION = 0.05;
+  const fractionCap = Math.floor(total * MAX_FRACTION);
+  if (would_delete > MAX_ROWS || would_delete > fractionCap) {
+    throw new Error(
+      `dedupe would delete ${would_delete} of ${total} candidate(s) — ` +
+        `exceeds safety threshold (> ${MAX_ROWS} rows OR > ${MAX_FRACTION * 100}% = ${fractionCap} rows). ` +
+        `Refusing to DELETE. The DISTINCT ON keep-set is likely broken — investigate before re-running.`
+    );
+  }
+
   const deleted = await prisma.$executeRaw`
     DELETE FROM "Candidate"
     WHERE "linkedinUrl" IS NOT NULL
@@ -37,7 +74,7 @@ await step("deduplicate candidates", async () => {
                  "updatedAt" DESC
       )
   `;
-  console.log(`  removed ${deleted} duplicate(s)`);
+  console.log(`  removed ${deleted} duplicate(s) (of ${total} total, ${would_delete} predicted)`);
 });
 
 // 2. Job.lastScoredAt + lastParsedAt
@@ -684,6 +721,217 @@ await step("CandidateTag table + unique (CRM/reminders Stage)", async () => {
   `;
   await prisma.$executeRaw`
     CREATE UNIQUE INDEX IF NOT EXISTS "CandidateTag_orgId_label_key" ON "CandidateTag"("orgId", "label")
+  `;
+});
+
+// 27. Candidate.importBatchId (Phase E — group rows created in one bulk
+//     import operation, e.g. a JobAdder library pull). Additive, nullable,
+//     no constraint. Index by (orgId, importBatchId) so the library filter
+//     query stays cheap as the column population grows.
+await step("Candidate.importBatchId for batch-import grouping", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "importBatchId" TEXT
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_orgId_importBatchId_idx" ON "Candidate"("orgId", "importBatchId") WHERE "importBatchId" IS NOT NULL
+  `;
+});
+
+// 28. Candidate.email (Phase E1 — primary contact email, surfaced on every
+//     candidate view). Additive, nullable, no constraint. JobAdder import
+//     and the scraper write this; no backfill needed for older rows.
+await step("Candidate.email for primary contact email", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "email" TEXT
+  `;
+});
+
+// 31. CandidatePoolSync — pool-share opt-in audit + per-row sync state
+//     (Phase J5). When the customer opts in (OPT_IN_CANDIDATE_POOL=true
+//     in box.env, set after they sign the data-sharing T&Cs), a nightly
+//     cron diffs Candidate rows updated since last sync and uploads the
+//     non-PII canonical fields to the seller's central pool DB. This
+//     table tracks the per-row "uploaded?" state so we don't re-upload
+//     and so the customer can audit what's been shared.
+//
+//     The actual upload pipe lives in appliance/pool-sync/sync.mjs and
+//     stays inert when the env flag is false. Schema is shipped now so
+//     all boxes have the table ready when the customer flips the flag.
+await step("CandidatePoolSync table (Phase J5 — opt-in pool share)", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CandidatePoolSync" (
+      "id"            TEXT PRIMARY KEY,
+      "candidateId"   TEXT NOT NULL UNIQUE,
+      "uploadedAt"    TIMESTAMP(3),
+      "uploadedHash"  TEXT,
+      "lastError"     TEXT,
+      "createdAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CandidatePoolSync_uploadedAt_idx" ON "CandidatePoolSync"("uploadedAt")
+  `;
+});
+
+// 30. ScrapeJob.priority — sort-key for worker poll order (Phase H).
+//     Live recruiter searches enqueue with priority=100; background
+//     flywheel discovery runs at the default 0. Old composite index
+//     replaced with (status, priority, createdAt) for the priority-aware
+//     poll ORDER BY. Idempotent; safe to re-run.
+await step("ScrapeJob.priority for live-search queue jumping", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "ScrapeJob" ADD COLUMN IF NOT EXISTS "priority" INTEGER NOT NULL DEFAULT 0
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ScrapeJob_status_priority_createdAt_idx" ON "ScrapeJob"("status", "priority" DESC, "createdAt")
+  `;
+});
+
+// 29. Candidate.searchTsv — generated weighted tsvector for boolean FTS
+//     (Phase F). One GIN-indexed column built from name(A) / headline(B) /
+//     location(C) / profileText(D), so ts_rank_cd ranks name hits higher
+//     than body hits without needing per-field tsvectors. GENERATED column
+//     means zero app-side maintenance — Postgres rebuilds it on every row
+//     write. Prisma 5.22 has no first-class tsvector mapping; we declare
+//     it as Unsupported("tsvector") in the schema so `prisma db push` leaves
+//     it alone, and query through $queryRaw.
+await step("Candidate.searchTsv generated tsvector + GIN (Phase F boolean search)", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "searchTsv" tsvector
+    GENERATED ALWAYS AS (
+      setweight(to_tsvector('english', coalesce("name", '')), 'A') ||
+      setweight(to_tsvector('english', coalesce("headline", '') || ' ' || coalesce("archivedJobTitle", '')), 'B') ||
+      setweight(to_tsvector('english', coalesce("location", '') || ' ' || coalesce("archivedJobCompany", '')), 'C') ||
+      setweight(to_tsvector('english', coalesce("profileText", '')), 'D')
+    ) STORED
+  `;
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_searchTsv_gin_idx" ON "Candidate" USING gin ("searchTsv")
+  `;
+});
+
+// 26. ScrapeJob.kind + searchQuery (Phase B — scraper-side LinkedIn search
+//     discovery). Same additive raw-SQL approach as the others: profileUrl
+//     becomes nullable (was NOT NULL — search jobs have no URL to scrape,
+//     only a query to run), `kind` defaults to "profile" so existing rows
+//     match today's behaviour, `searchQuery` is nullable and only set for
+//     search jobs. All idempotent — `IF NOT EXISTS` on column adds, and the
+//     DROP NOT NULL is a no-op when the column is already nullable. Safe to
+//     re-run on every startup.
+await step("ScrapeJob.kind + searchQuery (Phase B search jobs)", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "ScrapeJob" ADD COLUMN IF NOT EXISTS "kind" TEXT NOT NULL DEFAULT 'profile'
+  `;
+  await prisma.$executeRaw`
+    ALTER TABLE "ScrapeJob" ADD COLUMN IF NOT EXISTS "searchQuery" TEXT
+  `;
+  await prisma.$executeRaw`
+    ALTER TABLE "ScrapeJob" ALTER COLUMN "profileUrl" DROP NOT NULL
+  `;
+});
+
+// 36. SearchRun — durable org-scoped background search (Phase K).
+await step("SearchRun table", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "SearchRun" (
+      "id"             TEXT NOT NULL,
+      "orgId"          TEXT,
+      "requestedBy"    TEXT,
+      "rawQuery"       TEXT NOT NULL,
+      "parsedQuery"    TEXT NOT NULL,
+      "location"       TEXT,
+      "sources"        TEXT NOT NULL,
+      "status"         TEXT NOT NULL DEFAULT 'queued',
+      "libraryStatus"  TEXT NOT NULL DEFAULT 'skipped',
+      "linkedinStatus" TEXT NOT NULL DEFAULT 'skipped',
+      "seekStatus"     TEXT NOT NULL DEFAULT 'skipped',
+      "libraryCount"   INTEGER NOT NULL DEFAULT 0,
+      "linkedinCount"  INTEGER NOT NULL DEFAULT 0,
+      "seekCount"      INTEGER NOT NULL DEFAULT 0,
+      "dedupedCount"   INTEGER NOT NULL DEFAULT 0,
+      "totalCount"     INTEGER NOT NULL DEFAULT 0,
+      "error"          TEXT,
+      "createdAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "completedAt"    TIMESTAMP(3),
+      "updatedAt"      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "SearchRun_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRun_orgId_createdAt_idx" ON "SearchRun"("orgId", "createdAt")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRun_orgId_status_idx" ON "SearchRun"("orgId", "status")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRun_status_updatedAt_idx" ON "SearchRun"("status", "updatedAt")`;
+});
+
+// 37. SearchRunResult — per-result rows. The @@unique index is created here
+//     with Prisma's exact generated name so `prisma db push` finds it in
+//     place and skips its data-loss pre-check.
+await step("SearchRunResult table + unique + FK", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "SearchRunResult" (
+      "id"                  TEXT NOT NULL,
+      "searchRunId"         TEXT NOT NULL,
+      "mergeKey"            TEXT NOT NULL,
+      "sources"             TEXT NOT NULL DEFAULT '[]',
+      "candidateId"         TEXT,
+      "candidateIdentityId" TEXT,
+      "profileUrl"          TEXT,
+      "name"                TEXT,
+      "headline"            TEXT,
+      "location"            TEXT,
+      "snippet"             TEXT,
+      "matchScore"          INTEGER,
+      "relevance"           DOUBLE PRECISION,
+      "rank"                INTEGER,
+      "createdAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "SearchRunResult_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "SearchRunResult_searchRunId_mergeKey_key"
+    ON "SearchRunResult"("searchRunId", "mergeKey")
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRunResult_searchRunId_idx" ON "SearchRunResult"("searchRunId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRunResult_candidateId_idx" ON "SearchRunResult"("candidateId")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRunResult_searchRunId_candidateId_idx" ON "SearchRunResult"("searchRunId", "candidateId")`;
+  await prisma.$executeRaw`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'SearchRunResult_searchRunId_fkey') THEN
+        ALTER TABLE "SearchRunResult"
+          ADD CONSTRAINT "SearchRunResult_searchRunId_fkey"
+          FOREIGN KEY ("searchRunId") REFERENCES "SearchRun"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
+});
+
+// 38. ScrapeJob.searchRunId — nullable add + index + FK (NOT VALID, then validate).
+await step("ScrapeJob.searchRunId column + index + FK", async () => {
+  await prisma.$executeRaw`ALTER TABLE "ScrapeJob" ADD COLUMN IF NOT EXISTS "searchRunId" TEXT`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ScrapeJob_searchRunId_status_idx" ON "ScrapeJob"("searchRunId", "status")`;
+  await prisma.$executeRaw`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ScrapeJob_searchRunId_fkey') THEN
+        ALTER TABLE "ScrapeJob"
+          ADD CONSTRAINT "ScrapeJob_searchRunId_fkey"
+          FOREIGN KEY ("searchRunId") REFERENCES "SearchRun"("id")
+          ON DELETE SET NULL ON UPDATE CASCADE NOT VALID;
+      END IF;
+    END $$
+  `;
+});
+
+await step("validate ScrapeJob.searchRunId FK", async () => {
+  await prisma.$executeRaw`
+    DO $$ DECLARE is_valid BOOLEAN;
+    BEGIN
+      SELECT convalidated INTO is_valid FROM pg_constraint WHERE conname = 'ScrapeJob_searchRunId_fkey';
+      IF is_valid IS FALSE THEN
+        ALTER TABLE "ScrapeJob" VALIDATE CONSTRAINT "ScrapeJob_searchRunId_fkey";
+      END IF;
+    END $$
   `;
 });
 

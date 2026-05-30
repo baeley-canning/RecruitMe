@@ -1,0 +1,10 @@
+[Unit]
+Description=RecruitMe Box → seller candidate-pool sync (nightly, opt-in)
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -89,7 +89,9 @@ model ScrapeJob {
   id          String   @id @default(cuid())
   orgId       String
   platform    String // "linkedin" | "seek" | "jobadder"
-  profileUrl  String // the URL being scraped
+  kind        String   @default("profile") // "profile" (scrape a URL) | "search" (run a boolean search, harvest URLs)
+  profileUrl  String? // populated when kind == "profile" — the URL being scraped
+  searchQuery String? // populated when kind == "search" — the boolean query the worker runs
   status      String   @default("pending") // pending | processing | completed | failed
   result      String? // JSON: { profileText, name, headline, location, seekUrl?, linkedinUrl? }
   error       String?
@@ -97,12 +99,102 @@ model ScrapeJob {
   candidateId String? // set after ingestion creates/updates a Candidate row
   identityId  String? // set after identity resolution runs
   requestedBy String? // userId who triggered the scrape; null = system-initiated
+  // Priority for worker poll ordering (Phase H). 0 = background discovery
+  // (the flywheel), 100 = live recruiter search (jumps the queue). Worker
+  // sorts (priority desc, createdAt asc) so a live job always runs before
+  // any background work. Single Chromium means jobs still run sequentially.
+  priority    Int      @default(0)
+  // Links a scrape job to the durable SearchRun that spawned it (Phase K).
+  // Null for background flywheel jobs. When set, the job's results attach
+  // to the run and the run settles when its last child job finishes.
+  searchRunId String?
+  searchRun   SearchRun? @relation(fields: [searchRunId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([orgId, status])
   @@index([orgId, platform])
-  @@index([status, createdAt]) // worker poll query
+  @@index([status, priority, createdAt]) // worker poll query — priority-ordered
+  @@index([searchRunId, status]) // run completion check: count pending|processing children
+}
+
+// ── Durable multi-source search (Phase K) ──────────────────────────────────
+// Org-scoped background talent search. Captures the recruiter's intent once
+// and survives navigation: library FTS attaches synchronously, LinkedIn/SEEK
+// discovery runs asynchronously via child ScrapeJobs (kind="search" →
+// harvested URLs → kind="profile" → ingest). Results attach as
+// SearchRunResult rows; the run flips terminal when its last child ScrapeJob
+// settles (settleRunIfDone), backstopped by a sweep. See src/lib/search-run.ts.
+model SearchRun {
+  id          String  @id @default(cuid())
+  orgId       String? // nullable: owner runs span all accessible orgs
+  requestedBy String? // userId who started the run; null = system
+  rawQuery    String
+  parsedQuery String // JSON: { raw, mustHave, anyOf, mustNot, hasErrors, errors }
+  location    String?
+  sources     String // JSON string[]: subset of ["library","linkedin","seek"]
+
+  // Overall lifecycle: queued → running → (complete | partial | failed).
+  status String @default("queued")
+
+  // Per-source sub-status as SEPARATE COLUMNS (NOT a JSON blob) so each
+  // source's write is an independent column update — no read-modify-write
+  // race under concurrent worker PATCHes. Each: skipped|pending|running|complete|failed.
+  libraryStatus  String @default("skipped")
+  linkedinStatus String @default("skipped")
+  seekStatus     String @default("skipped")
+
+  libraryCount  Int @default(0)
+  linkedinCount Int @default(0)
+  seekCount     Int @default(0)
+  dedupedCount  Int @default(0) // Tier-1-key collisions only
+  totalCount    Int @default(0)
+
+  error       String?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  results    SearchRunResult[]
+  scrapeJobs ScrapeJob[]
+
+  @@index([orgId, createdAt])
+  @@index([orgId, status])
+  @@index([status, updatedAt]) // sweep: find stuck non-terminal runs cheaply
+}
+
+// One row per result surfaced into a run. Two flavours:
+//  • library hit  → candidateId set immediately, snapshot copied from Candidate
+//  • scraper hit  → candidateId null until the worker ingests the profile
+model SearchRunResult {
+  id          String    @id @default(cuid())
+  searchRunId String
+  searchRun   SearchRun @relation(fields: [searchRunId], references: [id], onDelete: Cascade)
+
+  // identityMergeKey() string, or synthetic lib:<id> / li:<url> when no Tier-1 key.
+  mergeKey String
+
+  sources String @default("[]") // JSON string[]: e.g. ["library","linkedin"]
+
+  candidateId         String?
+  candidateIdentityId String?
+
+  profileUrl String?
+  name       String?
+  headline   String?
+  location   String?
+  snippet    String?
+  matchScore Int?
+  relevance  Float?
+  rank       Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([searchRunId, mergeKey]) // dedupe + ON CONFLICT target
+  @@index([searchRunId])
+  @@index([candidateId])
+  @@index([searchRunId, candidateId]) // reconcile late-arriving ingest to existing library row
 }
 
 // ── CRM (Stage 1, flag-gated FEATURES_CRM_ENABLED) ─────────────────────────
@@ -293,6 +385,12 @@ model Candidate {
   jobAdderUrl         String? // JobAdder candidate profile URL — set manually until API integration
   seekUrl             String? // SEEK profile URL — set manually now, by the mini-PC scraper later. Identity key (lowest precedence after LinkedIn + JobAdder).
   phone               String? // Primary contact phone — set by Firmable enrichment (preferred mobile; falls back to first available). UI display field.
+  email               String? // Primary contact email — set by JobAdder import / scraper / manual entry. UI display field.
+  // NOTE: a generated `searchTsv tsvector` column exists on this table in
+  // Postgres (Phase F boolean search) — see apply-schema-changes.mjs step 29.
+  // It is intentionally NOT modelled in Prisma: `prisma db push` can't
+  // round-trip GENERATED columns and tries to drop+recreate them on every
+  // startup. The FTS path queries it via $queryRaw from src/lib/talent-search/library.ts.
   firmableData        String? // JSON: full Firmable People response (other phones, emails, deliverability flags). Source-of-truth for "what else did the lookup return".
   firmableEnrichedAt  DateTime? // Last successful Firmable lookup; gates the 90-day re-enrichment check.
   profileText         String? // Raw pasted/captured profile text
@@ -311,6 +409,10 @@ model Candidate {
   statusHistory       String? // JSON: [{status, changedAt}]
   contactedAt         DateTime?
   source              String    @default("manual") // manual | serpapi | pdl | extension | talent_pool | jobadder_import | seek | scraper
+  // Groups candidates created together in one bulk-import operation. Set per
+  // batch (one cuid per import run) so the library can filter "show me only
+  // candidates from yesterday's JobAdder sync" etc. Null for single creates.
+  importBatchId       String?
   // Recruiter-set marker. "preferred" → boost in shortlists; "excluded" →
   // hide from search results. Mirrors JobAdder's Suitability field. Null is
   // the default neutral state. Library list + multi-source search will use

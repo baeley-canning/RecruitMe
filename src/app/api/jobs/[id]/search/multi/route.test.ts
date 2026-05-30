@@ -5,10 +5,12 @@
  *   • Auth chain (unauthenticated / forbidden)
  *   • Body validation (missing query / bad sources)
  *   • Source selection (library only / linkedin only / both)
- *   • SerpAPI key resolution (env vs Setting vs missing)
- *   • Partial failure tolerance (one source throws → other still returns)
+ *   • Scraper-only LinkedIn/SEEK discovery (Phase K — SerpAPI removed):
+ *       - enqueueSearchJob fired at priority=100 when discovery enabled
+ *       - errors.linkedin when discovery disabled
+ *   • Partial failure tolerance (library throws → still 200)
  *   • Rate limit
- *   • Aggregation + counts pass-through
+ *   • Aggregation + counts pass-through (fromLibrary / fromScraper)
  *   • recordUsage fire-and-forget call
  */
 
@@ -29,42 +31,48 @@ const usageMocks = vi.hoisted(() => ({
   recordUsage: vi.fn(),
 }));
 
-const settingsMocks = vi.hoisted(() => ({
-  getServerSetting: vi.fn(),
-}));
-
 const libraryMocks = vi.hoisted(() => ({
   searchLibrary: vi.fn(),
 }));
 
-const linkedinMocks = vi.hoisted(() => ({
-  searchLinkedIn: vi.fn(),
+const flagMocks = vi.hoisted(() => ({
+  isScraperDiscoveryEnabled: vi.fn(),
+}));
+
+const queueMocks = vi.hoisted(() => ({
+  enqueueSearchJob: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/org-access", () => orgAccessMocks);
 vi.mock("@/lib/usage", () => usageMocks);
-vi.mock("@/lib/settings", () => settingsMocks);
 vi.mock("@/lib/talent-search/library", () => libraryMocks);
-vi.mock("@/lib/talent-search/linkedin", () => linkedinMocks);
+vi.mock("@/lib/feature-flags", () => flagMocks);
+vi.mock("@/lib/scrape-queue", () => queueMocks);
 vi.mock("@/lib/error-reporting", () => ({
   reportError: vi.fn(),
 }));
 
 import { POST } from "@/app/api/jobs/[id]/search/multi/route";
 
+let scraperJobSeq = 0;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  scraperJobSeq = 0;
   // Sensible defaults — each test overrides what it cares about.
   sessionMocks.getAuth.mockResolvedValue({ userId: "u1", orgId: "org-A", isOwner: false });
   sessionMocks.requireJobAccess.mockResolvedValue({ job: { id: "job-1" }, error: null });
   orgAccessMocks.getAccessibleOrgIds.mockResolvedValue(["org-A"]);
   usageMocks.checkRateLimit.mockResolvedValue({ allowed: true });
   usageMocks.recordUsage.mockResolvedValue(undefined);
-  settingsMocks.getServerSetting.mockResolvedValue(null);
   libraryMocks.searchLibrary.mockResolvedValue([]);
-  linkedinMocks.searchLinkedIn.mockResolvedValue([]);
-  delete process.env.SERPAPI_API_KEY;
+  // Discovery enabled by default — most tests exercise the live scraper path.
+  flagMocks.isScraperDiscoveryEnabled.mockReturnValue(true);
+  // Each enqueue returns a fresh job id so liveJobs entries are distinguishable.
+  queueMocks.enqueueSearchJob.mockImplementation(async () => ({
+    id: `scrape-${++scraperJobSeq}`,
+  }));
 });
 
 function makeReq(body: unknown): Request {
@@ -92,18 +100,6 @@ function lib(over: Record<string, unknown> = {}) {
     profileTextSnippet: "Snippet",
     candidateIdentityId: "ident-1",
     createdAt: new Date(),
-    ...over,
-  };
-}
-
-function li(over: Record<string, unknown> = {}) {
-  return {
-    linkedinUrl: "https://www.linkedin.com/in/linkedin-person",
-    name: "LinkedIn Person",
-    headline: "Tech Lead",
-    location: "Auckland",
-    snippet: "From SerpAPI",
-    page: 1,
     ...over,
   };
 }
@@ -157,126 +153,153 @@ describe("POST /search/multi — rate limit", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/2 minutes/);
     expect(libraryMocks.searchLibrary).not.toHaveBeenCalled();
-    expect(linkedinMocks.searchLinkedIn).not.toHaveBeenCalled();
+    expect(queueMocks.enqueueSearchJob).not.toHaveBeenCalled();
   });
 });
 
-describe("POST /search/multi — source selection", () => {
-  it("library only: linkedin not called", async () => {
+describe("POST /search/multi — library results", () => {
+  it("returns library rows from searchLibrary in the response", async () => {
+    libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
+    const res = await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { results: unknown[]; counts: { fromLibrary: number } };
+    expect(body.results).toHaveLength(1);
+    expect(body.counts.fromLibrary).toBe(1);
+  });
+});
+
+describe("POST /search/multi — live scraper discovery (LinkedIn)", () => {
+  it("enqueues a priority=100 linkedin scraper job + returns it in liveJobs", async () => {
+    libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
+    const res = await POST(
+      makeReq({ query: "react", sources: ["library", "linkedin"] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(200);
+    expect(queueMocks.enqueueSearchJob).toHaveBeenCalledTimes(1);
+    expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org-A",
+        platform: "linkedin",
+        searchQuery: "react",
+        priority: 100,
+      }),
+    );
+    const body = (await res.json()) as {
+      liveJobs: Array<{ id: string; platform: string }>;
+    };
+    expect(body.liveJobs).toEqual([{ id: "scrape-1", platform: "linkedin" }]);
+  });
+
+  it("linkedin only: library not called, scraper job enqueued", async () => {
+    const res = await POST(makeReq({ query: "react", sources: ["linkedin"] }), PARAMS);
+    expect(res.status).toBe(200);
+    expect(libraryMocks.searchLibrary).not.toHaveBeenCalled();
+    expect(queueMocks.enqueueSearchJob).toHaveBeenCalledTimes(1);
+    const body = (await res.json()) as {
+      liveJobs: Array<{ platform: string }>;
+    };
+    expect(body.liveJobs).toEqual([{ id: "scrape-1", platform: "linkedin" }]);
+  });
+
+  it("default sources = [library, linkedin] when omitted from body", async () => {
+    await POST(makeReq({ query: "react" }), PARAMS);
+    expect(libraryMocks.searchLibrary).toHaveBeenCalled();
+    expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: "linkedin", priority: 100 }),
+    );
+  });
+});
+
+describe("POST /search/multi — live scraper discovery (SEEK)", () => {
+  it("seek requested + enabled: enqueues a seek job + seek entry in liveJobs", async () => {
+    const res = await POST(
+      makeReq({ query: "react", sources: ["library", "linkedin", "seek"] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(200);
+    expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: "linkedin", priority: 100 }),
+    );
+    expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: "seek", priority: 100 }),
+    );
+    const body = (await res.json()) as {
+      liveJobs: Array<{ id: string; platform: string }>;
+    };
+    expect(body.liveJobs).toContainEqual(
+      expect.objectContaining({ platform: "linkedin" }),
+    );
+    expect(body.liveJobs).toContainEqual(
+      expect.objectContaining({ platform: "seek" }),
+    );
+  });
+});
+
+describe("POST /search/multi — discovery disabled", () => {
+  it("linkedin requested + discovery disabled → errors.linkedin set, no enqueue", async () => {
+    flagMocks.isScraperDiscoveryEnabled.mockReturnValue(false);
+    libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
+    const res = await POST(
+      makeReq({ query: "react", sources: ["library", "linkedin"] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      errors?: { linkedin?: string };
+      results: unknown[];
+      liveJobs: unknown[];
+    };
+    expect(body.errors?.linkedin).toMatch(/offline/i);
+    expect(queueMocks.enqueueSearchJob).not.toHaveBeenCalled();
+    expect(body.liveJobs).toHaveLength(0);
+    // Library still returned its result.
+    expect(body.results).toHaveLength(1);
+  });
+});
+
+describe("POST /search/multi — library-only search", () => {
+  it("library only: no enqueue, no liveJobs", async () => {
     libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
     const res = await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);
     expect(res.status).toBe(200);
     expect(libraryMocks.searchLibrary).toHaveBeenCalledTimes(1);
-    expect(linkedinMocks.searchLinkedIn).not.toHaveBeenCalled();
-  });
-
-  it("linkedin only: library not called", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([li()]);
-    const res = await POST(makeReq({ query: "react", sources: ["linkedin"] }), PARAMS);
-    expect(res.status).toBe(200);
-    expect(libraryMocks.searchLibrary).not.toHaveBeenCalled();
-    expect(linkedinMocks.searchLinkedIn).toHaveBeenCalledTimes(1);
-  });
-
-  it("both sources: both called in parallel", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([li()]);
-    const res = await POST(makeReq({ query: "react" }), PARAMS);
-    expect(res.status).toBe(200);
-    expect(libraryMocks.searchLibrary).toHaveBeenCalledTimes(1);
-    expect(linkedinMocks.searchLinkedIn).toHaveBeenCalledTimes(1);
-  });
-
-  it("default sources = [library, linkedin] when omitted from body", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    await POST(makeReq({ query: "react" }), PARAMS);
-    expect(libraryMocks.searchLibrary).toHaveBeenCalled();
-    expect(linkedinMocks.searchLinkedIn).toHaveBeenCalled();
+    expect(queueMocks.enqueueSearchJob).not.toHaveBeenCalled();
+    const body = (await res.json()) as { liveJobs: unknown[] };
+    expect(body.liveJobs).toHaveLength(0);
   });
 });
 
-describe("POST /search/multi — SerpAPI key resolution", () => {
-  it("uses env var when SERPAPI_API_KEY is set", async () => {
-    process.env.SERPAPI_API_KEY = "env-key";
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([]);
-    await POST(makeReq({ query: "react", sources: ["linkedin"] }), PARAMS);
-    const call = linkedinMocks.searchLinkedIn.mock.calls[0][0] as { serpApiKey: string };
-    expect(call.serpApiKey).toBe("env-key");
-    expect(settingsMocks.getServerSetting).not.toHaveBeenCalled();
-  });
-
-  it("falls through to Setting when no env var", async () => {
-    settingsMocks.getServerSetting.mockResolvedValueOnce("setting-key");
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([]);
-    await POST(makeReq({ query: "react", sources: ["linkedin"] }), PARAMS);
-    expect(settingsMocks.getServerSetting).toHaveBeenCalledWith("SERPAPI_API_KEY");
-    const call = linkedinMocks.searchLinkedIn.mock.calls[0][0] as { serpApiKey: string };
-    expect(call.serpApiKey).toBe("setting-key");
-  });
-
-  it("does NOT load Setting when linkedin source is not requested", async () => {
-    await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);
-    expect(settingsMocks.getServerSetting).not.toHaveBeenCalled();
-  });
-
-  it("returns 200 with error.linkedin when key is missing AND linkedin requested", async () => {
+describe("POST /search/multi — counts", () => {
+  it("response counts include fromLibrary and fromScraper", async () => {
     libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
-    const res = await POST(makeReq({ query: "react", sources: ["library", "linkedin"] }), PARAMS);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { errors?: { linkedin?: string }; results: unknown[] };
-    expect(body.errors?.linkedin).toMatch(/SerpAPI key not configured/);
-    // Library still returned its result
-    expect(body.results.length).toBe(1);
-    // LinkedIn search function was NOT called (key missing)
-    expect(linkedinMocks.searchLinkedIn).not.toHaveBeenCalled();
+    const res = await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);
+    const body = (await res.json()) as {
+      counts: { fromLibrary: number; fromScraper: number };
+    };
+    expect(body.counts).toHaveProperty("fromLibrary", 1);
+    expect(body.counts).toHaveProperty("fromScraper", 0);
   });
 });
 
 describe("POST /search/multi — partial failure tolerance", () => {
-  it("library throws, linkedin succeeds → 200 with errors.library + linkedin results", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
+  it("library throws → 200 with errors.library + still enqueues scraper job", async () => {
     libraryMocks.searchLibrary.mockRejectedValueOnce(new Error("DB down"));
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([li()]);
-    const res = await POST(makeReq({ query: "react" }), PARAMS);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { errors?: { library?: string }; results: unknown[]; counts: { total: number } };
-    expect(body.errors?.library).toBe("DB down");
-    expect(body.counts.total).toBe(1);
-  });
-
-  it("linkedin throws, library succeeds → 200 with errors.linkedin + library results", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
-    linkedinMocks.searchLinkedIn.mockRejectedValueOnce(new Error("SerpAPI down"));
-    const res = await POST(makeReq({ query: "react" }), PARAMS);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { errors?: { linkedin?: string }; counts: { total: number } };
-    expect(body.errors?.linkedin).toBe("SerpAPI down");
-    expect(body.counts.total).toBe(1);
-  });
-
-  it("both sources throw → 200 with both errors and empty results", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    libraryMocks.searchLibrary.mockRejectedValueOnce(new Error("DB down"));
-    linkedinMocks.searchLinkedIn.mockRejectedValueOnce(new Error("SerpAPI down"));
     const res = await POST(makeReq({ query: "react" }), PARAMS);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      errors?: { library?: string; linkedin?: string };
-      results: unknown[];
+      errors?: { library?: string };
       counts: { total: number };
     };
     expect(body.errors?.library).toBe("DB down");
-    expect(body.errors?.linkedin).toBe("SerpAPI down");
-    expect(body.results).toHaveLength(0);
+    // LinkedIn discovery still fires because the library shortfall is full.
+    expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: "linkedin", priority: 100 }),
+    );
   });
 
   it("no errors → response omits the errors field", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
     libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([li()]);
     const res = await POST(makeReq({ query: "react" }), PARAMS);
     const body = (await res.json()) as { errors?: unknown };
     expect(body.errors).toBeUndefined();
@@ -294,52 +317,25 @@ describe("POST /search/multi — query parsing + aggregation", () => {
     expect(body.query.anyOf).toEqual([["cto", "vp eng"]]);
     expect(body.query.mustNot).toEqual(["junior"]);
   });
-
-  it("library row + linkedin row with same URL → deduped to one row, sources=both", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    libraryMocks.searchLibrary.mockResolvedValueOnce([
-      lib({ linkedinUrl: "https://www.linkedin.com/in/shared" }),
-    ]);
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([
-      li({ linkedinUrl: "https://linkedin.com/in/shared" }),
-    ]);
-    const res = await POST(makeReq({ query: "react" }), PARAMS);
-    const body = (await res.json()) as {
-      results: Array<{ sources: string[] }>;
-      counts: { deduped: number; total: number };
-    };
-    expect(body.results).toHaveLength(1);
-    expect(body.results[0].sources).toEqual(["library", "linkedin"]);
-    expect(body.counts.deduped).toBe(1);
-    expect(body.counts.total).toBe(1);
-  });
 });
 
 describe("POST /search/multi — limit propagation", () => {
-  it("default limits: library 100, linkedin 30", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    await POST(makeReq({ query: "react" }), PARAMS);
+  it("default library limit 100", async () => {
+    await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);
     const libCall = libraryMocks.searchLibrary.mock.calls[0][0] as { limit: number };
-    const liCall = linkedinMocks.searchLinkedIn.mock.calls[0][0] as { limit: number };
     expect(libCall.limit).toBe(100);
-    expect(liCall.limit).toBe(30);
   });
 
-  it("override limits respected", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    await POST(makeReq({ query: "react", libraryLimit: 25, linkedinLimit: 10 }), PARAMS);
+  it("override library limit respected", async () => {
+    await POST(makeReq({ query: "react", sources: ["library"], libraryLimit: 25 }), PARAMS);
     const libCall = libraryMocks.searchLibrary.mock.calls[0][0] as { limit: number };
-    const liCall = linkedinMocks.searchLinkedIn.mock.calls[0][0] as { limit: number };
     expect(libCall.limit).toBe(25);
-    expect(liCall.limit).toBe(10);
   });
 });
 
 describe("POST /search/multi — recordUsage", () => {
   it("fires recordUsage with counts after successful search", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
     libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
-    linkedinMocks.searchLinkedIn.mockResolvedValueOnce([li()]);
     await POST(makeReq({ query: "react", sources: ["library", "linkedin"] }), PARAMS);
     expect(usageMocks.recordUsage).toHaveBeenCalledWith(
       "org-A",
@@ -349,16 +345,13 @@ describe("POST /search/multi — recordUsage", () => {
         route: "search/multi",
         jobId: "job-1",
         libraryCount: 1,
-        linkedinCount: 1,
         hasErrors: false,
       }),
     );
   });
 
-  it("recordUsage hasErrors=true when a source failed", async () => {
-    process.env.SERPAPI_API_KEY = "test-key";
-    libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
-    linkedinMocks.searchLinkedIn.mockRejectedValueOnce(new Error("SerpAPI down"));
+  it("recordUsage hasErrors=true when the library source failed", async () => {
+    libraryMocks.searchLibrary.mockRejectedValueOnce(new Error("DB down"));
     await POST(makeReq({ query: "react" }), PARAMS);
     const call = usageMocks.recordUsage.mock.calls[0];
     expect(call[3]).toMatchObject({ hasErrors: true });

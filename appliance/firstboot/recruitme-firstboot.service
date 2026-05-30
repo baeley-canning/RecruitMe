@@ -1,0 +1,19 @@
+[Unit]
+Description=RecruitMe Box first-boot provisioning
+ConditionPathExists=!/etc/recruitme/.firstboot-done
+After=network-online.target
+Wants=network-online.target
+# Block the main app + scraper from starting until firstboot finishes;
+# they refuse to boot without /etc/recruitme/app.env anyway, but explicit
+# ordering avoids confusing restart-loops during the 60s setup window.
+Before=recruitme-app.service recruitme-scraper.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/recruitme/appliance/firstboot/firstboot.mjs
+RemainAfterExit=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,6 @@
-import { reportError } from "./error-reporting";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { isPlausibleLocation } from "./location";
-import { getCityCoords, NZ_CITIES } from "./nz-cities";
+import { NZ_CITIES } from "./nz-cities";
 import { recordProviderFailure, recordProviderSuccess } from "./provider-health";
 
 export interface SearchResult {
@@ -12,10 +11,11 @@ export interface SearchResult {
   snippet: string;
   fullText?: string; // full profile text for sources that return it (PDL)
   matchedQuery?: string;
-  // "serpapi" / "pdl" cover the search providers that produce a
-  // SearchResult. Manual / extension / talent_pool / github values come
-  // from the Candidate.source field at save time.
-  source: "serpapi" | "pdl";
+  // Only PDL produces a SearchResult now (SerpAPI removed in Phase K;
+  // LinkedIn discovery routes through the durable SearchRun + scraper).
+  // Manual / extension / talent_pool / github values come from the
+  // Candidate.source field at save time.
+  source: "pdl";
 }
 
 // ─── Name / org filtering ────────────────────────────────────────────────────
@@ -46,23 +46,6 @@ function cleanSearchText(value: string): string {
   return value.replace(/\u00a0/g, " ").replace(/[ \t]{2,}/g, " ").trim();
 }
 
-function stripSearchLocationNoise(value: string): string {
-  return value
-    .replace(/\b(hybrid|remote|remotely|onsite|on-site|in office|office based|office|work from home|wfh)\b.*$/i, "")
-    .replace(/[|/]+/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .replace(/[,\-–—\s]+$/g, "")
-    .trim();
-}
-
-function buildLocationSearchTerm(location: string): string {
-  const cleaned = stripSearchLocationNoise(location);
-  if (!cleaned) return "";
-
-  const city = getCityCoords(cleaned);
-  if (city) return `${city.name} New Zealand`;
-  return cleaned;
-}
 
 // Phrases that flag a role as permanent / full-time. We exclude contract /
 // freelance / consultant titles from search results only when the role is
@@ -87,20 +70,6 @@ export function inferEmploymentType(jdOrRoleText: string | null | undefined): "p
   if (CONTRACT_ROLE_RE.test(text)) return "contract";
   if (PERMANENT_ROLE_RE.test(text)) return "permanent";
   return "unknown";
-}
-
-function buildLinkedInSearchQuery(query: string, location: string, options: { excludeContractTitles?: boolean } = {}): string {
-  const locationTerm = buildLocationSearchTerm(location);
-  // Google-specific negative-intitle clauses, passed through by SerpAPI.
-  // Excluded titles: "contract", "freelancer", "consultant" (self-employed
-  // pattern), "available for hire". Senior recruiter playbook: when the
-  // JD is explicitly permanent, these are noise.
-  const exclusion = options.excludeContractTitles
-    ? ` -intitle:"contract" -intitle:"freelancer" -intitle:"freelance" -intitle:"available for hire"`
-    : "";
-  return locationTerm
-    ? `site:linkedin.com/in ${query} ${locationTerm}${exclusion}`
-    : `site:linkedin.com/in ${query}${exclusion}`;
 }
 
 function looksLikeLocationFragment(fragment: string): boolean {
@@ -178,98 +147,6 @@ function looksLikePersonName(name: string): boolean {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length < 2 || words.length > 5) return false;
   return true;
-}
-
-/** Parse LinkedIn profiles out of a generic list of search result items */
-export function parseLinkedInResults(
-  items: Array<{ title?: string; url?: string; link?: string; snippet?: string }>,
-  source: "serpapi"
-): SearchResult[] {
-  const results: SearchResult[] = [];
-  for (const item of items) {
-    const link = item.url ?? item.link ?? "";
-    if (!link.includes("linkedin.com/in/")) continue;
-
-    const rawTitle = item.title ?? "";
-    const namePart = rawTitle.split(" - ")[0]?.split(" | ")[0]?.trim() ?? "";
-    const headlinePart = rawTitle.split(" - ")[1]?.split(" | ")[0]?.trim() ?? "";
-    const locationPart = inferLocationFromSearchText(rawTitle, item.snippet ?? "");
-
-    if (!looksLikePersonName(namePart)) continue;
-
-    // Normalise the LinkedIn URL so the Phase-1 dedupe at search/route.ts:818
-    // can collapse this profile against the PDL variant (which already runs
-    // through normaliseLinkedInUrl). Skip rows whose URL can't be parsed
-    // rather than storing the raw form and leaking a duplicate.
-    let normalisedUrl: string;
-    try {
-      normalisedUrl = normaliseLinkedInUrl(link);
-    } catch {
-      continue;
-    }
-
-    results.push({
-      name: namePart,
-      headline: headlinePart,
-      location: locationPart,
-      linkedinUrl: normalisedUrl,
-      snippet: item.snippet ?? "",
-      source,
-    });
-  }
-  return results;
-}
-
-// ─── SerpAPI (Google) ─────────────────────────────────────────────────────────
-
-export async function searchLinkedInProfiles(
-  query: string,
-  location: string,
-  start = 0,
-  resolvedKey?: string,
-  options: { excludeContractTitles?: boolean } = {},
-): Promise<SearchResult[]> {
-  const apiKey = resolvedKey || process.env.SERPAPI_API_KEY;
-  if (!apiKey) throw new Error("SERPAPI_API_KEY is not configured");
-
-  const searchQuery = buildLinkedInSearchQuery(query, location, options);
-
-  const params = new URLSearchParams({
-    engine: "google",
-    q: searchQuery,
-    api_key: apiKey,
-    num: "10",
-    start: String(start),
-    gl: "nz",
-  });
-
-  const url = `https://serpapi.com/search.json?${params}`;
-  let res: Response;
-  try {
-    // 15s ceiling mirrors the PDL fetch below — a stalled SerpAPI shouldn't
-    // be able to consume the entire search worker budget. On AbortError we
-    // log + return [] so the search batch can still proceed with PDL/pool
-    // results rather than 500-ing the whole run.
-    res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  } catch (err) {
-    recordProviderFailure("serpapi", err instanceof Error ? err.message : String(err));
-    reportError(err, { provider: "serpapi", url });
-    if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
-      return [];
-    }
-    throw err;
-  }
-  if (!res.ok) {
-    recordProviderFailure("serpapi", `${res.status} ${res.statusText}`);
-    throw new Error(`SerpAPI error: ${res.status} ${res.statusText}`);
-  }
-
-  const data = await res.json() as {
-    organic_results?: Array<{ title?: string; link?: string; snippet?: string }>;
-  };
-
-  recordProviderSuccess("serpapi");
-  return parseLinkedInResults(data.organic_results ?? [], "serpapi");
 }
 
 // ─── People Data Labs ─────────────────────────────────────────────────────────

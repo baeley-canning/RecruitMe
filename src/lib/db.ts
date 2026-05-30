@@ -30,9 +30,32 @@ function tunePoolUrl(url: string | undefined): string | undefined {
 
 function createPrisma() {
   const datasourceUrl = tunePoolUrl(process.env.DATABASE_URL);
+  // Annotate the type explicitly: hoisting this out of the inline spread makes
+  // TS infer a `{ datasourceUrl: string } | {}` union whose empty member carries
+  // an implicit `datasourceUrl?: undefined`, which isn't assignable to
+  // PrismaClientOptions. `{ datasourceUrl?: string }` keeps the spread valid.
+  const dsOpt: { datasourceUrl?: string } = datasourceUrl ? { datasourceUrl } : {};
+  // Branch construction (rather than a ternary on `log`) so the prod client keeps
+  // the literal `emit:"event"` type — that's what makes `$on("query")` below
+  // type-check. dev/SQLite keeps the quiet error/warn stdout logging.
+  if (process.env.NODE_ENV === "production") {
+    const client = new PrismaClient({
+      log: [{ emit: "event", level: "query" }, "error", "warn"],
+      ...dsOpt,
+    });
+    // Lightweight slow-query log: surfaces queries >200ms in prod logs without
+    // the firehose of logging every statement. Truncated to keep lines readable.
+    client.$on("query", (e) => {
+      if (e.duration > 200) {
+        console.warn("[slow-query] " + e.duration + "ms " + e.query.slice(0, 120));
+      }
+    });
+    return client;
+  }
+
   const client = new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-    ...(datasourceUrl ? { datasourceUrl } : {}),
+    ...dsOpt,
   });
   const databaseUrl = process.env.DATABASE_URL ?? "";
   if (databaseUrl.startsWith("file:")) {

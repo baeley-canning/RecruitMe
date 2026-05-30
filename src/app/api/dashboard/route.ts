@@ -22,6 +22,13 @@ export async function GET() {
         lastScoredAt: true,
         lastParsedAt: true,
         candidates: {
+          // Cap the nested read: aging jobs can have thousands of candidates and
+          // an unbounded select here materialized every row (7 cols each) just to
+          // compute counts + a top-3. orderBy matchScore desc keeps the highest
+          // scorers (the only ones topCandidates can surface) within the cap, so
+          // the response shape is unchanged while the worst-case read is bounded.
+          orderBy: { matchScore: "desc" },
+          take: 50,
           select: {
             id: true,
             matchScore: true,
@@ -80,21 +87,55 @@ export async function GET() {
     }),
   ]);
 
-  // Compute job health signals
+  // The nested `candidates` select above is CAPPED at 50 (top by matchScore) so
+  // an aging job can't materialize thousands of rows — that cap is only safe
+  // for the top-3 display. The per-job COUNTS must be exact, so compute them as
+  // bounded DB aggregates (no row materialization, no raw SQL):
+  const jobIds = jobs.map((j) => j.id);
+  const [byJob, shortlistedByJob, needsFetchByJob] = jobIds.length
+    ? await Promise.all([
+        // total (_all), scored (non-null matchScore), fetched (non-null
+        // profileCapturedAt) and avg score — all in one grouped query.
+        prisma.candidate.groupBy({
+          by: ["jobId"],
+          where: { jobId: { in: jobIds } },
+          _count: { _all: true, matchScore: true, profileCapturedAt: true },
+          _avg: { matchScore: true },
+        }),
+        prisma.candidate.groupBy({
+          by: ["jobId"],
+          where: { jobId: { in: jobIds }, status: "shortlisted" },
+          _count: { _all: true },
+        }),
+        prisma.candidate.groupBy({
+          by: ["jobId"],
+          where: { jobId: { in: jobIds }, matchScore: { not: null }, profileCapturedAt: null },
+          _count: { _all: true },
+        }),
+      ])
+    : [[], [], []];
+  const num = (v: unknown) => (typeof v === "number" ? v : 0);
+  const totalBy = new Map(byJob.map((g) => [g.jobId, num(g._count._all)]));
+  const scoredBy = new Map(byJob.map((g) => [g.jobId, num(g._count.matchScore)]));
+  const fetchedBy = new Map(byJob.map((g) => [g.jobId, num(g._count.profileCapturedAt)]));
+  const avgBy = new Map(byJob.map((g) => [g.jobId, g._avg.matchScore == null ? null : Math.round(g._avg.matchScore)]));
+  const shortlistedBy = new Map(shortlistedByJob.map((g) => [g.jobId, num(g._count._all)]));
+  const needsFetchBy = new Map(needsFetchByJob.map((g) => [g.jobId, num(g._count._all)]));
+
+  // Compute job health signals (counts from the exact aggregates above;
+  // topCandidates from the capped, matchScore-ordered nested select).
   const jobStats = jobs.map((job) => {
-    const all        = job.candidates;
-    const scored     = all.filter((c) => c.matchScore !== null);
-    const shortlisted = all.filter((c) => c.status === "shortlisted").length;
-    const fetched    = all.filter((c) => c.profileCapturedAt).length;
-    const needsFetch = all.filter((c) => !c.profileCapturedAt && c.matchScore !== null).length;
-    const avgScore   = scored.length
-      ? Math.round(scored.reduce((s, c) => s + (c.matchScore ?? 0), 0) / scored.length)
-      : null;
+    const total = totalBy.get(job.id) ?? 0;
+    const scored = scoredBy.get(job.id) ?? 0;
+    const shortlisted = shortlistedBy.get(job.id) ?? 0;
+    const fetched = fetchedBy.get(job.id) ?? 0;
+    const needsFetch = needsFetchBy.get(job.id) ?? 0;
+    const avgScore = avgBy.get(job.id) ?? null;
     // "Top candidates" = anything not in the "poor" tier (40+) and not yet
-    // actioned. Tier definition lives in lib/score-utils so threshold stays
-    // aligned with the recruiter-visible tier labels.
-    const topCandidates = scored
-      .filter((c) => scoreTier(c.matchScore ?? 0, "match") !== "poor" && !["shortlisted","contacted","interviewing","offer_sent","hired","declined","rejected"].includes(c.status))
+    // actioned. The take:50 cap is matchScore-desc, so the genuine top-3 are
+    // always present.
+    const topCandidates = job.candidates
+      .filter((c) => c.matchScore !== null && scoreTier(c.matchScore ?? 0, "match") !== "poor" && !["shortlisted","contacted","interviewing","offer_sent","hired","declined","rejected"].includes(c.status))
       .sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0))
       .slice(0, 3)
       .map(({ id, name, headline, location, matchScore }) => ({ id, name, headline, location, matchScore }));
@@ -107,15 +148,15 @@ export async function GET() {
       title: job.title,
       company: job.company,
       location: job.location,
-      totalCandidates: all.length,
-      scored: scored.length,
+      totalCandidates: total,
+      scored,
       fetched,
       needsFetch,
       shortlisted,
       avgScore,
       topCandidates,
       staleScores,
-      needsAttention: all.length > 0 && shortlisted === 0 && scored.length > 0,
+      needsAttention: total > 0 && shortlisted === 0 && scored > 0,
     };
   });
 
@@ -125,8 +166,8 @@ export async function GET() {
     recentSearches,
     totals: {
       activeJobs: jobs.length,
-      totalCandidates: jobs.reduce((s, j) => s + j.candidates.length, 0),
-      shortlisted: jobs.reduce((s, j) => s + j.candidates.filter(c => c.status === "shortlisted").length, 0),
+      totalCandidates: jobStats.reduce((s, j) => s + j.totalCandidates, 0),
+      shortlisted: jobStats.reduce((s, j) => s + j.shortlisted, 0),
       capturedThisWeek: recentCaptures.length,
     },
   });

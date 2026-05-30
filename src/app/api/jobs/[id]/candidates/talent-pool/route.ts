@@ -17,6 +17,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
@@ -88,6 +89,9 @@ export async function POST(
       { status: 400 }
     );
   }
+  // One batch id per "auto-import N from pool" call so the resulting rows
+  // can be filtered as a single group in the library (Phase E).
+  const importBatchId = randomUUID();
   const { maxResults } = parsed.data;
 
   const { job, error } = await requireJobAccess(jobId, auth);
@@ -401,6 +405,7 @@ export async function POST(
           profileText: row.profileText,
           source: "talent_pool",
           status: "new",
+          importBatchId,
           ...(row.profileCapturedAt ? { profileCapturedAt: row.profileCapturedAt } : {}),
         },
         update: {

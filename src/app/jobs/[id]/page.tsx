@@ -59,6 +59,7 @@ interface Candidate {
   jobAdderUrl: string | null;
   seekUrl: string | null;
   phone: string | null;
+  email: string | null;
   photoFileId: string | null;
   profileText: string | null;
   /** Cross-job presence: this candidate's LinkedIn URL also matches one or

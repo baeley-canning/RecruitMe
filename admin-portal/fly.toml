@@ -1,0 +1,29 @@
+# Fly.io deployment for the RecruitMe admin portal.
+# Run: fly launch (first time) / fly deploy / fly secrets set ADMIN_PASSWORD=...
+#
+# Persistence: a 1 GB volume mounted at /data holds the SQLite file.
+# Rough cost: shared-cpu-1x (256 MB) + 1 GB volume = ~$2-3/mo.
+
+app = "recruitme-admin"   # rename in `fly launch`
+primary_region = "syd"    # closest to NZ recruitment customer base
+
+[build]
+
+[[mounts]]
+  source = "portal_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"   # heartbeats land every 5 min; don't sleep
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"
+
+[deploy]
+  release_command = "echo no-op"   # schema is created on boot

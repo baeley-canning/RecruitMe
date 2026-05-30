@@ -74,7 +74,6 @@ vi.mock("@/lib/ai", () => ({
 }));
 
 vi.mock("@/lib/search", () => ({
-  searchLinkedInProfiles: vi.fn(),
   searchPDLProfiles: vi.fn(),
 }));
 

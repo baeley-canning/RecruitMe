@@ -23,6 +23,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { verifyScraperAuth, unauthorized } from "@/lib/session";
@@ -92,11 +93,15 @@ export async function POST(req: Request) {
   }
   const { profiles } = parsed.data;
 
+  // One batch id per POST — every row created in this request is grouped so
+  // the library filter chip can show it as "JobAdder sync at 2026-05-30 …".
+  const batchId = randomUUID();
+
   const outcomes: IngestOutcome[] = [];
 
   for (let index = 0; index < profiles.length; index++) {
     try {
-      outcomes.push(await ingestOne(profiles[index], index, auth.orgId));
+      outcomes.push(await ingestOne(profiles[index], index, auth.orgId, batchId));
     } catch (err) {
       reportError(err, { route: "ingest/candidates/batch", orgId: auth.orgId, index });
       outcomes.push({
@@ -126,6 +131,7 @@ async function ingestOne(
   p: Profile,
   index: number,
   orgId: string | null,
+  batchId: string,
 ): Promise<IngestOutcome> {
   const { linkedinUrl, jobAdderUrl, seekUrl } = cleanUrls(p);
 
@@ -193,6 +199,7 @@ async function ingestOne(
       profileText: p.profileText,
       source: "scraper",
       status: "new",
+      importBatchId: batchId,
     },
   });
   return { index, status: "created", candidateId: created.id };

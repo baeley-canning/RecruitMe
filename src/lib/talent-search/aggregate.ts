@@ -40,7 +40,22 @@ import {
   mergeKeyToString,
 } from "../identity-merge";
 import type { LibrarySearchResult } from "./library";
-import type { LinkedInSearchResult } from "./linkedin";
+
+/**
+ * A LinkedIn discovery result. Relocated here from the deleted SerpAPI-backed
+ * linkedin.ts (Phase K removed SerpAPI). The aggregator still accepts a
+ * `linkedin: LinkedInSearchResult[]` slot so scraper-harvested rows can be
+ * folded in later; the live LinkedIn path is now the durable SearchRun +
+ * ScrapeJob pipeline, not a synchronous search call.
+ */
+export interface LinkedInSearchResult {
+  linkedinUrl: string;
+  name: string;
+  headline: string | null;
+  location: string | null;
+  snippet: string;
+  page: number;
+}
 
 export interface UnifiedResult {
   /** Stable ID for this aggregated result. Uses the identity merge key
@@ -72,6 +87,10 @@ export interface UnifiedResult {
   snippet: string | null;
   /** SerpAPI source page (1-indexed) when from LinkedIn. */
   linkedinPage: number | null;
+  /** Keyword-relevance score from the library search (null for LinkedIn-only
+   *  rows). Used as a sort tiebreaker so DB-first results keep their
+   *  relevance order when matchScore is absent. */
+  relevance: number | null;
 }
 
 export interface AggregateInput {
@@ -229,6 +248,7 @@ function libraryToUnified(
     candidateIdentityId: row.candidateIdentityId,
     snippet: row.profileTextSnippet,
     linkedinPage: null,
+    relevance: row.relevance,
   };
 }
 
@@ -250,6 +270,7 @@ function linkedinToUnified(
     candidateIdentityId: null,
     snippet: row.snippet.length > 0 ? row.snippet : null,
     linkedinPage: row.page,
+    relevance: null,
   };
 }
 
@@ -297,6 +318,12 @@ function compareUnified(a: UnifiedResult, b: UnifiedResult): number {
   const aScore = a.matchScore ?? -Infinity;
   const bScore = b.matchScore ?? -Infinity;
   if (aScore !== bScore) return bScore - aScore;
+
+  // Relevance tiebreaker — keeps DB-first (library) results in their
+  // keyword-relevance order when neither row has an AI matchScore yet.
+  const aRel = a.relevance ?? -Infinity;
+  const bRel = b.relevance ?? -Infinity;
+  if (aRel !== bRel) return bRel - aRel;
 
   const aPage = a.linkedinPage ?? Number.POSITIVE_INFINITY;
   const bPage = b.linkedinPage ?? Number.POSITIVE_INFINITY;
