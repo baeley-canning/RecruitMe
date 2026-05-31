@@ -133,6 +133,65 @@ export async function enqueueSearchJob(args: {
   }
 }
 
+/**
+ * Llama scoring offload: enqueue a kind="score" job. Fired by the score routes
+ * ONLY when Claude is out AND the local Ollama-on-Railway is unreachable
+ * (AllProvidersFailedError) AND isLlamaScoreOffloadEnabled(). Railway has
+ * already built the prompt (buildScorePrompt) — the box just runs it against
+ * its own local Ollama and POSTs back the raw text, which the PATCH handler
+ * finalizes (finalizeScoreFromText) into the candidate's score. Railway keeps
+ * ALL prompt-building + finalize; the box only runs the model.
+ *
+ * scorePayload carries everything the box needs to make the call AND
+ * everything Railway needs to finalize the result:
+ *   { system, prompt, temperature, maxTokens, model?, finalizeCtx }
+ *
+ * priority 0 (the default) so live scrapes/searches (priority 100) always win
+ * the box's claim ordering — score offload is best-effort background work.
+ *
+ * Deduped against any in-flight score job for the same (orgId, candidateId) so
+ * a recruiter mashing re-score, or a score-all re-running the same candidate,
+ * enqueues once. Fire-and-forget; never throws.
+ */
+export async function enqueueScoreJob(args: {
+  orgId: string;
+  candidateId: string;
+  platform?: ScrapePlatform;
+  scorePayload: object;
+  requestedBy?: string | null;
+}): Promise<{ id: string } | null> {
+  try {
+    const existing = await prisma.scrapeJob.findFirst({
+      where: {
+        orgId: args.orgId,
+        candidateId: args.candidateId,
+        kind: "score",
+        status: { in: ["pending", "processing"] },
+      },
+      select: { id: true },
+    });
+    if (existing) return null; // already queued or being scored
+
+    return await prisma.scrapeJob.create({
+      data: {
+        orgId: args.orgId,
+        platform: args.platform ?? "linkedin",
+        kind: "score",
+        candidateId: args.candidateId,
+        profileUrl: null,
+        scorePayload: JSON.stringify(args.scorePayload),
+        requestedBy: args.requestedBy ?? null,
+        status: "pending",
+        priority: 0,
+      },
+      select: { id: true },
+    });
+  } catch (err) {
+    reportError(err, { route: "scrape-queue:enqueueScore", orgId: args.orgId });
+    return null;
+  }
+}
+
 /** The job fields the worker poll needs (mirrors the GET claim's select). */
 export interface ClaimedScrapeJob {
   id: string;
@@ -144,6 +203,11 @@ export interface ClaimedScrapeJob {
   searchRunId: string | null;
   priority: number;
   retryCount: number;
+  // kind="score" carries the prompt (scorePayload) the box runs against its
+  // local Ollama, keyed back to the candidate it scores (candidateId). Both
+  // are null for kind="profile"/"search" jobs.
+  scorePayload: string | null;
+  candidateId: string | null;
 }
 
 /**
@@ -184,7 +248,7 @@ export async function claimScrapeJobs(
         LIMIT ${priorityLimit}
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount"
+      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount", "scorePayload", "candidateId"
     `;
 
     const reserved = await tx.$queryRaw<ClaimedScrapeJob[]>`
@@ -196,7 +260,7 @@ export async function claimScrapeJobs(
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount"
+      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount", "scorePayload", "candidateId"
     `;
 
     return [...priorityClaim, ...reserved];

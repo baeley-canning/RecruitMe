@@ -27,6 +27,7 @@ const dbMocks = vi.hoisted(() => ({
 
 const aiMocks = vi.hoisted(() => ({
   scoreCandidateStructured: vi.fn(),
+  buildScorePrompt: vi.fn(),
   predictAcceptance: vi.fn().mockResolvedValue({
     score: 70,
     likelihood: "medium",
@@ -35,6 +36,9 @@ const aiMocks = vi.hoisted(() => ({
     summary: "Likely to consider a suitable role.",
   }),
 }));
+
+const queueMocks = vi.hoisted(() => ({ enqueueScoreJob: vi.fn().mockResolvedValue({ id: "score-job-1" }) }));
+const flagMocks = vi.hoisted(() => ({ isLlamaScoreOffloadEnabled: vi.fn().mockReturnValue(false) }));
 
 const sessionMocks = vi.hoisted(() => ({
   getAuth: vi.fn(),
@@ -63,11 +67,19 @@ vi.mock("@/lib/ai", () => ({
   withRetry: (fn: () => unknown) => fn(),
 }));
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/scrape-queue", () => queueMocks);
+vi.mock("@/lib/feature-flags", () => flagMocks);
+vi.mock("@/lib/recruiter-memory", () => ({
+  getRecruitingContext: vi.fn().mockResolvedValue(""),
+  getCorrectionsVersion: vi.fn().mockResolvedValue(0),
+}));
 vi.mock("@/lib/scoring-config", () => ({
   getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
   getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
 
+// AllProvidersFailedError is NOT mocked — the route uses `instanceof`.
+import { AllProvidersFailedError } from "@/lib/ai/chat-with-failover";
 import { POST } from "./route";
 
 // Reads all newline-delimited JSON lines from a streaming Response and returns the last one.
@@ -129,6 +141,8 @@ describe("score-all route", () => {
     scoringConfigMocks.getJobScoringWeights.mockResolvedValue(scoringConfigMocks.customWeights);
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
     dbMocks.prisma.candidate.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => data);
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(false);
+    queueMocks.enqueueScoreJob.mockResolvedValue({ id: "score-job-1" });
   });
 
   it("always rescores every candidate regardless of cache key", async () => {
@@ -249,5 +263,56 @@ describe("score-all route", () => {
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/parse data is invalid/i);
     expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+  });
+
+  // ── Llama scoring offload ──────────────────────────────────────────────────
+
+  it("offload ON: per-candidate AllProvidersFailedError → enqueues, counts queued (not failed)", async () => {
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(true);
+    const job = makeJob("job-offload");
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-off", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+    ]);
+    aiMocks.scoreCandidateStructured.mockRejectedValue(new AllProvidersFailedError(new Error("Claude 401")));
+    aiMocks.buildScorePrompt.mockReturnValue({
+      kind: "prompt",
+      system: "sys",
+      userPrompt: "user prompt",
+      temperature: 0.1,
+      maxTokens: 4096,
+      chatOpts: {},
+      finalizeCtx: { mustHaves: ["React"], niceToHaves: [], parsedRoleLocation: "Wellington", parsedRoleTitle: "Software Engineer" },
+    });
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-offload" }),
+    });
+
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 0, queued: 1, total: 1, done: true });
+    // Not flagged as failed.
+    expect(result.failedIds).toBeUndefined();
+    expect(queueMocks.enqueueScoreJob).toHaveBeenCalledTimes(1);
+    expect(queueMocks.enqueueScoreJob.mock.calls[0][0]).toMatchObject({ orgId: "org-1", candidateId: "cand-off" });
+  });
+
+  it("offload OFF: per-candidate AllProvidersFailedError → flagged failed, no enqueue (unchanged)", async () => {
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(false);
+    const job = makeJob("job-no-offload");
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-fail2", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+    ]);
+    aiMocks.scoreCandidateStructured.mockRejectedValue(new AllProvidersFailedError(new Error("Claude 401")));
+    dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({ screeningData: null });
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-no-offload" }),
+    });
+
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 0, total: 1, done: true, failedIds: ["cand-fail2"] });
+    expect(queueMocks.enqueueScoreJob).not.toHaveBeenCalled();
   });
 });

@@ -845,6 +845,19 @@ await step("ScrapeJob.kind + searchQuery (Phase B search jobs)", async () => {
   `;
 });
 
+// 41. ScrapeJob.scorePayload (Llama scoring offload). Nullable TEXT holding the
+//     JSON {system,prompt,temperature,maxTokens,model?,finalizeCtx} the box
+//     needs to run a kind="score" job's prompt against local Ollama and POST
+//     back the raw text. Nullable add is metadata-only on Postgres ≥11. Safe
+//     to re-run; only populated for kind="score" rows. Deploys 100% inert
+//     until LLAMA_SCORE_OFFLOAD=1 is set AND the box is updated to poll for
+//     score jobs.
+await step("ScrapeJob.scorePayload (Llama scoring offload)", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "ScrapeJob" ADD COLUMN IF NOT EXISTS "scorePayload" TEXT
+  `;
+});
+
 // 36. SearchRun — durable org-scoped background search (Phase K).
 await step("SearchRun table", async () => {
   await prisma.$executeRaw`

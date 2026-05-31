@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance, buildScorePrompt } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { AllProvidersFailedError } from "@/lib/ai/chat-with-failover";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
@@ -10,6 +11,8 @@ import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getRecruitingContext, getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { reportError } from "@/lib/error-reporting";
 import { mergeScoringError } from "@/lib/linkedin-capture";
+import { isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
+import { enqueueScoreJob } from "@/lib/scrape-queue";
 import { NextResponse } from "next/server";
 
 // Allow up to 5 minutes for large scoring runs. Without this, Vercel (and some
@@ -141,6 +144,10 @@ export async function POST(
   const total = candidates.length;
   let scored = 0;
   let cached = 0;
+  // Llama scoring offload: candidates handed to the box's local model because
+  // Claude AND Ollama-on-Railway were both down. Counted separately from
+  // `failed` — these aren't failures, they're deferred to the box.
+  let queued = 0;
   const failed: string[] = [];
   const encoder = new TextEncoder();
 
@@ -176,7 +183,7 @@ export async function POST(
         if (!midSpend.allowed) {
           cappedHit = true;
           send({
-            scored, cached, total,
+            scored, cached, queued, total,
             capped: true,
             spentUsd: midSpend.spentUsd,
             capUsd: midSpend.capUsd,
@@ -262,6 +269,54 @@ export async function POST(
               scored++;
               send({ scored, cached, total });
             } catch (err) {
+              // Offload path: Claude is out AND Ollama-on-Railway is
+              // unreachable (AllProvidersFailedError). With the flag on, hand
+              // this candidate's scoring prompt to the mini-PC box (its own
+              // local Ollama) instead of flagging it failed. Railway builds the
+              // prompt + finalizes the box's raw text later. Flag OFF → fall
+              // through to the existing failure-flag path (unchanged).
+              if (err instanceof AllProvidersFailedError && isLlamaScoreOffloadEnabled() && auth.orgId) {
+                const built = buildScorePrompt(
+                  candidate.profileText!,
+                  parsedRole,
+                  salary,
+                  weights,
+                  recruiterContext ?? "",
+                  auth.orgId,
+                );
+                if (built.kind === "stub") {
+                  // Deterministic stub — no model needed; score locally so the
+                  // candidate still gets a number (no offload).
+                  const breakdown = applyLocationFitOverride(
+                    built.breakdown,
+                    candidate.location,
+                    getJobTargetLocation(job, parsedRole),
+                    parsedRole.location_rules,
+                    job.isRemote,
+                    weights,
+                  );
+                  await prisma.candidate.update({
+                    where: { id: candidate.id },
+                    data: { ...deriveUpdateData(breakdown), profileTextHash: scoreCacheKey },
+                  }).catch(() => {});
+                  scored++;
+                } else {
+                  await enqueueScoreJob({
+                    orgId: auth.orgId,
+                    candidateId: candidate.id,
+                    scorePayload: {
+                      system: built.system,
+                      prompt: built.userPrompt,
+                      temperature: built.temperature,
+                      maxTokens: built.maxTokens,
+                      finalizeCtx: built.finalizeCtx,
+                    },
+                  });
+                  queued++;
+                }
+                send({ scored, cached, queued, total });
+                return;
+              }
               reportError(err, { route: "score-all", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
               failed.push(candidate.id);
               // Surface the failure on the candidate row so the recruiter
@@ -300,13 +355,13 @@ export async function POST(
       }
 
       // Final message signals completion to the client, including any failures.
-      const finalMsg: Record<string, unknown> = { scored, cached, total, done: true };
+      const finalMsg: Record<string, unknown> = { scored, cached, queued, total, done: true };
       if (cappedHit) finalMsg.capped = true;
       if (failed.length > 0) finalMsg.failedIds = failed;
       send(finalMsg);
       controller.close();
 
-      console.log(`[score-all] scored=${scored} cached=${cached} of ${total}`);
+      console.log(`[score-all] scored=${scored} cached=${cached} queued=${queued} of ${total}`);
       void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored, cached });
     },
   });

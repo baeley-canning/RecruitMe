@@ -19,6 +19,7 @@ const dbMocks = vi.hoisted(() => ({
 
 const aiMocks = vi.hoisted(() => ({
   scoreCandidateStructured: vi.fn(),
+  buildScorePrompt: vi.fn(),
   predictAcceptance: vi.fn().mockResolvedValue({
     score: 65,
     likelihood: "medium",
@@ -26,6 +27,13 @@ const aiMocks = vi.hoisted(() => ({
     signals: [],
     summary: "Mock acceptance prediction.",
   }),
+}));
+
+const queueMocks = vi.hoisted(() => ({ enqueueScoreJob: vi.fn().mockResolvedValue({ id: "score-job-1" }) }));
+const flagMocks = vi.hoisted(() => ({ isLlamaScoreOffloadEnabled: vi.fn().mockReturnValue(false) }));
+const memoryMocks = vi.hoisted(() => ({
+  getCorrectionsVersion: vi.fn().mockResolvedValue(0),
+  getRecruitingContext: vi.fn().mockResolvedValue(""),
 }));
 
 const sessionMocks = vi.hoisted(() => ({
@@ -51,11 +59,17 @@ const scoringConfigMocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/scrape-queue", () => queueMocks);
+vi.mock("@/lib/feature-flags", () => flagMocks);
+vi.mock("@/lib/recruiter-memory", () => memoryMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,
   getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
 
+// AllProvidersFailedError is NOT mocked — the route uses `instanceof`, so the
+// test must throw the real class for the offload branch to fire.
+import { AllProvidersFailedError } from "@/lib/ai/chat-with-failover";
 import { POST } from "./route";
 
 function makeBreakdown() {
@@ -125,6 +139,9 @@ describe("candidate re-score route", () => {
       ...(lastWrite ?? {}),
     }));
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(false);
+    memoryMocks.getRecruitingContext.mockResolvedValue("");
+    queueMocks.enqueueScoreJob.mockResolvedValue({ id: "score-job-1" });
   });
 
   it("rebuilds structured score data for an existing candidate", async () => {
@@ -189,5 +206,56 @@ describe("candidate re-score route", () => {
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/parse data is invalid/i);
     expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+  });
+
+  // ── Llama scoring offload ──────────────────────────────────────────────────
+
+  it("offload ON: AllProvidersFailedError → enqueues score job + returns 202 queued", async () => {
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(true);
+    aiMocks.scoreCandidateStructured.mockRejectedValue(new AllProvidersFailedError(new Error("Claude 401")));
+    aiMocks.buildScorePrompt.mockReturnValue({
+      kind: "prompt",
+      system: "sys",
+      userPrompt: "user prompt",
+      temperature: 0.1,
+      maxTokens: 4096,
+      chatOpts: {},
+      finalizeCtx: { mustHaves: ["React"], niceToHaves: [], parsedRoleLocation: "Wellington", parsedRoleTitle: "Software Engineer" },
+    });
+
+    const res = await POST(
+      new Request("http://localhost/api/jobs/job-1/candidates/cand-5/score", { method: "POST" }),
+      { params: Promise.resolve({ id: "job-1", candidateId: "cand-5" }) },
+    );
+
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body).toMatchObject({ queued: true });
+    expect(queueMocks.enqueueScoreJob).toHaveBeenCalledTimes(1);
+    const arg = queueMocks.enqueueScoreJob.mock.calls[0][0];
+    expect(arg).toMatchObject({ orgId: "org-1", candidateId: "cand-5" });
+    expect(arg.scorePayload).toMatchObject({
+      system: "sys",
+      prompt: "user prompt",
+      temperature: 0.1,
+      maxTokens: 4096,
+      finalizeCtx: expect.objectContaining({ mustHaves: ["React"] }),
+    });
+    // No candidate score write happened — it's deferred to the box.
+    expect(dbMocks.prisma.candidate.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("offload OFF: AllProvidersFailedError → 500, no enqueue (existing behavior unchanged)", async () => {
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(false);
+    aiMocks.scoreCandidateStructured.mockRejectedValue(new AllProvidersFailedError(new Error("Claude 401")));
+
+    const res = await POST(
+      new Request("http://localhost/api/jobs/job-1/candidates/cand-5/score", { method: "POST" }),
+      { params: Promise.resolve({ id: "job-1", candidateId: "cand-5" }) },
+    );
+
+    expect(res.status).toBe(500);
+    expect(queueMocks.enqueueScoreJob).not.toHaveBeenCalled();
+    expect(aiMocks.buildScorePrompt).not.toHaveBeenCalled();
   });
 });

@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured, predictAcceptance } from "@/lib/ai";
+import { scoreCandidateStructured, predictAcceptance, buildScorePrompt } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
+import { AllProvidersFailedError } from "@/lib/ai/chat-with-failover";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
-import { getCorrectionsVersion } from "@/lib/recruiter-memory";
+import { getCorrectionsVersion, getRecruitingContext } from "@/lib/recruiter-memory";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
+import { isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
+import { enqueueScoreJob } from "@/lib/scrape-queue";
 
 export async function POST(
   _req: Request,
@@ -89,7 +92,54 @@ export async function POST(
       predictAcceptance(candidate.profileText!, parsedRole, salary),
     ]);
 
-    if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
+    if (rawBreakdown.status === "rejected") {
+      // Offload path: Claude is out AND the local Ollama-on-Railway is
+      // unreachable (AllProvidersFailedError). When the offload flag is on,
+      // hand the scoring prompt to the mini-PC box (which has its own local
+      // Ollama) instead of failing the recruiter's click. Railway builds the
+      // prompt + finalizes the box's raw text later (PATCH /api/scraper/jobs).
+      // Flag OFF → fall through to the original rethrow → 500 (unchanged).
+      if (rawBreakdown.reason instanceof AllProvidersFailedError && isLlamaScoreOffloadEnabled() && auth.orgId) {
+        // Resolve recruiter context the same way scoreCandidateStructured
+        // would have, so the offloaded prompt is identical to what Claude
+        // would have received.
+        const recruiterContext = await getRecruitingContext(parsedRole, auth.orgId).catch(() => "");
+        const built = buildScorePrompt(candidate.profileText!, parsedRole, salary, weights, recruiterContext ?? "", auth.orgId);
+        if (built.kind === "stub") {
+          // Stage-1 gate produced a deterministic stub — no model needed. Score
+          // it locally (no offload) so the recruiter still gets a number.
+          const breakdown = applyLocationFitOverride(
+            built.breakdown,
+            candidate.location,
+            getJobTargetLocation(job, parsedRole),
+            parsedRole.location_rules,
+            job.isRemote,
+            weights,
+          );
+          await prisma.candidate.updateMany({
+            where: { id: candidateId, profileTextHash: candidate.profileTextHash ?? null },
+            data: { ...deriveUpdateData(breakdown), profileTextHash: scoreCacheKey },
+          });
+          return NextResponse.json(await prisma.candidate.findUnique({ where: { id: candidateId } }));
+        }
+        await enqueueScoreJob({
+          orgId: auth.orgId,
+          candidateId,
+          scorePayload: {
+            system: built.system,
+            prompt: built.userPrompt,
+            temperature: built.temperature,
+            maxTokens: built.maxTokens,
+            finalizeCtx: built.finalizeCtx,
+          },
+        });
+        return NextResponse.json(
+          { queued: true, message: "Claude unavailable — queued for the local model; check back shortly." },
+          { status: 202 },
+        );
+      }
+      throw rawBreakdown.reason;
+    }
 
     const breakdown = applyLocationFitOverride(
       rawBreakdown.value,

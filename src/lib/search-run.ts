@@ -36,6 +36,12 @@ export type RunStatus = "queued" | "running" | "complete" | "partial" | "failed"
 const STALE_PROCESSING_MS = 10 * 60 * 1000; // 10 min
 const STUCK_QUEUED_MS = 30 * 1000; // re-drive a queued run abandoned mid-POST
 const MAX_RETRIES = 3; // mirror the scraper PATCH handler
+// Llama scoring offload TTL. A kind="score" job sits in "pending" until the
+// box claims it; if the offload flag is on but the box hasn't been updated to
+// poll score jobs (or is far behind), the candidate would wait forever. After
+// this window, fail the job so the recruiter's "queued" state resolves instead
+// of hanging. 20 min is generous vs. a normal Ollama scoring call.
+const STALE_SCORE_MS = 20 * 60 * 1000; // 20 min
 
 // ── merge-key helpers ───────────────────────────────────────────────────────
 
@@ -365,25 +371,51 @@ export async function settleRunIfDone(searchRunId: string): Promise<boolean> {
 
 // ── stale-job reclaim + stuck-run sweep ──────────────────────────────────────
 
-/** Bounce ScrapeJobs stuck in 'processing' past the staleness window. */
+/** Bounce ScrapeJobs stuck in 'processing' past the staleness window.
+ *  Excludes kind='score' (Llama offload) — those have no URL to re-scrape and
+ *  are governed by failStaleScoreJobs's hard TTL instead of the retry budget. */
 export async function reclaimStaleJobs(): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_PROCESSING_MS);
   const retryable = await prisma.$executeRaw`
     UPDATE "ScrapeJob"
        SET "status"='pending', "retryCount"="retryCount"+1, "updatedAt"=now()
-     WHERE "status"='processing' AND "updatedAt" < ${cutoff} AND "retryCount" < ${MAX_RETRIES}
+     WHERE "status"='processing' AND "kind" <> 'score' AND "updatedAt" < ${cutoff} AND "retryCount" < ${MAX_RETRIES}
   `;
   const exhausted = await prisma.$executeRaw`
     UPDATE "ScrapeJob"
        SET "status"='failed', "error"=COALESCE("error",'reclaimed: worker stalled'), "updatedAt"=now()
-     WHERE "status"='processing' AND "updatedAt" < ${cutoff} AND "retryCount" >= ${MAX_RETRIES}
+     WHERE "status"='processing' AND "kind" <> 'score' AND "updatedAt" < ${cutoff} AND "retryCount" >= ${MAX_RETRIES}
   `;
   return Number(retryable) + Number(exhausted);
 }
 
-/** Reclaim zombie children, re-drive abandoned queued runs, settle finished ones. */
-export async function sweepStuckRuns(): Promise<{ reclaimed: number; swept: number }> {
+/**
+ * Fail Llama-offload score jobs that have outlived the TTL in EITHER 'pending'
+ * (box never claimed it — offload flag on but box not updated) or 'processing'
+ * (box claimed it then died / is far behind). Without this, a flag-on-but-box-
+ * behind state leaves candidates "queued" forever. Failing the job lets the UI
+ * resolve. Returns the number failed.
+ */
+export async function failStaleScoreJobs(): Promise<number> {
+  const cutoff = new Date(Date.now() - STALE_SCORE_MS);
+  const failed = await prisma.$executeRaw`
+    UPDATE "ScrapeJob"
+       SET "status"='failed',
+           "error"='score offload timed out — local model unavailable',
+           "updatedAt"=now()
+     WHERE "kind"='score'
+       AND "status" IN ('pending','processing')
+       AND "createdAt" < ${cutoff}
+  `;
+  return Number(failed);
+}
+
+/** Reclaim zombie children, re-drive abandoned queued runs, settle finished ones.
+ *  Also fails timed-out Llama-offload score jobs so the offload never strands a
+ *  candidate in "queued" when the box is behind/not-updated. */
+export async function sweepStuckRuns(): Promise<{ reclaimed: number; swept: number; scoreTimedOut: number }> {
   const reclaimed = await reclaimStaleJobs();
+  const scoreTimedOut = await failStaleScoreJobs();
 
   // (a) queued runs with no enqueue (POST aborted mid-create) → terminal from library state.
   const stuckQueued = await prisma.searchRun.findMany({
@@ -411,7 +443,7 @@ export async function sweepStuckRuns(): Promise<{ reclaimed: number; swept: numb
   });
   let swept = 0;
   for (const r of candidates) if (await settleRunIfDone(r.id)) swept++;
-  return { reclaimed, swept };
+  return { reclaimed, swept, scoreTimedOut };
 }
 
 // ── snapshot / DTO ───────────────────────────────────────────────────────────

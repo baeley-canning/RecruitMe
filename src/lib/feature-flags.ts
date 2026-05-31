@@ -69,3 +69,15 @@ export function isRemindersEnabled(): boolean {
 export function isWhiteLabelEnabled(): boolean {
   return readBool("FEATURES_WHITE_LABEL_ENABLED", false);
 }
+
+/** Poll-based Llama scoring offload. When Claude is out AND the local
+ *  Ollama-on-Railway is unreachable (AllProvidersFailedError), the score
+ *  routes enqueue a kind="score" ScrapeJob so the mini-PC box can run the
+ *  prompt against its local Ollama and POST back the raw text. OFF by default
+ *  — the enqueue path must stay 100% inert until the box is updated to poll
+ *  for score jobs, otherwise candidates queue forever. Set LLAMA_SCORE_OFFLOAD=1
+ *  to activate (exact "1" match — distinct from the lenient readBool flags so
+ *  a stray truthy value can't arm it). Toggle the box's side in the same wave. */
+export function isLlamaScoreOffloadEnabled(): boolean {
+  return process.env.LLAMA_SCORE_OFFLOAD === "1";
+}
