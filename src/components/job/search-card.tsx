@@ -38,7 +38,7 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     evaluation: string | null; avgScore: number | null;
     candidatesRejected: number | null; totalExamined: number | null;
   }>>([]);
-  const [maxResults, setMaxResults] = useState(20);
+  const [maxResults, setMaxResults] = useState(50);
   const [locationOverride, setLocationOverride] = useState<string | null>(null);
   const [relaxClearance, setRelaxClearance] = useState(false);
   // Library-only mode — when ON, the main button searches only the talent

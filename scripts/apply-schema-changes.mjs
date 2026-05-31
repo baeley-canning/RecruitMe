@@ -267,6 +267,20 @@ await step("pg_trgm + Candidate.profileText GIN index", async () => {
   `;
 });
 
+// 11b. Candidate.location trigram GIN index. The empty-query + location-filter
+//      path in src/lib/talent-search/library.ts runs
+//      `c."location" ILIKE '%'||$loc||'%'`, which can't use a btree index
+//      because of the leading wildcard. A trigram GIN index makes that
+//      substring match index-backed. pg_trgm is already created by the step
+//      above, so no CREATE EXTENSION needed here. CREATE INDEX IF NOT EXISTS
+//      is idempotent; building a GIN index is metadata-only-ish and safe on prod.
+await step("Candidate.location trigram GIN index", async () => {
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "Candidate_location_trgm_idx"
+    ON "Candidate" USING gin ("location" gin_trgm_ops)
+  `;
+});
+
 // 12. CandidateFile.dataHash column + index (paired with the duplicate-
 //     detection fix in /api/candidates/[id]/files/route.ts and the
 //     scripts/backfill-cv-hashes.mjs backfill).
