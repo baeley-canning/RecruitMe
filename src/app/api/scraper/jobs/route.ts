@@ -19,6 +19,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { isScraperEnabled } from "@/lib/feature-flags";
 import { randomUUID } from "crypto";
+import { claimScrapeJobs } from "@/lib/scrape-queue";
 
 const CLAIM_LIMIT = 5;
 
@@ -69,53 +70,15 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const orgId = url.searchParams.get("orgId");
 
-  // Claim pending jobs atomically: update status to processing, return them.
-  const whereClause = orgId
-    ? { status: "pending", orgId }
-    : { status: "pending" };
-
-  // Fetch then update — prisma doesn't support UPDATE...RETURNING in one call.
-  // Phase H: priority-aware ordering. Live recruiter searches enqueue with
-  // priority=100 and jump ahead of any background discovery jobs (priority=0).
-  // Within the same priority bucket, FIFO by createdAt.
-  const jobSelect = {
-    id: true,
-    orgId: true,
-    platform: true,
-    kind: true,
-    profileUrl: true,
-    searchQuery: true,
-    searchRunId: true, // Phase K: worker propagates this to profile children
-    priority: true, // Phase H: worker propagates this to enrichment child jobs
-    retryCount: true,
-  } as const;
-
-  // Phase K fairness: claim up to CLAIM_LIMIT-1 by priority, but RESERVE one
-  // slot for the oldest background (priority<100) job so a burst of live
-  // searches can't fully starve flywheel discovery. If no background job
-  // exists, the priority claim fills all slots as before.
-  const priorityClaim = await prisma.scrapeJob.findMany({
-    where: whereClause,
-    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
-    take: Math.max(1, CLAIM_LIMIT - 1),
-    select: jobSelect,
-  });
-  const claimedIds = new Set(priorityClaim.map((j) => j.id));
-  const reserved = await prisma.scrapeJob.findFirst({
-    where: { ...whereClause, priority: { lt: 100 }, id: { notIn: [...claimedIds] } },
-    orderBy: { createdAt: "asc" },
-    select: jobSelect,
-  });
-  const jobs = reserved ? [...priorityClaim, reserved] : priorityClaim;
+  // Claim pending jobs ATOMICALLY via Postgres FOR UPDATE SKIP LOCKED (see
+  // claimScrapeJobs). The old findMany→updateMany here was not atomic: two
+  // concurrent pollers could claim the same jobs and double-scrape. Phase H
+  // priority ordering + Phase K background-slot fairness are preserved inside.
+  const jobs = await claimScrapeJobs(orgId, CLAIM_LIMIT);
 
   if (jobs.length === 0) {
     return NextResponse.json({ jobs: [] });
   }
-
-  await prisma.scrapeJob.updateMany({
-    where: { id: { in: jobs.map((j) => j.id) } },
-    data: { status: "processing", updatedAt: new Date() },
-  });
 
   // Enrich search jobs with their SearchRun's location filter (stored on the
   // run, not the job) so the worker can scope SEEK to the recruiter's region

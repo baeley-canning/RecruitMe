@@ -27,6 +27,7 @@ import { parseBooleanQuery } from "@/lib/boolean-query";
 import { searchLibrary } from "@/lib/talent-search/library";
 import { getLibraryCandidates } from "@/lib/library";
 import { collectBoxStats } from "@/lib/box-stats";
+import { claimScrapeJobs } from "@/lib/scrape-queue";
 import {
   createRun,
   attachLibraryResults,
@@ -45,11 +46,14 @@ const d = ENABLED ? describe : describe.skip;
 
 // Track temp rows for cleanup so a mid-test failure still tidies up.
 const createdRunIds: string[] = [];
+// Sentinel so the concurrent-claim test's jobs are isolated + always cleaned.
+const CLAIM_TEST_MARKER = "__smoke_claim_test__";
 
 afterAll(async () => {
   for (const id of createdRunIds) {
     await prisma.searchRun.delete({ where: { id } }).catch(() => {});
   }
+  await prisma.scrapeJob.deleteMany({ where: { requestedBy: CLAIM_TEST_MARKER } }).catch(() => {});
   await prisma.$disconnect().catch(() => {});
 });
 
@@ -181,5 +185,49 @@ d("smoke: sweepStuckRuns (reclaim + settle raw SQL)", () => {
     const out = await sweepStuckRuns();
     expect(typeof out.reclaimed).toBe("number");
     expect(typeof out.swept).toBe("number");
+  });
+});
+
+d("smoke: claimScrapeJobs (atomic FOR UPDATE SKIP LOCKED)", () => {
+  it("concurrent claims return DISJOINT job sets (no double-claim)", async () => {
+    // Seed pending jobs under a sentinel org so they're isolated. The
+    // requestedBy marker guarantees afterAll cleans them even on failure. (A
+    // host suffix on the platform allowlist keeps any worker that grabs one
+    // between insert and claim from doing real work — but disjointness holds
+    // regardless, since a worker-claimed row is no longer 'pending'.)
+    const orgId = `${CLAIM_TEST_MARKER}_org`;
+    const N = 12;
+    await prisma.scrapeJob.createMany({
+      data: Array.from({ length: N }, (_, i) => ({
+        orgId,
+        platform: "linkedin",
+        kind: "profile",
+        profileUrl: `https://www.linkedin.com/in/${CLAIM_TEST_MARKER}-${i}`,
+        status: "pending",
+        priority: i % 3 === 0 ? 100 : 0, // mix of live + background
+        requestedBy: CLAIM_TEST_MARKER,
+      })),
+    });
+
+    // Fire several claims concurrently — the race the old findMany→updateMany lost.
+    const results = await Promise.all([
+      claimScrapeJobs(orgId, 5),
+      claimScrapeJobs(orgId, 5),
+      claimScrapeJobs(orgId, 5),
+      claimScrapeJobs(orgId, 5),
+    ]);
+
+    const allIds = results.flatMap((r) => r.map((j) => j.id));
+    const uniqueIds = new Set(allIds);
+    // The core invariant: no job was handed to two concurrent claimers.
+    expect(uniqueIds.size).toBe(allIds.length);
+    // And we never claimed more rows than we seeded.
+    expect(allIds.length).toBeLessThanOrEqual(N);
+    // Returned rows carry the fields the worker needs.
+    for (const j of results.flat()) {
+      expect(typeof j.id).toBe("string");
+      expect(j.orgId).toBe(orgId);
+      expect(typeof j.priority).toBe("number");
+    }
   });
 });
