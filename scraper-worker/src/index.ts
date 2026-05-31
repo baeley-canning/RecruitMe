@@ -116,6 +116,13 @@ interface ScrapeJob {
 // monopolise the single-Chromium worker and starve background discovery.
 const LIVE_SEARCH_FANOUT_CAP = 25;
 
+// LinkedIn search pagination depth (volume vs detectability). Default 1 =
+// first results page only (~10 cards) — the safe, historical behaviour. Raise
+// to harvest ~10×N cards per search at the cost of higher detectability (each
+// extra &page=N load is the highest-risk move). Clamped 1..10. Pair a higher
+// value with a higher SCRAPER_DAILY_SEARCH_CAP and watch for auth challenges.
+const SCRAPER_SEARCH_MAX_PAGES = Math.max(1, Math.min(parseInt(process.env.SCRAPER_SEARCH_MAX_PAGES ?? "1", 10) || 1, 10));
+
 async function pollJobs(): Promise<ScrapeJob[]> {
   const res = await fetch(`${RAILWAY_URL}/api/scraper/jobs`, {
     headers: { "x-scraper-secret": SCRAPER_SECRET },
@@ -322,8 +329,10 @@ async function processJob(
         }
         await ensureSession("linkedin", context, page);
         const harvest = await withTimeout(
-          scrapeLinkedInSearch(job.searchQuery, page),
-          HARVEST_TIMEOUT_MS,
+          scrapeLinkedInSearch(job.searchQuery, page, SCRAPER_SEARCH_MAX_PAGES),
+          // Scale the wedge guard with page depth (60s headroom per extra page);
+          // default maxPages=1 leaves the 120s budget unchanged.
+          HARVEST_TIMEOUT_MS + (SCRAPER_SEARCH_MAX_PAGES - 1) * 60_000,
           "linkedin-search",
         );
         searchCountToday += 1;
