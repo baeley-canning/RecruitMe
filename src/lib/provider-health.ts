@@ -20,7 +20,6 @@ export type ProviderName =
   | "claude"
   | "openai"
   | "pdl"
-  | "firmable"
   | "github";
 
 export interface ProviderHealthEntry {
@@ -47,7 +46,6 @@ export const providerHealth: Record<ProviderName, ProviderHealthEntry> = {
   claude:   initialEntry(),
   openai:   initialEntry(),
   pdl:      initialEntry(),
-  firmable: initialEntry(),
   github:   initialEntry(),
 };
 
@@ -149,7 +147,6 @@ export function isProviderConfigured(name: ProviderName): boolean {
     case "claude":   return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
     case "openai":   return Boolean(process.env.OPENAI_API_KEY?.trim());
     case "pdl":      return Boolean(process.env.PDL_API_KEY?.trim());
-    case "firmable": return Boolean(process.env.FIRMABLE_API_KEY?.trim());
     case "github":   return Boolean(process.env.GITHUB_TOKEN?.trim());
   }
 }

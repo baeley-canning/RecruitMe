@@ -252,8 +252,6 @@ export default function JobDetailPage({
   const [locationDraft, setLocationDraft] = useState("");
   const [location2Draft, setLocation2Draft] = useState("");
   const [togglingStatus, setTogglingStatus] = useState(false);
-  const [enrichingPhones, setEnrichingPhones] = useState(false);
-  const [enrichResult, setEnrichResult] = useState<string | null>(null);
   const [editingJd, setEditingJd] = useState(false);
   const [jdDraft, setJdDraft] = useState("");
   const [savingJd, setSavingJd] = useState(false);
@@ -421,31 +419,6 @@ export default function JobDetailPage({
       setEditingSalary(false);
     }
     setSavingSalary(false);
-  };
-
-  const handleEnrichPhones = async () => {
-    if (!job) return;
-    setEnrichingPhones(true);
-    setEnrichResult(null);
-    try {
-      const res = await fetch(`/api/jobs/${job.id}/enrich-phones`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json().catch(() => ({})) as { error?: string; enriched?: number; message?: string };
-      if (!res.ok) {
-        setEnrichResult(data.error ?? `Enrichment failed (${res.status})`);
-      } else {
-        setEnrichResult(data.message ?? `Enriched ${data.enriched ?? 0} candidates.`);
-        // Re-fetch so the new phones show up on the cards without a manual reload.
-        await fetchJob();
-      }
-    } catch {
-      setEnrichResult("Enrichment failed — check your connection and try again.");
-    } finally {
-      setEnrichingPhones(false);
-    }
   };
 
   const handleSaveLocation = async () => {
@@ -1478,19 +1451,6 @@ ${toHtml(job.rawJd)}
                     Client report
                   </button>
                 )}
-                <button
-                  onClick={() => { void handleEnrichPhones(); setOverflowOpen(false); }}
-                  disabled={enrichingPhones}
-                  className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-base text-text-primary hover:bg-surface-hover disabled:opacity-50"
-                  title="Looks up phone numbers from Firmable for every candidate on this job that doesn't already have one. Skips candidates enriched in the last 90 days."
-                >
-                  {enrichingPhones
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin text-text-tertiary" />
-                    : <svg className="w-3.5 h-3.5 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h2.28a1 1 0 01.95.68l1.49 4.48a1 1 0 01-.5 1.21l-1.6.8a11 11 0 005.52 5.52l.8-1.6a1 1 0 011.21-.5l4.48 1.49a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
-                      </svg>}
-                  {enrichingPhones ? "Enriching…" : "Enrich phone numbers"}
-                </button>
                 {job.status === "active" && (
                   <>
                     <div className="my-1 border-t border-separator" />
@@ -1574,12 +1534,6 @@ ${toHtml(job.rawJd)}
           </span>
         )}
       </div>
-      {enrichResult && (
-        <div className="mb-3 text-xs text-text-secondary bg-surface-raised border border-separator rounded-md px-3 py-2 inline-flex items-center gap-2">
-          {enrichResult}
-          <button onClick={() => setEnrichResult(null)} className="text-text-tertiary hover:text-text-primary">✕</button>
-        </div>
-      )}
 
       {/* Closed job banner */}
       {job.status === "closed" && (

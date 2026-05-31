@@ -16,7 +16,6 @@ import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
-import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -192,9 +191,9 @@ export async function POST(
   // limit, body shape, profile-text length gate) but never writes.
   const isDryRun = reqUrl.searchParams.get("dryRun") === "1";
 
-  // Library import does scoring + (optional) Firmable enrichment per row, up
-  // to the 50-candidate Zod cap below. Same per-org rate limit + daily USD
-  // cap as score-all so a single click can't blow past the $5/day budget.
+  // Library import does scoring per row, up to the 50-candidate Zod cap
+  // below. Same per-org rate limit + daily USD cap as score-all so a
+  // single click can't blow past the $5/day budget.
   // Mirrors the guard pattern in score-all/route.ts:34-48.
   //
   // dryRun skips rate-limit + spend-cap enforcement on purpose — the
@@ -385,9 +384,6 @@ export async function POST(
       });
       added++;
       upsertedIds.push(upserted.id);
-      // Background phone enrichment — gated by Firmable's 90d cache so
-      // re-importing the same person to a new job doesn't re-bill.
-      enrichCandidateInBackground(upserted.id);
       if (!breakdown) unscoredIds.push(source.id);
     } catch {
       failed.push(source.id);

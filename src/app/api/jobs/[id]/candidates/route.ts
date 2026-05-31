@@ -14,7 +14,6 @@ import { getJobScoringWeights } from "@/lib/scoring-config";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { reportError } from "@/lib/error-reporting";
 import { mergeScoringError } from "@/lib/linkedin-capture";
-import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 
 export async function GET(
   _req: Request,
@@ -102,10 +101,6 @@ export async function POST(
       status: overseas.reject ? "rejected" : "new",
     },
   });
-
-  // Fire-and-forget phone enrichment. No-op when FIRMABLE_API_KEY isn't set,
-  // and never blocks the save — the candidate row is already persisted.
-  if (linkedinUrl) enrichCandidateInBackground(candidate.id);
 
   if (body.autoScore !== false && body.profileText && job.parsedRole) {
     const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);

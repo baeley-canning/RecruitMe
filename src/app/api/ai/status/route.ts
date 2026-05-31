@@ -12,7 +12,7 @@ export async function GET() {
   const provider = process.env.AI_PROVIDER ?? "claude";
   const failover = snapshotFailoverHealth();
   // Aggregated health for every external provider (Claude, OpenAI, SerpAPI,
-  // PDL, Firmable, GitHub). Drives the live green/amber/red badges on the
+  // PDL, GitHub). Drives the live green/amber/red badges on the
   // search card. Each entry's `state` is the derived UX colour — UI doesn't
   // need to re-implement the rules.
   const providers = snapshotProviderHealth();

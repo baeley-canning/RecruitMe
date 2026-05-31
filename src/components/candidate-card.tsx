@@ -663,7 +663,7 @@ function ProfileDrawer({
                 )}
               </div>
             )}
-            {/* Phone + email (Firmable enrichment / JobAdder import). Click-to-call
+            {/* Phone + email (JobAdder import). Click-to-call
                 and mailto links are the recruiter's one-click outreach paths. */}
             {(candidate.phone || candidate.email) && (
               <div className="mt-1.5 flex items-center gap-3 flex-wrap text-xs text-text-secondary">

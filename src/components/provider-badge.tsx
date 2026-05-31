@@ -1,6 +1,6 @@
 /**
  * Live status pill for an external provider (Claude, OpenAI, SerpAPI, PDL,
- * Firmable, GitHub). Colour comes from the `state` field returned by
+ * GitHub). Colour comes from the `state` field returned by
  * [[/api/ai/status]], which is derived from in-memory provider-health
  * signals recorded by every provider call site (see [[provider-health.ts]]).
  *
@@ -22,7 +22,6 @@ export type ProviderName =
   | "claude"
   | "openai"
   | "pdl"
-  | "firmable"
   | "github";
 
 export type ProviderState =
@@ -46,7 +45,6 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
   claude:   "Claude",
   openai:   "GPT",
   pdl:      "PDL",
-  firmable: "Firmable",
   github:   "GitHub",
 };
 
@@ -146,7 +144,7 @@ export function ProviderBadgeRow({
   // Keeps related providers visually grouped.
   const order: ProviderName[] = [
     "claude", "openai",
-    "pdl", "firmable", "github",
+    "pdl", "github",
   ];
   const sorted = [...providers].sort(
     (a, b) => order.indexOf(a.name) - order.indexOf(b.name),

@@ -36,10 +36,6 @@ const scoringConfigMocks = vi.hoisted(() => ({
   getJobScoringWeights: vi.fn(),
 }));
 
-const firmableMocks = vi.hoisted(() => ({
-  enrichCandidateInBackground: vi.fn(),
-}));
-
 const errorReportingMocks = vi.hoisted(() => ({
   reportError: vi.fn(),
 }));
@@ -49,7 +45,6 @@ vi.mock("../ai", () => aiMocks);
 vi.mock("../scoring-config", () => ({
   getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
-vi.mock("../firmable-enrich", () => firmableMocks);
 vi.mock("../error-reporting", () => errorReportingMocks);
 
 import {

@@ -14,7 +14,6 @@ describe("providerHealth — state derivation", () => {
     process.env.ANTHROPIC_API_KEY = "test";
     process.env.OPENAI_API_KEY = "test";
     process.env.PDL_API_KEY = "test";
-    process.env.FIRMABLE_API_KEY = "test";
     process.env.GITHUB_TOKEN = "test";
   });
   afterEach(() => { process.env = { ...snapshot }; });
@@ -28,10 +27,8 @@ describe("providerHealth — state derivation", () => {
 
   it("unconfigured providers report state=unconfigured", () => {
     delete process.env.PDL_API_KEY;
-    delete process.env.FIRMABLE_API_KEY;
     const snap = snapshotProviderHealth();
     expect(snap.find((p) => p.name === "pdl")!.state).toBe("unconfigured");
-    expect(snap.find((p) => p.name === "firmable")!.state).toBe("unconfigured");
     expect(snap.find((p) => p.name === "claude")!.state).toBe("untested");
   });
 
@@ -76,14 +73,14 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("one failure (last call) reads as degraded — not down", () => {
-    recordProviderFailure("firmable", "transient 502");
-    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("degraded");
+    recordProviderFailure("pdl", "transient 502");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("degraded");
   });
 
   it("success after a single failure flips back to healthy (1-shot recovery)", () => {
-    recordProviderFailure("firmable", "transient 502");
-    recordProviderSuccess("firmable");
-    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("healthy");
+    recordProviderFailure("pdl", "transient 502");
+    recordProviderSuccess("pdl");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("healthy");
   });
 
   it("trims very long failure reasons to ~200 chars", () => {
@@ -109,8 +106,8 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("401/403 auth failures flip immediately to down", () => {
-    recordProviderFailure("firmable", "401 Unauthorized");
-    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("down");
+    recordProviderFailure("pdl", "401 Unauthorized");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
     recordProviderFailure("github", "403 forbidden — bad credentials");
     expect(snapshotProviderHealth().find((p) => p.name === "github")!.state).toBe("down");
   });
@@ -164,8 +161,8 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("DOES flag 'HTTP 401 Unauthorized' as fatal", () => {
-    recordProviderFailure("firmable", "HTTP 401 Unauthorized");
-    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("down");
+    recordProviderFailure("pdl", "HTTP 401 Unauthorized");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
   });
 
   it("DOES flag 'account suspended' as fatal", () => {
@@ -174,7 +171,7 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("DOES flag 'subscription expired' as fatal", () => {
-    recordProviderFailure("firmable", "Your subscription expired on 2026-01-01");
-    expect(snapshotProviderHealth().find((p) => p.name === "firmable")!.state).toBe("down");
+    recordProviderFailure("pdl", "Your subscription expired on 2026-01-01");
+    expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
   });
 });

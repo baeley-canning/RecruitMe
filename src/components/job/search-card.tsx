@@ -28,8 +28,8 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
   const [poolResult, setPoolResult] = useState<{ count: number; message?: string } | null>(null);
   const [poolError, setPoolError] = useState("");
   const [hasSerpApi, setHasSerpApi] = useState<boolean | null>(null);
-  // Live per-provider health (Claude / Llama / SerpAPI / PDL / Firmable /
-  // GitHub) for the green/amber/red badges. Polled every 30s so a failed
+  // Live per-provider health (Claude / Llama / SerpAPI / PDL / GitHub)
+  // for the green/amber/red badges. Polled every 30s so a failed
   // call flips the badge before the recruiter notices via output quality.
   const [providerHealth, setProviderHealth] = useState<ProviderHealth[]>([]);
   const [searchHistory, setSearchHistory] = useState<Array<{

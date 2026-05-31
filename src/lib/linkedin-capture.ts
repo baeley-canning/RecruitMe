@@ -2,7 +2,6 @@ import { prisma } from "./db";
 import { Prisma } from "@prisma/client";
 import { applyLocationFitOverride, deriveUpdateData } from "./score-utils";
 import { getJobTargetLocation } from "./job-target-location";
-import { enrichCandidateInBackground } from "./firmable-enrich";
 import {
   extractCandidateInfo,
   predictAcceptance,
@@ -820,10 +819,6 @@ export async function importCapturedLinkedInProfileFast(args: {
     : await prisma.candidate.create({
         data: { jobId, status: "new", ...baseUpdate },
       });
-
-  // Background phone enrichment for new captures. No-op without
-  // FIRMABLE_API_KEY; cached for 90 days per candidate.
-  enrichCandidateInBackground(candidate.id);
 
   return { candidate, identity };
 }

@@ -9,7 +9,6 @@ import {
 import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
-import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import {
   classifyDataQuality,
   type ScoreBreakdown,
@@ -1528,11 +1527,6 @@ async function runSearchBackground(args: {
       ? await prisma.candidate.findMany({ where: { id: { in: poolSaved.map((c) => c.id) } } })
       : [];
     for (const c of poolSavedFull) saved.push(c as SavedCandidate);
-
-    // Background phone enrichment for everything we just saved (LinkedIn imports
-    // + pool-first criteria saves). Fire-and-forget; Firmable's per-candidate
-    // 90d cache prevents re-billing on duplicates.
-    for (const c of saved) enrichCandidateInBackground(c.id);
 
     console.log(`[search] done — scored ${scored}, saved ${saved.length} (pool-first ${poolFirstSaved}, linkedin ${linkedinSaved}, of which url-reuse ${linkedinFromPool}), skipped ${skippedScore} below score/location threshold, ${skippedSourceGate} source-gated, ${skippedSeniorityGate} seniority-gated`);
 

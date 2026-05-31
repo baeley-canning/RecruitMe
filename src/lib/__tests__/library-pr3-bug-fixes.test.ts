@@ -77,10 +77,6 @@ const usageMocks = vi.hoisted(() => ({
   checkSpendCap:  vi.fn().mockResolvedValue({ allowed: true, spentUsd: 0, capUsd: 5 }),
 }));
 
-const firmableMocks = vi.hoisted(() => ({
-  enrichCandidateInBackground: vi.fn(),
-}));
-
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
@@ -88,7 +84,6 @@ vi.mock("@/lib/scoring-config", () => ({
   getJobScoringWeights: scoringConfigMocks.getJobScoringWeights,
 }));
 vi.mock("@/lib/usage", () => usageMocks);
-vi.mock("@/lib/firmable-enrich", () => firmableMocks);
 
 import { POST as LibraryPOST } from "@/app/api/jobs/[id]/library/route";
 import { invalidateAccessCache } from "@/lib/org-access";

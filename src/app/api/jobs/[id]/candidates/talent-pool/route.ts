@@ -20,7 +20,6 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { enrichCandidateInBackground } from "@/lib/firmable-enrich";
 import { candidateTitleFitsRole } from "@/lib/title-family";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
@@ -34,10 +33,9 @@ import { extractSignalsFromRequirement, signalMatchesText } from "@/lib/requirem
 import { extractRoleAwareDistinctiveAnchors } from "@/lib/requirement-signals";
 
 // Frontend aborts at 50s and a 45s internal TIME_BUDGET_MS gates the batch
-// score, but the route itself can run a hair longer (Firmable enrichment
-// kicks off after the batch, saves run sequentially). 60s gives the platform
-// proxy headroom over Vercel/Railway's default 10-15s function timeout
-// without uncapping it.
+// score, but the route itself can run a hair longer (saves run
+// sequentially after the batch). 60s gives the platform proxy headroom
+// over Vercel/Railway's default 10-15s function timeout without uncapping it.
 export const maxDuration = 60;
 
 // Re-derive distinctive terms from a parsedRole — role-aware so hybrid IT-ops
@@ -421,10 +419,6 @@ export async function POST(
   }
 
   console.log(`[talent-pool] done — imported ${saved.length}, skipped ${skippedRequirements} on requirements, ${skippedOverseas} overseas, stoppedEarly=${stoppedEarly}`);
-
-  // Background phone enrichment for the just-saved candidates. Cached for 90d
-  // per identity so re-imports across jobs don't re-burn credits.
-  for (const c of saved) enrichCandidateInBackground(c.id);
 
   const partialNote = stoppedEarly
     ? ` (Library is large — imported the first ${saved.length}; click search again to pull more.)`
