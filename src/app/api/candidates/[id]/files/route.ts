@@ -15,6 +15,7 @@ import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 import { encryptCv } from "@/lib/cv-encryption";
+import { persistFileEnvelope, deleteBlob } from "@/lib/blob-store";
 
 // CV uploads kick off PDF extract → cleanCvText → extractCandidateInfo →
 // scoreCandidateStructured + predictAcceptance all synchronously before the
@@ -228,10 +229,13 @@ export async function POST(
     }
   }
 
-  // Encrypt before persisting — audit P2 HIGH (NZ Privacy Act). Every byte
-  // we write to `data` after this point is AES-256-GCM ciphertext, so Railway
-  // backups no longer contain plaintext-equivalent CVs.
+  // Encrypt before persisting — audit P2 HIGH (NZ Privacy Act). Every byte we
+  // persist after this point is AES-256-GCM ciphertext, whether it lands inline
+  // in `data` or in the blob store, so backups never contain plaintext CVs.
   const encryptedData = await encryptCv(base64);
+  // Decide storage: inline `data` (no bucket configured) or offloaded to S3/R2
+  // with just a `storageKey` pointer on the row. Inert until BLOB_S3_* is set.
+  const blob = await persistFileEnvelope(encryptedData);
 
   let created;
   try {
@@ -241,7 +245,8 @@ export async function POST(
         type,
         filename: upload.name,
         mimeType: upload.type || "application/octet-stream",
-        data: encryptedData,
+        data: blob.data,
+        storageKey: blob.storageKey,
         dataHash: fileHash,
         size: upload.size,
       },
@@ -257,6 +262,9 @@ export async function POST(
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === "P2002"
     ) {
+      // The row lost the unique-constraint race, so the blob we just uploaded
+      // is now orphaned — drop it rather than leak an unreferenced object.
+      if (blob.storageKey) void deleteBlob(blob.storageKey);
       const existing = await prisma.candidateFile.findFirst({
         where: { candidateId: id, dataHash: fileHash },
         select: { id: true, type: true, filename: true, mimeType: true, size: true, createdAt: true },

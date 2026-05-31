@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { decryptCv, isEncrypted, maybeMigrateLegacy } from "@/lib/cv-encryption";
+import { loadFileEnvelope, deleteBlob } from "@/lib/blob-store";
 
 // Allow-list for download MIME types. Whatever the browser claimed at upload
 // time should never be reflected back as-is — a recruiter who uploaded an
@@ -86,16 +87,27 @@ export async function GET(
   const file = await requireFileAccess(id, fileId, auth);
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Fetch the stored (still-encrypted) envelope — from the S3/R2 blob store
+  // when this row was offloaded (storageKey set), else inline from `data`.
+  let envelope: string;
+  try {
+    envelope = await loadFileEnvelope(file);
+  } catch {
+    return NextResponse.json({ error: "Unable to read file" }, { status: 500 });
+  }
+
   // Decrypt — `decryptCv` is a no-op on legacy (pre-encryption) rows so old
-  // CVs keep downloading. When we hit a legacy row, schedule a background
-  // re-encrypt so the at-rest state heals itself without a separate backfill.
+  // CVs keep downloading. When we hit a legacy inline row, schedule a
+  // background re-encrypt so the at-rest state heals itself without a separate
+  // backfill. Offloaded rows (storageKey set) are always encrypted, so the
+  // lazy-migration path never applies to them.
   let plainBase64: string;
   try {
-    plainBase64 = await decryptCv(file.data);
+    plainBase64 = await decryptCv(envelope);
   } catch {
     return NextResponse.json({ error: "Unable to decrypt file" }, { status: 500 });
   }
-  if (!isEncrypted(file.data)) {
+  if (!file.storageKey && !isEncrypted(envelope)) {
     void maybeMigrateLegacy(file.id, plainBase64);
   }
 
@@ -135,5 +147,8 @@ export async function DELETE(
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await prisma.candidateFile.delete({ where: { id: fileId } });
+  // Best-effort: drop the backing blob too so we don't leak an orphan object
+  // in the bucket. deleteBlob swallows errors (an already-gone object is fine).
+  if (file.storageKey) void deleteBlob(file.storageKey);
   return NextResponse.json({ ok: true });
 }

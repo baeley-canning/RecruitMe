@@ -979,6 +979,18 @@ await step("validate CandidateIdentity.currentInsightId FK", async () => {
   `;
 });
 
+// 40. CandidateFile.storageKey — pointer to the S3/R2 object holding the
+//     encrypted blob envelope. NULL = blob is inline in `data` (legacy /
+//     no-bucket path). Set by the upload route when BLOB_S3_* is configured,
+//     and by scripts/migrate-files-to-r2.mjs when moving existing rows out of
+//     Postgres. Nullable TEXT add is metadata-only on Postgres ≥11. Inert
+//     until a bucket is configured — see src/lib/blob-store.ts.
+await step("CandidateFile.storageKey column (blob-store offload)", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "CandidateFile" ADD COLUMN IF NOT EXISTS "storageKey" TEXT
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

@@ -27,6 +27,12 @@ const dbMocks = vi.hoisted(() => ({
     candidate: {
       findUnique: vi.fn(),
     },
+    candidateFile: {
+      // The route reads the previous/target photo row's storageKey (outside the
+      // transaction) so it can drop the backing blob from the object store after
+      // a swap/delete commits. Default undefined → no blob cleanup (inline rows).
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));

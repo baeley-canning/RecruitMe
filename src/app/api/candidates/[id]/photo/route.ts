@@ -19,6 +19,7 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { encryptCv } from "@/lib/cv-encryption";
+import { persistFileEnvelope, deleteBlob } from "@/lib/blob-store";
 import { reportError } from "@/lib/error-reporting";
 
 const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5 MB — headshots should be much smaller
@@ -101,41 +102,62 @@ export async function POST(
     const base64 = buffer.toString("base64");
     const fileHash = createHash("sha256").update(buffer).digest("hex").slice(0, 32);
     const encryptedData = await encryptCv(base64);
+    // Offload to the blob store (or inline in `data`) BEFORE opening the
+    // transaction — a network PUT must not be held inside the DB transaction.
+    const blob = await persistFileEnvelope(encryptedData);
 
     const previousPhotoFileId = candidate.photoFileId;
+    // Grab the previous photo's storage key (if any) so we can drop its backing
+    // blob from the bucket once the swap commits.
+    const previous = previousPhotoFileId
+      ? await prisma.candidateFile.findUnique({
+          where: { id: previousPhotoFileId },
+          select: { storageKey: true },
+        })
+      : null;
 
     // Atomic replacement: create the new CandidateFile, point the Candidate
     // at it, and delete the previous CandidateFile in one transaction. If any
     // step fails the whole thing rolls back and the candidate stays pointing
     // at whatever they had before (or nothing).
-    const createdId = await prisma.$transaction(async (tx) => {
-      const created = await tx.candidateFile.create({
-        data: {
-          candidateId: id,
-          type: "photo",
-          filename: upload.name,
-          mimeType: upload.type,
-          data: encryptedData,
-          dataHash: fileHash,
-          size: upload.size,
-        },
-        select: { id: true },
-      });
-      await tx.candidate.update({
-        where: { id },
-        data: { photoFileId: created.id },
-      });
-      if (previousPhotoFileId) {
-        // Cascade-on-delete would also nuke this row when the candidate is
-        // deleted; here we just clean up the stale photo within the same tx
-        // so we don't leak an unreferenced encrypted blob in CandidateFile.
-        await tx.candidateFile.delete({ where: { id: previousPhotoFileId } }).catch(() => {
-          // Best-effort: if the old row is already gone (race with another
-          // delete), don't fail the whole transaction.
+    let createdId: string;
+    try {
+      createdId = await prisma.$transaction(async (tx) => {
+        const created = await tx.candidateFile.create({
+          data: {
+            candidateId: id,
+            type: "photo",
+            filename: upload.name,
+            mimeType: upload.type,
+            data: blob.data,
+            storageKey: blob.storageKey,
+            dataHash: fileHash,
+            size: upload.size,
+          },
+          select: { id: true },
         });
-      }
-      return created.id;
-    });
+        await tx.candidate.update({
+          where: { id },
+          data: { photoFileId: created.id },
+        });
+        if (previousPhotoFileId) {
+          // Cascade-on-delete would also nuke this row when the candidate is
+          // deleted; here we just clean up the stale photo within the same tx
+          // so we don't leak an unreferenced encrypted blob in CandidateFile.
+          await tx.candidateFile.delete({ where: { id: previousPhotoFileId } }).catch(() => {
+            // Best-effort: if the old row is already gone (race with another
+            // delete), don't fail the whole transaction.
+          });
+        }
+        return created.id;
+      });
+    } catch (err) {
+      // The swap rolled back, so the blob we just uploaded is orphaned — drop it.
+      if (blob.storageKey) void deleteBlob(blob.storageKey);
+      throw err;
+    }
+    // Swap committed and the old row is gone — drop its backing blob too.
+    if (previous?.storageKey) void deleteBlob(previous.storageKey);
 
     return NextResponse.json(
       {
@@ -165,6 +187,10 @@ export async function DELETE(
     }
 
     const photoFileId = candidate.photoFileId;
+    const photoRow = await prisma.candidateFile.findUnique({
+      where: { id: photoFileId },
+      select: { storageKey: true },
+    });
     await prisma.$transaction(async (tx) => {
       await tx.candidate.update({
         where: { id },
@@ -175,6 +201,8 @@ export async function DELETE(
         // Candidate.photoFileId clear is what we actually needed.
       });
     });
+    // Drop the backing blob from the bucket (best-effort, no-op when inline).
+    if (photoRow?.storageKey) void deleteBlob(photoRow.storageKey);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

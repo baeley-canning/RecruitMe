@@ -459,7 +459,11 @@ model CandidateFile {
   type        String // "cv" | "cover_letter" | "other"
   filename    String
   mimeType    String
-  data        String // base64 encoded file content
+  data        String // base64 file content (encrypted envelope), OR "" when offloaded to the blob store — see storageKey
+  // When set, the encrypted envelope lives in the S3/R2 blob store under this
+  // key and `data` is empty. When null, the envelope is inline in `data` (the
+  // legacy / no-bucket path). See src/lib/blob-store.ts.
+  storageKey  String?
   size        Int // original size in bytes
   // SHA-256 (first 32 hex chars) of the raw file bytes. Set on every new
   // upload; nullable for pre-existing rows that haven't been backfilled.
