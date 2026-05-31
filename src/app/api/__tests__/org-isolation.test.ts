@@ -304,7 +304,13 @@ describe("org isolation — candidates library", () => {
     // re-applied to the downstream findMany via buildLibraryWhere. Verify
     // both paths carry org-b.
     const rawCall = dbMocks.prisma.$queryRaw.mock.calls[0];
-    const rawParams = rawCall.slice(1);
+    // getLibraryCandidates now composes the pre-filter with Prisma.join and
+    // runs it via the FUNCTION form `$queryRaw(Prisma.sql`…`)`, so the bound
+    // params live on the single Prisma.Sql arg's `.values` rather than being
+    // spread as positional call args. (Fall back to the positional form so
+    // this assertion survives either calling convention.)
+    const sqlArg = rawCall[0] as { values?: unknown[] };
+    const rawParams = Array.isArray(sqlArg?.values) ? sqlArg.values : rawCall.slice(1);
     const orgArrayParam = rawParams.find((p: unknown) => Array.isArray(p)) as string[] | undefined;
     expect(orgArrayParam).toEqual(["org-b"]);
 
@@ -321,7 +327,8 @@ describe("org isolation — candidates library", () => {
     const { GET: getCandidatesLibrary } = await import("@/app/api/candidates/route");
     sessionMocks.getAuth.mockResolvedValue({ ...ORG_A, isOwner: true });
     // Pre-filter returns one ID so findMany is exercised. Owner's raw query
-    // takes the no-org-filter branch (boolean param flips it off).
+    // takes the no-org-filter branch (the org clause is simply omitted from
+    // the composed WHERE).
     dbMocks.prisma.$queryRaw.mockResolvedValueOnce([{ id: "cand-1" }]);
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
 

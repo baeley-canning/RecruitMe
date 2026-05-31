@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { extractCandidateInfo } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
-import { getLibraryCandidates } from "@/lib/library";
+import { getLibraryCandidates, LIBRARY_PAGE_SIZE } from "@/lib/library";
 
 /**
  * GET /api/candidates
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const cursor = url.searchParams.get("cursor") ?? undefined;
 
-  const { candidates, nextCursor } = await getLibraryCandidates(auth, { cursor });
+  const { candidates, nextCursor } = await getLibraryCandidates(auth, { cursor, take: LIBRARY_PAGE_SIZE });
 
   // Existing consumers (candidates-library-client) expect the array shape on
   // first-page calls. Preserve that for the no-cursor request; expose the

@@ -133,24 +133,17 @@ export async function collectBoxStats(): Promise<BoxStats> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [
-    dbOk,
-    searchesToday,
-    candidatesToday,
-    scrapeOkToday,
-    scrapeFailedToday,
-    aiCallsToday,
-    inProgress,
-    pendingCount,
-    recentScrapes,
-    recentCandidates,
-    lastAiCall,
-    lastScraperUpdate,
-  ] = await Promise.all([
+  // These DB reads run in BATCHES of 4 rather than one 12-wide Promise.all:
+  // the pool is 10 connections shared with score-all (CONCURRENCY=3), and a
+  // 12-wide fan-out here could exhaust it under overlap (pool_timeout 500s).
+  // Counts/findFirst are fast, so 3 sequential batches add negligible latency.
+  const [dbOk, searchesToday, candidatesToday, scrapeOkToday] = await Promise.all([
     prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false),
     prisma.scrapeJob.count({ where: { kind: "search", createdAt: { gte: todayStart } } }).catch(() => 0),
     prisma.candidate.count({ where: { createdAt: { gte: todayStart } } }).catch(() => 0),
     prisma.scrapeJob.count({ where: { status: "completed", updatedAt: { gte: todayStart } } }).catch(() => 0),
+  ]);
+  const [scrapeFailedToday, aiCallsToday, inProgress, pendingCount] = await Promise.all([
     prisma.scrapeJob.count({ where: { status: "failed", updatedAt: { gte: todayStart } } }).catch(() => 0),
     prisma.usageEvent.count({ where: { type: "ai_call", createdAt: { gte: todayStart } } }).catch(() => 0),
     prisma.scrapeJob.findFirst({
@@ -159,6 +152,8 @@ export async function collectBoxStats(): Promise<BoxStats> {
       select: { platform: true, kind: true, searchQuery: true },
     }).catch(() => null),
     prisma.scrapeJob.count({ where: { status: "pending" } }).catch(() => 0),
+  ]);
+  const [recentScrapes, recentCandidates, lastAiCall, lastScraperUpdate] = await Promise.all([
     prisma.scrapeJob.findMany({
       where: { status: { in: ["completed", "failed"] } },
       orderBy: { updatedAt: "desc" },

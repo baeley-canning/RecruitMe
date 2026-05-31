@@ -6,6 +6,19 @@ import { recordAiCall } from "../usage";
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude and OpenAI so all AI functions stay clean.
 
+// Ollama (local, OpenAI-compatible) client options. Extracted + exported so the
+// timeout is unit-testable. Without an explicit timeout the OpenAI SDK defaults
+// to ~600s, so a hung local inference on the 2-core i3 (Qwen at ~6-10 tok/s)
+// would block the request pool. Mirror Claude's 90s ceiling.
+export const OLLAMA_TIMEOUT_MS = 90_000;
+export function ollamaClientOptions(): { baseURL: string; apiKey: string; timeout: number } {
+  return {
+    baseURL: process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434/v1",
+    apiKey: "ollama",
+    timeout: OLLAMA_TIMEOUT_MS,
+  };
+}
+
 export type ChatProvider = "claude" | "openai" | "ollama";
 
 export interface ChatOptions {
@@ -159,8 +172,7 @@ export async function chat(
   // RAM and runs at ~6-10 tok/s on the i3-5010U. Override per-call with
   // options.model = "llama3.2:3b" etc.
   if (provider === "ollama") {
-    const baseURL = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434/v1";
-    const client = new OpenAI({ baseURL, apiKey: "ollama" });
+    const client = new OpenAI(ollamaClientOptions());
     const model  = options?.model ?? process.env.OLLAMA_MODEL ?? "qwen2.5:1.5b";
 
     const messages = options?.system

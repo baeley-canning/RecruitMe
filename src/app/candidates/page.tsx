@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getAuth } from "@/lib/session";
-import { getLibraryCandidates } from "@/lib/library";
+import { getLibraryCandidates, LIBRARY_PAGE_SIZE } from "@/lib/library";
 import { CandidatesLibraryClient } from "@/components/candidates-library-client";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,9 @@ export default async function CandidatesPage() {
 
   // Cross-org grant expansion + dedupe + shared-org enrichment lives in
   // src/lib/library.ts so this loader and /api/candidates can't drift.
-  const { candidates, nextCursor } = await getLibraryCandidates(auth);
+  // Cap the SSR fetch to the first page; the client loads more via nextCursor
+  // and searches server-side, so the full library stays reachable.
+  const { candidates, nextCursor } = await getLibraryCandidates(auth, { take: LIBRARY_PAGE_SIZE });
 
   const serializedCandidates = candidates.map((candidate) => ({
     id: candidate.id,

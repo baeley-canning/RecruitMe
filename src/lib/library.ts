@@ -10,15 +10,23 @@
  * requirements is applied here so neither caller loses functionality.
  */
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { getAccessibleOrgIds, candidateOrgFilter, getGrantScopes } from "./org-access";
 import type { AuthResult } from "./session";
 
-// Per-request cap. 20k is the safety ceiling for SSR memory; typical orgs
-// at 13.5k JobAdder-imported rows fit in one page today. Cursor pagination
+// Per-request cap. 20k is the absolute safety ceiling for SSR memory; left as
+// the default so any "load everything" caller is unchanged. Cursor pagination
 // is wired below — callers paginate via the returned `nextCursor`.
 const DEFAULT_TAKE = 20000;
+
+// First-page size for the candidates library SSR + the load-more endpoint.
+// Materialising up to 20k rows (+ a per-row files join) before first byte was a
+// memory/latency trap on the 2-core box; the page renders this many, then loads
+// more via `nextCursor`. Browsing is paged; SEARCH is server-side FTS
+// (/api/candidates/library/search), so candidates never "vanish" from results.
+export const LIBRARY_PAGE_SIZE = 200;
 
 export interface LibraryQueryOptions {
   /** Free-text query (currently unused server-side; reserved). */
@@ -171,36 +179,63 @@ export async function getLibraryCandidates(
     }
   }
 
-  const eligibleRows = await prisma.$queryRaw<Array<{ id: string }>>`
+  // Build the WHERE as a composed list of Prisma.sql fragments joined with
+  // AND, then run it via the FUNCTION form `$queryRaw(query)`.
+  //
+  // This is deliberately NOT the tagged-template form with `${fragment}`
+  // interpolation. That form splices a nested fragment's SQL text but drops
+  // its bound parameters, so the keyset cursor's `< $cursor` placeholders
+  // mapped to the wrong values and filtered NOTHING — every "load more" page
+  // silently re-returned page 1, stranding the rest of the library
+  // (candidates "vanished"). Owners hit this on every paginated load; it was
+  // masked only because page 2 was never exercised. Prisma.join + the
+  // function form merges every fragment's params in order, which a real-DB
+  // pagination smoke test verifies (page 2 disjoint from page 1).
+  const conditions: Prisma.Sql[] = [
+    // Substantive profileText (canonical "we have content on this person"), OR
+    // a source-whitelisted row: manual entries and JobAdder imports carry their
+    // content as files / in JobAdder, not in profileText. Mirrors
+    // buildLibraryWhere's whitelist — without it the 13k JobAdder library was
+    // invisible.
+    Prisma.sql`(
+      (c."profileText" IS NOT NULL AND char_length(c."profileText") >= ${LIBRARY_PROFILE_MIN_CHARS})
+      OR c."source" IN ('manual', 'jobadder_import')
+    )`,
+    // Never surface orphan rows with neither a job nor an org.
+    Prisma.sql`(c."jobId" IS NOT NULL OR c."orgId" IS NOT NULL)`,
+  ];
+  if (useOrgFilter) {
+    conditions.push(Prisma.sql`(
+      j."orgId" = ANY(${orgIdsParam}::text[])
+      OR (c."jobId" IS NULL AND c."orgId" = ANY(${orgIdsParam}::text[]))
+    )`);
+  }
+  if (cursorCreatedAt) {
+    // Keyset: everything strictly after the cursor row in (createdAt, id) DESC.
+    //
+    // NOTE: bind the cursor as a tz-less UTC wall-clock STRING cast to
+    // ::timestamp, not as a JS Date. "Candidate"."createdAt" is `timestamp
+    // without time zone` storing UTC wall-clock; binding a Date makes Postgres
+    // apply the SESSION timezone (the box runs a non-UTC session TZ), shifting
+    // the cursor ~12h into the future. The keyset then matched newer rows too,
+    // so "load more" silently re-served page 1 and the rest of the library was
+    // unreachable. The string form is session-independent. Verified by a
+    // real-DB smoke test asserting page 2 is disjoint from page 1.
+    const cursorTs = cursorCreatedAt.toISOString().replace("Z", "");
+    conditions.push(Prisma.sql`(
+      c."createdAt" < ${cursorTs}::timestamp
+      OR (c."createdAt" = ${cursorTs}::timestamp AND c."id" < ${cursorId})
+    )`);
+  }
+
+  const eligibleRows = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT c.id
     FROM "Candidate" c
     LEFT JOIN "Job" j ON j.id = c."jobId"
-    WHERE (
-        -- Substantive profileText (the canonical "we have content on this person").
-        (c."profileText" IS NOT NULL AND char_length(c."profileText") >= ${LIBRARY_PROFILE_MIN_CHARS})
-        -- Source-whitelisted rows: manual entries and JobAdder imports
-        -- carry their content as files or in JobAdder itself, not in
-        -- profileText. Mirrors buildLibraryWhere's stated whitelist —
-        -- without this, the 13k JobAdder library was invisible.
-        OR c."source" IN ('manual', 'jobadder_import')
-      )
-      AND (
-        ${!useOrgFilter}::boolean
-        OR j."orgId" = ANY(${orgIdsParam}::text[])
-        OR (c."jobId" IS NULL AND c."orgId" = ANY(${orgIdsParam}::text[]))
-      )
-      AND (
-        c."jobId" IS NOT NULL
-        OR c."orgId" IS NOT NULL
-      )
-      AND (
-        ${cursorCreatedAt === null}::boolean
-        OR c."createdAt" < ${cursorCreatedAt}
-        OR (c."createdAt" = ${cursorCreatedAt} AND c."id" < ${cursorId})
-      )
+    WHERE ${Prisma.join(conditions, " AND ")}
     ORDER BY c."createdAt" DESC, c."id" DESC
     LIMIT ${take}
-  `;
+  `);
   const eligibleIds = eligibleRows.map((r) => r.id);
   if (eligibleIds.length === 0) {
     return { candidates: [], total: 0, nextCursor: null };

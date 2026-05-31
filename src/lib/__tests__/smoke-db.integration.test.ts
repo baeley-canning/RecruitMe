@@ -107,11 +107,31 @@ d("smoke: getLibraryCandidates (library SSR prefilter raw SQL)", () => {
 });
 
 d("smoke: collectBoxStats (box-dashboard raw queries + /proc)", () => {
-  it("collects without error", async () => {
+  it("collects without error (now batched ≤4 queries at a time)", async () => {
     const stats = await collectBoxStats();
     expect(stats.services.db.ok).toBe(true);
     expect(stats.today).toBeDefined();
     expect(typeof stats.scraper.queueDepth).toBe("number");
+  });
+});
+
+d("smoke: getLibraryCandidates pagination (SSR cap + cursor load-more)", () => {
+  it("first page is capped and the cursor loads a DISJOINT next page (no vanish/repeat)", async () => {
+    const auth = { userId: "smoke", orgId: null, isOwner: true } as Parameters<typeof getLibraryCandidates>[0];
+    const page1 = await getLibraryCandidates(auth, { take: 3 });
+    expect(Array.isArray(page1.candidates)).toBe(true);
+    expect(page1.candidates.length).toBeLessThanOrEqual(3);
+    // With a 14k library, a 3-row first page must expose a cursor to reach the rest.
+    if (page1.candidates.length === 3) {
+      expect(page1.nextCursor).not.toBeNull();
+      const page2 = await getLibraryCandidates(auth, { cursor: page1.nextCursor!, take: 3 });
+      const ids1 = new Set(page1.candidates.map((c) => c.id));
+      // load-more must return NEW rows — candidates don't repeat or vanish across
+      // pages. (Regressed once: an empty-array param on the owner path misaligned
+      // the cursor bind, so page 2 silently re-returned page 1.)
+      expect(page2.candidates.length).toBeGreaterThan(0);
+      for (const c of page2.candidates) expect(ids1.has(c.id)).toBe(false);
+    }
   });
 });
 
