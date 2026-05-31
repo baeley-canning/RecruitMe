@@ -236,6 +236,22 @@ export async function POST(
 
     return NextResponse.json(updated);
   } catch (err) {
+    // Graceful AI-down: Claude is out AND the local Ollama failover is
+    // unreachable (AllProvidersFailedError), and the Llama offload branch
+    // above did NOT handle it (flag off / null org → it rethrew here). This
+    // is a provider outage, not a server bug — return a clean 503 the client
+    // can render as a "temporarily unavailable" notice instead of a scary 500.
+    // The flag-ON path returns 202 queued before reaching this catch, so it's
+    // untouched.
+    if (err instanceof AllProvidersFailedError) {
+      return NextResponse.json(
+        {
+          error: "AI scoring is temporarily unavailable — Claude is out of credits and no local model is reachable. Try again later.",
+          code: "ai_unavailable",
+        },
+        { status: 503 }
+      );
+    }
     const { reportError } = await import("@/lib/error-reporting");
     reportError(err, { route: "score:candidate", jobId: id, candidateId, orgId: auth.orgId });
     return NextResponse.json(

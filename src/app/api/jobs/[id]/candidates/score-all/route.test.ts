@@ -315,4 +315,51 @@ describe("score-all route", () => {
     expect(result).toMatchObject({ scored: 0, total: 1, done: true, failedIds: ["cand-fail2"] });
     expect(queueMocks.enqueueScoreJob).not.toHaveBeenCalled();
   });
+
+  it("offload OFF: every candidate fails with AllProvidersFailedError → summary says AI unavailable", async () => {
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(false);
+    const job = makeJob("job-all-down");
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-x", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+      { id: "cand-y", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+    ]);
+    aiMocks.scoreCandidateStructured.mockRejectedValue(new AllProvidersFailedError(new Error("Claude 401")));
+    dbMocks.prisma.candidate.findUnique.mockResolvedValue({ screeningData: null });
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-all-down" }),
+    });
+
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 0, total: 2, done: true, aiUnavailable: true });
+    expect(result.message).toMatch(/AI scoring unavailable \(Claude out of credits\)/i);
+    expect(result.failedIds).toEqual(["cand-x", "cand-y"]);
+    // No uncaught 500 — the stream completed with a done message.
+    expect(res.status).toBe(200);
+  });
+
+  it("does NOT label as AI-unavailable when only some candidates fail on provider outage", async () => {
+    // One scores fine, one hits AllProvidersFailedError → this is a partial
+    // run, not a full outage; the summary must stay generic (no aiUnavailable).
+    flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(false);
+    const job = makeJob("job-partial-down");
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-ok", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+      { id: "cand-down", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
+    ]);
+    aiMocks.scoreCandidateStructured
+      .mockResolvedValueOnce(makeBreakdown())
+      .mockRejectedValueOnce(new AllProvidersFailedError(new Error("Claude 401")));
+    dbMocks.prisma.candidate.findUnique.mockResolvedValue({ screeningData: null });
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-partial-down" }),
+    });
+
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 1, total: 2, done: true });
+    expect(result.aiUnavailable).toBeUndefined();
+  });
 });

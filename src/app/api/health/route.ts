@@ -133,11 +133,17 @@ export async function GET() {
   // the app. An Ollama outage is reported as `degraded` instead.
   const overallOk = db.ok && scraper.ok;
   const degraded = overallOk && !ollama.ok;
+  // Report the deployed commit SHA so a deploy is verifiable from /api/health.
+  // RECRUITME_VERSION stays the highest-priority explicit override; otherwise
+  // fall back to the build's git SHA (Railway sets RAILWAY_GIT_COMMIT_SHA;
+  // GIT_SHA is the generic fallback), truncated to 7 chars, then "dev" locally.
+  const version = process.env.RECRUITME_VERSION
+    ?? (process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_SHA ?? "dev").slice(0, 7);
   const body: HealthResponse = {
     ok: overallOk,
     degraded,
     checks: { db, ollama, scraper },
-    version: process.env.RECRUITME_VERSION ?? "dev",
+    version,
     uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
     timestamp: new Date().toISOString(),
   };

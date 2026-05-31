@@ -245,7 +245,7 @@ describe("candidate re-score route", () => {
     expect(dbMocks.prisma.candidate.updateMany).not.toHaveBeenCalled();
   });
 
-  it("offload OFF: AllProvidersFailedError → 500, no enqueue (existing behavior unchanged)", async () => {
+  it("offload OFF: AllProvidersFailedError → graceful 503 + code, no enqueue", async () => {
     flagMocks.isLlamaScoreOffloadEnabled.mockReturnValue(false);
     aiMocks.scoreCandidateStructured.mockRejectedValue(new AllProvidersFailedError(new Error("Claude 401")));
 
@@ -254,7 +254,12 @@ describe("candidate re-score route", () => {
       { params: Promise.resolve({ id: "job-1", candidateId: "cand-5" }) },
     );
 
-    expect(res.status).toBe(500);
+    // Graceful AI-down: provider outage with offload off → clean 503, not 500.
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.code).toBe("ai_unavailable");
+    expect(body.error).toMatch(/temporarily unavailable/i);
+    // Offload path must NOT have fired (flag off): no enqueue, no prompt build.
     expect(queueMocks.enqueueScoreJob).not.toHaveBeenCalled();
     expect(aiMocks.buildScorePrompt).not.toHaveBeenCalled();
   });

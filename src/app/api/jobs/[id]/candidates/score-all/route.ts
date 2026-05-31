@@ -149,6 +149,12 @@ export async function POST(
   // `failed` — these aren't failures, they're deferred to the box.
   let queued = 0;
   const failed: string[] = [];
+  // Subset of `failed` that failed specifically because every AI provider was
+  // down (Claude out + Ollama unreachable) while the offload flag was OFF. When
+  // ALL failures are this kind — and nothing scored/cached/queued — the summary
+  // reads as a provider outage rather than a generic per-candidate failure, so
+  // the recruiter understands it's not bad data.
+  let providerOutageFails = 0;
   const encoder = new TextEncoder();
 
   // Stream progress as newline-delimited JSON so the client can show a live counter.
@@ -319,6 +325,11 @@ export async function POST(
               }
               reportError(err, { route: "score-all", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
               failed.push(candidate.id);
+              // Track provider-outage failures separately so the final summary
+              // can distinguish "Claude is down" from "this candidate's data is
+              // bad". Reaching here with AllProvidersFailedError means the
+              // offload flag was off (the flag-on branch returns above).
+              if (err instanceof AllProvidersFailedError) providerOutageFails++;
               // Surface the failure on the candidate row so the recruiter
               // sees "scoring blew up" on each failed card rather than
               // "Scored 0" with no per-candidate trail. updateMany scoped
@@ -358,6 +369,20 @@ export async function POST(
       const finalMsg: Record<string, unknown> = { scored, cached, queued, total, done: true };
       if (cappedHit) finalMsg.capped = true;
       if (failed.length > 0) finalMsg.failedIds = failed;
+      // Provider-outage summary: if NOTHING succeeded (no scores, no cache hits,
+      // no offloads) and EVERY failure was an all-providers-down error, this was
+      // a Claude/Ollama outage, not bad candidate data. Surface a single clear
+      // message so the recruiter retries later instead of distrusting the rows.
+      if (
+        failed.length > 0 &&
+        providerOutageFails === failed.length &&
+        scored === 0 &&
+        cached === 0 &&
+        queued === 0
+      ) {
+        finalMsg.aiUnavailable = true;
+        finalMsg.message = "AI scoring unavailable (Claude out of credits)";
+      }
       send(finalMsg);
       controller.close();
 
