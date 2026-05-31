@@ -49,7 +49,13 @@ export function isScraperEnabled(): boolean {
  *  Off by default until pacing is dialled in. The worker has the same flag
  *  (SCRAPER_DISCOVERY_ENABLED) on its end; toggle BOTH together. */
 export function isScraperDiscoveryEnabled(): boolean {
-  return readBool("SCRAPER_DISCOVERY_ENABLED", false);
+  // Default ON: the scraper IS the SERP replacement. A multi-source search must
+  // enqueue LinkedIn/SEEK discovery so a niche query the local library can't
+  // satisfy (e.g. "Business Analyst" AND "Oracle Fusion") gets filled from live
+  // search instead of returning 0. The worker paces itself (its own
+  // SCRAPER_DISCOVERY_ENABLED + DAILY_SEARCH_CAP); set SCRAPER_DISCOVERY_ENABLED=false
+  // on the app to disable.
+  return readBool("SCRAPER_DISCOVERY_ENABLED", true);
 }
 
 /** CRM: clients / submissions / placements (triage Stage 1). Off by default.

@@ -33,6 +33,7 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { isScraperDiscoveryEnabled, isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
 
 interface CheckResult {
   ok: boolean;
@@ -55,6 +56,9 @@ interface HealthResponse {
   version: string;
   uptimeSec: number;
   timestamp: string;
+  /** Operator-visible flag state so a deploy's effect is verifiable without
+   *  app auth (e.g. confirm discovery actually flipped on). */
+  flags: { discovery: boolean; scoreOffload: boolean };
 }
 
 const PROCESS_STARTED_AT = Date.now();
@@ -146,6 +150,7 @@ export async function GET() {
     version,
     uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
     timestamp: new Date().toISOString(),
+    flags: { discovery: isScraperDiscoveryEnabled(), scoreOffload: isLlamaScoreOffloadEnabled() },
   };
   return NextResponse.json(body, { status: overallOk ? 200 : 503 });
 }
