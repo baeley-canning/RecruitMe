@@ -183,6 +183,20 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
             select: { id: true },
           });
         }
+
+        // A P2002 means a row with this exact key DOES exist. If the refetch
+        // still can't see it, the state is inconsistent (a different unique
+        // constraint fired, replica lag, or the row was deleted between the
+        // conflict and the refetch). DO NOT fall through to the name-only
+        // identity create below — that silently spawns a KEYLESS orphan
+        // identity that defeats dedupe and strands the candidate under a row
+        // no future scrape can match. Fail loud so the ingest is retried.
+        if (!identity) {
+          throw new Error(
+            `Identity create raced (P2002) on ${key.kind}=${key.value} for org ${args.orgId}, ` +
+            `but the refetch found no matching row — refusing to create a keyless orphan identity`,
+          );
+        }
       }
 
       // Write alias row for audit trail.
@@ -243,8 +257,16 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
       })
     : null;
 
-  // For SEEK / JobAdder, fall back to jobAdderUrl match if no LinkedIn URL.
-  if (!existing && args.platform !== "linkedin") {
+  // Fall back to the platform's OWN url key when there's no LinkedIn match.
+  // (This used to always query jobAdderUrl, so a re-scraped SEEK person never
+  // matched their existing row and a duplicate Candidate was created on every
+  // scrape. Match seekUrl for SEEK, jobAdderUrl for JobAdder.)
+  if (!existing && args.platform === "seek") {
+    existing = await prisma.candidate.findFirst({
+      where: { orgId: args.orgId, seekUrl: normalisedUrl },
+      select: { id: true, profileText: true },
+    }).catch(() => null);
+  } else if (!existing && args.platform === "jobadder") {
     existing = await prisma.candidate.findFirst({
       where: { orgId: args.orgId, jobAdderUrl: normalisedUrl },
       select: { id: true, profileText: true },
@@ -266,6 +288,14 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
     if (args.name) updateData.name = args.name;
     if (args.headline) updateData.headline = args.headline;
     if (args.location) updateData.location = args.location;
+    // Write the SEEK URL onto the existing Candidate row (not just the identity)
+    // so a person first captured via LinkedIn gains their seekUrl, and a SEEK
+    // re-scrape keeps it populated. Non-unique partial index → safe to re-write;
+    // latest scrape wins (same policy as name/headline/location above).
+    const seekForUpdate = args.platform === "seek"
+      ? normalisedUrl
+      : args.seekUrl ? normaliseSeekUrl(args.seekUrl) : null;
+    if (seekForUpdate) updateData.seekUrl = seekForUpdate;
     // Clear stale score hash so UI shows "re-score recommended".
     if (args.profileText && args.profileText !== existing.profileText) {
       updateData.profileTextHash = null;
@@ -296,8 +326,16 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
       createData.linkedinUrl = normaliseLinkedInUrl(args.linkedinUrl ?? args.profileUrl);
     } else if (args.platform === "jobadder") {
       createData.jobAdderUrl = normalisedUrl;
+    } else if (args.platform === "seek") {
+      // normalisedUrl is already normaliseSeekUrl(profileUrl) for the SEEK
+      // platform. Write it onto the Candidate row (not just the identity) so
+      // the library/search can dedupe + deep-link by it.
+      createData.seekUrl = normalisedUrl;
     }
-    // SEEK doesn't have a Candidate-level seekUrl field; identity carries it.
+    // A SEEK URL can also ride along on a non-SEEK scrape (cross-platform capture).
+    if (args.seekUrl && args.platform !== "seek") {
+      createData.seekUrl = normaliseSeekUrl(args.seekUrl);
+    }
 
     await prisma.candidate.create({
       data: createData as Parameters<typeof prisma.candidate.create>[0]["data"],

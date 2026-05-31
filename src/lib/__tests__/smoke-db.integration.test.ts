@@ -135,6 +135,18 @@ d("smoke: getLibraryCandidates pagination (SSR cap + cursor load-more)", () => {
   });
 });
 
+d("smoke: Candidate.seekUrl column (SEEK ingestion writes it on create/update)", () => {
+  it("filters candidates by seekUrl without a Postgres error", async () => {
+    // Proves the seekUrl column exists + is queryable on the real DB. The
+    // scraper ingestion now stamps it on SEEK create AND update (it was
+    // silently dropped before); the dedupe lookup also queries it. Unit tests
+    // cover the write logic; this is the real-column existence gate. Non-mutating.
+    const n = await prisma.candidate.count({ where: { seekUrl: { not: null } } });
+    expect(typeof n).toBe("number");
+    expect(n).toBeGreaterThanOrEqual(0);
+  });
+});
+
 d("smoke: SearchRun write lifecycle (ON CONFLICT, jsonb merge, FOR UPDATE)", () => {
   it("create → attach (library+scraper+ingest) → recompute → settle → snapshot", async () => {
     const run = await createRun({
