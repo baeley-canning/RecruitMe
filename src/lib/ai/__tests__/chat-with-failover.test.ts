@@ -13,6 +13,7 @@ import {
   chatWithFailover,
   probeProviders,
   isAiFailoverConfigured,
+  AllProvidersFailedError,
 } from "../chat-with-failover";
 import { snapshotFailoverHealth, __resetFailoverHealthForTests } from "../../ai-failover-health";
 
@@ -73,13 +74,26 @@ describe("chatWithFailover — behaviour matrix", () => {
     expect(chat).toHaveBeenNthCalledWith(2, "hi", 0.1, 100, expect.objectContaining({ provider: "ollama" }));
   });
 
-  it("Claude AND Ollama both fail → re-throws the ORIGINAL Claude error", async () => {
+  it("Claude AND Ollama both fail → throws AllProvidersFailedError preserving the ORIGINAL Claude error", async () => {
     const claudeErr = Object.assign(new Error("Credit balance is too low"), { status: 400 });
     const ollamaErr = Object.assign(new Error("Ollama 503"), { status: 503 });
     vi.mocked(chat)
       .mockRejectedValueOnce(claudeErr)
       .mockRejectedValueOnce(ollamaErr);
-    await expect(chatWithFailover("hi", 0.1, 100)).rejects.toBe(claudeErr);
+    // The double-failure now surfaces as a typed AllProvidersFailedError, but
+    // it copies the ORIGINAL Claude error's message + status onto itself
+    // (so message/status-based callers and withRetry are unchanged) and
+    // exposes both underlying errors. This still proves the failure
+    // propagates out of chatWithFailover after both providers were tried.
+    const err = await chatWithFailover("hi", 0.1, 100).then(
+      () => { throw new Error("expected rejection"); },
+      (e) => e as AllProvidersFailedError,
+    );
+    expect(err).toBeInstanceOf(AllProvidersFailedError);
+    expect(err.message).toBe(claudeErr.message);
+    expect(err.status).toBe(400);
+    expect(err.primaryError).toBe(claudeErr);
+    expect(err.secondaryError).toBe(ollamaErr);
     expect(chat).toHaveBeenCalledTimes(2);
   });
 
@@ -92,11 +106,23 @@ describe("chatWithFailover — behaviour matrix", () => {
     expect(chat).toHaveBeenCalledTimes(1);
   });
 
-  it("no Claude key + Ollama fails → throws WITHOUT a Claude attempt (no fallback)", async () => {
+  it("no Claude key + Ollama fails → throws AllProvidersFailedError WITHOUT a Claude attempt (no fallback)", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     const ollamaErr = Object.assign(new Error("Ollama daemon down"), { status: 503 });
     vi.mocked(chat).mockRejectedValueOnce(ollamaErr);
-    await expect(chatWithFailover("hi", 0.1, 100)).rejects.toBe(ollamaErr);
+    // Ollama is the sole primary here with no secondary, so the single
+    // failure surfaces as AllProvidersFailedError wrapping the Ollama error
+    // (message + status preserved, original reachable via primaryError).
+    // No Claude attempt is made.
+    const err = await chatWithFailover("hi", 0.1, 100).then(
+      () => { throw new Error("expected rejection"); },
+      (e) => e as AllProvidersFailedError,
+    );
+    expect(err).toBeInstanceOf(AllProvidersFailedError);
+    expect(err.message).toBe(ollamaErr.message);
+    expect(err.status).toBe(503);
+    expect(err.primaryError).toBe(ollamaErr);
+    expect(err.secondaryError).toBeUndefined();
     expect(chat).toHaveBeenCalledTimes(1);
   });
 

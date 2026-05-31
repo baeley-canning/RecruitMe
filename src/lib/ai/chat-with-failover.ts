@@ -25,6 +25,33 @@ import { recordFailover, recordPrimarySuccess } from "../ai-failover-health";
 
 export type ChatSource = "claude" | "ollama";
 
+/**
+ * Thrown when every configured AI provider has failed for a single call —
+ * either the sole primary errored with no secondary configured, or both
+ * primary AND secondary errored. Lets callers (e.g. an offload/queue path)
+ * reliably detect "all AI is down" with `instanceof` instead of pattern-
+ * matching raw Anthropic/Ollama error shapes.
+ *
+ * Backward-compat: the original primary error's `.message` and `.status`
+ * are copied onto this instance, so any caller doing `err.message`,
+ * `err.status`, or message-based matching keeps working unchanged — and
+ * `withRetry`'s status/message-based retry decisions are identical to
+ * re-throwing the original error. The original errors are still available
+ * via `.primaryError` / `.secondaryError` for callers that need them.
+ */
+export class AllProvidersFailedError extends Error {
+  readonly primaryError: unknown;
+  readonly secondaryError?: unknown;
+  readonly status?: number;
+  constructor(primaryError: unknown, secondaryError?: unknown) {
+    super(primaryError instanceof Error ? primaryError.message : String(primaryError));
+    this.name = "AllProvidersFailedError";
+    this.primaryError = primaryError;
+    this.secondaryError = secondaryError;
+    this.status = (primaryError as { status?: number })?.status;
+  }
+}
+
 export interface ProviderAvailability {
   hasClaude: boolean;
   hasOllama: boolean;
@@ -124,7 +151,7 @@ export async function chatWithFailover(
     const reason = summariseError(primaryErr);
     if (!secondary) {
       console.warn(`[chat-failover] ${preferred} failed (${reason}) — no secondary configured`);
-      throw primaryErr;
+      throw new AllProvidersFailedError(primaryErr);
     }
 
     console.warn(`[chat-failover] ${preferred} failed (${reason}) — attempting ${secondary} fallback`);
@@ -144,7 +171,7 @@ export async function chatWithFailover(
       // timeout) and there's no way to tell which.
       const secondaryReason = summariseError(secondaryErr);
       console.warn(`[chat-failover] ${secondary} also failed (${secondaryReason}) — re-throwing original ${preferred} error`);
-      throw primaryErr;
+      throw new AllProvidersFailedError(primaryErr, secondaryErr);
     }
   }
 }
