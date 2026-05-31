@@ -1375,7 +1375,12 @@ ${toHtml(job.rawJd)}
   }
 
   if (!job) {
-    return <div className="px-4 py-6 text-center text-text-tertiary">Job not found.</div>;
+    return (
+      <div className="px-4 py-6 text-center text-text-tertiary">
+        Job not found.{" "}
+        <Link href="/dashboard" className="text-accent hover:text-accent-hover">Back to dashboard</Link>
+      </div>
+    );
   }
 
   const jobStatusPillClass =

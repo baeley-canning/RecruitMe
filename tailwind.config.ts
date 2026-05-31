@@ -74,6 +74,19 @@ const config: Config = {
           DEFAULT: "#bf5af2",
           subtle:  "rgba(191, 90, 242, 0.18)",
         },
+        // Source-badge colours (candidateSourceBadge / search-result source
+        // pills). Without these tokens the badges fell back to neutral grey —
+        // the talent-pool, PDL/API and LinkedIn-in-search pills lost their
+        // colour-coding. Apple "Cyan" + "Indigo" so each source stays distinct
+        // from accent-blue / success-green / warning-orange.
+        info: {
+          DEFAULT: "#64d2ff",
+          subtle:  "rgba(100, 210, 255, 0.15)",
+        },
+        purple: {
+          DEFAULT: "#5e5ce6",
+          subtle:  "rgba(94, 92, 230, 0.18)",
+        },
       },
       fontFamily: {
         // -apple-system gives us SF Pro on Apple platforms; system-ui is

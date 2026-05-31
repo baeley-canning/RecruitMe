@@ -79,7 +79,7 @@ function CandidateCard({ c }: { c: LibraryCandidate }) {
         {/* Org name — only shown to owner, identifies cross-org candidates */}
         {c.sharedFromOrgName && (
           <Badge className="bg-accent-subtle text-accent">
-            <span title={`Organisation: ${c.sharedFromOrgName}`}>{c.sharedFromOrgName}</span>
+            <span className="line-clamp-1 max-w-[120px]" title={`Organisation: ${c.sharedFromOrgName}`}>{c.sharedFromOrgName}</span>
           </Badge>
         )}
         {/* Job context */}
