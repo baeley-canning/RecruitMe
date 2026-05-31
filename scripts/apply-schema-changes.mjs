@@ -935,6 +935,50 @@ await step("validate ScrapeJob.searchRunId FK", async () => {
   `;
 });
 
+// 39. CandidateIdentity.currentInsightId → ProfileInsight FK (ON DELETE SET NULL).
+//     The column has existed (bare TEXT) since the CandidateIdentity table was
+//     created — a denormalised "latest valid insight" pointer the read path
+//     follows — but with NO referential integrity. Deleting a ProfileInsight
+//     left the pointer dangling at a row that no longer exists. Add the FK so a
+//     deleted insight nulls the pointer instead of stranding it. Pre-null any
+//     already-dangling values first (insights deleted before the FK existed),
+//     else VALIDATE would fail. FK added NOT VALID then validated separately
+//     (same low-lock pattern as the candidateIdentityId / searchRunId FKs).
+//     Name matches Prisma's <Table>_<col>_fkey so `prisma db push` finds it
+//     in place and no-ops (the relation is modelled in schema.prisma).
+await step("CandidateIdentity.currentInsightId FK → ProfileInsight (pre-null + SET NULL)", async () => {
+  // (a) Clear dangling pointers so the constraint can validate.
+  await prisma.$executeRaw`
+    UPDATE "CandidateIdentity" ci
+    SET "currentInsightId" = NULL
+    WHERE ci."currentInsightId" IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM "ProfileInsight" pi WHERE pi."id" = ci."currentInsightId")
+  `;
+  // (b) Add the FK if absent.
+  await prisma.$executeRaw`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CandidateIdentity_currentInsightId_fkey') THEN
+        ALTER TABLE "CandidateIdentity"
+          ADD CONSTRAINT "CandidateIdentity_currentInsightId_fkey"
+          FOREIGN KEY ("currentInsightId") REFERENCES "ProfileInsight"("id")
+          ON DELETE SET NULL ON UPDATE CASCADE NOT VALID;
+      END IF;
+    END $$
+  `;
+});
+
+await step("validate CandidateIdentity.currentInsightId FK", async () => {
+  await prisma.$executeRaw`
+    DO $$ DECLARE is_valid BOOLEAN;
+    BEGIN
+      SELECT convalidated INTO is_valid FROM pg_constraint WHERE conname = 'CandidateIdentity_currentInsightId_fkey';
+      IF is_valid IS FALSE THEN
+        ALTER TABLE "CandidateIdentity" VALIDATE CONSTRAINT "CandidateIdentity_currentInsightId_fkey";
+      END IF;
+    END $$
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

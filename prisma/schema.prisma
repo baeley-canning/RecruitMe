@@ -684,7 +684,13 @@ model CandidateIdentity {
 
   candidates Candidate[]
   aliases    CandidateIdentityAlias[]
-  insights   ProfileInsight[]
+  insights   ProfileInsight[]   @relation("IdentityInsights")
+  // FK for the denormalised currentInsightId pointer above. ON DELETE SET NULL
+  // so deleting a ProfileInsight clears the pointer rather than leaving the
+  // read path chasing a row that no longer exists. The DB constraint is added
+  // (with pre-null cleanup of any already-dangling values) in
+  // scripts/apply-schema-changes.mjs; modelled here so `prisma db push` keeps it.
+  currentInsight ProfileInsight? @relation("CurrentInsight", fields: [currentInsightId], references: [id], onDelete: SetNull)
 
   // Same person legitimately exists across orgs; uniqueness is per-org only.
   // jobAdderUrl uniqueness within an org prevents auto-merging two subsidiaries
@@ -752,7 +758,7 @@ model ProfileInsight {
   id                    String            @id @default(cuid())
   orgId                 String
   identityId            String
-  identity              CandidateIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  identity              CandidateIdentity @relation("IdentityInsights", fields: [identityId], references: [id], onDelete: Cascade)
   factsJson             String // JSON: primaryStack, domains, titlesHeld, evidenceSnippets, etc.
   extractionVersion     Int // Gate for Stage 1 ranker; bumped only after re-extraction sweep
   promptVersion         String // e.g. "insight-v1.0" — bumped on prompt edits
@@ -764,6 +770,11 @@ model ProfileInsight {
   sourceCandidateId     String? // which Candidate row was the longest-text source
   extractedAt           DateTime          @default(now())
   supersededAt          DateTime?
+
+  // Back-reference for CandidateIdentity.currentInsight (the denormalised
+  // "latest insight" pointer). The FK column lives on CandidateIdentity
+  // (currentInsightId), so there are no relation scalar fields on this side.
+  currentForIdentities  CandidateIdentity[] @relation("CurrentInsight")
 
   // Idempotency: re-running the extractor with the same inputs is a no-op.
   @@unique([orgId, identityId, sourceProfileTextHash, extractionVersion])

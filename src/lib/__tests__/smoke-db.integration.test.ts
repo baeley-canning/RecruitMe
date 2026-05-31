@@ -48,12 +48,19 @@ const d = ENABLED ? describe : describe.skip;
 const createdRunIds: string[] = [];
 // Sentinel so the concurrent-claim test's jobs are isolated + always cleaned.
 const CLAIM_TEST_MARKER = "__smoke_claim_test__";
+// Fixed ids for the currentInsightId FK behavioural test (deleted in afterAll
+// too, in case the test is interrupted between create and the inline cleanup).
+const FK_SMOKE_IDENTITY = "__smoke_fk_idty__";
+const FK_SMOKE_INSIGHT = "__smoke_fk_insight__";
 
 afterAll(async () => {
   for (const id of createdRunIds) {
     await prisma.searchRun.delete({ where: { id } }).catch(() => {});
   }
   await prisma.scrapeJob.deleteMany({ where: { requestedBy: CLAIM_TEST_MARKER } }).catch(() => {});
+  // Deleting the identity cascades its insights (identityId FK is CASCADE).
+  await prisma.profileInsight.deleteMany({ where: { id: FK_SMOKE_INSIGHT } }).catch(() => {});
+  await prisma.candidateIdentity.deleteMany({ where: { id: FK_SMOKE_IDENTITY } }).catch(() => {});
   await prisma.$disconnect().catch(() => {});
 });
 
@@ -144,6 +151,56 @@ d("smoke: Candidate.seekUrl column (SEEK ingestion writes it on create/update)",
     const n = await prisma.candidate.count({ where: { seekUrl: { not: null } } });
     expect(typeof n).toBe("number");
     expect(n).toBeGreaterThanOrEqual(0);
+  });
+});
+
+d("smoke: CandidateIdentity.currentInsightId FK (ON DELETE SET NULL)", () => {
+  it("FK exists with SET NULL action and no dangling pointers remain", async () => {
+    const fk = await prisma.$queryRaw<Array<{ confdeltype: string }>>`
+      SELECT confdeltype FROM pg_constraint WHERE conname = 'CandidateIdentity_currentInsightId_fkey'
+    `;
+    expect(fk.length).toBe(1);
+    // 'n' = ON DELETE SET NULL (vs 'c' cascade, 'a' no action, 'r' restrict).
+    expect(fk[0].confdeltype).toBe("n");
+    // The pre-null cleanup must have cleared any insight-deleted-before-FK rows.
+    const dangling = await prisma.$queryRaw<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM "CandidateIdentity" ci
+      WHERE ci."currentInsightId" IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM "ProfileInsight" pi WHERE pi."id" = ci."currentInsightId")
+    `;
+    expect(dangling[0].n).toBe(0);
+  });
+
+  it("deleting the pointed-to ProfileInsight nulls the pointer (SET NULL in action)", async () => {
+    // CandidateIdentity.orgId → Org is an FK, so borrow an existing org.
+    const org = await prisma.org.findFirst({ select: { id: true } });
+    if (!org) return; // empty box — skip the behavioural leg, the FK-shape test still ran
+    // Clean any leftovers from a prior interrupted run first (repeatable).
+    await prisma.candidateIdentity.deleteMany({ where: { id: FK_SMOKE_IDENTITY } });
+    await prisma.profileInsight.deleteMany({ where: { id: FK_SMOKE_INSIGHT } });
+
+    await prisma.candidateIdentity.create({
+      data: { id: FK_SMOKE_IDENTITY, orgId: org.id, canonicalName: "__smoke_fk__" },
+    });
+    await prisma.profileInsight.create({
+      data: {
+        id: FK_SMOKE_INSIGHT, orgId: org.id, identityId: FK_SMOKE_IDENTITY,
+        factsJson: "{}", extractionVersion: 0, promptVersion: "smoke",
+        extractedBy: "deterministic", modelId: "smoke", sourceProfileTextHash: "__smoke_fk_hash__",
+      },
+    });
+    await prisma.candidateIdentity.update({
+      where: { id: FK_SMOKE_IDENTITY }, data: { currentInsightId: FK_SMOKE_INSIGHT },
+    });
+
+    // Delete the insight → the FK must null the identity's pointer, not error.
+    await prisma.profileInsight.delete({ where: { id: FK_SMOKE_INSIGHT } });
+    const after = await prisma.candidateIdentity.findUnique({
+      where: { id: FK_SMOKE_IDENTITY }, select: { currentInsightId: true },
+    });
+    expect(after?.currentInsightId).toBeNull();
+
+    await prisma.candidateIdentity.delete({ where: { id: FK_SMOKE_IDENTITY } }).catch(() => {});
   });
 });
 
