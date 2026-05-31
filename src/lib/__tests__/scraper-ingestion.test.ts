@@ -80,6 +80,40 @@ describe("ingestScraperResult — SEEK seekUrl is written on the Candidate row",
   });
 });
 
+describe("ingestScraperResult — SEEK + LinkedIn cross-key identity backfill", () => {
+  it("backfills identity.seekUrl from profileUrl when a SEEK scrape resolves to a LinkedIn identity", async () => {
+    // identityMergeKey prefers linkedinUrl, so the identity is FOUND by LinkedIn.
+    // The SEEK URL lives in profileUrl (args.seekUrl is absent) — it must still
+    // backfill the identity's seekUrl, else a later SEEK-only hit can't merge.
+    const LINKEDIN_URL = "https://www.linkedin.com/in/jane-doe-12345";
+    dbMocks.prisma.candidateIdentity.findFirst.mockResolvedValue({ id: "identity-1" });
+    // No existing Candidate row → create path (also asserts the Candidate gets seekUrl).
+    dbMocks.prisma.candidate.findFirst.mockResolvedValue(null);
+
+    await ingestScraperResult({
+      orgId: "org-1",
+      platform: "seek",
+      profileUrl: SEEK_URL,
+      linkedinUrl: LINKEDIN_URL,
+      profileText: "Jane Doe — Senior RF Engineer, Wellington.",
+      name: "Jane Doe",
+    });
+
+    // Identity backfill: updateMany writes the normalised SEEK URL, gated on
+    // seekUrl IS NULL (the existing "don't clobber" safety pattern).
+    expect(dbMocks.prisma.candidateIdentity.updateMany).toHaveBeenCalledTimes(1);
+    const idtyUpdate = dbMocks.prisma.candidateIdentity.updateMany.mock.calls[0][0] as {
+      where: Record<string, unknown>; data: Record<string, unknown>;
+    };
+    expect(idtyUpdate.data.seekUrl).toBe(normaliseSeekUrl(SEEK_URL));
+    expect(idtyUpdate.where.seekUrl).toBeNull();
+
+    // The Candidate row also carries the SEEK URL (created under the LinkedIn key).
+    const createArg = dbMocks.prisma.candidate.create.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(createArg.data.seekUrl).toBe(normaliseSeekUrl(SEEK_URL));
+  });
+});
+
 describe("ingestScraperResult — P2002 identity race", () => {
   it("recovers when the refetch finds the racing row (no throw)", async () => {
     // Initial lookup → null (we try to create); create loses the race (P2002);

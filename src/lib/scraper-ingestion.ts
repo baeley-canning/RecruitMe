@@ -212,10 +212,19 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
         }).catch(() => {}); // non-fatal if duplicate alias
       }
     } else {
-      // Update seekUrl on the existing identity if this is the first SEEK scrape
-      // for a person we already know via LinkedIn.
+      // Backfill seekUrl on the existing identity if this is the first SEEK
+      // scrape for a person we already know via LinkedIn. For a SEEK scrape the
+      // URL is usually in profileUrl (args.seekUrl is often absent), so fall
+      // back to profileUrl — otherwise the identity's seekUrl never gets set
+      // and a later SEEK-only match can't reconcile to this person.
       if (key.kind === "linkedinUrl" && (args.seekUrl || args.platform === "seek")) {
-        const seekVal = args.seekUrl ? normaliseSeekUrl(args.seekUrl) : null;
+        const seekVal = args.seekUrl
+          ? normaliseSeekUrl(args.seekUrl)
+          : args.platform === "seek"
+            ? normaliseSeekUrl(args.profileUrl)
+            : null;
+        // `where: { seekUrl: null }` keeps the existing safety pattern — only
+        // write when the identity has no seekUrl yet (don't clobber a known one).
         if (seekVal) {
           await prisma.candidateIdentity.updateMany({
             where: { id: identity.id, orgId: args.orgId, seekUrl: null },
