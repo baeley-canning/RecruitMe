@@ -6,8 +6,8 @@
  */
 
 export interface ProvenancePillProps {
-  label: "Claude" | "GPT";
-  tone:  "claude" | "openai";
+  label: "Claude" | "Llama";
+  tone:  "claude" | "ollama";
   title: string;
 }
 
@@ -17,14 +17,14 @@ export interface ProvenancePillProps {
  *
  * Returns null for missing / legacy / unrecognised values so older
  * candidates (scored before scoredBy was tracked, or scored by a now-
- * removed provider like "ollama") render no provenance badge instead
+ * removed provider like "openai") render no provenance badge instead
  * of misleading the recruiter.
  */
 export function provenancePillProps(
-  source: "claude" | "openai" | undefined | null,
+  source: "claude" | "ollama" | undefined | null,
   context: "match" | "acceptance",
 ): ProvenancePillProps | null {
-  if (source !== "claude" && source !== "openai") return null;
+  if (source !== "claude" && source !== "ollama") return null;
   if (source === "claude") {
     return {
       label: "Claude",
@@ -35,10 +35,10 @@ export function provenancePillProps(
     };
   }
   return {
-    label: "GPT",
-    tone:  "openai",
+    label: "Llama",
+    tone:  "ollama",
     title: context === "match"
-      ? "Match score produced by OpenAI's GPT model (failover from Claude). Re-score when Claude is back if you want a Claude verdict."
-      : "Acceptance likelihood produced by OpenAI's GPT model (failover from Claude). Re-run when Claude is back if you want a Claude verdict.",
+      ? "Match score produced by the local Llama model (Ollama) (failover from Claude). Re-score when Claude is back if you want a Claude verdict."
+      : "Acceptance likelihood produced by the local Llama model (Ollama) (failover from Claude). Re-run when Claude is back if you want a Claude verdict.",
   };
 }

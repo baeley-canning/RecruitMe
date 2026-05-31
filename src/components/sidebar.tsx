@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, Github, Menu, Search } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, Menu, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isOwner as sessionIsOwner } from "@/lib/access";
 import { useState, useEffect } from "react";
@@ -164,7 +164,6 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/jobs/listing-builder",icon: FileText,           label: "Listing Builder",    match: (p) => p === "/jobs/listing-builder" },
   { href: "/search",              icon: Search,             label: "Search",             match: (p) => p === "/search" || p.startsWith("/search/") },
   { href: "/candidates",          icon: Library,            label: "Candidates Library", match: (p) => p === "/candidates" || p.startsWith("/candidates/") },
-  { href: "/github-search",       icon: Github,             label: "GitHub Search",      match: (p) => p.startsWith("/github-search") },
   { href: "/linkedin-setup",      icon: Bookmark,           label: "LinkedIn Setup",     match: (p) => p === "/linkedin-setup" },
 ];
 

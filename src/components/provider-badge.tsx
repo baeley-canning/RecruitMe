@@ -1,6 +1,6 @@
 /**
- * Live status pill for an external provider (Claude, OpenAI, SerpAPI, PDL,
- * GitHub). Colour comes from the `state` field returned by
+ * Live status pill for a model/enrichment provider (Claude, Ollama, PDL).
+ * Colour comes from the `state` field returned by
  * [[/api/ai/status]], which is derived from in-memory provider-health
  * signals recorded by every provider call site (see [[provider-health.ts]]).
  *
@@ -20,9 +20,8 @@ import { cn } from "@/lib/utils";
 
 export type ProviderName =
   | "claude"
-  | "openai"
-  | "pdl"
-  | "github";
+  | "ollama"
+  | "pdl";
 
 export type ProviderState =
   | "healthy"
@@ -43,9 +42,8 @@ export interface ProviderHealth {
 
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   claude:   "Claude",
-  openai:   "GPT",
+  ollama:   "Llama",
   pdl:      "PDL",
-  github:   "GitHub",
 };
 
 /**
@@ -64,10 +62,10 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
  *
  */
 function colourClasses(state: ProviderState, name: ProviderName): string {
-  // OpenAI gets the dedicated success-tone token so recruiters can spot
-  // at a glance when scoring is being handled by the GPT fallback
-  // rather than Claude. (Same idea as the prior Llama-purple convention.)
-  if (name === "openai" && state === "healthy") {
+  // Ollama gets the dedicated success-tone token so recruiters can spot
+  // at a glance when scoring is being handled by the local Llama fallback
+  // rather than Claude.
+  if (name === "ollama" && state === "healthy") {
     return "bg-success-subtle text-success";
   }
   switch (state) {
@@ -131,7 +129,7 @@ export function ProviderBadge({ health, showUnconfigured = false }: ProviderBadg
 /**
  * Renders the relevant providers as a horizontal row of badges. Hides
  * unconfigured providers by default. Sorts so the AI providers (Claude /
- * GPT) appear first, then search/enrichment, then GitHub.
+ * Llama) appear first, then search/enrichment.
  */
 export function ProviderBadgeRow({
   providers,
@@ -140,11 +138,10 @@ export function ProviderBadgeRow({
   providers: ProviderHealth[];
   showUnconfigured?: boolean;
 }) {
-  // Order: AI providers first (Claude/GPT), then enrichment + GitHub.
+  // Order: AI providers first (Claude/Llama), then enrichment.
   // Keeps related providers visually grouped.
   const order: ProviderName[] = [
-    "claude", "openai",
-    "pdl", "github",
+    "claude", "ollama", "pdl",
   ];
   const sorted = [...providers].sort(
     (a, b) => order.indexOf(a.name) - order.indexOf(b.name),

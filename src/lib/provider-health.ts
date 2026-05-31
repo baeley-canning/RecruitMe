@@ -11,16 +11,15 @@
  *
  * The module-level health for the Claude failover lives in
  * [[ai-failover-health.ts]] — that one tracks the binary "Claude is dead,
- * use Llama" state. This file tracks per-provider last-success / last-
- * failure timestamps for the badge UI. They're complementary; the API
- * endpoint that drives the UI reads both.
+ * use the local Ollama model" state. This file tracks per-provider
+ * last-success / last-failure timestamps for the badge UI. They're
+ * complementary; the API endpoint that drives the UI reads both.
  */
 
 export type ProviderName =
   | "claude"
-  | "openai"
-  | "pdl"
-  | "github";
+  | "ollama"
+  | "pdl";
 
 export interface ProviderHealthEntry {
   /** Last time we successfully reached this provider (ISO timestamp). */
@@ -44,9 +43,8 @@ const initialEntry = (): ProviderHealthEntry => ({
 
 export const providerHealth: Record<ProviderName, ProviderHealthEntry> = {
   claude:   initialEntry(),
-  openai:   initialEntry(),
+  ollama:   initialEntry(),
   pdl:      initialEntry(),
-  github:   initialEntry(),
 };
 
 export function recordProviderSuccess(name: ProviderName): void {
@@ -145,9 +143,10 @@ export interface ProviderHealthSnapshot {
 export function isProviderConfigured(name: ProviderName): boolean {
   switch (name) {
     case "claude":   return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
-    case "openai":   return Boolean(process.env.OPENAI_API_KEY?.trim());
+    // Ollama is always "configured": the local client URL defaults to the
+    // mini-PC endpoint, so there's no key to gate on.
+    case "ollama":   return true;
     case "pdl":      return Boolean(process.env.PDL_API_KEY?.trim());
-    case "github":   return Boolean(process.env.GITHUB_TOKEN?.trim());
   }
 }
 

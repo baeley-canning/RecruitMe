@@ -1,9 +1,9 @@
 /**
  * Unit tests for src/lib/ai/insights.ts — the ProfileInsight extractor.
  *
- * All AI calls mocked. No real Claude / OpenAI traffic. Tests cover:
+ * All AI calls mocked. No real Claude / Ollama traffic. Tests cover:
  *  • Thin-profile fast path (no AI tokens spent)
- *  • Provider provenance flows through (Claude vs OpenAI source)
+ *  • Provider provenance flows through (Claude vs Ollama source)
  *  • Hash normalisation defeats whitespace-only changes
  *  • Hallucination guard drops evidence quotes not in source
  *  • validateAndCoerce caps array sizes + lowercases stacks/domains
@@ -116,12 +116,12 @@ describe("extractInsight — AI happy path", () => {
           { field: "currentTitle", value: "Senior TypeScript Engineer", quote: "Senior TypeScript Engineer at Acme Corp" },
         ],
       }),
-      source: "openai",
+      source: "ollama",
       durationMs: 200,
     });
     const result = await extractInsight({ profileText, orgId: "org-A" });
-    expect(result.extractedBy).toBe("openai");
-    expect(result.modelId).toMatch(/gpt-4o|gpt/i);
+    expect(result.extractedBy).toBe("ollama");
+    expect(result.modelId).toMatch(/qwen|llama/i);
     expect(result.facts.currentTitle).toBe("Senior TypeScript Engineer");
     expect(result.facts.primaryStack).toContain("typescript");
   });

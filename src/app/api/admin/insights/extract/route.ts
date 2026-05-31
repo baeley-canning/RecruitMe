@@ -15,7 +15,7 @@
  *     This mirrors the auth shape used by purge-jobadder-imports — see
  *     src/app/api/admin/purge-jobadder-imports/route.ts.
  *
- * Cost: one Claude/OpenAI call per identity unless the profileText is
+ * Cost: one Claude/Ollama call per identity unless the profileText is
  * < INSIGHT_MIN_PROFILE_CHARS, in which case the extractor returns a
  * thin-profile stub without spending tokens. Both paths cost-track via
  * recordAiCall (the underlying chat helper) so they appear in UsageEvent.

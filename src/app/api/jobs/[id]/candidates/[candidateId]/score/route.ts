@@ -79,11 +79,11 @@ export async function POST(
 
     // No withRetry wrapper — scoreCandidateStructured / predictAcceptance
     // both route through chatWithFailover, which already attempts the
-    // secondary provider (OpenAI) on any Claude error. Stacking a
-    // 3-attempt retry on top would mean a single Claude outage burns
-    // up to 6 paid API calls per Re-score click (3 × Claude + 3 ×
-    // OpenAI). The failover wrapper is the resilience layer; one
-    // primary attempt + one secondary attempt is enough.
+    // secondary provider (the local Ollama model) on any Claude error.
+    // Stacking a 3-attempt retry on top would mean a single Claude outage
+    // burns up to 6 API calls per Re-score click (3 × Claude + 3 ×
+    // Ollama). The failover wrapper is the resilience layer; one primary
+    // attempt + one secondary attempt is enough.
     const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
       scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId),
       predictAcceptance(candidate.profileText!, parsedRole, salary),

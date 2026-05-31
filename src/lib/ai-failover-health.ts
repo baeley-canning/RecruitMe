@@ -1,5 +1,5 @@
 /**
- * In-memory health state for the Claude ↔ OpenAI symmetric failover.
+ * In-memory health state for the Claude → Ollama failover.
  * When `chatWithFailover` succeeds against the primary, isPrimaryDead
  * is cleared; when it falls over to the secondary, isPrimaryDead is
  * set with a free-form reason. The /api/ai/status endpoint reads this
@@ -11,8 +11,8 @@
  * process) the state is stable until restart.
  *
  * "Primary" here is whichever provider `probeProviders().primary`
- * resolves to (Claude by default; OpenAI when AI_PROVIDER=openai or
- * only OPENAI_API_KEY is set).
+ * resolves to (Claude when ANTHROPIC_API_KEY is set; otherwise the
+ * local Ollama model).
  */
 
 import type { ChatSource } from "./ai/chat-with-failover";

@@ -88,11 +88,12 @@ export interface ScoreBreakdown {
   recruiter_summary: string;
   /**
    * Which model produced this breakdown. Absent on legacy rows; "claude"
-   * for the default pipeline; "openai" when Claude failed and the OpenAI
-   * failover ran. Both providers are first-class — no penalty is applied
-   * either way — the field exists so the UI can render a provenance pill.
+   * for the default pipeline; "ollama" when Claude failed and the local
+   * Ollama failover ran. Both providers are first-class — no penalty is
+   * applied either way — the field exists so the UI can render a
+   * provenance pill.
    */
-  scoredBy?: "claude" | "openai";
+  scoredBy?: "claude" | "ollama";
 }
 
 // ─── Category weights — v3 (must sum to 1.0) ───────────────────────────────────

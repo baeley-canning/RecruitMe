@@ -13,7 +13,7 @@
  *    scoring prompt (src/lib/ai/scoring.ts) so hallucinations are
  *    catchable post-hoc.
  *  • Provenance is captured at every persistence boundary: extractedBy
- *    ("claude" | "openai" — propagated from chatWithFailover.source),
+ *    ("claude" | "ollama" — propagated from chatWithFailover.source),
  *    modelId (the exact model string at call time), promptVersion
  *    (bumped on every prompt edit), extractionVersion (bumped only after
  *    a re-extraction sweep validates a new prompt).
@@ -21,9 +21,9 @@
  *    the input — lowercase + whitespace-collapse — so cosmetic edits
  *    (line-ending flips, extra spaces) don't trigger re-extraction.
  *  • Goes through chatWithFailover + withRetry like all other AI calls.
- *    OpenAI failover is fine for one-off insight extractions; provenance
- *    is recorded so cross-role consumers can audit which model produced
- *    what.
+ *    The local Ollama failover is fine for one-off insight extractions;
+ *    provenance is recorded so cross-role consumers can audit which model
+ *    produced what.
  *
  * Versioning policy:
  *  • INSIGHT_PROMPT_VERSION bumps on any prompt edit.
@@ -85,7 +85,7 @@ export interface InsightFacts {
 
 export interface ExtractedInsight {
   facts: InsightFacts;
-  /** Which provider actually produced the JSON — "claude" or "openai". */
+  /** Which provider actually produced the JSON — "claude" or "ollama". */
   extractedBy: ChatSource;
   /** Exact model identifier at call time (the env-configured default). */
   modelId: string;
@@ -163,7 +163,7 @@ function resolveModelId(source: ChatSource): string {
   if (source === "claude") {
     return process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
   }
-  return process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  return process.env.OLLAMA_MODEL ?? "qwen2.5:1.5b";
 }
 
 /**
@@ -308,7 +308,7 @@ export async function extractInsight(opts: ExtractInsightOptions): Promise<Extra
 
   // Real extraction. Wrap in withRetry so transient 5xx/429 errors don't
   // turn into permanent "no insight" rows. Capture the source so the
-  // persisted row knows whether Claude or OpenAI did the work.
+  // persisted row knows whether Claude or Ollama did the work.
   const sourceRef: { value: ChatSource } = { value: "claude" };
   const text = await withRetry(async () => {
     const result = await chatWithFailover(buildUserPrompt(profileText), 0.1, 2048, {

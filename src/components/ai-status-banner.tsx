@@ -73,10 +73,10 @@ export function AiStatusBanner() {
     );
   }
 
-  // CASE 2: Claude key present but failover triggered — running on GPT.
-  // chat-with-failover.ts only supports Claude → OpenAI; there is no third
-  // (local) provider. The card-level ProvenancePill renders Claude vs GPT
-  // per-score so the "marked accordingly" claim is real.
+  // CASE 2: Claude key present but failover triggered — running on the
+  // local Llama model. chat-with-failover.ts falls Claude → Ollama. The
+  // card-level ProvenancePill renders Claude vs Llama per-score so the
+  // "marked accordingly" claim is real.
   if (status.failover?.isPrimaryDead) {
     const reasonText = status.failover.failoverReason
       ? FAILOVER_REASON_TEXT[status.failover.failoverReason]
@@ -87,10 +87,10 @@ export function AiStatusBanner() {
           <Cpu className="w-3.5 h-3.5 text-warning flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <p className="text-md font-medium text-warning-hover">
-              Claude is degraded — using GPT (OpenAI) as fallback
+              Claude is degraded — using local Llama (Ollama) fallback
             </p>
             <p className="text-xs text-warning-hover/80 mt-0.5">
-              {reasonText}. New scores are produced by GPT and tagged with a provider pill on the candidate card. Recheck Claude status / credits and re-score when restored.
+              {reasonText}. New scores are produced by the local Llama model and tagged with a provider pill on the candidate card. Recheck Claude status / credits and re-score when restored.
             </p>
           </div>
           <button
@@ -124,7 +124,7 @@ export function AiStatusIndicator() {
     return (
       <span className="flex items-center gap-1 text-xs text-warning">
         <Cpu className="w-3 h-3" />
-        GPT fallback ({status.failover.failoverReason ?? "claude offline"})
+        Llama fallback ({status.failover.failoverReason ?? "claude offline"})
       </span>
     );
   }

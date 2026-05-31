@@ -140,11 +140,11 @@ describe("mergeScoringError", () => {
 
   it("preserves existing screeningData fields when merging", () => {
     const existing = JSON.stringify({ availability: "4 weeks", notes: "Strong React." });
-    const merged = mergeScoringError(existing, "OpenAI 502");
+    const merged = mergeScoringError(existing, "Ollama 502");
     const parsed = JSON.parse(merged);
     expect(parsed.availability).toBe("4 weeks");
     expect(parsed.notes).toBe("Strong React.");
-    expect(parsed.scoringError).toBe("OpenAI 502");
+    expect(parsed.scoringError).toBe("Ollama 502");
   });
 
   it("survives malformed existing screeningData (falls back to empty base)", () => {

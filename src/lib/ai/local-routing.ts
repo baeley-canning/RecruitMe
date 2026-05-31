@@ -4,7 +4,7 @@
  * Each AI workflow in the app passes a task key — e.g. "cv_clean",
  * "info_extract", "refs_questions" — and this helper decides whether to
  * route that call to the local Qwen instance vs. the default hosted
- * provider (Claude / OpenAI failover).
+ * provider (Claude, with the local Ollama model as failover).
  *
  * Configured via a single env var so flipping a task on/off doesn't need
  * a code change:

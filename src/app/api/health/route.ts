@@ -1,7 +1,7 @@
 /**
  * GET /api/health — appliance liveness + dependency probe.
  *
- * Returns 200 only when DB, Ollama, and the scraper worker are all
+ * Returns 200 when the FATAL dependencies (DB + scraper worker) are
  * reachable. Used by:
  *  - systemd healthcheck timer on the mini-PC (restarts the app on
  *    repeated failure)
@@ -19,9 +19,16 @@
  * OLLAMA_OFFLOAD_TASKS env is set — boxes without local LLM shouldn't
  * fail health for a service they don't depend on.
  *
- * Status code: 200 when overall.ok = true, 503 otherwise. The body is
- * always JSON so consumers can read why something's down without
- * branching on status.
+ * Ollama is a BEST-EFFORT signal, not a fatal dependency: it's the
+ * Claude failover, so the app still functions when it's down (Claude
+ * stays primary). An unreachable Ollama is reported in `checks.ollama`
+ * (ok:false) and surfaced via the `degraded` flag, but it does NOT flip
+ * the overall status to 503 — otherwise the Railway/systemd healthcheck
+ * would restart-loop the whole app over a non-critical local model.
+ *
+ * Status code: 200 when DB + scraper are ok (503 only when one of THOSE
+ * fails). The body is always JSON so consumers can read why something's
+ * down — or degraded — without branching on status.
  */
 
 import { NextResponse } from "next/server";
@@ -36,6 +43,10 @@ interface CheckResult {
 
 interface HealthResponse {
   ok: boolean;
+  /** True when a non-fatal dependency (Ollama) is unreachable but the
+   *  app is still serving — i.e. ok stays true. Lets the ops dashboard
+   *  show an amber pill without the healthcheck restarting the app. */
+  degraded: boolean;
   checks: {
     db: CheckResult;
     ollama: CheckResult;
@@ -116,9 +127,15 @@ export async function GET() {
     checkScraper(),
   ]);
 
-  const overallOk = db.ok && ollama.ok && scraper.ok;
+  // Only DB + scraper are FATAL. Ollama is the Claude failover, not a hard
+  // dependency: when it's unreachable the app still serves (Claude stays
+  // primary), so it must not flip the healthcheck to 503 and restart-loop
+  // the app. An Ollama outage is reported as `degraded` instead.
+  const overallOk = db.ok && scraper.ok;
+  const degraded = overallOk && !ollama.ok;
   const body: HealthResponse = {
     ok: overallOk,
+    degraded,
     checks: { db, ollama, scraper },
     version: process.env.RECRUITME_VERSION ?? "dev",
     uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),

@@ -159,8 +159,8 @@ ${scarceBlock}`;
       userId: cost?.userId,
       costTag: "parse_jd",
     };
-    // Routes through the Claude ↔ OpenAI failover wrapper. When both
-    // providers are configured, the secondary catches Claude outages.
+    // Routes through the Claude → Ollama failover wrapper. The local
+    // Ollama model catches Claude outages.
     const { text } = await chatWithFailover(fullPrompt, 0.1, 8192, opts);
     return text;
   };

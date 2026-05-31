@@ -4,7 +4,8 @@ import { recordProviderFailure, recordProviderSuccess } from "../provider-health
 import { recordAiCall } from "../usage";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
-// Abstracts over Claude and OpenAI so all AI functions stay clean.
+// Abstracts over Claude (hosted) and Ollama (local) so all AI functions stay
+// clean. Ollama is reached through the OpenAI-compatible SDK below.
 
 // Ollama (local, OpenAI-compatible) client options. Extracted + exported so the
 // timeout is unit-testable. Without an explicit timeout the OpenAI SDK defaults
@@ -19,7 +20,7 @@ export function ollamaClientOptions(): { baseURL: string; apiKey: string; timeou
   };
 }
 
-export type ChatProvider = "claude" | "openai" | "ollama";
+export type ChatProvider = "claude" | "ollama";
 
 export interface ChatOptions {
   provider?: ChatProvider;
@@ -49,7 +50,9 @@ export interface ChatOptions {
 }
 
 export function resolveChatProvider(override?: ChatProvider): ChatProvider {
-  return override ?? ((process.env.AI_PROVIDER as ChatProvider | undefined) ?? "claude");
+  // Primary is always Claude; Ollama is reached explicitly (override or via
+  // the failover wrapper). AI_PROVIDER is no longer consulted for primary.
+  return override ?? "claude";
 }
 
 export function getJobParsingProvider(): ChatProvider | undefined {
@@ -134,38 +137,6 @@ export async function chat(
     return block.type === "text" ? block.text : "";
   }
 
-  // ── OpenAI ──
-  if (provider === "openai") {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY is not set in .env.local");
-
-    const client = new OpenAI({ apiKey });
-    const model  = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
-
-    const messages = options?.system
-      ? [{ role: "system" as const, content: options.system }, { role: "user" as const, content: prompt }]
-      : [{ role: "user" as const, content: prompt }];
-    const response = await client.chat.completions.create({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-    });
-
-    if (response.usage) {
-      void recordAiCall({
-        orgId:        options?.orgId,
-        userId:       options?.userId,
-        model,
-        inputTokens:  response.usage.prompt_tokens,
-        outputTokens: response.usage.completion_tokens,
-        meta:         options?.costTag ? { tag: options.costTag } : undefined,
-      });
-    }
-
-    return response.choices[0]?.message?.content ?? "";
-  }
-
   // ── Ollama (local LLM on the mini-PC, OpenAI-compatible endpoint) ──
   // Same OpenAI SDK, just different baseURL and a dummy API key. Model
   // defaults to qwen2.5:1.5b — the Apache-2.0 1.5B that fits in ~1.6 GB
@@ -201,9 +172,9 @@ export async function chat(
     return response.choices[0]?.message?.content ?? "";
   }
 
-  // Unreachable — ChatProvider is now narrowed to "claude" | "openai" | "ollama"
-  // and all branches return above. Kept as an exhaustive-check throw so a
-  // future provider added to the union surfaces here at compile time.
+  // Unreachable — ChatProvider is now narrowed to "claude" | "ollama" and all
+  // branches return above. Kept as an exhaustive-check throw so a future
+  // provider added to the union surfaces here at compile time.
   throw new Error(`Unsupported AI provider: ${provider as string}`);
 }
 

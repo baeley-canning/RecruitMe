@@ -17,11 +17,11 @@ describe("provenancePillProps", () => {
     });
   });
 
-  it("returns a GPT pill for scoredBy='openai' on match context", () => {
-    const props = provenancePillProps("openai", "match");
-    expect(props?.label).toBe("GPT");
-    expect(props?.tone).toBe("openai");
-    expect(props?.title).toMatch(/OpenAI/);
+  it("returns a Llama pill for scoredBy='ollama' on match context", () => {
+    const props = provenancePillProps("ollama", "match");
+    expect(props?.label).toBe("Llama");
+    expect(props?.tone).toBe("ollama");
+    expect(props?.title).toMatch(/Llama/);
     expect(props?.title).toMatch(/failover from Claude/);
   });
 
@@ -29,8 +29,8 @@ describe("provenancePillProps", () => {
     const claude = provenancePillProps("claude", "acceptance");
     expect(claude?.title).toMatch(/Acceptance likelihood produced by Claude/);
 
-    const openai = provenancePillProps("openai", "acceptance");
-    expect(openai?.title).toMatch(/Acceptance likelihood produced by OpenAI/);
+    const ollama = provenancePillProps("ollama", "acceptance");
+    expect(ollama?.title).toMatch(/Acceptance likelihood produced by the local Llama model/);
   });
 
   it("returns null for missing scoredBy (legacy candidates show no provenance badge)", () => {
@@ -40,11 +40,13 @@ describe("provenancePillProps", () => {
   });
 
   it("returns null for unrecognised scoredBy values (forward-compat guard)", () => {
-    // Legacy rows from the prior Llama-failover era still carry
-    // scoredBy:"ollama" in JSON. Those should render no pill rather
-    // than mislead the recruiter; the candidate just looks unscored
-    // for that field until re-scored.
-    expect(provenancePillProps("ollama" as never, "match")).toBeNull();
+    // Legacy rows from the prior OpenAI-failover era still carry
+    // scoredBy:"openai" in JSON, and any future-removed provider (e.g.
+    // "gemini") likewise. Those should render no pill rather than
+    // mislead the recruiter; the candidate just looks unscored for that
+    // field until re-scored.
+    expect(provenancePillProps("gemini" as never, "match")).toBeNull();
+    expect(provenancePillProps("openai" as never, "match")).toBeNull();
     expect(provenancePillProps(""       as never, "match")).toBeNull();
   });
 });

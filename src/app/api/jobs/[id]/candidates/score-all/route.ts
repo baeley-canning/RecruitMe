@@ -232,8 +232,8 @@ export async function POST(
               // predictAcceptance already route through chatWithFailover,
               // which retries internally (primary → secondary). Stacking
               // a 3-attempt withRetry on top means a single Claude
-              // outage triggers up to 6 paid API calls per candidate
-              // (3 × Claude + 3 × OpenAI) instead of 2.
+              // outage triggers up to 6 API calls per candidate
+              // (3 × Claude + 3 × Ollama) instead of 2.
               const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
                 scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId, recruiterContext),
                 predictAcceptance(candidate.profileText!, parsedRole, salary),

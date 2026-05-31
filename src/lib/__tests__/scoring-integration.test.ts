@@ -106,14 +106,13 @@ const baseParsedRole = {
   anchor_terms: ["React"],
 };
 
-// Ensure failover sees at least one provider configured. Without
-// ANTHROPIC_API_KEY set, probeProviders() returns no primary and
-// chatWithFailover throws before reaching the mocked chat().
+// Set ANTHROPIC_API_KEY so Claude is the primary provider these tests
+// exercise (the Ollama fallback is always available but shouldn't be the
+// primary here). chatWithFailover then routes to the mocked chat().
 const envSnapshot = { ...process.env };
 beforeEach(() => {
   mockChat.mockReset();
   process.env.ANTHROPIC_API_KEY = "test";
-  delete process.env.OPENAI_API_KEY;
   delete process.env.AI_PROVIDER;
 });
 // Restore env after the suite to avoid leaking into other tests.
@@ -446,15 +445,14 @@ describe("Deterministic evidence repair for exact stored profile signals", () =>
   });
 });
 
-describe("AcceptancePrediction — scoredBy legacy round-trip (DB → UI contract)", () => {
-  // Legacy-data guard: older Candidate.acceptanceReason rows were written
-  // with `scoredBy: "ollama"` back when there was a local-model code path.
-  // Llama scoring is gone from the live write path (Claude → OpenAI only),
-  // but historic rows still exist in production, so the UI must keep
-  // surfacing them honestly rather than silently rebadging them as Claude.
-  // These tests only assert the JSON round-trip — they are NOT exercising
-  // a live Llama scoring code path.
-  it("preserves legacy scoredBy='ollama' through JSON.stringify + JSON.parse", () => {
+describe("AcceptancePrediction — scoredBy round-trip (DB → UI contract)", () => {
+  // Provenance-data guard: Candidate.acceptanceReason rows carry a
+  // `scoredBy` tag — "claude" on the primary path, "ollama" when the local
+  // Llama fallback produced the score. The UI must surface that tag
+  // honestly rather than silently rebadging everything as Claude. These
+  // tests only assert the JSON round-trip — they are NOT exercising a live
+  // scoring code path.
+  it("preserves scoredBy='ollama' through JSON.stringify + JSON.parse", () => {
     const original = {
       score: 75,
       likelihood: "high" as const,

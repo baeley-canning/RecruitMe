@@ -115,7 +115,7 @@ export async function recordUsage(
 
 /**
  * Record an AI call's cost. Called by chat.ts after each successful
- * Anthropic / OpenAI call. Fire-and-forget — never blocks the response.
+ * Anthropic / Ollama call. Fire-and-forget — never blocks the response.
  *
  * Cost is null when the model isn't in the pricing table; the event is
  * still recorded so the call is countable, but `checkSpendCap` won't

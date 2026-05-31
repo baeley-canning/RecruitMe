@@ -11,10 +11,9 @@ describe("providerHealth — state derivation", () => {
   beforeEach(() => {
     __resetProviderHealthForTests();
     // Configure every provider so we exercise the non-"unconfigured" branches.
+    // (Ollama is always considered configured — no key to set.)
     process.env.ANTHROPIC_API_KEY = "test";
-    process.env.OPENAI_API_KEY = "test";
     process.env.PDL_API_KEY = "test";
-    process.env.GITHUB_TOKEN = "test";
   });
   afterEach(() => { process.env = { ...snapshot }; });
 
@@ -51,25 +50,25 @@ describe("providerHealth — state derivation", () => {
   it("success after sustained failures decrements toward recovery (no instant flip)", () => {
     // Use a non-fatal failure pattern so the trigger is 3 consecutive,
     // not the fatal fast-path.
-    recordProviderFailure("github", "500 server error");
-    recordProviderFailure("github", "500 server error");
-    recordProviderFailure("github", "500 server error");
-    expect(snapshotProviderHealth().find((p) => p.name === "github")!.state).toBe("down");
+    recordProviderFailure("ollama", "500 server error");
+    recordProviderFailure("ollama", "500 server error");
+    recordProviderFailure("ollama", "500 server error");
+    expect(snapshotProviderHealth().find((p) => p.name === "ollama")!.state).toBe("down");
 
     // First success: degrades but stays sub-healthy (still 2 failures on record)
-    recordProviderSuccess("github");
-    expect(snapshotProviderHealth().find((p) => p.name === "github")!.consecutiveFailures).toBe(2);
+    recordProviderSuccess("ollama");
+    expect(snapshotProviderHealth().find((p) => p.name === "ollama")!.consecutiveFailures).toBe(2);
 
     // Second success: still 1 failure
-    recordProviderSuccess("github");
-    expect(snapshotProviderHealth().find((p) => p.name === "github")!.consecutiveFailures).toBe(1);
+    recordProviderSuccess("ollama");
+    expect(snapshotProviderHealth().find((p) => p.name === "ollama")!.consecutiveFailures).toBe(1);
 
     // Third success: cleared, badge reads healthy
-    recordProviderSuccess("github");
-    const gh = snapshotProviderHealth().find((p) => p.name === "github");
-    expect(gh!.consecutiveFailures).toBe(0);
-    expect(gh!.state).toBe("healthy");
-    expect(gh!.lastFailureReason).toBeNull();
+    recordProviderSuccess("ollama");
+    const oll = snapshotProviderHealth().find((p) => p.name === "ollama");
+    expect(oll!.consecutiveFailures).toBe(0);
+    expect(oll!.state).toBe("healthy");
+    expect(oll!.lastFailureReason).toBeNull();
   });
 
   it("one failure (last call) reads as degraded — not down", () => {
@@ -108,8 +107,8 @@ describe("providerHealth — state derivation", () => {
   it("401/403 auth failures flip immediately to down", () => {
     recordProviderFailure("pdl", "401 Unauthorized");
     expect(snapshotProviderHealth().find((p) => p.name === "pdl")!.state).toBe("down");
-    recordProviderFailure("github", "403 forbidden — bad credentials");
-    expect(snapshotProviderHealth().find((p) => p.name === "github")!.state).toBe("down");
+    recordProviderFailure("ollama", "403 forbidden — bad credentials");
+    expect(snapshotProviderHealth().find((p) => p.name === "ollama")!.state).toBe("down");
   });
 
   it("'invalid API key' phrasing flips immediately to down", () => {
@@ -156,8 +155,8 @@ describe("providerHealth — state derivation", () => {
   });
 
   it("does NOT flag '401-byte response from upstream' as fatal (bare '401' false positive)", () => {
-    recordProviderFailure("github", "received 401-byte response from upstream");
-    expect(snapshotProviderHealth().find((p) => p.name === "github")!.state).toBe("degraded");
+    recordProviderFailure("ollama", "received 401-byte response from upstream");
+    expect(snapshotProviderHealth().find((p) => p.name === "ollama")!.state).toBe("degraded");
   });
 
   it("DOES flag 'HTTP 401 Unauthorized' as fatal", () => {

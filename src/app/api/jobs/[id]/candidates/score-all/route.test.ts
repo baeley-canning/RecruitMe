@@ -213,7 +213,7 @@ describe("score-all route", () => {
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
       { id: "cand-fail", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, location: "Wellington" },
     ]);
-    aiMocks.scoreCandidateStructured.mockRejectedValueOnce(new Error("OpenAI 502 fallback also failed"));
+    aiMocks.scoreCandidateStructured.mockRejectedValueOnce(new Error("Ollama 502 fallback also failed"));
     dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({ screeningData: null });
 
     const res = await POST(new Request("http://localhost/", { method: "POST" }), {
@@ -232,7 +232,7 @@ describe("score-all route", () => {
     const flagData = (flagWrite![0].data) as Record<string, unknown>;
     expect(flagData.matchScore).toBeNull();
     const screening = JSON.parse(flagData.screeningData as string);
-    expect(screening.scoringError).toContain("OpenAI 502");
+    expect(screening.scoringError).toContain("Ollama 502");
   });
 
   it("returns 400 when stored parsedRole JSON is invalid", async () => {

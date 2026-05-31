@@ -517,22 +517,6 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
             </div>
           </div>
         </div>
-
-        {/* GitHub sourcing link — for technical roles, GitHub developer search
-            is a high-yield complement to LinkedIn. Wiring it into the main
-            search would mix two pipelines (LinkedIn-URL keyed vs GitHub-user
-            keyed); a separate page keeps the UX clean. */}
-        {(parsedRole.must_haves ?? []).length + (parsedRole.skills_required ?? []).length > 0 && (
-          <div className="mt-4 pt-3 border-t border-separator">
-            <a
-              href={`/github-search?role=${encodeURIComponent(parsedRole.title ?? "")}&languages=${encodeURIComponent([...(parsedRole.must_haves ?? []), ...(parsedRole.skills_required ?? [])].join(","))}&jobId=${encodeURIComponent(jobId)}`}
-              className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent transition-colors"
-            >
-              <span>Also search GitHub for developers in {jobLocation || "NZ"}</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        )}
       </CardBody>
     </Card>
   );

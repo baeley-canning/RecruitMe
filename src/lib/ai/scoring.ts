@@ -66,7 +66,7 @@ export interface AcceptancePrediction {
    * penalty is applied — but visibility matters for ops + audit.
    * Absent on legacy rows.
    */
-  scoredBy?: "claude" | "openai";
+  scoredBy?: "claude" | "ollama";
 }
 
 // ─── Private helpers ───────────────────────────────────────────────────────────
@@ -219,11 +219,11 @@ ${escapeXmlForPrompt(profileSlice)}
 </candidate_profile>
 
 ${ACCEPTANCE_ASSESSMENT_RULES}`;
-  // Routes through the Claude ↔ OpenAI failover wrapper. When both keys
-  // are configured, the primary is tried first and the secondary takes
-  // over on any error. When only one is set, that's the only attempt.
-  // The returned scoredBy reflects which provider actually produced the
-  // result so the UI provenance pill can render correctly.
+  // Routes through the Claude → Ollama failover wrapper. Claude is tried
+  // first when its key is set and the local Ollama model takes over on any
+  // error. When Claude has no key, Ollama is the only attempt. The returned
+  // scoredBy reflects which provider actually produced the result so the UI
+  // provenance pill can render correctly.
   const failoverResult = await chatWithFailover(acceptancePrompt, 0.1, 2048, { model: SONNET });
   const text = failoverResult.text;
   const source: ChatSource = failoverResult.source;
@@ -662,7 +662,7 @@ ${escapeXmlForPrompt(profileSlice)}
     });
     // Tag the unparseable stub with the actual source so the recruiter
     // can see which provider returned the bad output. No penalty —
-    // Claude and OpenAI are both first-class providers.
+    // Claude and Ollama are both first-class providers.
     return { ...stub, scoredBy: source };
   }
 
@@ -909,7 +909,7 @@ ${candidatesBlock}
 
       // Same scoredBy tag for every candidate in the batch — they all
       // came from the same provider on the same call. No penalty —
-      // Claude and OpenAI are both first-class providers.
+      // Claude and Ollama are both first-class providers.
       const tag = (b: ScoreBreakdown): ScoreBreakdown =>
         ({ ...b, scoredBy: batchSourceRef.value });
 

@@ -25,8 +25,8 @@ export interface AcceptanceData {
   summary: string;
   /** Mirrors AcceptancePrediction.scoredBy on the server. Drives the
    *  provenance pill next to the acceptance score so the recruiter can
-   *  see whether Claude or OpenAI produced the likelihood. */
-  scoredBy?: "claude" | "openai";
+   *  see whether Claude or the local Llama model produced the likelihood. */
+  scoredBy?: "claude" | "ollama";
 }
 
 export interface FetchPriorityReason {
@@ -78,13 +78,13 @@ export function ProvenancePill({
   source,
   context,
 }: {
-  source: "claude" | "openai" | undefined | null;
+  source: "claude" | "ollama" | undefined | null;
   context: "match" | "acceptance";
 }) {
   const props = provenancePillProps(source, context);
   if (!props) return null;
   const toneClass =
-    props.tone === "openai"
+    props.tone === "ollama"
       ? "bg-success-subtle text-success"
       : "bg-accent-subtle text-accent";
   return (

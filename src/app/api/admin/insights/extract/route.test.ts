@@ -307,8 +307,8 @@ describe("POST /api/admin/insights/extract — happy path", () => {
     });
     aiMocks.extractInsight.mockResolvedValueOnce({
       facts: { primaryStack: ["go"] } as never,
-      extractedBy: "openai", // failover
-      modelId: "gpt-4o-mini",
+      extractedBy: "ollama", // failover
+      modelId: "qwen2.5:1.5b",
       sourceProfileTextHash: "hash-A",
       promptVersion: "insight-v1.0",
       extractionVersion: 1,
@@ -320,8 +320,8 @@ describe("POST /api/admin/insights/extract — happy path", () => {
       facts: {} as never,
       extractionVersion: 1,
       promptVersion: "insight-v1.0",
-      extractedBy: "openai",
-      modelId: "gpt-4o-mini",
+      extractedBy: "ollama",
+      modelId: "qwen2.5:1.5b",
       sourceProfileTextHash: "hash-A",
       sourceCandidateId: "c-1",
       extractedAt: new Date(),
@@ -331,8 +331,8 @@ describe("POST /api/admin/insights/extract — happy path", () => {
     const res = await POST(makeReq({ identityId: "i-1" }, { "x-cron-secret": "test-secret-xyz" }));
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.action).toBe("extracted");
-    expect(body.extractedBy).toBe("openai");
-    expect(body.modelId).toBe("gpt-4o-mini");
+    expect(body.extractedBy).toBe("ollama");
+    expect(body.modelId).toBe("qwen2.5:1.5b");
     expect(body.extractionVersion).toBe(1);
     expect(body.insightId).toBe("pi-1");
   });
