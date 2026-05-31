@@ -20,7 +20,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { candidateTitleFitsRole } from "@/lib/title-family";
+import { extractTitleFamily, titleFamiliesCompatible } from "@/lib/title-family";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
@@ -324,6 +324,9 @@ export async function POST(
   const roleTerms = distinctiveTerms(parsedRole);
   const isSpecialistRole = roleTerms.length >= 2;
   const mustHaveSignalSets = mustHavesForRank.map((req) => extractSignalsFromRequirement(req));
+  // Role's title family (null = unclassifiable). Used by the signal-less
+  // fallback gate below to prevent the null-auto-pass pool dump.
+  const roleFamily = extractTitleFamily(parsedRole.title);
 
   for (const row of candidates) {
     if (saved.length >= maxResults) {
@@ -357,18 +360,28 @@ export async function POST(
       const hasMustHaveSignal = mustHaveSignalSets.some(
         (signals) => signals.some((s) => signalMatchesText(haystack, s)),
       );
-      // When ANY must-have produces extractable signals, demand a signal hit —
-      // title-fit alone isn't enough. Reason: candidateTitleFitsRole returns
-      // true whenever EITHER side is unclassified (title-family.ts:294), so
-      // soft-skill JDs like "Quoting Specialist" (no family pattern matches)
-      // used to admit every candidate via the title-fit fallback regardless
-      // of what their CV said. We only fall back to title-fit when the JD is
-      // genuinely signal-less (parse failure or pure soft-skill prose with
-      // no role-distinctive nouns at all).
+      // When ANY must-have produces extractable signals, demand a signal hit.
+      // Title-fit alone is NOT safe: titleFamiliesCompatible() returns true
+      // whenever EITHER side is unclassified (title-family.ts:294), so a
+      // signal-less JD with an unclassifiable title (e.g. "Technical BA",
+      // "Office Manager") used to admit the ENTIRE pool — the Soft-Skill JD
+      // Class Bug (100 random imports, avg ~20% scores). So: fall back to
+      // title-fit only when genuinely signal-less, AND require BOTH the role
+      // and the candidate to classify to a compatible family — no null-side
+      // auto-pass. An unclassifiable signal-less role imports nothing from the
+      // pool (LinkedIn discovery + the explicit "Pool only" browse cover it)
+      // instead of dumping low-fit profiles.
       const hasAnyExtractableSignals = mustHaveSignalSets.some((s) => s.length > 0);
-      const admitted = hasAnyExtractableSignals
-        ? hasMustHaveSignal
-        : candidateTitleFitsRole(parsedRole.title, row.headline);
+      let admitted: boolean;
+      if (hasAnyExtractableSignals) {
+        admitted = hasMustHaveSignal;
+      } else {
+        const candidateFamily = extractTitleFamily(row.headline);
+        admitted =
+          roleFamily !== null &&
+          candidateFamily !== null &&
+          titleFamiliesCompatible(candidateFamily, roleFamily);
+      }
       if (!admitted) {
         skippedRequirements++;
         continue;

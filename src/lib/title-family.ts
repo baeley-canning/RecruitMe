@@ -26,6 +26,7 @@ export type TitleFamily =
   | "product"                // Product managers, product owners
   | "design"                 // UI / UX / Product designers
   | "data"                   // Data scientists / analysts / ML engineers
+  | "business_analyst"       // Business / systems / requirements / functional analysts (BA)
   | "qa"                     // QA / test / automation engineers
   | "devops_infra"           // DevOps, SRE, Platform, Infrastructure, Sysadmin, Cloud Engineer
   | "support_ops"            // IT support, service desk, help desk, support engineer
@@ -95,6 +96,20 @@ const FAMILY_PATTERNS: FamilyPattern[] = [
     family: "data",
     patterns: [
       /\b(?:data\s+(?:scientist|engineer|analyst|architect)|machine\s+learning\s+(?:engineer|specialist)|\bml\s+(?:engineer|ops)|analytics\s+engineer|business\s+intelligence|\bbi\s+(?:developer|analyst))\b/i,
+    ],
+  },
+
+  // ── Business Analyst (must follow `data` so "Data Analyst" stays data, and
+  //    precede nothing that owns "security/qa analyst" via its own prefix).
+  //    Covers BA / business-systems / systems / requirements / functional /
+  //    process / solutions / configuration analysts + the "Technical BA" title.
+  //    Without this, "Business Analyst"/"Technical BA" classified to null and
+  //    the talent-pool title-fit gate admitted the whole pool (Soft-Skill JD
+  //    Class Bug — see project-soft-skill-jd-class-bug memory).
+  {
+    family: "business_analyst",
+    patterns: [
+      /\b(?:business\s+(?:systems\s+)?analyst|systems\s+analyst|requirements?\s+analyst|solutions?\s+analyst|functional\s+analyst|process\s+analyst|configuration\s+analyst|business\s+analysis|technical\s+(?:business\s+)?ba)\b/i,
     ],
   },
 

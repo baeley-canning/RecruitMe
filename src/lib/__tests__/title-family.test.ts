@@ -45,6 +45,24 @@ describe("extractTitleFamily — engineering archetypes", () => {
     expect(extractTitleFamily("Senior Data Scientist")).toBe("data");
     expect(extractTitleFamily("ML Engineer at Datacom")).toBe("data");
   });
+
+  it("classifies Business Analyst family (Soft-Skill JD Class Bug fix)", () => {
+    expect(extractTitleFamily("Technical BA")).toBe("business_analyst");
+    expect(extractTitleFamily("Business Analyst")).toBe("business_analyst");
+    expect(extractTitleFamily("Senior Business Systems Analyst")).toBe("business_analyst");
+    expect(extractTitleFamily("Systems Analyst")).toBe("business_analyst");
+    expect(extractTitleFamily("Requirements Analyst")).toBe("business_analyst");
+    expect(extractTitleFamily("Functional Analyst")).toBe("business_analyst");
+    expect(extractTitleFamily("Oracle Fusion Business Analyst")).toBe("business_analyst");
+    // Must NOT steal the analyst variants owned by other families:
+    expect(extractTitleFamily("Data Analyst")).toBe("data");
+    expect(extractTitleFamily("Security Analyst")).toBe("security_grc");
+    expect(extractTitleFamily("QA Analyst")).toBe("qa");
+    // Unrelated titles must NOT classify as BA — so the talent-pool gate
+    // rejects them for a BA role instead of dumping the whole pool:
+    expect(extractTitleFamily("Registered Nurse")).not.toBe("business_analyst");
+    expect(extractTitleFamily("Warehouse Manager")).not.toBe("business_analyst");
+  });
 });
 
 describe("extractTitleFamily — non-engineering archetypes", () => {
