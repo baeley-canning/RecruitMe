@@ -24,6 +24,7 @@ import { scrapeJobAdderList } from "./scrapers/jobadder-list.js";
 import { scrapeJobAdderProfile } from "./scrapers/jobadder-profile.js";
 import { closeArchive } from "./archive.js";
 import { log } from "./util/log.js";
+import { isAuthChallengeMessage } from "./auth-failure.js";
 
 const RAILWAY_URL = (process.env.RAILWAY_API_URL ?? "").replace(/\/$/, "");
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET ?? "";
@@ -429,13 +430,13 @@ async function processJob(
     const message = err instanceof Error ? err.message : String(err);
     log.error(`job ${job.id} failed:`, message);
 
-    // An AUTH CHALLENGE (session expired / login wall — message carries the
-    // "_challenge:" prefix) is NOT a rate limit. It will keep failing until a
-    // human re-logs in, so it must NOT trigger the multi-hour global backoff
-    // (a dead SEEK session was freezing ALL platforms, incl. LinkedIn, for
-    // 2-4h) and must NOT be retried. Fail the job, let the API flag the source
-    // needs-reauth, and CONTINUE to the next job immediately.
-    const isAuthChallenge = message.includes("_challenge:");
+    // An AUTH CHALLENGE (session expired / login wall — the scrapers raise a
+    // "<platform>_challenge:" prefix) is NOT a rate limit. It will keep failing
+    // until a human re-logs in, so it must NOT trigger the multi-hour global
+    // backoff (a dead SEEK session was freezing ALL platforms for 2-4h) and must
+    // NOT be retried. Match the prefix in an ANCHORED way (isAuthChallengeMessage)
+    // so arbitrary error text containing "_challenge:" can't false-trigger it.
+    const isAuthChallenge = isAuthChallengeMessage(message);
 
     if (err instanceof RateLimitError && !isAuthChallenge) {
       // Genuine throttle/checkpoint — back off this worker for 2-4 hours.

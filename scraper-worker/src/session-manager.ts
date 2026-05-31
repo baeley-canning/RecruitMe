@@ -6,6 +6,13 @@ import { randomViewport, DESKTOP_USER_AGENT } from "./humanizer.js";
 import { encrypt, decrypt } from "./util/encrypt.js";
 import { humanType, randomDelay } from "./humanizer.js";
 import { log } from "./util/log.js";
+import {
+  createBreakerState,
+  isCircuitOpen,
+  recordAuthFailure,
+  recordAuthSuccess,
+  classifyAuthFailure,
+} from "./auth-failure.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SESSIONS_DIR = join(__dirname, "../sessions");
@@ -225,20 +232,46 @@ export async function authenticate(platform: string, page: Page): Promise<void> 
   }
 }
 
+// Per-platform re-auth circuit breaker state, held for the worker's lifetime.
+// Pure breaker logic lives in ./auth-failure (unit-tested); this just holds the
+// state and injects the clock so a broken login can't spin authenticate()
+// forever (see auth-failure.ts header).
+let authBreaker = createBreakerState();
+
 export async function ensureSession(
   platform: string,
   context: BrowserContext,
   page: Page,
 ): Promise<void> {
+  if (isCircuitOpen(authBreaker, platform, Date.now())) {
+    throw new Error(
+      `${platform}: auth circuit open after repeated re-auth failures — run \`npx tsx login.ts ${platform}\` on the box; it clears automatically on the next success or after the cooldown.`,
+    );
+  }
+
   const loaded = await loadSession(platform, context);
   if (loaded) {
     const valid = await isSessionValid(platform, page);
     if (valid) {
+      authBreaker = recordAuthSuccess(authBreaker, platform);
       log.debug(`${platform}: session valid`);
       return;
     }
     log.info(`${platform}: session expired, re-authenticating`);
   }
-  await authenticate(platform, page);
-  await saveSession(platform, context);
+
+  try {
+    await authenticate(platform, page);
+    await saveSession(platform, context);
+    authBreaker = recordAuthSuccess(authBreaker, platform);
+  } catch (err) {
+    const kind = classifyAuthFailure(err);
+    authBreaker = recordAuthFailure(authBreaker, platform, kind, Date.now());
+    const opened = isCircuitOpen(authBreaker, platform, Date.now());
+    log.warn(
+      `${platform}: re-auth ${kind} failure (${err instanceof Error ? err.message : String(err)})` +
+        (opened ? " — circuit OPEN, pausing re-auth attempts for this platform" : " — will retry on next job"),
+    );
+    throw err;
+  }
 }
