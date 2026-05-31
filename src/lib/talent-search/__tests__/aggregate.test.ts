@@ -30,6 +30,7 @@ function lib(overrides: Partial<LibrarySearchResult> = {}): LibrarySearchResult 
     location: "Wellington",
     linkedinUrl: "https://www.linkedin.com/in/jane",
     jobAdderUrl: null,
+    seekUrl: null,
     photoFileId: null,
     matchScore: 85,
     source: "manual",

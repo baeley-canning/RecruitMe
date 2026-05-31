@@ -21,25 +21,42 @@ import { libraryMergeKey, scraperMergeKey } from "../search-run";
 
 describe("libraryMergeKey", () => {
   it("uses the LinkedIn URL when present (Tier-1)", () => {
-    const key = libraryMergeKey({ id: "c1", linkedinUrl: "https://www.linkedin.com/in/jane-doe/", jobAdderUrl: null });
+    const key = libraryMergeKey({ id: "c1", linkedinUrl: "https://www.linkedin.com/in/jane-doe/", jobAdderUrl: null, seekUrl: null });
     expect(key.startsWith("linkedinUrl:")).toBe(true);
   });
 
   it("falls back to JobAdder URL when no LinkedIn", () => {
-    const key = libraryMergeKey({ id: "c1", linkedinUrl: null, jobAdderUrl: "https://au6.jobadder.com/candidates/123" });
+    const key = libraryMergeKey({ id: "c1", linkedinUrl: null, jobAdderUrl: "https://au6.jobadder.com/candidates/123", seekUrl: null });
     expect(key.startsWith("jobAdderUrl:")).toBe(true);
   });
 
+  it("uses the SEEK URL when only seekUrl is present (Tier-1, lowest precedence)", () => {
+    const key = libraryMergeKey({ id: "c1", linkedinUrl: null, jobAdderUrl: null, seekUrl: "https://talentsearch.seek.com.au/profile/abc" });
+    expect(key.startsWith("seekUrl:")).toBe(true);
+  });
+
   it("falls back to a synthetic lib:<id> when no Tier-1 key", () => {
-    expect(libraryMergeKey({ id: "c1", linkedinUrl: null, jobAdderUrl: null })).toBe("lib:c1");
+    expect(libraryMergeKey({ id: "c1", linkedinUrl: null, jobAdderUrl: null, seekUrl: null })).toBe("lib:c1");
   });
 });
 
 describe("scraperMergeKey", () => {
   it("a LinkedIn scraper hit matches the library row's LinkedIn key", () => {
     const url = "https://www.linkedin.com/in/jane-doe/";
-    const libKey = libraryMergeKey({ id: "c1", linkedinUrl: url, jobAdderUrl: null });
+    const libKey = libraryMergeKey({ id: "c1", linkedinUrl: url, jobAdderUrl: null, seekUrl: null });
     const scrapeKey = scraperMergeKey({ linkedinUrl: url, fallbackUrl: url });
+    expect(scrapeKey).toBe(libKey); // same person → same key → dedup collapses
+  });
+
+  it("a SEEK-only library row and a SEEK scraper hit for the same person collapse to one key", () => {
+    // Finding 2: libraryMergeKey used to ignore seekUrl, so a SEEK-only library
+    // row fell back to lib:<id> and never reconciled with the scraper's
+    // seekUrl:<url> key — they became duplicate SearchRunResult rows for one
+    // person. With seekUrl plumbed through, both sides produce the same key.
+    const url = "https://talentsearch.seek.com.au/profile/abc";
+    const libKey = libraryMergeKey({ id: "c1", linkedinUrl: null, jobAdderUrl: null, seekUrl: url });
+    const scrapeKey = scraperMergeKey({ seekUrl: url, fallbackUrl: url });
+    expect(libKey.startsWith("seekUrl:")).toBe(true);
     expect(scrapeKey).toBe(libKey); // same person → same key → dedup collapses
   });
 

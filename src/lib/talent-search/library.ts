@@ -38,6 +38,7 @@ export interface LibrarySearchResult {
   location: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  seekUrl: string | null;
   photoFileId: string | null;
   matchScore: number | null;
   source: string;
@@ -66,6 +67,7 @@ interface RawRow {
   location: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  seekUrl: string | null;
   photoFileId: string | null;
   matchScore: number | null;
   source: string;
@@ -104,7 +106,7 @@ export async function searchLibrary(
     const rows = await prisma.$queryRaw<RawRow[]>`
       SELECT
         c."id", c."name", c."headline", c."location",
-        c."linkedinUrl", c."jobAdderUrl", c."photoFileId",
+        c."linkedinUrl", c."jobAdderUrl", c."seekUrl", c."photoFileId",
         c."matchScore", c."source", c."candidateIdentityId", c."createdAt",
         LEFT(c."profileText", ${PROFILE_SNIPPET_CHARS}::int) AS "profileTextSnippet",
         0::real AS "relevance"
@@ -135,7 +137,7 @@ export async function searchLibrary(
   const rows = await prisma.$queryRaw<RawRow[]>`
     SELECT
       c."id", c."name", c."headline", c."location",
-      c."linkedinUrl", c."jobAdderUrl", c."photoFileId",
+      c."linkedinUrl", c."jobAdderUrl", c."seekUrl", c."photoFileId",
       c."matchScore", c."source", c."candidateIdentityId", c."createdAt",
       LEFT(c."profileText", ${PROFILE_SNIPPET_CHARS}::int) AS "profileTextSnippet",
       ts_rank_cd(ARRAY[0.1, 0.2, 0.4, 1.0]::real[], c."searchTsv", q) AS "relevance"

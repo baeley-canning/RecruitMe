@@ -43,9 +43,12 @@ export function libraryMergeKey(c: {
   id: string;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  seekUrl: string | null;
 }): string {
   return (
-    mergeKeyToString(identityMergeKey({ linkedinUrl: c.linkedinUrl, jobAdderUrl: c.jobAdderUrl })) ??
+    mergeKeyToString(
+      identityMergeKey({ linkedinUrl: c.linkedinUrl, jobAdderUrl: c.jobAdderUrl, seekUrl: c.seekUrl }),
+    ) ??
     `lib:${c.id}`
   );
 }
@@ -119,6 +122,7 @@ export async function attachLibraryResults(
       id: r.id,
       linkedinUrl: r.linkedinUrl,
       jobAdderUrl: r.jobAdderUrl,
+      seekUrl: r.seekUrl,
     });
     // ON CONFLICT merges the "library" source into any pre-existing row for
     // this key (none expected at create time, but keeps the path idempotent).

@@ -152,16 +152,20 @@ export interface ClaimedScrapeJob {
  * The old path did findMany() then a separate updateMany() — NOT atomic: two
  * concurrent pollers could both SELECT the same pending rows and both flip them
  * to "processing", so the same profile got scraped + ingested twice (duplicate
- * results / double-counted). This uses a single `UPDATE … WHERE id IN (SELECT …
- * FOR UPDATE SKIP LOCKED) RETURNING` statement: each candidate row is locked as
- * it's selected and a concurrent poller SKIPs locked rows, so claims across
+ * results / double-counted). Each claim here is an `UPDATE … WHERE id IN (SELECT
+ * … FOR UPDATE SKIP LOCKED) RETURNING` statement: each candidate row is locked
+ * as it's selected and a concurrent poller SKIPs locked rows, so claims across
  * pollers are disjoint.
  *
- * Phase K fairness is preserved with two atomic claims: up to claimLimit-1 by
- * priority, then one reserved slot for the oldest background (priority<100) job
- * so a burst of live searches can't fully starve flywheel discovery. The first
- * claim has already flipped its rows to "processing", so the reserved query's
- * status='pending' filter naturally excludes them — no id bookkeeping needed.
+ * Phase K fairness uses TWO such claims — up to claimLimit-1 by priority, then
+ * one reserved slot for the oldest background (priority<100) job so a burst of
+ * live searches can't fully starve flywheel discovery. Both run inside ONE
+ * interactive `prisma.$transaction`, so the pair is a single claim operation:
+ * if the reserved claim throws after the priority claim has flipped its rows to
+ * "processing", the whole transaction rolls back rather than stranding those
+ * rows as "processing" without ever returning them to the caller. The reserved
+ * query sees the priority claim's flip within the same transaction, so its
+ * status='pending' filter excludes the just-claimed rows — no id bookkeeping.
  */
 export async function claimScrapeJobs(
   orgId: string | null,
@@ -170,29 +174,31 @@ export async function claimScrapeJobs(
   const orgFilter = orgId ? Prisma.sql`AND "orgId" = ${orgId}` : Prisma.empty;
   const priorityLimit = Math.max(1, claimLimit - 1);
 
-  const priorityClaim = await prisma.$queryRaw<ClaimedScrapeJob[]>`
-    UPDATE "ScrapeJob" SET status = 'processing', "updatedAt" = now()
-    WHERE id IN (
-      SELECT id FROM "ScrapeJob"
-      WHERE status = 'pending' ${orgFilter}
-      ORDER BY priority DESC, "createdAt" ASC
-      LIMIT ${priorityLimit}
-      FOR UPDATE SKIP LOCKED
-    )
-    RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount"
-  `;
+  return await prisma.$transaction(async (tx) => {
+    const priorityClaim = await tx.$queryRaw<ClaimedScrapeJob[]>`
+      UPDATE "ScrapeJob" SET status = 'processing', "updatedAt" = now()
+      WHERE id IN (
+        SELECT id FROM "ScrapeJob"
+        WHERE status = 'pending' ${orgFilter}
+        ORDER BY priority DESC, "createdAt" ASC
+        LIMIT ${priorityLimit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount"
+    `;
 
-  const reserved = await prisma.$queryRaw<ClaimedScrapeJob[]>`
-    UPDATE "ScrapeJob" SET status = 'processing', "updatedAt" = now()
-    WHERE id IN (
-      SELECT id FROM "ScrapeJob"
-      WHERE status = 'pending' ${orgFilter} AND priority < 100
-      ORDER BY "createdAt" ASC
-      LIMIT 1
-      FOR UPDATE SKIP LOCKED
-    )
-    RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount"
-  `;
+    const reserved = await tx.$queryRaw<ClaimedScrapeJob[]>`
+      UPDATE "ScrapeJob" SET status = 'processing', "updatedAt" = now()
+      WHERE id IN (
+        SELECT id FROM "ScrapeJob"
+        WHERE status = 'pending' ${orgFilter} AND priority < 100
+        ORDER BY "createdAt" ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount"
+    `;
 
-  return [...priorityClaim, ...reserved];
+    return [...priorityClaim, ...reserved];
+  });
 }

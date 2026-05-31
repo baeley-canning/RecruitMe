@@ -48,6 +48,8 @@ const d = ENABLED ? describe : describe.skip;
 const createdRunIds: string[] = [];
 // Sentinel so the concurrent-claim test's jobs are isolated + always cleaned.
 const CLAIM_TEST_MARKER = "__smoke_claim_test__";
+// Sentinel for the Phase K fairness (priority + reserved slot) claim test.
+const FAIRNESS_TEST_MARKER = "__smoke_fairness_test__";
 // Fixed ids for the currentInsightId FK behavioural test (deleted in afterAll
 // too, in case the test is interrupted between create and the inline cleanup).
 const FK_SMOKE_IDENTITY = "__smoke_fk_idty__";
@@ -57,7 +59,7 @@ afterAll(async () => {
   for (const id of createdRunIds) {
     await prisma.searchRun.delete({ where: { id } }).catch(() => {});
   }
-  await prisma.scrapeJob.deleteMany({ where: { requestedBy: CLAIM_TEST_MARKER } }).catch(() => {});
+  await prisma.scrapeJob.deleteMany({ where: { requestedBy: { in: [CLAIM_TEST_MARKER, FAIRNESS_TEST_MARKER] } } }).catch(() => {});
   // Deleting the identity cascades its insights (identityId FK is CASCADE).
   await prisma.profileInsight.deleteMany({ where: { id: FK_SMOKE_INSIGHT } }).catch(() => {});
   await prisma.candidateIdentity.deleteMany({ where: { id: FK_SMOKE_IDENTITY } }).catch(() => {});
@@ -227,6 +229,7 @@ d("smoke: SearchRun write lifecycle (ON CONFLICT, jsonb merge, FOR UPDATE)", () 
       location: "Nowhere",
       linkedinUrl: "https://www.linkedin.com/in/smoke-db-test/",
       jobAdderUrl: null,
+      seekUrl: null,
       photoFileId: null,
       matchScore: 70,
       source: "jobadder_import",
@@ -318,5 +321,35 @@ d("smoke: claimScrapeJobs (atomic FOR UPDATE SKIP LOCKED)", () => {
       expect(j.orgId).toBe(orgId);
       expect(typeof j.priority).toBe("number");
     }
+  });
+});
+
+d("smoke: claimScrapeJobs Phase K fairness (priority + reserved background slot)", () => {
+  it("claims by priority but still reserves one slot for an older background job", async () => {
+    // 4 live (priority 100) + 2 background (priority 0), all pending, isolated org.
+    const orgId = `${FAIRNESS_TEST_MARKER}_org`;
+    await prisma.scrapeJob.createMany({
+      data: [
+        ...Array.from({ length: 4 }, (_, i) => ({
+          orgId, platform: "linkedin", kind: "profile",
+          profileUrl: `https://www.linkedin.com/in/${FAIRNESS_TEST_MARKER}-live-${i}`,
+          status: "pending", priority: 100, requestedBy: FAIRNESS_TEST_MARKER,
+        })),
+        ...Array.from({ length: 2 }, (_, i) => ({
+          orgId, platform: "linkedin", kind: "profile",
+          profileUrl: `https://www.linkedin.com/in/${FAIRNESS_TEST_MARKER}-bg-${i}`,
+          status: "pending", priority: 0, requestedBy: FAIRNESS_TEST_MARKER,
+        })),
+      ],
+    });
+
+    // claimLimit=3 → priorityLimit=2 (two priority-100) + 1 reserved background.
+    const claimed = await claimScrapeJobs(orgId, 3);
+    expect(claimed.length).toBe(3);
+    // The two highest-priority jobs were claimed…
+    expect(claimed.filter((j) => j.priority === 100).length).toBe(2);
+    // …and the reserved slot still pulled a background job through even though
+    // four live jobs were waiting — live bursts can't fully starve discovery.
+    expect(claimed.filter((j) => j.priority < 100).length).toBe(1);
   });
 });
