@@ -278,16 +278,20 @@ export async function POST(
   // from the import (~3 of 25 actually matched the role).
   const mustHavesForRank   = parsedRole.must_haves?.length ? parsedRole.must_haves : (parsedRole.skills_required ?? []);
   const niceToHavesForRank = parsedRole.nice_to_haves?.length ? parsedRole.nice_to_haves : (parsedRole.skills_preferred ?? []);
+  // Hoist signal extraction OUT of the per-candidate loop: signals derive from
+  // the JD requirements, not the candidate, so recomputing them for every one
+  // of up to 12k pooled rows was pure waste on the 2-core box. Extract once;
+  // the per-row work is now just the (unavoidable) signalMatchesText scan.
+  const mustHaveRankSignals = mustHavesForRank.map((req) => extractSignalsFromRequirement(req));
+  const niceToHaveRankSignals = niceToHavesForRank.slice(0, 8).map((req) => extractSignalsFromRequirement(req));
   const computeRelevance = (row: typeof candidatesBeforeRank[number]): number => {
     const haystack = (row.profileText ?? "").toLowerCase();
     if (!haystack) return -Infinity;
     let score = 0;
-    for (const req of mustHavesForRank) {
-      const signals = extractSignalsFromRequirement(req);
+    for (const signals of mustHaveRankSignals) {
       if (signals.some((s) => signalMatchesText(haystack, s))) score += 3;
     }
-    for (const req of niceToHavesForRank.slice(0, 8)) {
-      const signals = extractSignalsFromRequirement(req);
+    for (const signals of niceToHaveRankSignals) {
       if (signals.some((s) => signalMatchesText(haystack, s))) score += 1;
     }
     // Tie-break: prefer recently-captured (more current profile content).
