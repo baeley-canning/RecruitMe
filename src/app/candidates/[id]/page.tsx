@@ -18,6 +18,7 @@ import {
   Phone,
   Globe,
   Camera,
+  ExternalLink,
 } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
 import { cn, timeAgo, safeParseJson } from "@/lib/utils";
@@ -265,6 +266,17 @@ function FileTableRow({
         {/* Actions (no header) */}
         <td className="py-2 px-3 align-middle whitespace-nowrap text-right">
           <div className="inline-flex items-center gap-1">
+            {previewable && (
+              <a
+                href={`/api/candidates/${candidateId}/files/${file.id}?inline=1`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-7 w-7 rounded inline-flex items-center justify-center text-text-secondary hover:text-accent hover:bg-surface-hover transition-colors"
+                title="Open in new tab"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
             <a
               href={`/api/candidates/${candidateId}/files/${file.id}`}
               download={file.filename}

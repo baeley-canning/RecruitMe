@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ChevronDown, ChevronRight, Download, Loader2, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Trash2, Upload } from "lucide-react";
 import { cn, timeAgo } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
 import { confirm } from "@/components/ui/confirm-dialog";
@@ -79,6 +79,17 @@ function DrawerFileRow({
           <p className="text-2xs text-text-tertiary data-mono" suppressHydrationWarning>{formatBytes(file.size)} · {timeAgo(new Date(file.createdAt))}</p>
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {previewable && (
+            <a
+              href={`/api/candidates/${candidateId}/files/${file.id}?inline=1`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1 text-text-tertiary hover:text-accent hover:bg-surface-hover rounded transition-colors"
+              title="Open in new tab"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
           <a
             href={`/api/candidates/${candidateId}/files/${file.id}`}
             download={file.filename}
@@ -194,14 +205,7 @@ export function CandidateFilesSection({ candidateId }: CandidateFilesSectionProp
     fetch(`/api/candidates/${candidateId}/files`, { signal: controller.signal })
       .then((r) => r.ok ? r.json() : Promise.reject(new Error("Request failed")))
       .then((data) => { setFiles(data); setFilesError(null); })
-      .catch((e) => {
-        if (e.name !== "AbortError") {
-          setFilesError("Could not load files");
-        } else {
-          setFilesError("Could not load files");
-        }
-        setFilesLoading(false);
-      })
+      .catch(() => { setFilesError("Could not load files"); })
       .finally(() => { clearTimeout(timeoutId); setFilesLoading(false); });
     return () => { clearTimeout(timeoutId); controller.abort(); };
   }, [candidateId]);
