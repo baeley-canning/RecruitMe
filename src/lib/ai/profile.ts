@@ -2,6 +2,8 @@ import { chat, parseJson } from "./chat";
 import { chatWithFailover, chatWithMaybeFailover } from "./chat-with-failover";
 import { ollamaProviderFor } from "./local-routing";
 import { escapeXmlForPrompt } from "../profile-excerpt";
+import { looksLikeCapturedName } from "../linkedin-capture";
+import { isPlausibleLocation } from "../location";
 
 /**
  * Shared candidate-capture helpers extracted from the (removed) candidate-
@@ -91,11 +93,21 @@ Return ONLY valid JSON:
     try {
       const text = await chat(prompt, 0, 300, { provider: localProvider });
       const parsed = parseJson<{ name?: string; headline?: string; location?: string }>(text);
-      if (parsed.name || parsed.headline || parsed.location) {
+      // A 1.5B model on noisy input can hallucinate or misassign fields
+      // (e.g. put a company in `name`). ONLY accept the local result when the
+      // returned name passes the same sanity check the capture path uses; a
+      // bad name means the whole extraction is untrustworthy → fall through to
+      // Claude. When accepted, drop an implausible location rather than store
+      // junk (an empty location is fine — Claude isn't worth the cost just for
+      // that one field once we have a solid name).
+      if (parsed.name && looksLikeCapturedName(parsed.name)) {
+        const location = parsed.location && isPlausibleLocation(parsed.location)
+          ? parsed.location
+          : "";
         return {
-          name:     parsed.name ?? "Unknown",
+          name:     parsed.name,
           headline: parsed.headline ?? "",
-          location: parsed.location ?? "",
+          location,
         };
       }
     } catch {

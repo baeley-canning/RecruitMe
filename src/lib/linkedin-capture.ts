@@ -49,6 +49,10 @@ export interface ExtensionCaptureSession {
 const CAPTURE_STOP_LINE_PATTERNS = [
   /^more profiles for you$/i,
   /^people you may know$/i,
+  /^people also viewed$/i,
+  /^others (named|viewed)/i,
+  /^promoted$/i,
+  /^suggested for you$/i,
   /^pages for you$/i,
   /^explore premium profiles$/i,
   /^linkedin corporation/i,
@@ -147,7 +151,7 @@ export function sanitizeCapturedLinkedInText(profileText: string): string {
   return cleaned.join("\n").trim();
 }
 
-function looksLikeCapturedName(value: string): boolean {
+export function looksLikeCapturedName(value: string | null | undefined): boolean {
   if (!value || value.length < 4 || value.length > 80) return false;
   if (/[|,@\d]/.test(value)) return false;
   if (isNzLocation(value) || isExplicitlyOverseasLocation(value)) return false;
@@ -156,6 +160,30 @@ function looksLikeCapturedName(value: string): boolean {
   if (words.length < 2 || words.length > 5) return false;
 
   return words.every((word) => /^[A-Z][A-Za-z.'’-]*$/.test(word));
+}
+
+// Action-verb-only lines that LinkedIn search cards sometimes leak into the
+// name/headline/location slots (the card's CTA button text, not profile data).
+const CARD_ACTION_ONLY = /^(message|follow|connect|view profile|view|save|more|open to|promoted|premium)$/i;
+
+/**
+ * Lightweight sanity check for a free-text search-card field (headline or
+ * location) before it's written RAW into SearchRunResult. Rejects the obvious
+ * garbage the harvester picks up off the results page: empty strings, lone
+ * action-verb/CTA text, URLs, and absurdly long blobs. Returns the trimmed
+ * value when it passes, or null to drop it.
+ *
+ * This is deliberately permissive (it is NOT a positive headline heuristic) —
+ * the search card is a low-stakes preview, so we only filter junk that is
+ * clearly not human-readable profile text.
+ */
+export function sanitizeCardField(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const v = value.trim();
+  if (!v || v.length > 120) return null;
+  if (CARD_ACTION_ONLY.test(v)) return null;
+  if (/https?:\/\//i.test(v) || /\bwww\.|linkedin\.com|seek\.co/i.test(v)) return null;
+  return v;
 }
 
 function looksLikeCapturedLocation(value: string): boolean {
@@ -171,6 +199,42 @@ function looksLikeMetaLine(value: string): boolean {
   return /^(she\/her|he\/him|they\/them|she\s*\/\s*they|he\s*\/\s*they|contact info|message|follow|connect|save in sales navigator|open to|top skills|about|experience|education)$/i.test(
     value
   );
+}
+
+// Role/title keywords that signal a line is a headline rather than a stray
+// company name or nav word. Matched case-insensitively as whole words.
+const HEADLINE_ROLE_KEYWORDS =
+  /\b(engineer|manager|developer|lead|consultant|analyst|specialist|director|architect|officer|designer|scientist|administrator|coordinator|advisor|adviser|recruiter|founder|owner|president|head of|principal|associate|executive|technician|accountant|teacher|nurse|partner|strategist|programmer|administrator)\b/i;
+
+/**
+ * Positive heuristic: does this line look like a real role/headline, vs. a
+ * bare company name or stray nav token? Accept only when it carries headline
+ * structure (" at ", a separator like |/•, or a role keyword) OR is a
+ * multi-word Title-Case phrase. A single bare token is never a headline.
+ *
+ * Without this guard the headline was simply "the first non-meta line after
+ * the name" — which on noisy captures grabbed a lone company name ("Datacom")
+ * or a nav word and stored it as the candidate's headline.
+ */
+function looksLikeHeadline(value: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  const words = v.split(/\s+/);
+  // A single bare token (e.g. "Datacom", "Promoted") is never a headline.
+  if (words.length < 2) return false;
+  if (looksLikeMetaLine(v) || looksLikeCapturedLocation(v)) return false;
+
+  if (/\bat\b/i.test(v)) return true;
+  if (/[|•·]/.test(v)) return true;
+  if (HEADLINE_ROLE_KEYWORDS.test(v)) return true;
+
+  // Multi-word Title-Case phrase (most words start uppercase) — e.g.
+  // "Artificial Intelligence Practice Lead". Allow short connector words
+  // (of/and/the/in/for/&) to be lowercase.
+  const connectors = new Set(["of", "and", "the", "in", "for", "to", "&", "a", "an", "on", "with"]);
+  const significant = words.filter((w) => !connectors.has(w.toLowerCase()));
+  const titleCaseCount = significant.filter((w) => /^[A-Z]/.test(w)).length;
+  return significant.length >= 2 && titleCaseCount === significant.length;
 }
 
 export function extractIdentityFromLinkedInProfileText(profileText: string): {
@@ -198,7 +262,7 @@ export function extractIdentityFromLinkedInProfileText(profileText: string): {
       location = line;
       continue;
     }
-    if (!headline && !looksLikeMetaLine(line) && !looksLikeCapturedLocation(line)) {
+    if (!headline && looksLikeHeadline(line)) {
       headline = line;
     }
     if (headline && location) break;

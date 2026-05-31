@@ -25,6 +25,7 @@ import {
   mergeKeyToString,
 } from "./identity-merge";
 import { getCandidatePhotoUrl } from "./candidate-photo";
+import { looksLikeCapturedName, sanitizeCardField } from "./linkedin-capture";
 import type { ParsedQuery } from "./boolean-query";
 import type { LibrarySearchResult } from "./talent-search/library";
 
@@ -177,9 +178,13 @@ export async function attachScraperHits(args: {
       fallbackUrl: url,
     });
     const card = cardByUrl.get(url);
-    const name = card?.name ?? null;
-    const headline = card?.headline ?? null;
-    const location = card?.location ?? null;
+    // Guard the harvested card fields before they go RAW into SearchRunResult.
+    // Search cards regularly leak nav/CTA text ("Message", "Connect"), a bare
+    // company name, or a URL into these slots; storing that as the candidate's
+    // name/headline is the "mumbled shit" we're stopping at the door.
+    const name = looksLikeCapturedName(card?.name) ? card!.name! : null;
+    const headline = sanitizeCardField(card?.headline);
+    const location = sanitizeCardField(card?.location);
     await prisma.$executeRaw`
       INSERT INTO "SearchRunResult"
         ("id","searchRunId","mergeKey","sources","profileUrl","name","headline","location","createdAt","updatedAt")

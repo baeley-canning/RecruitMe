@@ -28,6 +28,7 @@ import { normaliseSeekUrl } from "./seek";
 import {
   sanitizeCapturedLinkedInText,
   extractIdentityFromLinkedInProfileText,
+  looksLikeCapturedName,
 } from "./linkedin-capture";
 import {
   identityMergeKey,
@@ -110,9 +111,33 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
     // path already solves this with extractIdentityFromLinkedInProfileText; reuse
     // it here to back-fill the headline from the just-sanitised profileText when
     // the scraper passed none. (Same proven extractor → same headline quality.)
-    if (!args.headline) {
-      const derived = extractIdentityFromLinkedInProfileText(args.profileText);
-      if (derived.headline) args.headline = derived.headline;
+    const derived = extractIdentityFromLinkedInProfileText(args.profileText);
+    if (!args.headline && derived.headline) args.headline = derived.headline;
+    // Prefer the extracted name when the scraper passed none OR passed junk (a
+    // truthy-but-garbage card name like "View profile"). derived.name is itself
+    // gated by looksLikeCapturedName, so a non-empty value is always a real name
+    // — strictly better than junk, and it recovers profiles that would otherwise
+    // hit the D2 reject below purely on a bad card name.
+    if ((!args.name || !looksLikeCapturedName(args.name)) && derived.name) {
+      args.name = derived.name;
+    }
+
+    // Reject thin/junk LinkedIn captures BEFORE they become an "Unknown" or
+    // garbage Candidate. Throwing here makes the PATCH route mark the ScrapeJob
+    // failed (retried/visible) instead of silently persisting page chrome.
+    //  - <200 chars: the same usable-text floor the extension path enforces
+    //    (buildIdentityData in linkedin-capture.ts).
+    //  - name fails looksLikeCapturedName AND no headline: we couldn't recover
+    //    a real person from this text — it's the "mumbled shit" we're blocking.
+    if (args.profileText.length < 200) {
+      throw new Error(
+        "Scraped LinkedIn profile did not contain enough usable profile text (<200 chars after sanitising)",
+      );
+    }
+    if (!looksLikeCapturedName(args.name) && !args.headline) {
+      throw new Error(
+        "Scraped LinkedIn profile yielded no usable name or headline — refusing to create a garbage candidate",
+      );
     }
   }
 

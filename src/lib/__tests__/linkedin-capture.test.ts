@@ -102,6 +102,39 @@ Jan 2020 - Present
     );
   });
 
+  it("stops at the 'People also viewed' / 'Others named' sidebar block", () => {
+    // D3: the right-rail recommendation block (People also viewed / Others
+    // named / Promoted) was NOT in the stop-list, so unrelated sidebar people
+    // bled into the captured profileText.
+    const dirtyCapture = `
+Owen Bannister
+Artificial Intelligence Practice Lead
+Wellington, New Zealand
+About
+I have worked across the full software lifecycle with Python and cloud services.
+People also viewed
+Sam Haines
+General Manager at Datacom Systems Ltd
+Others named Owen Bannister
+Owen Bannister
+Sales Director at SomewhereElse
+Promoted
+Acme is hiring senior engineers
+Suggested for you
+`;
+
+    const cleaned = sanitizeCapturedLinkedInText(dirtyCapture);
+
+    expect(cleaned).toContain("Owen Bannister");
+    expect(cleaned).toContain("About");
+    expect(cleaned).not.toContain("People also viewed");
+    expect(cleaned).not.toContain("Sam Haines");
+    expect(cleaned).not.toContain("Others named");
+    expect(cleaned).not.toContain("Sales Director at SomewhereElse");
+    expect(cleaned).not.toContain("Promoted");
+    expect(cleaned).not.toContain("Suggested for you");
+  });
+
   it("keeps real section content while dropping show-all placeholders", () => {
     const structuredCapture = `
 Jane Doe
@@ -166,6 +199,23 @@ Software developer based in Wellington.`;
       headline: "Engineer at Xero | RubyOnRails | React",
       location: "Wellington, Wellington, New Zealand",
     });
+  });
+
+  it("leaves the headline empty when the first line after the name is a bare company/nav word", () => {
+    // D5: previously the headline was just "the first non-meta line after the
+    // name", so a bare company name ("Datacom") or stray token got stored as
+    // the candidate's headline. The positive heuristic now rejects single
+    // bare tokens that don't look like a role/headline.
+    const capture = `Owen Bannister
+Datacom
+Wellington, New Zealand
+About
+I have shipped reliable software for over ten years and love mentoring.`;
+
+    const result = extractIdentityFromLinkedInProfileText(capture);
+    expect(result.name).toBe("Owen Bannister");
+    expect(result.headline).toBe(""); // bare "Datacom" rejected, not stored as headline
+    expect(result.location).toBe("Wellington, New Zealand");
   });
 
   it("does not treat comma-separated headline text as location", () => {

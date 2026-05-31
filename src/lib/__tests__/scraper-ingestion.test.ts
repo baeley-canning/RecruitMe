@@ -170,3 +170,84 @@ describe("ingestScraperResult — P2002 identity race", () => {
     })).rejects.toThrow(/connection reset/);
   });
 });
+
+describe("ingestScraperResult — D2 thin/junk LinkedIn rejection", () => {
+  const LINKEDIN_URL = "https://www.linkedin.com/in/jane-doe-12345";
+
+  it("THROWS on a thin LinkedIn profile (<200 chars after sanitising) — no Candidate created", async () => {
+    await expect(ingestScraperResult({
+      orgId: "org-1",
+      platform: "linkedin",
+      profileUrl: LINKEDIN_URL,
+      profileText: "Jane Doe\nSenior Engineer\nAuckland", // well under 200 chars
+      name: "Jane Doe",
+    })).rejects.toThrow(/usable profile text/i);
+
+    expect(dbMocks.prisma.candidate.create).not.toHaveBeenCalled();
+    expect(dbMocks.prisma.candidateIdentity.create).not.toHaveBeenCalled();
+  });
+
+  it("THROWS when no usable name AND no headline can be recovered — no 'Unknown' Candidate", async () => {
+    // 200+ chars of mumbled lowercase chrome: the name is junk and the
+    // extractor can pull no headline (no role keyword, no separator, not
+    // Title-Case). Must reject rather than persist an Unknown row.
+    const junk =
+      "this captured blob is mostly mumbled navigation chrome with no clear " +
+      "person described here just lots of filler words repeated over and over " +
+      "until it crosses two hundred characters but still says nothing useful";
+    await expect(ingestScraperResult({
+      orgId: "org-1",
+      platform: "linkedin",
+      profileUrl: LINKEDIN_URL,
+      profileText: junk,
+      name: "view profile", // lowercase → fails looksLikeCapturedName
+    })).rejects.toThrow(/no usable name or headline/i);
+
+    expect(dbMocks.prisma.candidate.create).not.toHaveBeenCalled();
+  });
+
+  it("ACCEPTS a healthy LinkedIn profile (real name + enough text) — creates the Candidate", async () => {
+    dbMocks.prisma.candidateIdentity.findFirst.mockResolvedValue(null);
+    dbMocks.prisma.candidateIdentity.create.mockResolvedValue({ id: "identity-1" });
+
+    const profileText =
+      "Jane Doe\nSenior Software Engineer at Acme\nAuckland, New Zealand\nAbout\n" +
+      "Experienced engineer with a decade building distributed systems, cloud platforms, and developer tooling across multiple high-growth product teams.";
+
+    const res = await ingestScraperResult({
+      orgId: "org-1",
+      platform: "linkedin",
+      profileUrl: LINKEDIN_URL,
+      profileText,
+      name: "Jane Doe",
+    });
+
+    expect(res.candidateAction).toBe("created_new");
+    expect(dbMocks.prisma.candidate.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("RECOVERS a real name from profileText when the scraper passed a junk card name", async () => {
+    // The search card leaked "View profile" into the name slot, but the real
+    // name is the first profile line. derived.name (itself gated by
+    // looksLikeCapturedName) must override the junk so the profile is NOT
+    // wrongly rejected by the D2 name/headline guard.
+    dbMocks.prisma.candidateIdentity.findFirst.mockResolvedValue(null);
+    dbMocks.prisma.candidateIdentity.create.mockResolvedValue({ id: "identity-1" });
+
+    const profileText =
+      "Jane Doe\nSenior Software Engineer at Acme\nAuckland, New Zealand\nAbout\n" +
+      "Experienced engineer with a decade building distributed systems, cloud platforms, and developer tooling across multiple high-growth product teams.";
+
+    const res = await ingestScraperResult({
+      orgId: "org-1",
+      platform: "linkedin",
+      profileUrl: LINKEDIN_URL,
+      profileText,
+      name: "View profile", // junk card text → must be replaced by derived "Jane Doe"
+    });
+
+    expect(res.candidateAction).toBe("created_new");
+    const createArg = dbMocks.prisma.candidate.create.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(createArg.data.name).toBe("Jane Doe");
+  });
+});

@@ -11,13 +11,20 @@
  * lock the pure logic that has no I/O.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // search-run.ts imports prisma at module load; stub it so the pure helpers
-// can be imported without a DB.
-vi.mock("@/lib/db", () => ({ prisma: {} }));
+// can be imported without a DB. $executeRaw is a spy so the attachScraperHits
+// test can inspect the values bound into the INSERT (D1 card-field guards).
+const dbMocks = vi.hoisted(() => ({
+  prisma: {
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    searchRun: { update: vi.fn().mockResolvedValue({}) },
+  } as Record<string, unknown>,
+}));
+vi.mock("@/lib/db", () => dbMocks);
 
-import { libraryMergeKey, scraperMergeKey } from "../search-run";
+import { libraryMergeKey, scraperMergeKey, attachScraperHits } from "../search-run";
 
 describe("libraryMergeKey", () => {
   it("uses the LinkedIn URL when present (Tier-1)", () => {
@@ -69,5 +76,50 @@ describe("scraperMergeKey", () => {
   it("falls back to a synthetic li:<url> when the URL isn't a recognised profile key", () => {
     const key = scraperMergeKey({ fallbackUrl: "https://example.com/x" });
     expect(key).toBe("li:https://example.com/x");
+  });
+});
+
+describe("attachScraperHits — D1 card-field guards", () => {
+  const executeRaw = dbMocks.prisma.$executeRaw as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    executeRaw.mockResolvedValue(0);
+  });
+
+  // The INSERT binds VALUES in this order:
+  //   0 id, 1 searchRunId, 2 mergeKey, 3 sources, 4 url, 5 name, 6 headline, 7 location
+  function insertedValuesForUrl(url: string): unknown[] | null {
+    for (const call of executeRaw.mock.calls) {
+      const values = call.slice(1); // drop the TemplateStringsArray
+      if (values[4] === url) return values;
+    }
+    return null;
+  }
+
+  it("drops a junk card name (CTA/company text) but keeps a real name + headline", async () => {
+    await attachScraperHits({
+      searchRunId: "run-1",
+      source: "linkedin",
+      urls: ["https://www.linkedin.com/in/junk", "https://www.linkedin.com/in/real"],
+      cards: [
+        // Junk: name is an action-verb, headline is a URL, location is empty.
+        { url: "https://www.linkedin.com/in/junk", name: "Connect", headline: "https://acme.example/jobs", location: "" },
+        // Real: clean name, plausible headline + location survive verbatim.
+        { url: "https://www.linkedin.com/in/real", name: "Jane Doe", headline: "Senior Engineer at Acme", location: "Auckland, New Zealand" },
+      ],
+    });
+
+    const junk = insertedValuesForUrl("https://www.linkedin.com/in/junk");
+    expect(junk).not.toBeNull();
+    expect(junk![5]).toBeNull(); // name "Connect" rejected
+    expect(junk![6]).toBeNull(); // URL headline dropped
+    expect(junk![7]).toBeNull(); // empty location dropped
+
+    const real = insertedValuesForUrl("https://www.linkedin.com/in/real");
+    expect(real).not.toBeNull();
+    expect(real![5]).toBe("Jane Doe");
+    expect(real![6]).toBe("Senior Engineer at Acme");
+    expect(real![7]).toBe("Auckland, New Zealand");
   });
 });
