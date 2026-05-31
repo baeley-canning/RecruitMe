@@ -23,12 +23,15 @@ export const BREAKER_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2h
 
 /**
  * Does an error message signal a scraper-detected auth wall (the "_challenge:"
- * convention the scrapers raise)? Anchored to the known platform prefixes so a
- * candidate's profile text or an unrelated error that merely contains the
- * substring "_challenge:" can't false-trigger a needs-reauth flip.
+ * convention the scrapers raise)? The scrapers throw messages that START with
+ * "<platform>_challenge:" (and ensureSession's circuit-open error now does too),
+ * so we anchor to the START of the string. A word-boundary anchor (\b) was too
+ * loose: it matched "foo seek_challenge:" mid-string, which a candidate's
+ * profile text or a wrapped error could legitimately contain. Start-anchoring
+ * means only a genuine platform-prefixed message flips needs-reauth / no-retry.
  */
 export function isAuthChallengeMessage(message: string): boolean {
-  return /\b(linkedin|seek|jobadder)_challenge:/i.test(message ?? "");
+  return /^(linkedin|seek|jobadder)_challenge:/i.test(message ?? "");
 }
 
 /**

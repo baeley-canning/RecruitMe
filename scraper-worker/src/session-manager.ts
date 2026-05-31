@@ -244,8 +244,13 @@ export async function ensureSession(
   page: Page,
 ): Promise<void> {
   if (isCircuitOpen(authBreaker, platform, Date.now())) {
+    // Prefix with "<platform>_challenge:" so this is classified as an AUTH
+    // failure, not a transient one: the worker (isAuthChallengeMessage) skips
+    // the rate-limit backoff, and the API PATCH route treats it as a final
+    // no-retry failure instead of requeuing until the retry budget is spent.
+    // A circuit-open job needs a manual re-login, not a retry.
     throw new Error(
-      `${platform}: auth circuit open after repeated re-auth failures — run \`npx tsx login.ts ${platform}\` on the box; it clears automatically on the next success or after the cooldown.`,
+      `${platform}_challenge: auth circuit open after repeated re-auth failures — run \`npx tsx login.ts ${platform}\` on the box; it clears automatically on the next success or after the cooldown.`,
     );
   }
 

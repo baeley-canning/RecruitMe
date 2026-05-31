@@ -22,6 +22,23 @@ describe("isAuthChallengeMessage (anchored — no false positives)", () => {
     expect(isAuthChallengeMessage("Senior Engineer | the_big_challenge: leadership")).toBe(false);
     expect(isAuthChallengeMessage("")).toBe(false);
   });
+  it("requires the platform prefix at the START — not mid-string (true prefix anchor)", () => {
+    // The \b bug matched a platform name after a space, so a wrapped/quoted
+    // error or profile text containing "seek_challenge:" mid-string falsely
+    // flipped needs-reauth. Only a message that STARTS with the prefix counts.
+    expect(isAuthChallengeMessage("foo seek_challenge: bar")).toBe(false);
+    expect(isAuthChallengeMessage("scrape failed: linkedin_challenge: auth wall")).toBe(false);
+    expect(isAuthChallengeMessage("  seek_challenge: leading whitespace")).toBe(false);
+  });
+  it("classifies the circuit-open error as an auth challenge (so the job fails final, no requeue)", () => {
+    // ensureSession throws this when the breaker is open — it must be detected
+    // as a challenge so the worker skips backoff and the API marks it failed.
+    expect(
+      isAuthChallengeMessage(
+        "seek_challenge: auth circuit open after repeated re-auth failures — run `npx tsx login.ts seek` on the box",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("classifyAuthFailure (soft vs hard)", () => {
