@@ -25,6 +25,7 @@ const dbMocks = vi.hoisted(() => {
   };
   const candidateIdentityMerge = {
     create: vi.fn(),
+    upsert: vi.fn(),
     findFirst: vi.fn(),
   };
   const prisma = {
@@ -224,12 +225,14 @@ describe("POST /identity/unmerge — happy path", () => {
     const res = await unmergePOST(req, { params: Promise.resolve({ id: "cand-1" }) });
     expect(res.status).toBe(200);
 
-    // Tombstone written.
-    const createCall = dbMocks.prisma.candidateIdentityMerge.create.mock.calls[0][0] as {
-      data: Record<string, unknown>;
+    // Tombstone written via idempotent upsert (not create-and-catch-P2002,
+    // which would poison the transaction on a real conflict).
+    const upsertCall = dbMocks.prisma.candidateIdentityMerge.upsert.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+      where: Record<string, unknown>;
     };
-    expect(createCall.data.isTombstone).toBe(true);
-    expect(createCall.data.reason).toBe("unmerge");
+    expect(upsertCall.create.isTombstone).toBe(true);
+    expect(upsertCall.create.reason).toBe("unmerge");
 
     // Original identity detached.
     expect(dbMocks.prisma.candidateIdentity.update).toHaveBeenCalledWith({
@@ -244,7 +247,7 @@ describe("POST /identity/unmerge — happy path", () => {
     });
   });
 
-  it("idempotent when tombstone already exists (P2002 swallowed)", async () => {
+  it("idempotent when the tombstone already exists — upsert no-ops, tx still completes", async () => {
     dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({
       id: "cand-1", orgId: "org-A", candidateIdentityId: "ident-survivor",
     });
@@ -252,9 +255,9 @@ describe("POST /identity/unmerge — happy path", () => {
       .mockResolvedValueOnce({ id: "ident-original", orgId: "org-A", mergedIntoIdentityId: null })
       .mockResolvedValueOnce({ id: "ident-survivor", orgId: "org-A" });
     dbMocks.prisma.candidateIdentityMerge.findFirst.mockResolvedValueOnce({ id: "merge-row-1" });
-    dbMocks.prisma.candidateIdentityMerge.create.mockRejectedValueOnce(
-      Object.assign(new Error("unique violation"), { code: "P2002" }),
-    );
+    // upsert is the idempotency mechanism now — it resolves (update:{}) when the
+    // tombstone exists rather than throwing a P2002 that would poison the tx.
+    dbMocks.prisma.candidateIdentityMerge.upsert.mockResolvedValueOnce({});
 
     const req = new Request("http://test/api/candidates/cand-1/identity/unmerge", {
       method: "POST",
@@ -262,7 +265,9 @@ describe("POST /identity/unmerge — happy path", () => {
     });
     const res = await unmergePOST(req, { params: Promise.resolve({ id: "cand-1" }) });
     expect(res.status).toBe(200);
-    // Even with P2002 the rest of the transaction proceeds.
+    // The rest of the transaction proceeds (this is what the old create-and-
+    // catch-P2002 broke: a conflict aborted the tx and the candidate was never
+    // re-pointed).
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalled();
   });
 });

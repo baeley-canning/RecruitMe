@@ -7,6 +7,7 @@ const dbMocks = vi.hoisted(() => ({
   prisma: {
     candidateIdentity: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       create: vi.fn(),
       updateMany: vi.fn(),
     },
@@ -29,11 +30,43 @@ const SEEK_URL = "https://www.seek.com.au/profile/jane-doe-12345?ref=tracking";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Merge-chain follow on found-existing identities: default to "not merged"
+  // (null pointer) so the walk breaks immediately and the resolved identity is
+  // unchanged. Tests that exercise a merge chain override this.
+  dbMocks.prisma.candidateIdentity.findUnique.mockResolvedValue({ mergedIntoIdentityId: null });
   dbMocks.prisma.candidateIdentity.updateMany.mockResolvedValue({ count: 0 });
   dbMocks.prisma.candidateIdentityAlias.create.mockResolvedValue({});
   dbMocks.prisma.candidate.findFirst.mockResolvedValue(null);
   dbMocks.prisma.candidate.create.mockResolvedValue({});
   dbMocks.prisma.candidate.update.mockResolvedValue({});
+});
+
+describe("ingestScraperResult — follows the identity merge chain", () => {
+  it("attaches a re-scraped candidate to the SURVIVOR, not the merged-away identity", async () => {
+    // The Tier-1 key still resolves to the OLD (merged-away) identity...
+    dbMocks.prisma.candidateIdentity.findFirst.mockResolvedValue({ id: "old-identity" });
+    // ...but it was merged into "survivor-1" (which is itself terminal).
+    dbMocks.prisma.candidateIdentity.findUnique.mockImplementation(({ where }) => {
+      if (where.id === "old-identity") return Promise.resolve({ mergedIntoIdentityId: "survivor-1" });
+      return Promise.resolve({ mergedIntoIdentityId: null });
+    });
+    dbMocks.prisma.candidate.findFirst.mockResolvedValue(null); // new candidate row
+
+    await ingestScraperResult({
+      orgId: "org-1",
+      platform: "linkedin",
+      profileUrl: "https://www.linkedin.com/in/jane-doe",
+      profileText:
+        "Jane Doe — Senior RF Engineer based in Wellington with over 10 years of " +
+        "experience designing software-defined radios, RF front-ends, and antenna " +
+        "systems for aerospace and defence programmes. Led a team of six engineers " +
+        "delivering a phased-array prototype from concept through to field trials.",
+      name: "Jane Doe",
+    });
+
+    const createArg = dbMocks.prisma.candidate.create.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(createArg.data.candidateIdentityId).toBe("survivor-1");
+  });
 });
 
 describe("ingestScraperResult — SEEK seekUrl is written on the Candidate row", () => {

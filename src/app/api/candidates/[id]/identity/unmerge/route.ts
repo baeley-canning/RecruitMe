@@ -121,25 +121,34 @@ export async function POST(
   }
 
   await prisma.$transaction(async (tx) => {
-    // Tombstone row. The @@unique([orgId, sourceIdentityId,
-    // survivorIdentityId, isTombstone]) constraint makes the tombstone
-    // idempotent — re-clicking unmerge for the same pair is a no-op.
-    try {
-      await tx.candidateIdentityMerge.create({
-        data: {
-          id: randomUUID(),
+    // Tombstone row, made idempotent via UPSERT on the
+    // @@unique([orgId, sourceIdentityId, survivorIdentityId, isTombstone])
+    // constraint. The previous create-and-catch-P2002 was a bug: a unique
+    // violation inside a Postgres transaction poisons the WHOLE transaction
+    // (25P02), so the two updates below would then fail with "current
+    // transaction is aborted" — re-clicking unmerge 500'd and left the
+    // candidate un-repointed. UPSERT never throws on conflict, so the tx
+    // stays healthy.
+    await tx.candidateIdentityMerge.upsert({
+      where: {
+        orgId_sourceIdentityId_survivorIdentityId_isTombstone: {
           orgId: originalIdentity.orgId,
           sourceIdentityId: originalIdentityId,
           survivorIdentityId: currentIdentityId,
-          mergedByUserId: auth.userId,
-          reason: "unmerge",
           isTombstone: true,
         },
-      });
-    } catch (err) {
-      const code = (err as { code?: string })?.code;
-      if (code !== "P2002") throw err; // tombstone already exists; fine
-    }
+      },
+      create: {
+        id: randomUUID(),
+        orgId: originalIdentity.orgId,
+        sourceIdentityId: originalIdentityId,
+        survivorIdentityId: currentIdentityId,
+        mergedByUserId: auth.userId,
+        reason: "unmerge",
+        isTombstone: true,
+      },
+      update: {},
+    });
 
     // Detach the original identity from its merge target.
     await tx.candidateIdentity.update({

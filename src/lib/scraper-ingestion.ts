@@ -275,6 +275,27 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
 
   if (!identity) throw new Error("Failed to resolve CandidateIdentity");
 
+  // Follow any merge chain so a re-scrape of a person whose identity was merged
+  // (recruiter confirm OR auto-cluster sets mergedIntoIdentityId) attaches the
+  // candidate to the SURVIVOR, not the merged-away row. Without this, every
+  // re-scrape silently re-splits a confirmed merge — the exact bug class the
+  // identity layer exists to prevent. The lookups above only fetch `id`, so
+  // walk here; only needed for found-existing rows (a row we just created can't
+  // be merged). Depth-capped to survive a pathological cycle.
+  if (identityAction === "found_existing") {
+    let cursorId: string = identity.id;
+    for (let hop = 0; hop < 10; hop++) {
+      const row: { mergedIntoIdentityId: string | null } | null =
+        await prisma.candidateIdentity.findUnique({
+          where: { id: cursorId },
+          select: { mergedIntoIdentityId: true },
+        });
+      if (!row?.mergedIntoIdentityId) break;
+      cursorId = row.mergedIntoIdentityId;
+    }
+    identity = { id: cursorId };
+  }
+
   // --- Step 2: upsert Candidate row ---
   let candidateAction: IngestResult["candidateAction"] = "created_new";
 
