@@ -49,6 +49,10 @@ async function detectBin(name) {
 const TEXTUTIL_PATH   = await detectBin("textutil");
 const SOFFICE_PATH    = await detectBin("soffice");
 const DOC_CONVERTER   = TEXTUTIL_PATH ? "textutil" : (SOFFICE_PATH ? "soffice" : null);
+// poppler's pdftotext reads many PDFs that pdf-parse refuses (odd producers,
+// broken xref). Used as a fallback in extractPdf when present (it's on the
+// mini-PC; not on macOS by default).
+const PDFTOTEXT_PATH  = await detectBin("pdftotext");
 
 const args = parseArgs(process.argv.slice(2));
 const LIMIT       = args.limit ? Number(args.limit) : null;
@@ -163,6 +167,24 @@ async function loadFileBase64(fileRow) {
 
 const PDF_VERSIONS = ["v2.0.550", "v1.10.100", "v1.10.88", "v1.9.426"];
 
+async function extractPdfViaPdftotext(buffer) {
+  const dir = await mkdtemp(path.join(tmpdir(), "cv-pdf-"));
+  const pdfPath = path.join(dir, "in.pdf");
+  try {
+    await writeFile(pdfPath, buffer);
+    return await new Promise((resolve, reject) => {
+      const p = spawn(PDFTOTEXT_PATH, ["-q", "-enc", "UTF-8", "-nopgbrk", pdfPath, "-"]);
+      let out = "", err = "";
+      p.stdout.on("data", (d) => { out += d.toString(); });
+      p.stderr.on("data", (d) => { err += d.toString(); });
+      p.on("close", (code) => code === 0 ? resolve(out) : reject(new Error(`pdftotext exit ${code}: ${err.trim()}`)));
+      p.on("error", reject);
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function extractPdf(buffer) {
   const pdfParse = require("pdf-parse");
   let lastError;
@@ -170,6 +192,15 @@ async function extractPdf(buffer) {
     try {
       const data = await pdfParse(buffer, { version });
       const text = (data?.text ?? "");
+      if (text.trim().length > 0) return text;
+    } catch (err) { lastError = err; }
+  }
+  // Fallback to poppler — recovers PDFs pdf-parse can't open. A genuinely
+  // image-only/scanned PDF still yields ~nothing here (caught by the
+  // MIN_USABLE_CHARS gate downstream) and would need OCR.
+  if (PDFTOTEXT_PATH) {
+    try {
+      const text = await extractPdfViaPdftotext(buffer);
       if (text.trim().length > 0) return text;
     } catch (err) { lastError = err; }
   }
@@ -186,17 +217,17 @@ async function extractDocx(buffer) {
 // macOS textutil reads it natively; on Linux we shell out to LibreOffice
 // (--headless --convert-to txt) which produces the same output. Temp-file
 // round trip in both cases because both tools are flaky on stdin.
-async function extractDocViaConverter(buffer) {
-  if (!DOC_CONVERTER) throw new Error("no .doc converter available (need textutil or soffice)");
+async function extractDocViaConverter(buffer, ext = ".doc") {
+  if (!DOC_CONVERTER) throw new Error("no .doc/.rtf converter available (need textutil or soffice)");
   const dir  = await mkdtemp(path.join(tmpdir(), "cv-doc-"));
-  const docPath = path.join(dir, "in.doc");
+  const docPath = path.join(dir, `in${ext}`);
   const txtPath = path.join(dir, "in.txt");
   try {
     await writeFile(docPath, buffer);
     await new Promise((resolve, reject) => {
       const p = DOC_CONVERTER === "textutil"
         ? spawn(TEXTUTIL_PATH, ["-convert", "txt", docPath, "-output", txtPath])
-        : spawn(SOFFICE_PATH, ["--headless", "--convert-to", "txt:Text", "--outdir", dir, docPath]);
+        : spawn(SOFFICE_PATH, [`-env:UserInstallation=file://${dir}/lo`, "--headless", "--convert-to", "txt:Text", "--outdir", dir, docPath]);
       let stderr = "";
       p.stderr.on("data", (d) => { stderr += d.toString(); });
       p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`${DOC_CONVERTER} exit ${code}: ${stderr.trim()}`)));
@@ -223,19 +254,33 @@ function detectKind(filename, mimeType) {
   if (mt === "text/plain" || ext === ".txt") return "txt";
   // legacy .doc — mammoth doesn't support it, pdf-parse won't either.
   if (mt === "application/msword" || ext === ".doc") return "doc_legacy";
+  if (mt === "application/rtf" || mt === "text/rtf" || ext === ".rtf") return "rtf";
+  return "unknown";
+}
+
+// Many JobAdder files arrive as application/octet-stream (no real mime) or with
+// no extension. Sniff the magic bytes so a mislabelled CV still gets routed to
+// the right extractor instead of being dropped as "unknown".
+function sniffKind(buf) {
+  if (buf.length >= 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return "pdf";        // %PDF
+  if (buf.length >= 4 && buf[0] === 0xD0 && buf[1] === 0xCF && buf[2] === 0x11 && buf[3] === 0xE0) return "doc_legacy"; // OLE2 (.doc/.xls)
+  if (buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4B) return "docx";                                            // PK zip (.docx)
+  if (buf.length >= 5 && buf.toString("latin1", 0, 5) === "{\\rtf") return "rtf";
   return "unknown";
 }
 
 async function extractFromFile(file) {
   const buf  = Buffer.from(file.data, "base64");
-  const kind = detectKind(file.filename, file.mimeType);
+  let kind = detectKind(file.filename, file.mimeType);
+  if (kind === "unknown") kind = sniffKind(buf); // octet-stream / mislabelled → magic-byte sniff
   switch (kind) {
     case "pdf":        return { text: await extractPdf(buf),  kind };
     case "docx":       return { text: await extractDocx(buf), kind };
     case "txt":        return { text: buf.toString("utf-8"),  kind };
+    case "rtf":        return { text: await extractDocViaConverter(buf, ".rtf"), kind };
     case "doc_legacy":
       if (!DOC_CONVERTER) throw new Error("legacy .doc needs textutil (macOS) or soffice (Linux)");
-      return { text: await extractDocViaConverter(buf), kind };
+      return { text: await extractDocViaConverter(buf, ".doc"), kind };
     default:           throw new Error(`unsupported file type — mimeType="${file.mimeType}" filename="${file.filename}"`);
   }
 }
@@ -307,7 +352,7 @@ async function main() {
         where: { type: "cv" },
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true, filename: true, mimeType: true, size: true, storageKey: true },
+        select: { id: true, filename: true, mimeType: true, size: true },
       },
     },
     ...(LIMIT ? { take: LIMIT } : {}),
@@ -321,7 +366,7 @@ async function main() {
     skippedUnsupportedKind: 0,
     errored: 0,
     charsWritten: 0,
-    byKind: { pdf: 0, docx: 0, txt: 0, doc_legacy: 0, unknown: 0 },
+    byKind: { pdf: 0, docx: 0, txt: 0, doc_legacy: 0, rtf: 0, unknown: 0 },
     // Headline-rewrite counters (independent of profileText path).
     headlineDerived: 0,        // deriveHeadlineFromCv returned non-null
     headlineKeptCorrect: 0,    // existing headline already looked correct — skipped
@@ -340,9 +385,11 @@ async function main() {
 
     const kind = detectKind(meta.filename, meta.mimeType);
     stats.byKind[kind] = (stats.byKind[kind] ?? 0) + 1;
-    // unknown mime + .doc-when-textutil-missing: skip up-front. .doc with
-    // textutil present falls through to the normal extraction path.
-    const isUnsupportedHere = kind === "unknown" || (kind === "doc_legacy" && !TEXTUTIL_PATH);
+    // Only skip up-front when there's genuinely no path. "unknown" mime is
+    // sniffed from magic bytes once we have the bytes (extractFromFile), so let
+    // it through. doc_legacy/rtf need a converter — textutil (macOS) OR soffice
+    // (the mini-PC); gate on DOC_CONVERTER, not textutil specifically.
+    const isUnsupportedHere = ((kind === "doc_legacy" || kind === "rtf") && !DOC_CONVERTER);
     if (isUnsupportedHere) {
       stats.skippedUnsupportedKind++;
       failures.push({ candidateId: row.id, fileId: meta.id, filename: meta.filename, mimeType: meta.mimeType, reason: kind });
@@ -350,13 +397,14 @@ async function main() {
     }
 
     // Fetch just THIS file's bytes — keeps peak memory ≈ CONCURRENCY × 1 CV.
-    const fileWithData = await withDbRetry(
-      () => prisma.candidateFile.findUnique({
-        where: { id: meta.id },
-        select: { data: true, storageKey: true },
-      }),
+    // Raw SQL (not the typed client) so this works even where the deployed
+    // Prisma client predates the `storageKey` column (e.g. the mini-PC's
+    // pre-migration generated client).
+    const rawRows = await withDbRetry(
+      () => prisma.$queryRaw`SELECT data, "storageKey" FROM "CandidateFile" WHERE id = ${meta.id} LIMIT 1`,
       `file fetch (cid=${row.id})`,
     );
+    const fileWithData = Array.isArray(rawRows) ? rawRows[0] ?? null : null;
     // Post-migration the bytes live in the encrypted bucket (storageKey set,
     // data empty). Fetch + decrypt; fall back to the legacy inline column.
     let base64;
@@ -515,7 +563,7 @@ async function main() {
   console.log(`Skipped — unsupported:    ${stats.skippedUnsupportedKind.toLocaleString()}  (legacy .doc or unknown mime)`);
   console.log(`Skipped — raced:          ${(stats.racedSkipped ?? 0).toLocaleString()}  (another writer populated profileText first)`);
   console.log(`Errored:                  ${stats.errored.toLocaleString()}`);
-  console.log(`By kind:                  pdf=${stats.byKind.pdf} docx=${stats.byKind.docx} txt=${stats.byKind.txt} doc_legacy=${stats.byKind.doc_legacy} unknown=${stats.byKind.unknown}`);
+  console.log(`By kind:                  pdf=${stats.byKind.pdf} docx=${stats.byKind.docx} txt=${stats.byKind.txt} doc_legacy=${stats.byKind.doc_legacy} rtf=${stats.byKind.rtf} unknown=${stats.byKind.unknown}`);
   console.log(`Headlines derived:        ${stats.headlineDerived.toLocaleString()}  (deriveHeadlineFromCv returned a value)`);
   console.log(`Headlines kept (already correct): ${stats.headlineKeptCorrect.toLocaleString()}`);
   console.log(`Headlines updated:        ${stats.headlineUpdated.toLocaleString()}  ${COMMIT_HEADLINE ? "" : "(would update if --commit was passed)"}`);
