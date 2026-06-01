@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseBooleanQuery } from "@/lib/boolean-query";
+import { NZ_LOCATIONS } from "@/lib/nz-locations";
 import { Button } from "@/components/ui/button";
 
 type Source = "library" | "linkedin" | "seek";
@@ -84,12 +85,17 @@ export function NewSearchPanel() {
       )}
 
       <div className="flex flex-wrap items-center gap-3 mt-4">
-        <input
+        <label htmlFor="search-location" className="sr-only">Location</label>
+        <select
+          id="search-location"
           value={location}
           onChange={(e) => setLocation(e.target.value)}
-          placeholder="Location (optional) — e.g. Wellington"
-          className="h-9 px-3 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-all flex-1 min-w-[200px]"
-        />
+          className="h-9 px-3 rounded bg-surface-sunken border border-separator text-md text-text-primary focus:outline-none focus:border-accent transition-all flex-1 min-w-[200px]"
+        >
+          {NZ_LOCATIONS.map((l) => (
+            <option key={l.value} value={l.value}>{l.label}</option>
+          ))}
+        </select>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mt-4">

@@ -26,6 +26,7 @@ import {
 } from "./identity-merge";
 import { getCandidatePhotoUrl } from "./candidate-photo";
 import { looksLikeCapturedName, sanitizeCardField } from "./linkedin-capture";
+import { locationMatches } from "./nz-locations";
 import type { ParsedQuery } from "./boolean-query";
 import type { LibrarySearchResult } from "./talent-search/library";
 
@@ -177,6 +178,12 @@ export async function attachScraperHits(args: {
   cards?: ScraperCard[];
 }): Promise<void> {
   const cardByUrl = new Map((args.cards ?? []).map((c) => [c.url, c]));
+  // Location gate: the scrape legs (LinkedIn/SEEK) return NZ-wide cards. Drop any
+  // whose location doesn't match the run's requested location, so a "Wellington"
+  // search can't surface Auckland/Christchurch profiles (the Library leg already
+  // filters this way). "All NZ" runs (null location) keep everything.
+  const run = await prisma.searchRun.findUnique({ where: { id: args.searchRunId }, select: { location: true } });
+  const runLocation = run?.location ?? null;
   for (const url of args.urls) {
     const mergeKey = scraperMergeKey({
       linkedinUrl: args.source === "linkedin" ? url : null,
@@ -184,6 +191,7 @@ export async function attachScraperHits(args: {
       fallbackUrl: url,
     });
     const card = cardByUrl.get(url);
+    if (!locationMatches(card?.location, runLocation)) continue;
     // Guard the harvested card fields before they go RAW into SearchRunResult.
     // Search cards regularly leak nav/CTA text ("Message", "Connect"), a bare
     // company name, or a URL into these slots; storing that as the candidate's
