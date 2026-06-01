@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Search, Users, Briefcase, Star, UserPlus, FileText } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { timeAgo, cn } from "@/lib/utils";
-import { scoreTier } from "@/lib/score-utils";
 import { AddLibraryCandidateModal } from "@/components/add-library-candidate-modal";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
 import { candidateSourceBadge } from "@/components/candidate/helpers";
@@ -129,9 +128,12 @@ interface CandidatesLibraryClientProps {
   candidates: LibraryCandidate[];
   /** Pagination cursor from SSR. Non-null when more rows exist past the take cap. */
   initialNextCursor?: string | null;
+  /** True library-wide header totals (deduped, server-computed) — independent of
+   *  how many pages are loaded, so the counts no longer grow as you "Load more". */
+  stats: { total: number; strongMatches: number; withCV: number };
 }
 
-export function CandidatesLibraryClient({ candidates: initialCandidates, initialNextCursor }: CandidatesLibraryClientProps) {
+export function CandidatesLibraryClient({ candidates: initialCandidates, initialNextCursor, stats }: CandidatesLibraryClientProps) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const deferred = useDeferredValue(search);
@@ -215,18 +217,11 @@ export function CandidatesLibraryClient({ candidates: initialCandidates, initial
     return rows;
   }, [candidates, searchResults, selectedBatchId]);
 
-  // Single-pass reducer for stats — was 3 separate full-array scans (every
-  // keystroke triggered ~42k iterations through 14k candidates). Now ~14k.
-  // strongMatches counts via canonical scoreTier so the "Strong" label here
-  // matches every other tier display in the app (>= 80 = strong).
-  const { withCV, withProfile, strongMatches } = useMemo(() => {
-    let cv = 0, strong = 0;
-    for (const c of candidates) {
-      if (c.files.some((f) => f.type === "cv")) cv++;
-      if (c.matchScore !== null && scoreTier(c.matchScore, "match") === "strong") strong++;
-    }
-    return { withCV: cv, withProfile: candidates.length, strongMatches: strong };
-  }, [candidates]);
+  // Header stats come from `stats` (server-computed, library-wide, deduped) —
+  // NOT from the loaded `candidates` array. Computing them client-side meant
+  // they only reflected the loaded page and grew with every "Load more" (the
+  // "lying counts" bug). The "{filtered.length} of {candidates.length}" line
+  // below still reflects the current view; these three cards are the truth.
 
   // ── Virtualization ──
   // Track viewport width to pick a column count that matches the Tailwind
@@ -275,7 +270,7 @@ export function CandidatesLibraryClient({ candidates: initialCandidates, initial
             <Users className="w-4 h-4 text-accent" />
           </div>
           <div>
-            <p className="text-lg font-semibold text-text-primary data-mono">{withProfile}</p>
+            <p className="text-lg font-semibold text-text-primary data-mono">{stats.total}</p>
             <p className="text-xs text-text-secondary">People</p>
           </div>
         </Card>
@@ -284,7 +279,7 @@ export function CandidatesLibraryClient({ candidates: initialCandidates, initial
             <Star className="w-4 h-4 text-success" />
           </div>
           <div>
-            <p className="text-lg font-semibold text-text-primary data-mono">{strongMatches}</p>
+            <p className="text-lg font-semibold text-text-primary data-mono">{stats.strongMatches}</p>
             <p className="text-xs text-text-secondary">Strong matches (80%+)</p>
           </div>
         </Card>
@@ -293,7 +288,7 @@ export function CandidatesLibraryClient({ candidates: initialCandidates, initial
             <FileText className="w-4 h-4 text-warning" />
           </div>
           <div>
-            <p className="text-lg font-semibold text-text-primary data-mono">{withCV}</p>
+            <p className="text-lg font-semibold text-text-primary data-mono">{stats.withCV}</p>
             <p className="text-xs text-text-secondary">With CV</p>
           </div>
         </Card>

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getAuth } from "@/lib/session";
-import { getLibraryCandidates, LIBRARY_PAGE_SIZE } from "@/lib/library";
+import { getLibraryCandidates, getLibraryStats, LIBRARY_PAGE_SIZE } from "@/lib/library";
 import { CandidatesLibraryClient } from "@/components/candidates-library-client";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,13 @@ export default async function CandidatesPage() {
   // src/lib/library.ts so this loader and /api/candidates can't drift.
   // Cap the SSR fetch to the first page; the client loads more via nextCursor
   // and searches server-side, so the full library stays reachable.
-  const { candidates, nextCursor } = await getLibraryCandidates(auth, { take: LIBRARY_PAGE_SIZE });
+  // Header stats are the TRUE library-wide totals (deduped), computed server-
+  // side independently of the first page — so they don't lie/grow as the user
+  // clicks "Load more". Fetched in parallel with the first page.
+  const [{ candidates, nextCursor }, stats] = await Promise.all([
+    getLibraryCandidates(auth, { take: LIBRARY_PAGE_SIZE }),
+    getLibraryStats(auth),
+  ]);
 
   const serializedCandidates = candidates.map((candidate) => ({
     id: candidate.id,
@@ -48,5 +54,5 @@ export default async function CandidatesPage() {
     })),
   }));
 
-  return <CandidatesLibraryClient candidates={serializedCandidates} initialNextCursor={nextCursor} />;
+  return <CandidatesLibraryClient candidates={serializedCandidates} initialNextCursor={nextCursor} stats={stats} />;
 }

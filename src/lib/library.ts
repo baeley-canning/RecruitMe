@@ -14,6 +14,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { getAccessibleOrgIds, candidateOrgFilter, getGrantScopes } from "./org-access";
+import { scoreTier } from "./score-utils";
 import type { AuthResult } from "./session";
 
 // Per-request cap. 20k is the absolute safety ceiling for SSR memory; left as
@@ -371,4 +372,93 @@ export async function getLibraryCandidates(
     : null;
 
   return { candidates, total: candidates.length, nextCursor };
+}
+
+export interface LibraryStats {
+  /** Unique people in the library (post LinkedIn-URL dedup) — the true total. */
+  total: number;
+  /** Of those, how many have a strong match score (scoreTier "strong"). */
+  strongMatches: number;
+  /** Of those, how many have at least one CV file. */
+  withCV: number;
+}
+
+/**
+ * True, library-wide header stats — independent of pagination.
+ *
+ * The library list is deduped by normalised LinkedIn URL at query time (there's
+ * no stored "person" row), so a plain COUNT(*) over-counts duplicate captures.
+ * This mirrors getLibraryCandidates' EXACT eligibility WHERE + the same
+ * URL-dedup, but pulls only scalars (id, url, dates, matchScore, a has-CV
+ * boolean) — never profileText/files — so it stays cheap at 14k+ rows.
+ *
+ * Why this exists: the header cards used to be computed client-side from the
+ * *loaded* page (`candidates.length` etc.), so "People / Strong / With CV"
+ * under-reported and grew as you clicked "Load more" — i.e. the counts lied.
+ * Keep the dedup logic in sync with getLibraryCandidates above.
+ */
+export async function getLibraryStats(auth: AuthResult): Promise<LibraryStats> {
+  const accessibleOrgIds = await getAccessibleOrgIds(auth);
+  if (accessibleOrgIds !== null && accessibleOrgIds.length === 0) {
+    return { total: 0, strongMatches: 0, withCV: 0 };
+  }
+  const orgIdsParam = accessibleOrgIds ?? [];
+  const useOrgFilter = accessibleOrgIds !== null;
+
+  // Same eligibility conditions as getLibraryCandidates (length-gate + orphan
+  // guard + org scope) — NO cursor, NO limit (we count the whole library).
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`(
+      (c."profileText" IS NOT NULL AND char_length(c."profileText") >= ${LIBRARY_PROFILE_MIN_CHARS})
+      OR c."source" IN ('manual', 'jobadder_import')
+    )`,
+    Prisma.sql`(c."jobId" IS NOT NULL OR c."orgId" IS NOT NULL)`,
+  ];
+  if (useOrgFilter) {
+    conditions.push(Prisma.sql`(
+      j."orgId" = ANY(${orgIdsParam}::text[])
+      OR (c."jobId" IS NULL AND c."orgId" = ANY(${orgIdsParam}::text[]))
+    )`);
+  }
+
+  const rows = await prisma.$queryRaw<Array<{
+    id: string;
+    linkedinUrl: string | null;
+    profileCapturedAt: Date | null;
+    createdAt: Date;
+    matchScore: number | null;
+    hasCv: boolean;
+  }>>(Prisma.sql`
+    SELECT c.id, c."linkedinUrl", c."profileCapturedAt", c."createdAt", c."matchScore",
+           EXISTS(SELECT 1 FROM "CandidateFile" f WHERE f."candidateId" = c.id AND f."type" = 'cv') AS "hasCv"
+    FROM "Candidate" c
+    LEFT JOIN "Job" j ON j.id = c."jobId"
+    WHERE ${Prisma.join(conditions, " AND ")}
+  `);
+
+  // Dedup by normalised LinkedIn URL, keeping the freshest capture per person —
+  // identical to getLibraryCandidates so the total matches the listing.
+  type R = (typeof rows)[number];
+  const byUrl = new Map<string, R>();
+  const noUrl: R[] = [];
+  for (const row of rows) {
+    if (!row.linkedinUrl) { noUrl.push(row); continue; }
+    let norm: string;
+    try { norm = normaliseLinkedInUrl(row.linkedinUrl); } catch { noUrl.push(row); continue; }
+    const existing = byUrl.get(norm);
+    if (!existing) { byUrl.set(norm, row); continue; }
+    const rowAge = row.profileCapturedAt ?? row.createdAt;
+    const existAge = existing.profileCapturedAt ?? existing.createdAt;
+    if (rowAge > existAge) byUrl.set(norm, row);
+  }
+
+  let strongMatches = 0;
+  let withCV = 0;
+  let total = 0;
+  for (const p of [byUrl.values(), noUrl].flatMap((it) => [...it])) {
+    total++;
+    if (p.matchScore !== null && scoreTier(p.matchScore, "match") === "strong") strongMatches++;
+    if (p.hasCv) withCV++;
+  }
+  return { total, strongMatches, withCV };
 }
