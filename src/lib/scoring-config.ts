@@ -21,25 +21,10 @@ export const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
   nice_to_have_fit: 0.06,
 };
 
-export const WEIGHT_LABELS: Record<keyof ScoringWeights, string> = {
-  must_have:        "Must-have coverage",
-  skill_fit:        "Skill fit",
-  seniority_fit:    "Seniority fit",
-  domain_fit:       "Domain fit",
-  location_fit:     "Location fit",
-  title_fit:        "Title fit",
-  nice_to_have_fit: "Nice-to-haves",
-};
-
-export const WEIGHT_DESCRIPTIONS: Record<keyof ScoringWeights, string> = {
-  must_have:        "How much of the listed must-haves the candidate can demonstrably cover",
-  skill_fit:        "Technical and role-specific skill alignment across the whole profile",
-  seniority_fit:    "Career level relative to the role's seniority expectation",
-  domain_fit:       "Sector/domain experience and vocabulary alignment with the role",
-  location_fit:     "Geographic proximity to the role's required location",
-  title_fit:        "How closely past job titles match the target role family",
-  nice_to_have_fit: "Coverage of preferred (non-essential) skills and experience",
-};
+// Pure presentation strings live in a prisma-free module so client components
+// (e.g. ScoringWeightsEditor) can import them without bundling PrismaClient.
+// Re-exported here for back-compat with existing server-side importers.
+export { WEIGHT_LABELS, WEIGHT_DESCRIPTIONS } from "./scoring-weights-labels";
 
 function settingKey(orgId: string | null | undefined) {
   return orgId ? `SCORING_WEIGHTS_V1:${orgId}` : "SCORING_WEIGHTS_V1:default";

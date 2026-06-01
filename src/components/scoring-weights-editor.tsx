@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { RotateCcw, Save, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ScoringWeights } from "@/lib/scoring-config";
-import { WEIGHT_LABELS, WEIGHT_DESCRIPTIONS } from "@/lib/scoring-config";
+import { WEIGHT_LABELS, WEIGHT_DESCRIPTIONS } from "@/lib/scoring-weights-labels";
 
 // ─── Radar chart ──────────────────────────────────────────────────────────────
 

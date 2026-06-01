@@ -19,9 +19,12 @@ import type { ParsedQuery } from "../boolean-query";
 // to_tsquery operators: & (AND), | (OR), ! (NOT), <-> (followed-by/phrase),
 // ( ) (grouping), :* (prefix match). Anything else is a lexeme and gets
 // tsearch-tokenised. The hazard is user input that contains reserved chars —
-// a single `:` slips through and to_tsquery 500s the whole query.
+// a single `:` slips through and to_tsquery 500s the whole query. A trailing
+// backslash is the nastiest: `to_tsquery('english', 'alsa\')` errors with
+// "there is no escaped character", and an unbalanced single-quote opens a
+// quoted lexeme that never closes — both 500 the whole search. Strip them all.
 
-const TSQUERY_RESERVED = /[&|!():*<>]/g;
+const TSQUERY_RESERVED = /[&|!():*<>\\']/g;
 
 /** One ParsedQuery term → a tsquery atom. A multi-word phrase becomes
  *  `word1 <-> word2` (followed-by) so ts_rank rewards proximity. */
