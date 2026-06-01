@@ -15,7 +15,7 @@
  */
 
 import { prisma } from "@/lib/db";
-import { readFile, statfs } from "node:fs/promises";
+import { readFile, statfs, readdir } from "node:fs/promises";
 import os from "node:os";
 
 export interface ServiceCheck { ok: boolean; detail?: string }
@@ -30,6 +30,8 @@ export interface BoxStats {
     swap: { total: number; free: number; usedPct: number };
     disk: { total: number; free: number; used: number; usedPct: number };
     network: { wifiSignal: number | null; tailscaleOnline: boolean };
+    /** CPU package temperature in °C (null if no readable sensor). */
+    cpuTempC: number | null;
   };
   services: {
     app: ServiceCheck;
@@ -108,6 +110,31 @@ async function readDiskUsage() {
   }
 }
 
+/**
+ * CPU temperature from /sys/class/thermal (values are milli-°C). Prefers the
+ * CPU package sensor (x86_pkg_temp / coretemp); falls back to the hottest
+ * acpitz zone. No lm-sensors dependency. Returns null if nothing readable.
+ */
+async function readCpuTemp(): Promise<number | null> {
+  try {
+    const base = "/sys/class/thermal";
+    const zones = (await readdir(base)).filter((e) => /^thermal_zone\d+$/.test(e));
+    let pkg: number | null = null;
+    let acpiMax: number | null = null;
+    for (const z of zones) {
+      const type = (await readFile(`${base}/${z}/type`, "utf-8").catch(() => "")).trim();
+      const raw = Number((await readFile(`${base}/${z}/temp`, "utf-8").catch(() => "")).trim());
+      if (!Number.isFinite(raw) || raw <= 0) continue;
+      const c = Math.round(raw / 1000);
+      if (type === "x86_pkg_temp" || type.startsWith("coretemp")) pkg = c;
+      else if (type === "acpitz") acpiMax = Math.max(acpiMax ?? 0, c);
+    }
+    return pkg ?? acpiMax;
+  } catch {
+    return null;
+  }
+}
+
 async function checkOllama(): Promise<ServiceCheck & { model?: string }> {
   if (!process.env.OLLAMA_OFFLOAD_TASKS) return { ok: true, detail: "not in use" };
   const baseURL = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434/v1";
@@ -122,12 +149,13 @@ async function checkOllama(): Promise<ServiceCheck & { model?: string }> {
 }
 
 export async function collectBoxStats(): Promise<BoxStats> {
-  const [mem, wifi, tsOnline, disk, ollama] = await Promise.all([
+  const [mem, wifi, tsOnline, disk, ollama, cpuTempC] = await Promise.all([
     readMemoryInfo(),
     readWifiSignal(),
     readTailscaleOnline(),
     readDiskUsage(),
     checkOllama(),
+    readCpuTemp(),
   ]);
 
   const todayStart = new Date();
@@ -217,6 +245,7 @@ export async function collectBoxStats(): Promise<BoxStats> {
       },
       disk,
       network: { wifiSignal: wifi, tailscaleOnline: tsOnline },
+      cpuTempC,
     },
     services: {
       app: { ok: true },

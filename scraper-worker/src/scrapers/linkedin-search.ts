@@ -143,7 +143,12 @@ export async function scrapeLinkedInSearch(
   maxPages = 1,
 ): Promise<LinkedInSearchHarvest> {
   const encoded = encodeURIComponent(query);
-  const baseUrl = `https://www.linkedin.com/search/results/people/?keywords=${encoded}&origin=GLOBAL_SEARCH_HEADER`;
+  // Constrain to New Zealand (geoId 103844754) so LinkedIn doesn't return
+  // overseas profiles — RecruitMe is NZ-only and the app then narrows to the
+  // requested region. Without geoUrn, results are only loosely NZ-biased by the
+  // logged-in account, so other countries leak in.
+  const nzGeo = encodeURIComponent('["103844754"]');
+  const baseUrl = `https://www.linkedin.com/search/results/people/?keywords=${encoded}&geoUrn=${nzGeo}&origin=GLOBAL_SEARCH_HEADER`;
   const pages = Math.max(1, Math.min(maxPages, 10)); // hard cap — detectability guard
   log.info(`linkedin-search: ${query}${pages > 1 ? ` (up to ${pages} pages)` : ""}`);
 

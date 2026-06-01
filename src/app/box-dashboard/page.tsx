@@ -31,6 +31,7 @@ interface Stats {
     swap: { usedPct: number };
     disk: { total: number; used: number; usedPct: number };
     network: { wifiSignal: number | null; tailscaleOnline: boolean };
+    cpuTempC: number | null;
   };
   services: {
     app: { ok: boolean; detail?: string };
@@ -185,7 +186,7 @@ export default function BoxDashboardPage() {
         {/* Resources */}
         <div className="bg-surface-raised border border-separator rounded-md p-4 md:col-span-2">
           <h2 className="text-text-tertiary uppercase text-2xs tracking-wider mb-3">Resources</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
             <div>
               <div className="flex justify-between text-text-secondary mb-1"><span>CPU load</span><span className="text-text-primary">{(s.system.loadAvg[0] * 100 / s.system.cpuCount).toFixed(0)}%</span></div>
               <Bar pct={Math.min(1, s.system.loadAvg[0] / s.system.cpuCount)} />
@@ -200,6 +201,11 @@ export default function BoxDashboardPage() {
               <div className="flex justify-between text-text-secondary mb-1"><span>Disk</span><span className="text-text-primary">{(s.system.disk.usedPct * 100).toFixed(0)}% — {fmtBytes(s.system.disk.used)} / {fmtBytes(s.system.disk.total)}</span></div>
               <Bar pct={s.system.disk.usedPct} />
               <div className="text-2xs text-text-tertiary mt-1">&nbsp;</div>
+            </div>
+            <div>
+              <div className="flex justify-between text-text-secondary mb-1"><span>CPU temp</span><span className="text-text-primary">{s.system.cpuTempC !== null ? `${s.system.cpuTempC}°C` : "—"}</span></div>
+              <Bar pct={s.system.cpuTempC !== null ? s.system.cpuTempC / 100 : 0} warn={0.75} danger={0.9} />
+              <div className="text-2xs text-text-tertiary mt-1">{s.system.cpuTempC === null ? "no sensor" : s.system.cpuTempC >= 90 ? "hot — throttle risk" : s.system.cpuTempC >= 75 ? "warm" : "nominal"}</div>
             </div>
           </div>
         </div>
