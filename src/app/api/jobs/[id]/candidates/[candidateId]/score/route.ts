@@ -131,6 +131,11 @@ export async function POST(
             temperature: built.temperature,
             maxTokens: built.maxTokens,
             finalizeCtx: built.finalizeCtx,
+            // Race guards: the candidate's hash NOW (so the box's later write
+            // is skipped if a fresher score advanced it) + the cache key this
+            // score should stamp (same value the synchronous path writes).
+            expectedProfileTextHash: candidate.profileTextHash ?? null,
+            scoreCacheKey,
           },
         });
         return NextResponse.json(

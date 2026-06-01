@@ -37,6 +37,9 @@ const SCORE_PAYLOAD = {
     parsedRoleLocation: "Wellington",
     parsedRoleTitle: "Software Engineer",
   },
+  // Race guards (see ScoreJobPayload): enqueue-time hash + intended cache key.
+  expectedProfileTextHash: "hash-at-enqueue",
+  scoreCacheKey: "cache-key-v1",
 };
 
 describe("enqueueScoreJob", () => {

@@ -316,6 +316,10 @@ export async function POST(
                       temperature: built.temperature,
                       maxTokens: built.maxTokens,
                       finalizeCtx: built.finalizeCtx,
+                      // Race guards: the candidate's hash NOW + the cache key
+                      // this score should stamp (same as the synchronous path).
+                      expectedProfileTextHash: candidate.profileTextHash ?? null,
+                      scoreCacheKey,
                     },
                   });
                   queued++;

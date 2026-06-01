@@ -232,12 +232,21 @@ export async function PATCH(
       parsedRoleLocation: string | null;
       parsedRoleTitle?: string | null;
     };
+    // Race guards captured at ENQUEUE time (see ScoreJobPayload). The candidate
+    // write is gated on expectedProfileTextHash — NOT the hash re-read now — so
+    // a fresher score that landed while the box was working is never clobbered.
+    let expectedProfileTextHash: string | null = null;
+    let scoreCacheKey: string | null = null;
     try {
       const payload = JSON.parse(job.scorePayload) as {
         finalizeCtx?: typeof finalizeCtx;
+        expectedProfileTextHash?: string | null;
+        scoreCacheKey?: string | null;
       };
       if (!payload.finalizeCtx) throw new Error("scorePayload has no finalizeCtx");
       finalizeCtx = payload.finalizeCtx;
+      expectedProfileTextHash = payload.expectedProfileTextHash ?? null;
+      scoreCacheKey = payload.scoreCacheKey ?? null;
     } catch (err) {
       await prisma.scrapeJob.update({
         where: { id },
@@ -270,18 +279,24 @@ export async function PATCH(
       ...finalizeCtx,
     });
 
-    // Concurrency-guarded write, mirroring the single-score route: only write
-    // if the row still carries the profileTextHash it had when this job was
-    // enqueued. A fresher Claude/Ollama score that landed while the box was
-    // working will have advanced the hash; our older offload score must not
-    // clobber it. count===0 → a fresher score won; we still mark the job
-    // completed (the offload did its part) and report no write.
+    // Concurrency-guarded write: gate on the profileTextHash captured at
+    // ENQUEUE time (expectedProfileTextHash from the payload) — NOT the hash
+    // re-read just now. A fresher Claude/Ollama score that landed while the box
+    // was working advanced the hash to its own scoreCacheKey, so this guard
+    // matches 0 rows and we skip — the stale-overwrite bug. On success we stamp
+    // scoreCacheKey as the new profileTextHash, identical to what the
+    // synchronous score path writes, so a later same-context re-score still
+    // cache-hits. count===0 → a fresher score won (or an old-format job without
+    // guard fields): mark the job completed (the offload did its part) but do
+    // NOT overwrite the candidate.
     const guarded = await prisma.candidate.updateMany({
-      where: { id: candidate.id, profileTextHash: candidate.profileTextHash ?? null },
-      data: deriveUpdateData(breakdown),
+      where: { id: candidate.id, profileTextHash: expectedProfileTextHash ?? null },
+      data: scoreCacheKey
+        ? { ...deriveUpdateData(breakdown), profileTextHash: scoreCacheKey }
+        : deriveUpdateData(breakdown),
     });
     if (guarded.count === 0) {
-      console.log(`[score-offload] concurrent writer won for candidate=${candidate.id} — skipping stale offload score`);
+      console.log(`[score-offload] candidate=${candidate.id} profileTextHash moved since enqueue (fresher score won) — completing job without overwrite`);
     }
 
     await prisma.scrapeJob.update({

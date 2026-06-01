@@ -79,6 +79,10 @@ const SCORE_PAYLOAD = JSON.stringify({
   temperature: 0.1,
   maxTokens: 4096,
   finalizeCtx: { mustHaves: ["React"], niceToHaves: [], parsedRoleLocation: "Wellington", parsedRoleTitle: "Engineer" },
+  // Race guards captured at enqueue time. The happy-path candidate mock below
+  // still carries "hash-at-enqueue", so the guarded write matches (count 1).
+  expectedProfileTextHash: "hash-at-enqueue",
+  scoreCacheKey: "fresh-cache-key",
 });
 
 function scoreJob(over: Record<string, unknown> = {}) {
@@ -141,8 +145,11 @@ describe("PATCH /api/scraper/jobs/[id] — kind=score", () => {
     // Candidate written via the concurrency-guarded updateMany (gated on the
     // profileTextHash captured at enqueue time).
     const upd = dbMocks.prisma.candidate.updateMany.mock.calls[0][0];
+    // Guard uses the ENQUEUE-time hash from the payload (not the re-read one).
     expect(upd.where).toMatchObject({ id: "cand-1", profileTextHash: "hash-at-enqueue" });
     expect(upd.data.matchScore).toBe(73);
+    // Stamps the intended cache key so a later same-context re-score cache-hits.
+    expect(upd.data.profileTextHash).toBe("fresh-cache-key");
     // scoredBy="ollama" lives inside the serialized scoreBreakdown JSON.
     expect(JSON.parse(upd.data.scoreBreakdown).scoredBy).toBe("ollama");
 
@@ -188,5 +195,50 @@ describe("PATCH /api/scraper/jobs/[id] — kind=score", () => {
     expect(res.status).toBe(404);
     expect(dbMocks.prisma.scrapeJob.update.mock.calls[0][0].data.status).toBe("failed");
     expect(dbMocks.prisma.candidate.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does NOT overwrite a fresher score — guards on enqueue-time hash, completes job, leaves candidate untouched", async () => {
+    // The box was slow; while it worked, a fresher Claude/Ollama score landed
+    // and advanced the candidate's profileTextHash to "new-hash". The offload
+    // job carries expectedProfileTextHash="old-hash". The guarded write MUST
+    // target "old-hash" (matching 0 rows), NOT the candidate's current
+    // "new-hash" — otherwise it clobbers the fresher score (the bug).
+    dbMocks.prisma.scrapeJob.findUnique.mockResolvedValue(
+      scoreJob({
+        scorePayload: JSON.stringify({
+          system: "sys",
+          prompt: "p",
+          temperature: 0.1,
+          maxTokens: 4096,
+          finalizeCtx: { mustHaves: ["React"], niceToHaves: [], parsedRoleLocation: "Wellington", parsedRoleTitle: "Engineer" },
+          expectedProfileTextHash: "old-hash",
+          scoreCacheKey: "fresh-cache-key",
+        }),
+      }),
+    );
+    // Candidate has since been re-scored → its hash moved on.
+    dbMocks.prisma.candidate.findUnique.mockResolvedValue({
+      id: "cand-1",
+      profileText: "React engineer in Wellington with 5 years experience.",
+      orgId: "org-1",
+      profileTextHash: "new-hash",
+    });
+    // The guarded updateMany matches 0 rows (old-hash != current new-hash).
+    dbMocks.prisma.candidate.updateMany.mockResolvedValue({ count: 0 });
+
+    const res = await PATCH(patchReq({ status: "completed", result: { text: '{"overall_score":73}' } }), params);
+
+    expect(res.status).toBe(200);
+
+    // The guard targeted the ENQUEUE-time hash, not the candidate's current one.
+    const upd = dbMocks.prisma.candidate.updateMany.mock.calls[0][0];
+    expect(upd.where.profileTextHash).toBe("old-hash");
+    expect(upd.where.profileTextHash).not.toBe("new-hash");
+    // Only one write was attempted, and it matched nothing → no overwrite path.
+    expect(dbMocks.prisma.candidate.updateMany).toHaveBeenCalledTimes(1);
+
+    // Job still marked completed (the offload did its part).
+    const jobUpdate = dbMocks.prisma.scrapeJob.update.mock.calls.at(-1)![0];
+    expect(jobUpdate.data.status).toBe("completed");
   });
 });

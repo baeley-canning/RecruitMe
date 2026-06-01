@@ -143,8 +143,8 @@ export async function enqueueSearchJob(args: {
  * ALL prompt-building + finalize; the box only runs the model.
  *
  * scorePayload carries everything the box needs to make the call AND
- * everything Railway needs to finalize the result:
- *   { system, prompt, temperature, maxTokens, model?, finalizeCtx }
+ * everything Railway needs to finalize the result without clobbering a fresher
+ * score — see ScoreJobPayload.
  *
  * priority 0 (the default) so live scrapes/searches (priority 100) always win
  * the box's claim ordering — score offload is best-effort background work.
@@ -153,11 +153,35 @@ export async function enqueueSearchJob(args: {
  * a recruiter mashing re-score, or a score-all re-running the same candidate,
  * enqueues once. Fire-and-forget; never throws.
  */
+/**
+ * Serialized prompt + finalize context the box needs to run a kind="score"
+ * job, plus the two race-guard fields that stop a slow offload score from
+ * clobbering a fresher one:
+ *  - expectedProfileTextHash: Candidate.profileTextHash captured AT ENQUEUE
+ *    TIME. The PATCH ingest guards the candidate write on this EXACT value, so
+ *    if a fresher Claude/Ollama score landed while the box was working (which
+ *    advances the hash to its own scoreCacheKey), our write matches 0 rows and
+ *    is skipped — no stale overwrite.
+ *  - scoreCacheKey: the cache key the finished score stamps as the new
+ *    profileTextHash — identical to what the synchronous score path writes, so
+ *    a future re-score with the same context still cache-hits.
+ */
+export interface ScoreJobPayload {
+  system: string;
+  prompt: string;
+  temperature: number;
+  maxTokens: number;
+  model?: string;
+  finalizeCtx: unknown;
+  expectedProfileTextHash: string | null;
+  scoreCacheKey: string;
+}
+
 export async function enqueueScoreJob(args: {
   orgId: string;
   candidateId: string;
   platform?: ScrapePlatform;
-  scorePayload: object;
+  scorePayload: ScoreJobPayload;
   requestedBy?: string | null;
 }): Promise<{ id: string } | null> {
   try {
