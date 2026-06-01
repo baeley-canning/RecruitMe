@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { createHash, createHmac, createDecipheriv } from "node:crypto";
 import {
   deriveHeadlineFromCv,
   existingHeadlineLooksCorrect,
@@ -67,6 +68,9 @@ const COMMIT_HEADLINE = args.commit === true;
 // CVs (173- and 441-char garbage from heavily-templated docs). 200 still
 // keeps a 1-page CV in, but kills genuine OCR noise.
 const MIN_USABLE_CHARS = 200;
+// Upper bound — keeps the generated searchTsv under Postgres's 1 MB tsvector
+// cap. A genuine CV is a few KB to ~50 KB; anything larger is extraction noise.
+const MAX_PROFILE_CHARS = 200_000;
 const FAILURES_FILE = path.join(process.cwd(), "extract-cv-failures.json");
 
 function parseArgs(argv) {
@@ -80,6 +84,79 @@ function parseArgs(argv) {
     else { out[k] = n; i++; }
   }
   return out;
+}
+
+// ─── Bucket fetch + decrypt ─────────────────────────────────────────────────
+// CVs were migrated off the inline `CandidateFile.data` column into the
+// S3/R2 bucket (storageKey set, data empty) and AES-256-GCM encrypted at rest.
+// This script must therefore fetch the envelope from the bucket and decrypt it
+// — mirrors src/lib/blob-store.ts (SigV4 GET) + src/lib/cv-encryption.ts.
+const BLOB = (() => {
+  const e = process.env.BLOB_S3_ENDPOINT?.trim();
+  const b = process.env.BLOB_S3_BUCKET?.trim();
+  const ak = process.env.BLOB_S3_ACCESS_KEY_ID?.trim();
+  const sk = process.env.BLOB_S3_SECRET_ACCESS_KEY?.trim();
+  const region = process.env.BLOB_S3_REGION?.trim() || "auto";
+  if (!e || !b || !ak || !sk) return null;
+  return { endpoint: e.replace(/\/+$/, ""), bucket: b, accessKeyId: ak, secretAccessKey: sk, region };
+})();
+const CV_KEY = (() => {
+  const k = process.env.CV_ENCRYPTION_KEY?.trim();
+  if (!k) return null;
+  const buf = Buffer.from(k, "base64");
+  if (buf.length !== 32) throw new Error(`CV_ENCRYPTION_KEY must decode to 32 bytes; got ${buf.length}`);
+  return buf;
+})();
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const sha256hex = (b) => createHash("sha256").update(b).digest("hex");
+const hmac = (k, d) => createHmac("sha256", k).update(d, "utf8").digest();
+const encSeg = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+
+function signGet(key) {
+  const host = new URL(BLOB.endpoint).host;
+  const uri = `/${encSeg(BLOB.bucket)}/${key.split("/").map(encSeg).join("/")}`;
+  const amz = new Date().toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const date = amz.slice(0, 8);
+  const ch = `host:${host}\nx-amz-content-sha256:${EMPTY_SHA256}\nx-amz-date:${amz}\n`;
+  const sh = "host;x-amz-content-sha256;x-amz-date";
+  const creq = ["GET", uri, "", ch, sh, EMPTY_SHA256].join("\n");
+  const scope = `${date}/${BLOB.region}/s3/aws4_request`;
+  const sts = ["AWS4-HMAC-SHA256", amz, scope, sha256hex(creq)].join("\n");
+  const kSign = hmac(hmac(hmac(hmac(`AWS4${BLOB.secretAccessKey}`, date), BLOB.region), "s3"), "aws4_request");
+  const sig = createHmac("sha256", kSign).update(sts, "utf8").digest("hex");
+  return {
+    url: `${BLOB.endpoint}${uri}`,
+    headers: {
+      Authorization: `AWS4-HMAC-SHA256 Credential=${BLOB.accessKeyId}/${scope}, SignedHeaders=${sh}, Signature=${sig}`,
+      "x-amz-content-sha256": EMPTY_SHA256,
+      "x-amz-date": amz,
+    },
+  };
+}
+
+async function getBlob(key) {
+  if (!BLOB) throw new Error("BLOB_S3_* env not set — cannot fetch bucket object");
+  const { url, headers } = signGet(key);
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) throw new Error(`blob get ${res.status} for ${key}`);
+  return res.text();
+}
+
+function decryptCv(stored) {
+  if (!stored.startsWith("v1:")) return stored; // legacy plaintext base64 — passthrough
+  const parts = stored.split(":");
+  if (parts.length !== 4) throw new Error("malformed CV envelope");
+  if (!CV_KEY) throw new Error("CV_ENCRYPTION_KEY required to decrypt v1: blob");
+  const d = createDecipheriv("aes-256-gcm", CV_KEY, Buffer.from(parts[1], "base64"));
+  d.setAuthTag(Buffer.from(parts[2], "base64"));
+  return Buffer.concat([d.update(Buffer.from(parts[3], "base64")), d.final()]).toString("utf8");
+}
+
+/** Return the base64 file body — from the bucket (decrypted) when storageKey is
+ *  set, else from the legacy inline column. */
+async function loadFileBase64(fileRow) {
+  if (fileRow?.storageKey) return decryptCv(await getBlob(fileRow.storageKey));
+  return fileRow?.data ?? "";
 }
 
 // ─── PDF extraction (mirrors src/lib/pdf.ts) ───────────────────────────────
@@ -230,7 +307,7 @@ async function main() {
         where: { type: "cv" },
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { id: true, filename: true, mimeType: true, size: true },
+        select: { id: true, filename: true, mimeType: true, size: true, storageKey: true },
       },
     },
     ...(LIMIT ? { take: LIMIT } : {}),
@@ -276,16 +353,26 @@ async function main() {
     const fileWithData = await withDbRetry(
       () => prisma.candidateFile.findUnique({
         where: { id: meta.id },
-        select: { data: true },
+        select: { data: true, storageKey: true },
       }),
       `file fetch (cid=${row.id})`,
     );
-    if (!fileWithData?.data) {
+    // Post-migration the bytes live in the encrypted bucket (storageKey set,
+    // data empty). Fetch + decrypt; fall back to the legacy inline column.
+    let base64;
+    try {
+      base64 = await loadFileBase64(fileWithData ?? {});
+    } catch (err) {
       stats.errored++;
-      failures.push({ candidateId: row.id, fileId: meta.id, reason: "file data missing" });
+      failures.push({ candidateId: row.id, fileId: meta.id, filename: meta.filename, mimeType: meta.mimeType, reason: `bucket fetch/decrypt: ${err instanceof Error ? err.message : String(err)}` });
       return;
     }
-    const file = { ...meta, data: fileWithData.data };
+    if (!base64) {
+      stats.errored++;
+      failures.push({ candidateId: row.id, fileId: meta.id, reason: "file data missing (no bucket object + empty column)" });
+      return;
+    }
+    const file = { ...meta, data: base64 };
 
     let text = "";
     try {
@@ -311,6 +398,15 @@ async function main() {
       return;
     }
 
+    // Cap before write: one pathological .doc extracted to 6.8 MB, and the
+    // generated searchTsv blew past Postgres's 1 MB tsvector limit (error
+    // 54000), aborting the whole run. No real CV needs >200k chars; truncate
+    // so a single bad file can't poison the tsvector or kill the backfill.
+    if (text.length > MAX_PROFILE_CHARS) {
+      stats.truncated = (stats.truncated ?? 0) + 1;
+      text = text.slice(0, MAX_PROFILE_CHARS);
+    }
+
     if (text.length < MIN_USABLE_CHARS) {
       stats.skippedShortText++;
       failures.push({
@@ -325,20 +421,29 @@ async function main() {
       // If a recruiter (or LinkedIn capture) populated it between our
       // initial findMany and now, we don't clobber their content.
       // updateMany returns count=0 in that case → bucket as "raced", skip.
-      const upd = await withDbRetry(
-        () => prisma.candidate.updateMany({
-          where: { id: row.id, profileText: null },
-          data: {
-            profileText:       text,
-            profileCapturedAt: new Date(),
-            // Clear stale score-cache markers so any next score-all re-runs
-            // these candidates against the new full content rather than
-            // hitting a stub from the import time.
-            profileTextHash:   null,
-          },
-        }),
-        `update (cid=${row.id})`,
-      );
+      let upd;
+      try {
+        upd = await withDbRetry(
+          () => prisma.candidate.updateMany({
+            where: { id: row.id, profileText: null },
+            data: {
+              profileText:       text,
+              profileCapturedAt: new Date(),
+              // Clear stale score-cache markers so any next score-all re-runs
+              // these candidates against the new full content rather than
+              // hitting a stub from the import time.
+              profileTextHash:   null,
+            },
+          }),
+          `update (cid=${row.id})`,
+        );
+      } catch (err) {
+        // A non-transient write error (e.g. residual tsvector overflow on a
+        // pathological doc) must NOT abort the whole run — log + continue.
+        stats.errored++;
+        failures.push({ candidateId: row.id, fileId: file.id, filename: file.filename, mimeType: file.mimeType, reason: `write: ${err instanceof Error ? err.message : String(err)}` });
+        return;
+      }
       if (upd.count === 0) {
         stats.racedSkipped = (stats.racedSkipped ?? 0) + 1;
         return;
