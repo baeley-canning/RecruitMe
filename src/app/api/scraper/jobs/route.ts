@@ -14,12 +14,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { isScraperEnabled } from "@/lib/feature-flags";
 import { randomUUID } from "crypto";
 import { claimScrapeJobs } from "@/lib/scrape-queue";
+import { authenticateScraper, resolveScraperOrgId } from "@/lib/scraper-auth";
 
 const CLAIM_LIMIT = 5;
 
@@ -46,29 +46,22 @@ function isAllowedProfileHost(profileUrl: string): boolean {
   );
 }
 
-function checkScraperSecret(req: Request): boolean {
-  const provided = req.headers.get("x-scraper-secret");
-  const expected = process.env.SCRAPER_SECRET;
-  if (!provided || !expected) return false;
-  try {
-    const a = Buffer.from(provided);
-    const b = Buffer.from(expected);
-    return a.length === b.length && timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
 
 export async function GET(req: Request) {
   if (!isScraperEnabled()) {
     return NextResponse.json({ error: "Scraper not enabled." }, { status: 404 });
   }
-  if (!checkScraperSecret(req)) {
+  const principal = await authenticateScraper(req);
+  if (!principal) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
   const url = new URL(req.url);
-  const orgId = url.searchParams.get("orgId");
+  const resolved = resolveScraperOrgId(principal.boundOrgId, url.searchParams.get("orgId"));
+  if ("error" in resolved) {
+    return NextResponse.json({ error: resolved.error }, { status: 403 });
+  }
+  const orgId = resolved.orgId;
 
   // Claim pending jobs ATOMICALLY via Postgres FOR UPDATE SKIP LOCKED (see
   // claimScrapeJobs). The old findMany→updateMany here was not atomic: two
@@ -126,13 +119,25 @@ export async function POST(req: Request) {
   if (!isScraperEnabled()) {
     return NextResponse.json({ error: "Scraper not enabled." }, { status: 404 });
   }
-  if (!checkScraperSecret(req)) {
+  const principal = await authenticateScraper(req);
+  if (!principal) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
   const parsed = PostSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
+  }
+
+  // Tenant binding: a token-bound box may only enqueue into its own org; the
+  // body-supplied orgId is validated against (or overridden by) the credential.
+  const resolved = resolveScraperOrgId(principal.boundOrgId, parsed.data.orgId);
+  if ("error" in resolved) {
+    return NextResponse.json({ error: resolved.error }, { status: 403 });
+  }
+  const effectiveOrgId = resolved.orgId;
+  if (!effectiveOrgId) {
+    return NextResponse.json({ error: "orgId required." }, { status: 422 });
   }
 
   // SSRF guard: a profileUrl becomes a navigation target on the worker box, so
@@ -164,7 +169,7 @@ export async function POST(req: Request) {
   const job = await prisma.scrapeJob.create({
     data: {
       id: randomUUID(),
-      orgId: parsed.data.orgId,
+      orgId: effectiveOrgId,
       platform: parsed.data.platform,
       kind: parsed.data.kind,
       profileUrl: parsed.data.profileUrl ?? null,
