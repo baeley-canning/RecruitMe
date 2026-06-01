@@ -1,6 +1,6 @@
 # RecruitMe
 
-AI-powered recruiter tool for IT search assignments. Finds LinkedIn candidates via SerpAPI/Bing, captures full profiles via a browser extension, scores them against parsed job requirements using Claude, and manages the hiring pipeline.
+AI-powered recruiter tool for IT search assignments. Discovers candidates from a local talent library (Postgres full-text boolean search) plus live LinkedIn/SEEK discovery via a self-hosted scraper worker, captures full profiles via a browser extension, scores them against parsed job requirements using Claude (with a local Ollama/Llama fallback), and manages the hiring pipeline.
 
 ---
 
@@ -11,9 +11,9 @@ AI-powered recruiter tool for IT search assignments. Finds LinkedIn candidates v
 | Framework | Next.js 15 (App Router, TypeScript) |
 | Database | PostgreSQL via Prisma ORM |
 | Auth | NextAuth.js with credentials (bcrypt) |
-| AI | Claude (Anthropic) — JD parsing, scoring, outreach generation |
-| Search | SerpAPI (Google) + Bing Web Search |
-| Deployment | Railway (Docker/Nixpacks) |
+| AI | Claude (Anthropic) primary — JD parsing, scoring, outreach. Local Ollama/Llama fallback (chat-with-failover) when Claude is unavailable. |
+| Search | Local library boolean FTS (Postgres `to_tsquery`) + live LinkedIn/SEEK discovery via the self-hosted scraper worker. PDL for optional profile enrichment. |
+| Deployment | Railway (app + Postgres); a mini-PC runs the scraper worker + local Ollama (polls Railway outbound — no inbound path). |
 
 ---
 
@@ -72,21 +72,34 @@ Copy `.env.example` to `.env.local`. All variables below are required unless mar
 
 | Variable | Required | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes (if using Claude) | Anthropic API key. Claude is the default primary provider. |
-| `ANTHROPIC_MODEL` | No | Model ID. Default: `claude-haiku-4-5-20251001`. Use `claude-sonnet-4-6` for higher quality scoring. |
-| `OPENAI_API_KEY` | Optional | When set alongside `ANTHROPIC_API_KEY`, OpenAI is the automatic failover when Claude fails (or vice versa if `AI_PROVIDER=openai`). When set alone, OpenAI is the sole provider. |
-| `OPENAI_MODEL` | No | Default: `gpt-4o-mini`. |
-| `AI_PROVIDER` | No | `claude` (default) \| `openai`. Picks which provider is tried first when both are configured. |
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key. Claude is the primary provider for parsing, scoring, and outreach. |
+| `ANTHROPIC_MODEL` | No | Model ID. Default: `claude-haiku-4-5-20251001`. Use `claude-sonnet-4-6` for higher-quality scoring. |
+| `OLLAMA_BASE_URL` | No | OpenAI-compatible endpoint for the local Ollama fallback. Default `http://127.0.0.1:11434/v1`. On any Claude error the failover wrapper retries on Ollama. (The old OpenAI/GPT failover was removed — the fallback is now local Ollama only.) |
+| `OLLAMA_MODEL` | No | Local model used for offloaded tasks. |
+| `OLLAMA_OFFLOAD_TASKS` | No | Comma-list of light tasks (e.g. `info_extract`) to run on local Ollama instead of Claude to save tokens. |
+| `LLAMA_SCORE_OFFLOAD` | No | `true` (default) → when Claude is exhausted, candidate scoring is queued to the mini-PC's local Ollama (poll-based, no inbound path) instead of failing. Set `false` to disable. See `scraper-worker/LLAMA_SCORE_OFFLOAD.md`. |
 
-### Search APIs (at least one required to use LinkedIn search)
+### Discovery & enrichment
 
-| Variable | Description | Where to get it |
-|---|---|---|
-| `SERPAPI_API_KEY` | Google LinkedIn search. 100 free searches/month. | [serpapi.com](https://serpapi.com) |
-| `BING_API_KEY` | Bing LinkedIn search. ~$5/1000 searches. | [Azure Portal](https://portal.azure.com) → Bing Search |
-| `PDL_API_KEY` | People Data Labs profile enrichment. 100 free/month. | [peopledatalabs.com](https://peopledatalabs.com) |
+Primary candidate discovery is the **self-hosted scraper worker** (live LinkedIn/SEEK people search) feeding the local library, plus Postgres boolean FTS over that library. The worker runs on a mini-PC and polls the app — see `scraper-worker/`.
 
-These can also be entered in the app's Settings modal (stored encrypted-in-DB). Env vars take priority.
+| Variable | Description |
+|---|---|
+| `SCRAPER_SECRET` | Shared secret the scraper worker presents (`x-scraper-secret`) to claim/post jobs. Must match the worker's `.env`. |
+| `SCRAPER_DISCOVERY_ENABLED` | `true` (default) → a multi-source search enqueues live LinkedIn/SEEK discovery jobs (the SERP replacement). `false` → library-only. |
+| `PDL_API_KEY` | People Data Labs profile enrichment (optional). [peopledatalabs.com](https://peopledatalabs.com) |
+| `SERPAPI_API_KEY` / `BING_API_KEY` | Legacy SERP providers — present only for historical source labels/back-compat; no longer the primary discovery path (the scraper replaces them). Optional. |
+
+API keys can also be entered in the app's Settings modal (stored encrypted-in-DB). Env vars take priority.
+
+### File storage (optional — Cloudflare R2 / S3-compatible)
+
+CV files are AES-256-GCM encrypted (`CV_ENCRYPTION_KEY`) and stored inline (base64) in Postgres by default. Setting the `BLOB_S3_*` vars offloads the encrypted blobs to an S3-compatible bucket (Cloudflare R2) instead — **inert until configured** (with none set, files stay as encrypted base64 in Postgres; existing rows keep working after you flip it on).
+
+| Variable | Description |
+|---|---|
+| `BLOB_S3_ENDPOINT` / `BLOB_S3_BUCKET` / `BLOB_S3_ACCESS_KEY_ID` / `BLOB_S3_SECRET_ACCESS_KEY` / `BLOB_S3_REGION` | S3-compatible (R2) credentials for the encrypted-CV blob store. |
+| `CV_ENCRYPTION_KEY` | AES-256-GCM key for the at-rest CV envelope (independent of where the blob lands). |
 
 ### Rate limits (optional — defaults shown)
 
@@ -148,7 +161,7 @@ src/
 │   ├── candidate-card.tsx      # Candidate accordion with score breakdown
 │   └── ...
 ├── lib/
-│   ├── ai.ts                   # Claude/OpenAI abstraction
+│   ├── ai/                     # Claude primary + local Ollama fallback (chat-with-failover), parsing, scoring seams
 │   ├── linkedin-capture.ts     # Extension session queue + profile save
 │   ├── scoring.ts              # Score breakdown types and builders
 │   ├── usage.ts                # Rate limiting + usage event logging
@@ -170,7 +183,7 @@ browser-companion/
 
 ### Key flows
 
-**Search** — POST `/api/jobs/:id/search` → fires background task → polls GET `/api/jobs/:id/search?sessionId=X`. Results stored in `SearchSession` + `Candidate` tables.
+**Search** — POST `/api/search` creates a durable `SearchRun`: the local library boolean FTS (`to_tsquery`) attaches synchronously; LinkedIn/SEEK discovery runs asynchronously via the scraper worker (child `ScrapeJob`s → harvested → ingested → attached to the run). The client polls the run. (The legacy per-job `/api/jobs/:id/search` still exists.)
 
 **Profile capture** — Web UI POSTs to `/api/extension/fetch-session` → creates `FetchSession` → extension alarm opens LinkedIn tab → extension POSTs captured text to `/api/extension/fetch-session/complete` → profile saved and scored.
 
@@ -228,3 +241,7 @@ Tests are unit/route tests with mocked DB and AI calls. There are no integration
 4. Set env vars in Railway dashboard (see Environment Variables above)
 5. Push to `main` → Railway builds and deploys
 6. On startup: `prisma migrate deploy` runs, then Next.js starts on `PORT`
+
+### Scraper worker + local AI (mini-PC)
+
+The scraper worker (`scraper-worker/`) and a local Ollama run on a self-hosted mini-PC, **not** on Railway. The worker polls the Railway app's `/api/scraper/jobs` (outbound only — no inbound path needed), runs LinkedIn/SEEK discovery + profile scrapes that feed the library, and — when `LLAMA_SCORE_OFFLOAD=1` — runs queued candidate scoring on local Ollama and POSTs results back. See `scraper-worker/HANDOFF.md` and `scraper-worker/LLAMA_SCORE_OFFLOAD.md`.
