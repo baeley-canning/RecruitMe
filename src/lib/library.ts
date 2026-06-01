@@ -355,11 +355,19 @@ export async function getLibraryCandidates(
     const candOrgId = row.job?.orgId ?? row.orgId ?? null;
     const isCrossOrg = !auth.isOwner && viewerOrgId && candOrgId && candOrgId !== viewerOrgId;
     const sharedFromOrgName = isCrossOrg ? orgNameById.get(candOrgId!) ?? null : null;
+    // Redact sensitive fields on cross-org rows unless the viewer holds
+    // library_full. A library_read grant is "candidate discovery", NOT a
+    // licence to harvest a partner agency's direct contact details — leaking
+    // phone/email is exactly the data a competing recruiter would poach. The
+    // FTS search path (candidates/library/search) already nulls these for
+    // cross-org viewers; this SSR list path must match. Owners bypass org
+    // filtering entirely and always see everything.
+    const redactCrossOrg = isCrossOrg && !canSeeCrossOrgSensitive;
     return {
       ...row,
-      // Redact notes on cross-org rows unless the viewer has library_full.
-      // Owners always see notes (they bypass org filtering entirely).
-      notes: isCrossOrg && !canSeeCrossOrgSensitive ? null : row.notes,
+      notes: redactCrossOrg ? null : row.notes,
+      phone: redactCrossOrg ? null : row.phone,
+      email: redactCrossOrg ? null : row.email,
       sharedFromOrgName,
     };
   });

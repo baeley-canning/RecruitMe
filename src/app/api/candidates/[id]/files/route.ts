@@ -14,6 +14,7 @@ import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
+import { getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { encryptCv } from "@/lib/cv-encryption";
 import { persistFileEnvelope, deleteBlob } from "@/lib/blob-store";
 
@@ -388,9 +389,15 @@ export async function POST(
           // (e.g. higher must-have weight for security clearance) sees the CV
           // re-scored with that role's tuning, not a generic org default.
           const weights = await getJobScoringWeights(candidate.job.scoringWeights, auth.orgId);
+          // Must include correctionsVersion so the cache key matches the one
+          // score-all / single-score compute. Omitting it (defaulting to 0)
+          // means any org with a recorded correction sees this hash miss on
+          // the next re-score, triggering a redundant paid Claude pass that
+          // produces an identical result.
+          const correctionsVersion = await getCorrectionsVersion(auth.orgId);
           const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
             scoreCandidateStructured(text, parsedRole, salary, weights, auth.orgId),
-            predictAcceptance(text, parsedRole, salary),
+            predictAcceptance(text, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
           ]);
           if (rawBreakdown.status === "fulfilled") {
             const breakdown = applyLocationFitOverride(
@@ -410,6 +417,7 @@ export async function POST(
               jobLocation2: candidate.job.location2,
               isRemote: candidate.job.isRemote,
               weights,
+              correctionsVersion,
             });
             if (acceptanceResult.status === "fulfilled") {
               updates.acceptanceScore = acceptanceResult.value.score;

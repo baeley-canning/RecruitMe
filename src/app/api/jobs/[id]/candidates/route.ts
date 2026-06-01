@@ -133,7 +133,7 @@ export async function POST(
         }),
       };
       if (body.profileText.length >= 250) {
-        const acceptance = await predictAcceptance(body.profileText, parsedRole, salary);
+        const acceptance = await predictAcceptance(body.profileText, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId });
         updateData.acceptanceScore  = acceptance.score;
         updateData.acceptanceReason = JSON.stringify({
           likelihood: acceptance.likelihood,

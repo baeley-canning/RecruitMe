@@ -89,7 +89,7 @@ export async function POST(
     // attempt + one secondary attempt is enough.
     const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
       scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId),
-      predictAcceptance(candidate.profileText!, parsedRole, salary),
+      predictAcceptance(candidate.profileText!, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
     ]);
 
     if (rawBreakdown.status === "rejected") {

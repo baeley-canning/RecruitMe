@@ -249,7 +249,7 @@ export async function POST(
               // (3 × Claude + 3 × Ollama) instead of 2.
               const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
                 scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId, recruiterContext),
-                predictAcceptance(candidate.profileText!, parsedRole, salary),
+                predictAcceptance(candidate.profileText!, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
               ]);
               if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
               const breakdown = applyLocationFitOverride(

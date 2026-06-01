@@ -23,6 +23,11 @@ export async function GET(req: Request) {
       by: ["orgId", "type"],
       where: { createdAt: { gte: since } },
       _count: { id: true },
+      // Sum the actual money + token spend. Cost lives on "ai_call" events
+      // (which aren't in USAGE_TYPES, the per-action count buckets), so without
+      // this the dashboard could count actions but never answer "which org is
+      // burning money?". costUsd/tokens are null on non-AI rows → summed as 0.
+      _sum: { costUsd: true, inputTokens: true, outputTokens: true },
       orderBy: { orgId: "asc" },
     }),
     prisma.org.findMany({ select: { id: true, name: true } }),
@@ -39,7 +44,9 @@ export async function GET(req: Request) {
   // Per-org breakdown.
   // orgId is null for owner (role="owner") actions — these are explicitly bucketed
   // under the "__owner__" key so they don't get merged with any tenant org.
-  type OrgRow = { orgId: string | null; orgName: string | null } & Record<UsageType, number> & { total: number };
+  type OrgRow = { orgId: string | null; orgName: string | null } & Record<UsageType, number> & {
+    total: number; costUsd: number; inputTokens: number; outputTokens: number;
+  };
   const byOrgMap = new Map<string, OrgRow>();
 
   for (const row of events) {
@@ -50,23 +57,37 @@ export async function GET(req: Request) {
         orgId: row.orgId,
         orgName: row.orgId ? (orgMap.get(row.orgId) ?? `Unknown org (${row.orgId})`) : "Owner",
         search: 0, score: 0, score_all: 0, parse: 0, capture: 0, total: 0,
+        costUsd: 0, inputTokens: 0, outputTokens: 0,
       });
     }
     const entry = byOrgMap.get(key)!;
     const t = row.type as UsageType;
     if (USAGE_TYPES.includes(t)) entry[t] += row._count.id;
     entry.total += row._count.id;
+    entry.costUsd += row._sum.costUsd ?? 0;
+    entry.inputTokens += row._sum.inputTokens ?? 0;
+    entry.outputTokens += row._sum.outputTokens ?? 0;
   }
 
   const byOrg = [...byOrgMap.values()].sort((a, b) => b.total - a.total);
+  // "Who's burning money right now" — same rows, ranked by actual USD spend.
+  const topSpenders = [...byOrgMap.values()]
+    .filter((o) => o.costUsd > 0)
+    .sort((a, b) => b.costUsd - a.costUsd)
+    .slice(0, 10)
+    .map((o) => ({ orgId: o.orgId, orgName: o.orgName, costUsd: Number(o.costUsd.toFixed(4)), inputTokens: o.inputTokens, outputTokens: o.outputTokens }));
 
   // Global totals
-  const totals = { search: 0, score: 0, score_all: 0, parse: 0, capture: 0, total: 0 };
+  const totals = { search: 0, score: 0, score_all: 0, parse: 0, capture: 0, total: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 };
   for (const row of events) {
     const t = row.type as UsageType;
     if (USAGE_TYPES.includes(t)) totals[t] += row._count.id;
     totals.total += row._count.id;
+    totals.costUsd += row._sum.costUsd ?? 0;
+    totals.inputTokens += row._sum.inputTokens ?? 0;
+    totals.outputTokens += row._sum.outputTokens ?? 0;
   }
+  totals.costUsd = Number(totals.costUsd.toFixed(4));
 
   // Recent activity with org names
   const recent = recentRaw.map((e) => ({
@@ -77,5 +98,5 @@ export async function GET(req: Request) {
     createdAt: e.createdAt.toISOString(),
   }));
 
-  return NextResponse.json({ totals, byOrg, recent, days, since: since.toISOString() });
+  return NextResponse.json({ totals, byOrg, topSpenders, recent, days, since: since.toISOString() });
 }

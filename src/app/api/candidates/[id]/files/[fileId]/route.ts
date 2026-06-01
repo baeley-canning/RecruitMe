@@ -87,6 +87,24 @@ export async function GET(
   const file = await requireFileAccess(id, fileId, auth);
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Conditional-request short-circuit. A CandidateFile is immutable per id
+  // (a re-upload produces a new row/id), so the content hash is a stable
+  // strong validator. If the client already has it, return 304 BEFORE the
+  // R2 fetch + AES decrypt — this is what stops every avatar on a 200-row
+  // job page from re-downloading + re-decrypting on each render/navigation.
+  // ETag falls back to the row id for legacy rows without a dataHash.
+  const etag = `"${file.dataHash ?? file.id}"`;
+  // Per-user (auth-gated) + immutable content. `private` keeps shared caches
+  // from storing it; `max-age` lets the browser reuse it; `must-revalidate`
+  // pairs with the ETag so a cache-buster still re-auths.
+  const cacheControl = "private, max-age=86400, must-revalidate";
+  if (req.headers.get("if-none-match") === etag) {
+    return new Response(null, {
+      status: 304,
+      headers: { ETag: etag, "Cache-Control": cacheControl },
+    });
+  }
+
   // Fetch the stored (still-encrypted) envelope — from the S3/R2 blob store
   // when this row was offloaded (storageKey set), else inline from `data`.
   let envelope: string;
@@ -128,6 +146,10 @@ export async function GET(
       "Content-Type": safeMime,
       "Content-Disposition": `${disposition}; filename="${encodeURIComponent(file.filename)}"`,
       "Content-Length": String(buffer.length),
+      // Immutable-per-id content; let the browser cache and revalidate cheaply
+      // via the ETag 304 path above (avoids repeat R2 GET + decrypt).
+      "Cache-Control": cacheControl,
+      ETag: etag,
       // Belt-and-braces: even if a browser ignores Content-Disposition and
       // tries to render inline, no-sniff blocks MIME confusion attacks.
       "X-Content-Type-Options": "nosniff",

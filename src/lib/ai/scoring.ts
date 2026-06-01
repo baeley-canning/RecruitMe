@@ -195,7 +195,13 @@ function statementContradictedByStoredSignals(statement: string, signals: Set<st
 export async function predictAcceptance(
   profileText: string,
   parsedRole: ParsedRole,
-  salary?: { min: number; max: number } | null
+  salary?: { min: number; max: number } | null,
+  // Cost attribution: every score path fires predictAcceptance in parallel
+  // with the structured score, so its Claude call must be billed to the same
+  // org or the daily spend cap under-counts by ~2x (the cap only sums the
+  // requesting org's UsageEvents; an unattributed call lands in the null-org
+  // bucket and is invisible to checkSpendCap). Pass the caller's org/user.
+  attribution?: { orgId?: string | null; userId?: string | null }
 ): Promise<AcceptancePrediction> {
   if (!profileText || profileText.trim().length < 100) {
     throw new Error("Profile text too short to predict acceptance");
@@ -224,7 +230,12 @@ ${ACCEPTANCE_ASSESSMENT_RULES}`;
   // error. When Claude has no key, Ollama is the only attempt. The returned
   // scoredBy reflects which provider actually produced the result so the UI
   // provenance pill can render correctly.
-  const failoverResult = await chatWithFailover(acceptancePrompt, 0.1, 2048, { model: SONNET });
+  const failoverResult = await chatWithFailover(acceptancePrompt, 0.1, 2048, {
+    model: SONNET,
+    orgId: attribution?.orgId ?? null,
+    userId: attribution?.userId ?? null,
+    costTag: "acceptance",
+  });
   const text = failoverResult.text;
   const source: ChatSource = failoverResult.source;
 
