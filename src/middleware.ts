@@ -44,17 +44,38 @@ function clientIp(req: NextRequest): string {
   return req.headers.get("x-real-ip") ?? "";
 }
 
+/**
+ * Correlation id for tracing one request across log lines + Sentry. Honour an
+ * inbound x-request-id (so a proxy/client-supplied id chains through), else
+ * mint one. Propagated on BOTH the forwarded request headers (so route handlers
+ * can read it and pass it to reportError) and the response (so caller/logs can
+ * correlate). crypto.randomUUID is available in the edge runtime.
+ */
+const REQUEST_ID_HEADER = "x-request-id";
+
 export function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
-  if (!PROTECTED_PREFIXES.some((p) => path === p || path.startsWith(p + "/"))) {
-    return NextResponse.next();
+  const rid = req.headers.get(REQUEST_ID_HEADER) ?? crypto.randomUUID();
+
+  // Box-dashboard IP gate (unchanged): 404 to anything off loopback/Tailscale.
+  if (PROTECTED_PREFIXES.some((p) => path === p || path.startsWith(p + "/"))) {
+    const ip = clientIp(req);
+    if (!isLoopback(ip) && !isTailscale(ip)) {
+      // Don't advertise the surface exists to LAN-side scanners.
+      return new NextResponse("Not Found", { status: 404 });
+    }
   }
-  const ip = clientIp(req);
-  if (isLoopback(ip) || isTailscale(ip)) return NextResponse.next();
-  // 404 — don't advertise the surface exists to LAN-side scanners.
-  return new NextResponse("Not Found", { status: 404 });
+
+  // Forward the id to the route handler and echo it back to the caller.
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set(REQUEST_ID_HEADER, rid);
+  const res = NextResponse.next({ request: { headers: requestHeaders } });
+  res.headers.set(REQUEST_ID_HEADER, rid);
+  return res;
 }
 
 export const config = {
-  matcher: ["/box-dashboard/:path*", "/api/box-dashboard/:path*"],
+  // Run on all app + API routes (so every request gets a correlation id),
+  // excluding Next's static/image assets and favicon to avoid pointless work.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

@@ -5,6 +5,7 @@ import { extractCandidateInfo } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getLibraryCandidates, LIBRARY_PAGE_SIZE } from "@/lib/library";
+import { reportError } from "@/lib/error-reporting";
 
 /**
  * GET /api/candidates
@@ -80,7 +81,10 @@ export async function POST(req: Request) {
       name = info.name;
       headline = headline || info.headline;
       location = location || info.location;
-    } catch {
+    } catch (err) {
+      // Fall back to "Unknown" but report — a systematic extractor outage
+      // would otherwise masquerade as a wave of low-quality candidate data.
+      reportError(err, { route: "candidates:create", orgId: auth.orgId });
       name = "Unknown";
     }
   }

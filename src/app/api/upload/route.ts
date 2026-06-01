@@ -3,6 +3,7 @@ import { parseJobDescription } from "@/lib/ai";
 import { deriveJobBriefUploadPrefill, deriveRegexFallbackPrefill } from "@/lib/job-brief-prefill";
 import { extractTextFromPdf } from "@/lib/pdf";
 import { getAuth, unauthorized } from "@/lib/session";
+import { reportError } from "@/lib/error-reporting";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -90,7 +91,7 @@ export async function POST(req: Request) {
       }
       return buildResponse(text);
     } catch (err) {
-      console.error("DOCX extraction error:", err);
+      reportError(err, { route: "upload:docx", orgId: auth.orgId, requestId: req.headers.get("x-request-id") ?? undefined });
       return NextResponse.json({ error: "Could not read this Word document." }, { status: 500 });
     }
   }
@@ -106,7 +107,7 @@ export async function POST(req: Request) {
     }
     return buildResponse(text);
   } catch (err) {
-    console.error("PDF extraction error:", err);
+    reportError(err, { route: "upload:pdf", orgId: auth.orgId, requestId: req.headers.get("x-request-id") ?? undefined });
     return NextResponse.json(
       { error: "Could not read this PDF. Try saving as a different PDF, or paste the text directly." },
       { status: 500 }

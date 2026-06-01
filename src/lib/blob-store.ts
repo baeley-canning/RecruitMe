@@ -281,6 +281,28 @@ export async function loadFileEnvelope(file: {
   return file.data;
 }
 
+/**
+ * Liveness probe for the bucket — reachable AND credentials valid. Returns
+ * `skipped` when no bucket is configured (legacy DB-inline storage). A 404
+ * (the sentinel key doesn't exist) counts as healthy: the bucket answered and
+ * authorized the request. 403 means the credentials are wrong/expired — the
+ * dangerous case where /api/health would otherwise stay green while every CV
+ * download 500s. Short timeout so a slow bucket can't hang the health route.
+ */
+export async function probeBlobStore(): Promise<{ ok: boolean; detail?: string; skipped?: boolean }> {
+  const cfg = readConfig();
+  if (!cfg) return { ok: true, skipped: true };
+  try {
+    const { url, headers } = signRequest(cfg, "GET", "__health_probe__", null, new Date());
+    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(3_000) });
+    if (res.ok || res.status === 404) return { ok: true };
+    if (res.status === 403) return { ok: false, detail: "blob store auth failed (403) — check BLOB_S3 credentials" };
+    return { ok: false, detail: `blob store HTTP ${res.status}` };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : "blob store unreachable" };
+  }
+}
+
 async function safeText(res: Response): Promise<string> {
   try {
     return (await res.text()).slice(0, 300);

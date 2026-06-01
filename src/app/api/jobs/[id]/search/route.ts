@@ -635,7 +635,9 @@ async function persistPoolSearchResults(args: {
         matchScore: candidate.matchScore,
       });
     } catch (err) {
-      console.error("[search] pool-first candidate save failed:", err);
+      // Discovery write-loss: a scored candidate silently dropped. Report so a
+      // systematic save failure (constraint, connection) is visible, not buried.
+      reportError(err, { route: "search:pool-first-save", jobId, orgId });
     }
   }
   return saved;
@@ -1508,7 +1510,8 @@ async function runSearchBackground(args: {
             void enqueueScrapeJob({ orgId: job.orgId, platform: "linkedin", profileUrl: normUrl, candidateId: candidate.id });
           }
         } catch (err) {
-          console.error("[search] candidate save failed:", err);
+          // Write-loss in the main search processor — a scored candidate dropped.
+          reportError(err, { route: "search:candidate-save", jobId, orgId: job.orgId });
         }
       }
     }

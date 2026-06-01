@@ -57,6 +57,10 @@ const SCORE_TTL_MARKER = "__smoke_score_ttl_test__";
 // too, in case the test is interrupted between create and the inline cleanup).
 const FK_SMOKE_IDENTITY = "__smoke_fk_idty__";
 const FK_SMOKE_INSIGHT = "__smoke_fk_insight__";
+// Cross-org isolation probe: two orgs + a library candidate owned by org A.
+const ISO_ORG_A = "__smoke_iso_org_a__";
+const ISO_ORG_B = "__smoke_iso_org_b__";
+const ISO_CAND = "__smoke_iso_cand__";
 
 afterAll(async () => {
   for (const id of createdRunIds) {
@@ -66,6 +70,8 @@ afterAll(async () => {
   // Deleting the identity cascades its insights (identityId FK is CASCADE).
   await prisma.profileInsight.deleteMany({ where: { id: FK_SMOKE_INSIGHT } }).catch(() => {});
   await prisma.candidateIdentity.deleteMany({ where: { id: FK_SMOKE_IDENTITY } }).catch(() => {});
+  await prisma.candidate.deleteMany({ where: { id: ISO_CAND } }).catch(() => {});
+  await prisma.org.deleteMany({ where: { id: { in: [ISO_ORG_A, ISO_ORG_B] } } }).catch(() => {});
   await prisma.$disconnect().catch(() => {});
 });
 
@@ -144,6 +150,49 @@ d("smoke: getLibraryCandidates pagination (SSR cap + cursor load-more)", () => {
       expect(page2.candidates.length).toBeGreaterThan(0);
       for (const c of page2.candidates) expect(ids1.has(c.id)).toBe(false);
     }
+  });
+});
+
+d("smoke: cross-org library isolation (real DB — not a mocked where-clause)", () => {
+  it("org B cannot see org A's library candidate; org A can", async () => {
+    // The mocked unit tests only prove getLibraryCandidates was CALLED with an
+    // orgId in the where-clause. The thing that actually leaks — a raw-SQL
+    // prefilter that fails to bind orgId — is only catchable on Postgres. Seed
+    // two orgs + one library candidate owned by A, then read as B.
+    const orgA = await prisma.org.upsert({
+      where: { id: ISO_ORG_A }, update: {},
+      create: { id: ISO_ORG_A, name: ISO_ORG_A },
+    });
+    const orgB = await prisma.org.upsert({
+      where: { id: ISO_ORG_B }, update: {},
+      create: { id: ISO_ORG_B, name: ISO_ORG_B },
+    });
+    await prisma.candidate.upsert({
+      where: { id: ISO_CAND }, update: { orgId: orgA.id },
+      create: {
+        id: ISO_CAND,
+        orgId: orgA.id,
+        jobId: null,
+        name: "Isolation Probe",
+        headline: "Senior Reliability Engineer",
+        linkedinUrl: "https://www.linkedin.com/in/__smoke_iso_probe__",
+        profileText:
+          "Isolation Probe — Senior Reliability Engineer in Wellington with more " +
+          "than a decade building distributed systems, on-call tooling, and " +
+          "Postgres-backed services. Long enough to clear the library eligibility " +
+          "prefilter so the org-B absence below is real isolation, not ineligibility.",
+        source: "manual",
+        status: "new",
+      },
+    });
+
+    const asB = { userId: "smoke", orgId: orgB.id, isOwner: false } as Parameters<typeof getLibraryCandidates>[0];
+    const seenByB = await getLibraryCandidates(asB, { take: 200 });
+    expect(seenByB.candidates.some((c) => c.id === ISO_CAND)).toBe(false);
+
+    const asA = { userId: "smoke", orgId: orgA.id, isOwner: false } as Parameters<typeof getLibraryCandidates>[0];
+    const seenByA = await getLibraryCandidates(asA, { take: 200 });
+    expect(seenByA.candidates.some((c) => c.id === ISO_CAND)).toBe(true);
   });
 });
 

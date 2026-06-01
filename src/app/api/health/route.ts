@@ -34,6 +34,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { isScraperDiscoveryEnabled, isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
+import { probeBlobStore } from "@/lib/blob-store";
 
 interface CheckResult {
   ok: boolean;
@@ -52,6 +53,7 @@ interface HealthResponse {
     db: CheckResult;
     ollama: CheckResult;
     scraper: CheckResult;
+    blob: CheckResult;
   };
   version: string;
   uptimeSec: number;
@@ -125,18 +127,20 @@ async function checkScraper(): Promise<CheckResult> {
 }
 
 export async function GET() {
-  const [db, ollama, scraper] = await Promise.all([
+  const [db, ollama, scraper, blob] = await Promise.all([
     checkDb(),
     checkOllama(),
     checkScraper(),
+    probeBlobStore(),
   ]);
 
-  // Only DB + scraper are FATAL. Ollama is the Claude failover, not a hard
-  // dependency: when it's unreachable the app still serves (Claude stays
-  // primary), so it must not flip the healthcheck to 503 and restart-loop
-  // the app. An Ollama outage is reported as `degraded` instead.
+  // Only DB + scraper are FATAL. Ollama (Claude failover) and the blob store
+  // are reported but NON-fatal for the healthcheck: a transient R2 blip
+  // shouldn't restart-loop the app. But a blob-store outage means every CV
+  // download is failing, so it MUST surface — `degraded` flips amber so the
+  // ops dashboard / alerting catches it instead of /api/health staying green.
   const overallOk = db.ok && scraper.ok;
-  const degraded = overallOk && !ollama.ok;
+  const degraded = overallOk && (!ollama.ok || !blob.ok);
   // Report the deployed commit SHA so a deploy is verifiable from /api/health.
   // RECRUITME_VERSION stays the highest-priority explicit override; otherwise
   // fall back to the build's git SHA (Railway sets RAILWAY_GIT_COMMIT_SHA;
@@ -146,7 +150,7 @@ export async function GET() {
   const body: HealthResponse = {
     ok: overallOk,
     degraded,
-    checks: { db, ollama, scraper },
+    checks: { db, ollama, scraper, blob },
     version,
     uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
     timestamp: new Date().toISOString(),

@@ -11,6 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # Real Postgres so the smoke:db gate runs ON PRs, not just at deploy time.
+    # Previously raw-SQL regressions (e.g. the left(text,bigint) class) passed
+    # CI — which mocks Prisma — and were only caught by deploy-gate.sh on the
+    # box, AFTER merge to main. This closes that merge→deploy gap.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: recruitme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -43,3 +62,20 @@ jobs:
         run: npm run test
         env:
           DATABASE_URL: postgresql://user:password@localhost:5432/recruitme
+
+      # Apply the full schema to the real Postgres service the same way prod
+      # startup does: Prisma-modeled tables via db push, then the raw-SQL
+      # columns/indexes/generated tsvector that smoke:db depends on.
+      - name: Set up real DB schema for smoke test
+        run: |
+          npx prisma db push --skip-generate --accept-data-loss
+          node scripts/apply-schema-changes.mjs
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/recruitme
+
+      # Run the query functions against real Postgres so any statement the DB
+      # would reject (raw-SQL type/tz/cursor bugs, cross-org leaks) fails the PR.
+      - name: Run real-DB smoke test
+        run: npm run smoke:db
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/recruitme

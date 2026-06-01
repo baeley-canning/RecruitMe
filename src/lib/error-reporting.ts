@@ -21,6 +21,9 @@ export type ErrorContext = {
   userId?: string;
   jobId?: string;
   candidateId?: string;
+  /** Correlation id from middleware (x-request-id) — ties a Sentry event back
+   *  to the structured log line for the same request. */
+  requestId?: string;
   // Free-form extra fields
   [key: string]: unknown;
 };
@@ -42,6 +45,7 @@ export function reportError(err: unknown, context: ErrorContext = {}): void {
     Sentry.captureException(err, {
       tags: {
         route: context.route ?? "unknown",
+        requestId: context.requestId ?? undefined,
       },
       contexts: {
         request: {
