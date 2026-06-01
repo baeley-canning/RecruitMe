@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, jobsWhere } from "@/lib/session";
 import { scoreTier } from "@/lib/score-utils";
+import { getLibraryStats } from "@/lib/library";
 
 export async function GET() {
   const auth = await getAuth();
@@ -91,6 +92,13 @@ export async function GET() {
   // an aging job can't materialize thousands of rows — that cap is only safe
   // for the top-3 display. The per-job COUNTS must be exact, so compute them as
   // bounded DB aggregates (no row materialization, no raw SQL):
+  // "Total candidates" headline = UNIQUE people, the SAME deduped count the
+  // Candidates Library shows — so the two screens never disagree. (The old
+  // headline summed per-job pipeline rows, which double-counted anyone in
+  // multiple jobs and skipped library-only people, so it read ~1250 while the
+  // library showed ~713 — looked like the count was lying.)
+  const libraryStats = await getLibraryStats(auth);
+
   const jobIds = jobs.map((j) => j.id);
   const [byJob, shortlistedByJob, needsFetchByJob] = jobIds.length
     ? await Promise.all([
@@ -166,7 +174,9 @@ export async function GET() {
     recentSearches,
     totals: {
       activeJobs: jobs.length,
-      totalCandidates: jobStats.reduce((s, j) => s + j.totalCandidates, 0),
+      // Unique deduped people (matches the Candidates Library "People" stat),
+      // not the sum of per-job pipeline rows.
+      totalCandidates: libraryStats.total,
       shortlisted: jobStats.reduce((s, j) => s + j.shortlisted, 0),
       capturedThisWeek: recentCaptures.length,
     },
