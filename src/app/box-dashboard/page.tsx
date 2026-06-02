@@ -87,8 +87,29 @@ function wifiBars(dbm: number | null): string {
 function Bar({ pct, danger = 0.85, warn = 0.7 }: { pct: number; danger?: number; warn?: number }) {
   const tone = pct >= danger ? "bg-danger" : pct >= warn ? "bg-warning" : "bg-success";
   return (
-    <div className="h-2 w-full rounded-sm bg-surface-sunken overflow-hidden">
-      <div className={tone + " h-full transition-all"} style={{ width: `${Math.max(2, Math.min(100, pct * 100))}%` }} />
+    <div className="h-1.5 w-full rounded-full bg-surface-hover overflow-hidden">
+      <div className={tone + " h-full rounded-full transition-all"} style={{ width: `${Math.max(2, Math.min(100, pct * 100))}%` }} />
+    </div>
+  );
+}
+
+/** One Resources tile: label + hero value, a bar, and a detail sub-line. */
+function Metric({ label, value, sub, pct, warn, danger }: {
+  label: string;
+  value: string;
+  sub: string;
+  pct: number;
+  warn?: number;
+  danger?: number;
+}) {
+  return (
+    <div className="rounded-md bg-surface-base border border-separator-subtle p-3">
+      <div className="flex items-baseline justify-between gap-2 mb-2">
+        <span className="text-2xs uppercase tracking-wider text-text-tertiary">{label}</span>
+        <span className="text-base font-semibold text-text-primary leading-none">{value}</span>
+      </div>
+      <Bar pct={pct} warn={warn} danger={danger} />
+      <div className="mt-2 text-2xs text-text-tertiary truncate" title={sub}>{sub}</div>
     </div>
   );
 }
@@ -186,27 +207,33 @@ export default function BoxDashboardPage() {
         {/* Resources */}
         <div className="bg-surface-raised border border-separator rounded-md p-4 md:col-span-2">
           <h2 className="text-text-tertiary uppercase text-2xs tracking-wider mb-3">Resources</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-            <div>
-              <div className="flex justify-between text-text-secondary mb-1"><span>CPU load</span><span className="text-text-primary">{(s.system.loadAvg[0] * 100 / s.system.cpuCount).toFixed(0)}%</span></div>
-              <Bar pct={Math.min(1, s.system.loadAvg[0] / s.system.cpuCount)} />
-              <div className="text-2xs text-text-tertiary mt-1">load {s.system.loadAvg.map(n => n.toFixed(2)).join("  ")}</div>
-            </div>
-            <div>
-              <div className="flex justify-between text-text-secondary mb-1"><span>RAM</span><span className="text-text-primary">{(s.system.ram.usedPct * 100).toFixed(0)}% — {fmtBytes(s.system.ram.used)} / {fmtBytes(s.system.ram.total)}</span></div>
-              <Bar pct={s.system.ram.usedPct} />
-              <div className="text-2xs text-text-tertiary mt-1">swap {(s.system.swap.usedPct * 100).toFixed(0)}%</div>
-            </div>
-            <div>
-              <div className="flex justify-between text-text-secondary mb-1"><span>Disk</span><span className="text-text-primary">{(s.system.disk.usedPct * 100).toFixed(0)}% — {fmtBytes(s.system.disk.used)} / {fmtBytes(s.system.disk.total)}</span></div>
-              <Bar pct={s.system.disk.usedPct} />
-              <div className="text-2xs text-text-tertiary mt-1">&nbsp;</div>
-            </div>
-            <div>
-              <div className="flex justify-between text-text-secondary mb-1"><span>CPU temp</span><span className="text-text-primary">{s.system.cpuTempC !== null ? `${s.system.cpuTempC}°C` : "—"}</span></div>
-              <Bar pct={s.system.cpuTempC !== null ? s.system.cpuTempC / 100 : 0} warn={0.75} danger={0.9} />
-              <div className="text-2xs text-text-tertiary mt-1">{s.system.cpuTempC === null ? "no sensor" : s.system.cpuTempC >= 90 ? "hot — throttle risk" : s.system.cpuTempC >= 75 ? "warm" : "nominal"}</div>
-            </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Metric
+              label="CPU load"
+              value={`${Math.round(Math.min(1, s.system.loadAvg[0] / s.system.cpuCount) * 100)}%`}
+              pct={Math.min(1, s.system.loadAvg[0] / s.system.cpuCount)}
+              sub={`load ${s.system.loadAvg.map((n) => n.toFixed(2)).join("  ")}`}
+            />
+            <Metric
+              label="RAM"
+              value={`${Math.round(s.system.ram.usedPct * 100)}%`}
+              pct={s.system.ram.usedPct}
+              sub={`${fmtBytes(s.system.ram.used)} / ${fmtBytes(s.system.ram.total)} · swap ${Math.round(s.system.swap.usedPct * 100)}%`}
+            />
+            <Metric
+              label="Disk"
+              value={`${Math.round(s.system.disk.usedPct * 100)}%`}
+              pct={s.system.disk.usedPct}
+              sub={`${fmtBytes(s.system.disk.used)} / ${fmtBytes(s.system.disk.total)}`}
+            />
+            <Metric
+              label="CPU temp"
+              value={s.system.cpuTempC !== null ? `${s.system.cpuTempC}°C` : "—"}
+              pct={s.system.cpuTempC !== null ? s.system.cpuTempC / 100 : 0}
+              sub={s.system.cpuTempC === null ? "no sensor" : s.system.cpuTempC >= 90 ? "hot — throttle risk" : s.system.cpuTempC >= 75 ? "warm" : "nominal"}
+              warn={0.75}
+              danger={0.9}
+            />
           </div>
         </div>
 
