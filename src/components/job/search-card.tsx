@@ -54,6 +54,10 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
     try { localStorage.setItem("recruitme:libraryOnlySearch", libraryOnly ? "1" : "0"); } catch { /* ignore */ }
   }, [libraryOnly]);
 
+  // SEEK Talent Search discovery — defaults OFF (costs SEEK credits) and is
+  // deliberately NOT persisted, so it never silently re-fires on a later search.
+  const [useSeek, setUseSeek] = useState(false);
+
   const searchResultDisplay = searchResult ? getSearchResultDisplay(searchResult) : null;
 
   // Show the clearance toggle when the role has clearance/work-rights in its requirements
@@ -219,22 +223,17 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
       setPoolResult({ count: 0, message: "Library skipped — no distinctive anchors for this role, going straight to LinkedIn." });
     }
     const remainingResults = Math.max(0, maxResults - pool.count);
-    if (pool.ok && remainingResults === 0 && pool.count > 0) {
-      setSearchResult({
-        status: "complete",
-        count: pool.count,
-        fromPool: pool.count,
-        message: "Candidate library filled this search, so LinkedIn search was skipped.",
-      });
-      setSearching(false);
-      return;
-    }
+    // We deliberately do NOT short-circuit when the pool fills the request: the
+    // /search POST below fires the live LinkedIn/SEEK scraper discovery, and a
+    // well-stocked pool must not suppress a deliberately-requested live search
+    // (the recruiter only reaches here with library-only OFF). The scraper
+    // enriches the pool in the background; fresh profiles surface on re-run.
 
     try {
       const res = await fetch(`/api/jobs/${jobId}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxResults: remainingResults || maxResults, locationOverride: activeSearchLocation, relaxClearance }),
+        body: JSON.stringify({ maxResults: remainingResults || maxResults, locationOverride: activeSearchLocation, relaxClearance, useLinkedin: true, useSeek }),
       });
       const data = await res.json() as { sessionId?: string; error?: string };
       if (!res.ok || data.error) { setSearchError(data.error ?? "Search failed"); setSearching(false); return; }
@@ -259,7 +258,11 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
           if (pollData.status === "running") { setTimeout(poll, 3000); }
           else {
             const displayStatus = pollData.status === "crashed" ? "rate_limited" : pollData.status;
-            setSearchResult({ status: displayStatus, count: pollData.count ?? 0, message: pollData.message, fromPool: pollData.fromPool });
+            // Live discovery fired server-side (we're in the non-library-only
+            // path). It's async — scraped profiles enrich the pool, so tell the
+            // recruiter to re-run shortly rather than expecting instant results.
+            const discoveryNote = ` · 🔄 Also scraping LinkedIn${useSeek ? " + SEEK" : ""} in the background — re-run this search in a few minutes to pull fresh profiles into your pool.`;
+            setSearchResult({ status: displayStatus, count: pollData.count ?? 0, message: (pollData.message ?? "") + discoveryNote, fromPool: pollData.fromPool });
             onComplete();
             setSearching(false);
           }
@@ -513,6 +516,34 @@ export function SearchCard({ jobId, parsedRole, jobLocation, jobStatus, onComple
                   )} />
                 </div>
                 <span className="text-xs text-text-secondary">Library only (skip LinkedIn)</span>
+              </label>
+              {/* SEEK Talent Search — only meaningful when not library-only. Off
+                  by default (costs SEEK credits); fires a live SEEK scrape
+                  alongside LinkedIn when the recruiter opts in. */}
+              <label
+                className={cn(
+                  "flex items-center gap-2 select-none",
+                  libraryOnly ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
+                )}
+                title={libraryOnly ? "Turn off library-only to use live sources" : "Also search SEEK Talent Search (uses SEEK credits)"}
+              >
+                <div
+                  role="switch"
+                  aria-checked={useSeek && !libraryOnly}
+                  aria-label="Toggle SEEK Talent Search"
+                  onClick={() => !searching && !libraryOnly && setUseSeek((v) => !v)}
+                  className={cn(
+                    "relative w-8 h-4 rounded-full transition-colors flex-shrink-0",
+                    useSeek && !libraryOnly ? "bg-accent" : "bg-surface-hover",
+                    searching || libraryOnly ? "cursor-not-allowed" : "cursor-pointer",
+                  )}
+                >
+                  <span className={cn(
+                    "absolute top-0.5 w-3 h-3 bg-text-primary rounded-full shadow transition-transform",
+                    useSeek && !libraryOnly ? "translate-x-4" : "translate-x-0.5"
+                  )} />
+                </div>
+                <span className="text-xs text-text-secondary">Also search SEEK (uses credits)</span>
               </label>
             </div>
           </div>

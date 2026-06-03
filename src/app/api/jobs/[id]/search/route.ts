@@ -39,7 +39,7 @@ import { getServerSetting } from "@/lib/settings";
 import { getJobScoringWeights, type ScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { reportError } from "@/lib/error-reporting";
-import { enqueueScrapeJob } from "@/lib/scrape-queue";
+import { enqueueScrapeJob, enqueueSearchJob } from "@/lib/scrape-queue";
 import { isScraperEnabled, isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { hasFullCandidateProfile } from "@/lib/candidate-profile";
 import { computeFetchPriority, serialiseFetchPriority } from "@/lib/fetch-priority";
@@ -78,6 +78,12 @@ const SearchSchema = z.object({
   // scoring for this search run so technically-qualified candidates aren't penalised
   // for missing clearance data that never appears on LinkedIn profiles.
   relaxClearance: z.boolean().optional().default(false),
+  // Live scraper discovery toggles. LinkedIn defaults ON (free, and the only
+  // live external channel now SerpAPI is gone); SEEK defaults OFF (costs SEEK
+  // credits). When on, a priority-100 scraper SEARCH is enqueued that enriches
+  // the org talent pool — fresh profiles surface on the next pool-first run.
+  useLinkedin: z.boolean().optional().default(true),
+  useSeek: z.boolean().optional().default(false),
 });
 
 // Regex matching requirements that should be excluded when relaxClearance is set.
@@ -366,7 +372,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { maxResults, locationOverride, queriesOverride, savedSearchId, relaxClearance } = parsed.data;
+  const { maxResults, locationOverride, queriesOverride, savedSearchId, relaxClearance, useLinkedin, useSeek } = parsed.data;
 
   // Resolve API keys: env var wins, then DB-stored (keys entered via settings UI).
   // We do NOT mutate process.env so changing a key in settings takes effect immediately
@@ -463,6 +469,19 @@ export async function POST(
       orgId:    auth.orgId,
     },
   });
+
+  // Live scraper discovery — fire the working priority-100 scraper SEARCH for
+  // fresh LinkedIn/SEEK profiles when the recruiter asked for them. This is the
+  // only live external channel now (the synchronous SerpAPI path was removed and
+  // never reaches out); harvested profiles land in the org talent pool and
+  // surface on the next pool-first run. Fire-and-forget, priority 100 so it
+  // jumps ahead of background flywheel work. Fires regardless of how full the
+  // pool is — a stocked library must not suppress a requested live search.
+  const liveQuery = (cleanedOverride && cleanedOverride[0]) || searchQueries[0] || parsedRole.title;
+  if (isScraperDiscoveryEnabled() && auth.orgId && liveQuery) {
+    if (useLinkedin) void enqueueSearchJob({ orgId: auth.orgId, platform: "linkedin", searchQuery: liveQuery, requestedBy: auth.userId, priority: 100 });
+    if (useSeek) void enqueueSearchJob({ orgId: auth.orgId, platform: "seek", searchQuery: liveQuery, requestedBy: auth.userId, priority: 100 });
+  }
 
   // Fire-and-forget: run search in background so the response returns immediately.
   // On Railway (persistent server) the Node.js event loop keeps running after the
