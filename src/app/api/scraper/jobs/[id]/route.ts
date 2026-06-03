@@ -181,6 +181,43 @@ export async function PATCH(
         updatedAt: new Date(),
       },
     });
+
+    // SEEK Talent Search: turn the harvested result cards into persistent
+    // snippet candidates (name/headline/location/seekUrl — the FREE card data;
+    // no profile is opened, so NO SEEK credits are spent). LinkedIn doesn't need
+    // this (it deep-scrapes the dispatched profile children), but SEEK
+    // deliberately skips deep scrapes for credit safety — so without this its
+    // harvests never become candidates and never surface in search (verified:
+    // 7 completed SEEK searches, 0 candidates). Runs regardless of searchRunId
+    // so even legacy /search runs populate the pool. ingestScraperResult dedups
+    // by seekUrl + reuses identity resolution; the thin-profile reject is
+    // LinkedIn-only so it doesn't drop these. Per-card try/catch so one
+    // malformed card can't fail the whole job.
+    if (job.platform === "seek" && cards.length > 0) {
+      let ingested = 0;
+      for (const card of cards) {
+        if (!card.url) continue;
+        try {
+          await ingestScraperResult({
+            orgId: job.orgId,
+            platform: "seek",
+            profileUrl: card.url,
+            // No profile is opened, so there's no body text — the upsert turns
+            // "" into null profileText. The candidate stays findable via FTS on
+            // name/headline/location (headline = the SEEK card's role line).
+            profileText: "",
+            name: card.name ?? null,
+            headline: card.headline ?? null,
+            location: card.location ?? null,
+          });
+          ingested++;
+        } catch (err) {
+          reportError(err, { route: "scraper/jobs:seek-card-ingest", jobId: id, orgId: job.orgId });
+        }
+      }
+      console.log(`[scraper] seek-search ${id}: ingested ${ingested}/${cards.length} snippet candidate(s)`);
+    }
+
     // Phase K: attach the harvested cards as result rows (with name/headline/
     // location so they render immediately, not as "fetching…").
     if (job.searchRunId) {
