@@ -10,6 +10,7 @@ import {
   ChevronRight,
   AlertTriangle,
   Library,
+  Briefcase,
   FileText,
   HelpCircle,
 } from "lucide-react";
@@ -197,6 +198,9 @@ export function UnifiedSearchModal({
   const [location, setLocation] = useState(jobLocation ?? "");
   const [useLibrary, setUseLibrary] = useState(true);
   const [useLinkedIn, setUseLinkedIn] = useState(true);
+  // SEEK Talent Search defaults OFF — it costs SEEK credits, so it only fires
+  // when the recruiter explicitly ticks it ("both as toggles").
+  const [useSeek, setUseSeek] = useState(false);
 
   // Results state
   const [response, setResponse] = useState<SearchResponse | null>(null);
@@ -216,11 +220,12 @@ export function UnifiedSearchModal({
 
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
   const sourcesPicked = useMemo(() => {
-    const out: Array<"library" | "linkedin"> = [];
+    const out: Array<"library" | "linkedin" | "seek"> = [];
     if (useLibrary) out.push("library");
     if (useLinkedIn) out.push("linkedin");
+    if (useSeek) out.push("seek");
     return out;
-  }, [useLibrary, useLinkedIn]);
+  }, [useLibrary, useLinkedIn, useSeek]);
 
   const canSubmit = !searching && sourcesPicked.length > 0;
 
@@ -437,6 +442,12 @@ export function UnifiedSearchModal({
               icon={<LinkedInIcon className="w-3 h-3" />}
               checked={useLinkedIn}
               onChange={setUseLinkedIn}
+            />
+            <SourceToggle
+              label="SEEK"
+              icon={<Briefcase className="w-3 h-3" />}
+              checked={useSeek}
+              onChange={setUseSeek}
             />
           </div>
 

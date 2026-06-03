@@ -133,7 +133,13 @@ export async function POST(
     : serpTarget;
   const liveJobs: Array<{ id: string; platform: "linkedin" | "seek" }> = [];
   const queryRaw = parsedQuery.raw.trim();
-  if (libraryShortfall > 0 && queryRaw.length > 0 && isScraperDiscoveryEnabled() && auth.orgId) {
+  // Fire live discovery when the pool falls short (auto) OR whenever the
+  // recruiter explicitly toggled a live source ON. A well-stocked library must
+  // NOT suppress a deliberately-requested LinkedIn/SEEK search — that was the
+  // old behaviour and it meant fresh discovery silently never ran for common
+  // queries. Volume stays bounded by the hourly "search" rate limit above.
+  const liveRequested = wantLinkedin || sources.includes("seek");
+  if ((libraryShortfall > 0 || liveRequested) && queryRaw.length > 0 && isScraperDiscoveryEnabled() && auth.orgId) {
     if (wantLinkedin) {
       const j = await enqueueSearchJob({
         orgId: auth.orgId,
