@@ -142,6 +142,10 @@ export function aggregateSources(input: AggregateInput): AggregateOutput {
     const mergeKey = identityMergeKey({
       linkedinUrl: row.linkedinUrl,
       jobAdderUrl: row.jobAdderUrl,
+      // Include seekUrl so a SEEK row and a LinkedIn row for the same person
+      // collapse to one result (Phase 0). LinkedIn > JobAdder > SEEK precedence
+      // is handled inside identityMergeKey.
+      seekUrl: row.seekUrl,
     });
     const keyString =
       mergeKeyToString(mergeKey) ?? `lib:${row.id}`;
@@ -165,6 +169,7 @@ export function aggregateSources(input: AggregateInput): AggregateOutput {
     const mergeKey = identityMergeKey({
       linkedinUrl: row.linkedinUrl,
       jobAdderUrl: null,
+      seekUrl: null,
     });
     const keyString = mergeKeyToString(mergeKey) ?? `li:${row.linkedinUrl}`;
 

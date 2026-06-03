@@ -154,6 +154,7 @@ async function importOne(
         location: true,
         linkedinUrl: true,
         jobAdderUrl: true,
+        seekUrl: true,
         profileText: true,
         profileCapturedAt: true,
         orgId: true,
@@ -188,6 +189,9 @@ async function importOne(
         jobAdderUrl: accessibleOrgIds === null || sourceOrgId === jobOrgId
           ? source.jobAdderUrl
           : null,
+        // Preserve SEEK identity on the job Candidate row (Phase 0) so the
+        // imported candidate keeps its seekUrl for dedup/linking.
+        seekUrl: source.seekUrl,
         profileText: source.profileText,
         source: "talent_pool",
         status: "new",
