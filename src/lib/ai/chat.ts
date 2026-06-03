@@ -59,17 +59,20 @@ export function getJobParsingProvider(): ChatProvider | undefined {
   return process.env.ANTHROPIC_API_KEY ? "claude" : undefined;
 }
 
-// Model tiering: all Claude calls now go through Haiku 4.5 to cut spend.
-// Previously Sonnet was forced for full-profile work — switched per the
-// user's "use 4.5 for now" directive after a $10 rescore burn.
-// resolveModelForDataQuality is kept as the seam so we can re-introduce
-// per-quality tiering later (Opus for full, Haiku for snippets, etc.)
-// without rewriting call sites.
-export function resolveModelForDataQuality(_dataQuality: "full_profile" | "snippet" | "minimal"): {
+// Model tiering: full profiles score on Sonnet (premium reasoning for the
+// nuanced JD↔CV matching that scoring quality hinges on — the failure mode bad
+// scores come from); snippet/minimal scoring stays on the Haiku-aliased default
+// to cut spend (those scores are hard-capped 54–65, so Sonnet can't move them).
+// History: went all-Haiku after a $10 rescore burn ("use 4.5 for now");
+// full-profile scoring restored to Sonnet once per-batch cost proved trivial at
+// real backlog sizes. JD parsing + acceptance prediction still use the SONNET
+// constant (Haiku alias) — this tiering is scoped to the scoring path only.
+export function resolveModelForDataQuality(dataQuality: "full_profile" | "snippet" | "minimal"): {
   provider: ChatProvider;
   model?: string;
 } {
-  return { provider: "claude" }; // defaults to ANTHROPIC_MODEL env var (Haiku 4.5)
+  if (dataQuality === "full_profile") return { provider: "claude", model: "claude-sonnet-4-6" };
+  return { provider: "claude" }; // snippet/minimal → ANTHROPIC_MODEL (Haiku 4.5)
 }
 
 export async function chat(
