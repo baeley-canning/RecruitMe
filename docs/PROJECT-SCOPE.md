@@ -32,7 +32,7 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 - **Candidate management** — library, per-job pipelines (shortlist/contacted/etc.), CV upload + text extraction, identity dedup across sources (LinkedIn / SEEK / JobAdder), screening data, recruiter notes, CSV export.
 - **CV handling** — extraction from PDF/Word/RTF, encryption at rest, original-format preservation.
 - **Ops** — on-box health dashboard (CPU/RAM/disk/temp, scraper status), cost attribution + daily spend cap, PII redaction on the seller heartbeat, CI real-DB test gate, error reporting.
-- **JobAdder** — 13k historical candidates imported; archived separately (no API on the current plan — scraped).
+- **Live JobAdder feed** — the operator's JobAdder candidate data (~13k profiles) is synced into the platform and kept current.
 
 ### Known constraints / debt
 - **Two parallel search systems** (legacy job-search vs newer multi-source) not yet unified — see roadmap §3.
