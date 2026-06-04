@@ -66,16 +66,18 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 | Item | Cost / month | Basis |
 |---|---|---|
 | **Claude API (Anthropic)** | **~$15–40** | Measured **$13.37 over the last 30 days** (865 calls, ~3.7M tokens) — but that was mostly cheap Haiku. With Sonnet now scoring full profiles (~$0.05/score) cost rises with scoring volume; **hard-capped at $5/day** (≈ $150/mo ceiling) by the spend guard. Realistic steady-state ~$20–40. |
-| **Railway** (app + Postgres + egress) | **~$15–25** | Hobby plan ($5 base + metered usage): always-on Next app + Postgres (5 GB volume, ~1 GB used) + bandwidth. Estimate. |
+| **Railway** (app + Postgres + egress) | **$25** | Hosting: always-on Next app + Postgres (5 GB volume) + bandwidth. Operator-confirmed figure. |
 | **CV storage** (S3 / t3.storageapi.dev) | **~$1–3** | ~13.5k encrypted CVs (~8–12 GB est.) at S3-compatible rates + light egress. |
 | **Mini-PC scraper** (electricity) | **~$3–6** | Low-power i3 mini-PC 24/7 at NZ power rates. Internet = existing home line; Tailscale = free tier. |
 | **Domain** | **$0** | Railway subdomain (`*.up.railway.app`). Custom domain would add ~$1–2/mo. |
-| **Platform infra subtotal** | **~$35–65 / month** | Everything RecruitMe itself costs to run. |
+| **Platform infra subtotal** | **~$45–75 / month** | Everything RecruitMe itself costs to run (recurring). |
+| | | |
+| **Mini-PC hardware** (one-off) | **$150 once** | The mini-PC itself — already purchased; one-time capital cost, not recurring (≈ $4–6/mo amortised over 2–3 yrs). |
 | | | |
 | **SEEK Talent Search** | *operator's existing subscription* | External recruiting tool (the box logs into the operator's SEEK account). Significant but pre-existing; per-search/profile credits apply — the app is built to be credit-safe. |
 | **LinkedIn** | *operator's existing account* | Scraper uses the operator's logged-in LinkedIn; no extra app cost. |
 
-**Bottom line:** the RecruitMe *platform* runs at roughly **$35–65/month** in direct infrastructure + AI cost, on top of the operator's existing SEEK/LinkedIn subscriptions. The single largest and most variable line is the Claude API, which is bounded by the daily spend cap and scales with how much scoring is done.
+**Bottom line:** the RecruitMe *platform* runs at roughly **$45–75/month** in direct infrastructure + AI cost (plus a one-off **$150** mini-PC, already purchased), on top of the operator's existing SEEK/LinkedIn/JobAdder subscriptions. The single largest and most variable line is the Claude API, which is bounded by the daily spend cap and scales with how much scoring is done.
 
 ---
 
