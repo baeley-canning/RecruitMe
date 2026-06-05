@@ -33,7 +33,6 @@ import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueuePanel } from "@/components/fetch-queue-panel";
 import type { FetchStatus } from "@/components/fetch-queue-panel";
-import { SearchCard } from "@/components/job/search-card";
 import { SearchFunnelCard } from "@/components/job/search-funnel-card";
 import { SavedSearchesCard } from "@/components/job/saved-searches-card";
 import { OnboardingCard } from "@/components/job/onboarding-card";
@@ -1941,13 +1940,37 @@ ${toHtml(job.rawJd)}
 
       {parsedRole && (
         <div id="job-search-card">
-          <SearchCard
-            jobId={id}
-            parsedRole={parsedRole}
-            jobLocation={job.location}
-            jobStatus={job.status}
-            onComplete={fetchJob}
-          />
+          {/* Action-plan #3 (design-panel winner: "Inline Modal-Based Unified
+              Search"). The old SearchCard's "Find Candidates" box returned
+              recycled pool results + fired invisible background discovery + told
+              the recruiter to "re-run in a few minutes" — a dead end. This
+              prominent CTA opens the WORKING multi-source search (the same modal
+              the "Search talent" button uses): pool instantly + live LinkedIn/
+              SEEK with visible streaming status. The legacy SearchCard component
+              + its /api/jobs/[id]/search route are left intact in git for a
+              one-commit rollback. */}
+          <Card>
+            <CardBody className="flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-accent-subtle text-accent flex items-center justify-center flex-shrink-0">
+                  <Search className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-md font-semibold text-text-primary">Step 2 — Find Candidates</h3>
+                  <p className="text-sm text-text-secondary">Search your library plus live LinkedIn &amp; SEEK in one place — results stream in as they arrive.</p>
+                </div>
+              </div>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => openModal("multiSearch")}
+                disabled={job.status === "closed"}
+              >
+                <Search className="w-3.5 h-3.5" />
+                Find Candidates
+              </Button>
+            </CardBody>
+          </Card>
         </div>
       )}
 
