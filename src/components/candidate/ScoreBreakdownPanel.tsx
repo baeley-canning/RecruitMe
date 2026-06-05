@@ -88,6 +88,42 @@ function NiceToHaveCoverageChips({ coverage }: { coverage: NonNullable<ScoreBrea
   );
 }
 
+// Coverage summary "ribbon" — action-plan #5 (design-panel winner: UI-only, zero
+// scoring-math change). The hero trust signal a recruiter acts on at a glance:
+// how many must-haves are actually confirmed, plus the data quality the score is
+// based on. Pure presentation over the already-computed must_have_coverage — no
+// caps, no formula change, scores stay byte-identical.
+function CoverageSummary({
+  coverage,
+  dataQuality,
+}: {
+  coverage: ScoreBreakdown["must_have_coverage"];
+  dataQuality: ScoreBreakdown["data_quality"];
+}) {
+  const total = coverage.length;
+  if (total === 0) return null;
+  const met    = coverage.filter((c) => c.status === "confirmed" || c.status === "equivalent").length;
+  const likely = coverage.filter((c) => c.status === "likely" || c.status === "likely_historical").length;
+  const pct = (n: number) => `${(n / total) * 100}%`;
+  const qualityLabel =
+    dataQuality === "full_profile" ? "full profile" :
+    dataQuality === "minimal"      ? "estimate · headline only" : "snippet";
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <span className="text-sm font-semibold text-text-primary">
+          {met} / {total} must-haves confirmed{likely > 0 ? ` · ${likely} likely` : ""}
+        </span>
+        <span className="text-2xs text-text-tertiary whitespace-nowrap">{qualityLabel}</span>
+      </div>
+      <div className="flex h-2 w-full rounded-full overflow-hidden bg-surface-sunken">
+        {met > 0 && <div className="bg-success h-full" style={{ width: pct(met) }} title={`${met} confirmed / equivalent`} />}
+        {likely > 0 && <div className="bg-accent h-full" style={{ width: pct(likely) }} title={`${likely} likely`} />}
+      </div>
+    </div>
+  );
+}
+
 // ─── Public exports used by MH_CONFIG in the drawer too ───────────────────────
 export { MH_CONFIG };
 
@@ -163,6 +199,10 @@ export function ScoreBreakdownPanel({
             </div>
           ) : breakdown ? (
             <div className="space-y-3">
+              {/* #5 hero: must-have coverage summary, before the per-requirement detail */}
+              {breakdown.must_have_coverage.length > 0 && (
+                <CoverageSummary coverage={breakdown.must_have_coverage} dataQuality={breakdown.data_quality} />
+              )}
               {/* Coverage chips: must-haves + nice-to-haves */}
               <div className="space-y-2">
                 {breakdown.must_have_coverage.length > 0 && (
