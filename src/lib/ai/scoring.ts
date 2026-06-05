@@ -754,8 +754,13 @@ export async function scoreCandidateStructured(
   weights?: ScoringWeights,
   orgId?: string | null,         // used to retrieve recruiter memory examples
   recruiterContext?: string,     // pre-fetched context (avoids DB call inside scoring)
+  allowThin = false,             // SEEK/snippet cards carry only name+headline+location.
+                                 // When true, score that thin text as a low-confidence
+                                 // ESTIMATE (classifies "minimal" -> Haiku -> capped at 40)
+                                 // instead of throwing. Default false preserves the 100-char
+                                 // floor for every other caller.
 ): Promise<ScoreBreakdown> {
-  if (!profileText || profileText.trim().length < 100) {
+  if (!profileText || profileText.trim().length < (allowThin ? 20 : 100)) {
     throw new Error("Profile text too short to score");
   }
 

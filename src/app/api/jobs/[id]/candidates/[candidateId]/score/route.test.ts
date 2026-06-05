@@ -164,9 +164,44 @@ describe("candidate re-score route", () => {
       expect.any(Object),
       null,
       scoringConfigMocks.customWeights,
-      "org-1"
+      "org-1",
+      undefined,
+      true, // 22-char stub profile is < 100 chars → scored as a thin estimate
     );
     expect(body.scoreBreakdown).toContain("\"version\":2");
+  });
+
+  it("scores a snippet candidate with no profileText (SEEK card) as an estimate, not a 400", async () => {
+    const job = {
+      id: "job-1",
+      parsedRole: JSON.stringify({
+        title: "Software Engineer", location: "Wellington", location_rules: "Wellington office",
+        must_haves: ["React"], nice_to_haves: [], knockout_criteria: [], skills_required: ["React"], skills_preferred: [],
+      }),
+      salaryMin: null, salaryMax: null,
+    };
+    const snippet = {
+      id: "cand-seek", jobId: "job-1",
+      name: "Ada Lovelace", headline: "Senior Android Engineer", location: "Wellington, New Zealand",
+      profileText: "", profileTextHash: null, status: "new",
+    };
+    sessionMocks.requireCandidateAccess.mockResolvedValue({ job, candidate: snippet, error: null });
+    dbMocks.prisma.job.findUnique.mockResolvedValue(job);
+    dbMocks.prisma.candidate.findUnique.mockResolvedValue({ ...snippet, matchScore: 38 });
+
+    const req = new Request("http://localhost/api/jobs/job-1/candidates/cand-seek/score", { method: "POST" });
+    const res = await POST(req, { params: Promise.resolve({ id: "job-1", candidateId: "cand-seek" }) });
+
+    expect(res.status).toBe(200); // not 400 — the SEEK dead-end is gone
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      "Ada Lovelace\nSenior Android Engineer\nWellington, New Zealand",
+      expect.any(Object),
+      null,
+      scoringConfigMocks.customWeights,
+      "org-1",
+      undefined,
+      true,
+    );
   });
 
   it("skips the write when another scorer landed first (hash mismatch)", async () => {

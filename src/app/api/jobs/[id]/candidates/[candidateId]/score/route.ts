@@ -26,9 +26,22 @@ export async function POST(
   if (!job.parsedRole) {
     return NextResponse.json({ error: "Job has not been parsed yet." }, { status: 400 });
   }
-  if (!candidate.profileText) {
-    return NextResponse.json({ error: "Candidate has no profile text to score against." }, { status: 400 });
+  // Snippet candidates (e.g. SEEK Talent Search cards) carry no profileText —
+  // only name/headline/location. Rather than dead-end them, synthesise a thin
+  // profile from those fields and score it as a low-confidence ESTIMATE (it
+  // classifies as "minimal" data quality → Haiku → capped at 40, and the
+  // breakdown's data_quality flag lets the UI mark it). Only rows with no
+  // headline AND no location are rejected outright.
+  const scoreText = (candidate.profileText && candidate.profileText.trim().length > 0)
+    ? candidate.profileText
+    : [candidate.name, candidate.headline, candidate.location].filter(Boolean).join("\n");
+  if (!scoreText || scoreText.trim().length < 10) {
+    return NextResponse.json({ error: "Candidate has no profile text, headline, or location to score against." }, { status: 400 });
   }
+  // Thin text (synthetic SEEK card OR a short real profile, < 100 chars) is
+  // scored with allowThin so the scorer estimates it (minimal → Haiku → cap 40)
+  // rather than throwing "too short".
+  const allowThin = scoreText.trim().length < 100;
 
   // Per-event rate-limit + daily spend cap. Single-candidate score was
   // previously unguarded — a recruiter could mash the button repeatedly
@@ -62,7 +75,7 @@ export async function POST(
     // return the existing record. This is what makes re-pulling a
     // library candidate against the same job cost-free.
     const scoreCacheKey = buildScoreCacheKey({
-      profileText: candidate.profileText,
+      profileText: scoreText,
       parsedRole,
       salary,
       jobLocation: job.location,
@@ -88,8 +101,8 @@ export async function POST(
     // Ollama). The failover wrapper is the resilience layer; one primary
     // attempt + one secondary attempt is enough.
     const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-      scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId),
-      predictAcceptance(candidate.profileText!, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
+      scoreCandidateStructured(scoreText, parsedRole, salary, weights, auth.orgId, undefined, allowThin),
+      predictAcceptance(scoreText, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
     ]);
 
     if (rawBreakdown.status === "rejected") {
@@ -104,7 +117,7 @@ export async function POST(
         // would have, so the offloaded prompt is identical to what Claude
         // would have received.
         const recruiterContext = await getRecruitingContext(parsedRole, auth.orgId).catch(() => "");
-        const built = buildScorePrompt(candidate.profileText!, parsedRole, salary, weights, recruiterContext ?? "", auth.orgId);
+        const built = buildScorePrompt(scoreText, parsedRole, salary, weights, recruiterContext ?? "", auth.orgId);
         if (built.kind === "stub") {
           // Stage-1 gate produced a deterministic stub — no model needed. Score
           // it locally (no offload) so the recruiter still gets a number.
