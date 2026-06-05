@@ -5,6 +5,10 @@ interface ScoreBadgeProps {
   score: number | null | undefined;
   size?: "sm" | "md" | "lg";
   className?: string;
+  /** Thin-data estimate (SEEK card / snippet — scored from headline+location
+   *  only). Renders a muted "est" marker so a recruiter never mistakes a
+   *  keyword estimate for a verified full-profile score. Default false. */
+  estimate?: boolean;
 }
 
 // Score tier colours are now driven by the canonical scoreTier / scoreTierColor
@@ -12,7 +16,7 @@ interface ScoreBadgeProps {
 // truth (80/65/50) before consolidation — those breakpoints are the ones
 // score-utils.ts adopted, so this component's visuals are unchanged.
 
-export function ScoreBadge({ score, size = "md", className }: ScoreBadgeProps) {
+export function ScoreBadge({ score, size = "md", className, estimate = false }: ScoreBadgeProps) {
   // Sizing — kept dense per design system. Numbers always use mono +
   // tabular-nums so digits line up across rows.
   const sizeClasses = {
@@ -40,12 +44,15 @@ export function ScoreBadge({ score, size = "md", className }: ScoreBadgeProps) {
       className={cn(
         "inline-flex items-baseline gap-0.5 font-medium",
         scoreTierColor(scoreTier(score, "match")),
+        estimate && "opacity-80",
         sizeClasses[size],
         className
       )}
+      title={estimate ? "Estimate — scored from headline & location only. Fetch the full profile to confirm." : undefined}
     >
       <span className="font-mono tabular-nums">{score}</span>
       <span className="text-text-tertiary text-2xs">%</span>
+      {estimate && <span className="text-2xs font-normal text-text-tertiary ml-0.5">est</span>}
     </span>
   );
 }

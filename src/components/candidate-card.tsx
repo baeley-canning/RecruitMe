@@ -720,7 +720,7 @@ function ProfileDrawer({
               )}
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <ScoreBadge score={candidate.matchScore} size="sm" />
+              <ScoreBadge score={candidate.matchScore} size="sm" estimate={!!breakdown && breakdown.data_quality !== "full_profile"} />
               <ProvenancePill source={breakdown?.scoredBy} context="match" />
               {!hasFetchedProfile && (
                 <FetchPriorityBadge score={candidate.fetchPriorityScore} reason={fetchPriorityReason} />
