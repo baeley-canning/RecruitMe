@@ -20,6 +20,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ControlPanel from "./ControlPanel";
 
 interface Stats {
   ts: string;
@@ -180,6 +181,9 @@ export default function BoxDashboardPage() {
           <span className="text-xs opacity-70">uptime {fmtUptime(s.system.uptimeSec)}</span>
         </div>
       </div>
+
+      {/* Remote control (box-only; hidden off-box) */}
+      <ControlPanel />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         {/* Today */}
