@@ -27,7 +27,7 @@ import {
 import { getCandidatePhotoUrl } from "./candidate-photo";
 import { looksLikeCapturedName, sanitizeCardField } from "./linkedin-capture";
 import { locationMatches } from "./nz-locations";
-import type { ParsedQuery } from "./boolean-query";
+import { parseBooleanQuery, scoreTextRelevance, type ParsedQuery } from "./boolean-query";
 import type { LibrarySearchResult } from "./talent-search/library";
 
 export type SourceKey = "library" | "linkedin" | "seek";
@@ -182,8 +182,14 @@ export async function attachScraperHits(args: {
   // whose location doesn't match the run's requested location, so a "Wellington"
   // search can't surface Auckland/Christchurch profiles (the Library leg already
   // filters this way). "All NZ" runs (null location) keep everything.
-  const run = await prisma.searchRun.findUnique({ where: { id: args.searchRunId }, select: { location: true } });
+  const run = await prisma.searchRun.findUnique({ where: { id: args.searchRunId }, select: { location: true, rawQuery: true } });
   const runLocation = run?.location ?? null;
+  // Parse the run's query once so each unscored scraper card gets a cheap, local
+  // relevance (0..1). This is what lets LinkedIn/SEEK rows interleave with the
+  // scored library rows by quality instead of clumping at the bottom unranked
+  // (loadRunSnapshot sorts by matchScore ?? relevance×100). It's a keyword
+  // estimate, not a vetted score — so we set relevance, NOT matchScore.
+  const parsedQuery = run?.rawQuery ? parseBooleanQuery(run.rawQuery) : null;
   for (const url of args.urls) {
     const mergeKey = scraperMergeKey({
       linkedinUrl: args.source === "linkedin" ? url : null,
@@ -199,11 +205,17 @@ export async function attachScraperHits(args: {
     const name = looksLikeCapturedName(card?.name) ? card!.name! : null;
     const headline = sanitizeCardField(card?.headline);
     const location = sanitizeCardField(card?.location);
+    // Local relevance from the harvested card text (null if we couldn't parse
+    // the query). COALESCE in the conflict clause means a pre-existing library
+    // row keeps its own relevance — only a fresh scraper-only row takes this.
+    const relevance = parsedQuery
+      ? scoreTextRelevance(parsedQuery, [name, headline, location].filter(Boolean).join(" "))
+      : null;
     await prisma.$executeRaw`
       INSERT INTO "SearchRunResult"
-        ("id","searchRunId","mergeKey","sources","profileUrl","name","headline","location","createdAt","updatedAt")
+        ("id","searchRunId","mergeKey","sources","profileUrl","name","headline","location","relevance","createdAt","updatedAt")
       VALUES (${randomUUID()}, ${args.searchRunId}, ${mergeKey},
-              ${JSON.stringify([args.source])}, ${url}, ${name}, ${headline}, ${location}, now(), now())
+              ${JSON.stringify([args.source])}, ${url}, ${name}, ${headline}, ${location}, ${relevance}, now(), now())
       ON CONFLICT ("searchRunId","mergeKey") DO UPDATE SET
         "sources"   = (
           SELECT to_jsonb(array(SELECT DISTINCT unnest(
@@ -216,6 +228,7 @@ export async function attachScraperHits(args: {
         "name"       = COALESCE("SearchRunResult"."name", EXCLUDED."name"),
         "headline"   = COALESCE("SearchRunResult"."headline", EXCLUDED."headline"),
         "location"   = COALESCE("SearchRunResult"."location", EXCLUDED."location"),
+        "relevance"  = COALESCE("SearchRunResult"."relevance", EXCLUDED."relevance"),
         "updatedAt"  = now()
     `;
   }
@@ -544,7 +557,10 @@ export async function loadRunSnapshot(
 
   const rows = await prisma.searchRunResult.findMany({
     where: { searchRunId: runId },
-    orderBy: [{ rank: "asc" }, { matchScore: "desc" }, { relevance: "desc" }],
+    // Base fetch order only; the authoritative unified ranking (matchScore for
+    // scored library rows, relevance×100 for unscored scraper cards, on ONE
+    // axis) is applied in JS below — Prisma can't COALESCE across the two.
+    orderBy: [{ matchScore: "desc" }, { relevance: "desc" }, { rank: "asc" }],
   });
 
   // Batch-fetch photoFileId for the candidate-backed rows so result cards can
@@ -578,6 +594,24 @@ export async function loadRunSnapshot(
       photoFileId: r.candidateId ? photoByCandidate.get(r.candidateId) ?? null : null,
     }),
   }));
+  // Unified ranking across sources: a scored library row sorts by its matchScore
+  // (0-100); an unscored LinkedIn/SEEK card sorts by its local relevance scaled
+  // to the same axis (×100). This interleaves all sources by match quality
+  // instead of the old rank-first ordering that dumped every unscored scraper
+  // row below the entire library block. Ties: a vetted score beats an equal
+  // estimate; then library rank; then id for stability.
+  const unifiedKey = (r: SearchRunResultDTO) =>
+    r.matchScore ?? Math.round((r.relevance ?? 0) * 100);
+  results.sort((a, b) => {
+    const diff = unifiedKey(b) - unifiedKey(a);
+    if (diff !== 0) return diff;
+    const vetted = (a.matchScore !== null ? 1 : 0) - (b.matchScore !== null ? 1 : 0);
+    if (vetted !== 0) return -vetted;
+    const ar = a.rank ?? Number.MAX_SAFE_INTEGER;
+    const br = b.rank ?? Number.MAX_SAFE_INTEGER;
+    if (ar !== br) return ar - br;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
   return { run: dto, results };
 }
 

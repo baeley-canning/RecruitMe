@@ -376,3 +376,31 @@ export function parseBooleanQuery(query: string): ParsedQuery {
     errors,
   };
 }
+
+/**
+ * Cheap, AI-free relevance of a free-text blob (e.g. a search card's
+ * name + headline + location) against a parsed boolean query. Returns 0..1.
+ *
+ * Used to rank scraper (LinkedIn/SEEK) cards — which arrive unscored — on the
+ * SAME axis as library matchScore, so the merged result list orders by match
+ * quality instead of clumping into source blocks. It's a keyword-overlap
+ * estimate, NOT a semantic assessment: a mustNot hit zeroes it; otherwise it's
+ * the fraction of mustHave terms + anyOf groups that appear in the text. Terms
+ * in ParsedQuery are already lowercased, so we lowercase the haystack too.
+ */
+export function scoreTextRelevance(parsed: ParsedQuery, text: string): number {
+  const hay = (text || "").toLowerCase();
+  if (!hay.trim()) return 0;
+  // A forbidden term present → not a match at all.
+  for (const term of parsed.mustNot) {
+    if (term && hay.includes(term)) return 0;
+  }
+  const must = parsed.mustHave.filter(Boolean);
+  const groups = parsed.anyOf.filter((g) => g.some(Boolean));
+  const total = must.length + groups.length;
+  if (total === 0) return 0; // nothing to match on
+  let hits = 0;
+  for (const term of must) if (hay.includes(term)) hits += 1;
+  for (const group of groups) if (group.some((t) => t && hay.includes(t))) hits += 1;
+  return hits / total;
+}

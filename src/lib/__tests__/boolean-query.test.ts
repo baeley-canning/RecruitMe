@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseBooleanQuery } from "../boolean-query";
+import { parseBooleanQuery, scoreTextRelevance } from "../boolean-query";
 
 describe("parseBooleanQuery — happy paths", () => {
   it("empty query → empty result, no errors", () => {
@@ -227,5 +227,47 @@ describe("parseBooleanQuery — edge cases", () => {
     const r = parseBooleanQuery('"X" OR ("Y" OR "Z")');
     expect(r.anyOf).toEqual([["x", "y", "z"]]);
     expect(r.mustHave).toEqual([]);
+  });
+});
+
+describe("scoreTextRelevance — local relevance for unscored scraper cards", () => {
+  const q = parseBooleanQuery('"PHP" OR "Laravel" OR "SilverStripe" AND ("Senior" OR "Intermediate")');
+
+  it("returns 0 for empty text", () => {
+    expect(scoreTextRelevance(q, "")).toBe(0);
+    expect(scoreTextRelevance(q, "   ")).toBe(0);
+  });
+
+  it("a card hitting every group scores 1", () => {
+    const score = scoreTextRelevance(
+      parseBooleanQuery('"PHP" AND ("Senior" OR "Lead")'),
+      "Senior PHP Developer at Acme",
+    );
+    expect(score).toBe(1);
+  });
+
+  it("partial match scores between 0 and 1", () => {
+    // mustHave "react" present, the (aws OR gcp) group absent → 1 of 2 satisfied.
+    const score = scoreTextRelevance(
+      parseBooleanQuery('"React" AND ("AWS" OR "GCP")'),
+      "React frontend engineer, Wellington",
+    );
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThan(1);
+    expect(score).toBeCloseTo(0.5, 5);
+  });
+
+  it("a mustNot hit zeroes the score even with other matches", () => {
+    const score = scoreTextRelevance(
+      parseBooleanQuery('"PHP" -"recruiter"'),
+      "PHP developer and technical recruiter",
+    );
+    expect(score).toBe(0);
+  });
+
+  it("higher relevance for a stronger card → orders scraper cards sensibly", () => {
+    const strong = scoreTextRelevance(q, "Senior Full-Stack Developer — PHP | Laravel | SilverStripe");
+    const weak = scoreTextRelevance(q, "Office Manager");
+    expect(strong).toBeGreaterThan(weak);
   });
 });

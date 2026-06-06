@@ -43,6 +43,17 @@ function ResultRow({ r, enriching }: { r: SearchRunResultDTO; enriching: boolean
             <Badge key={s} className={SOURCE_BADGE[s]}>{s}</Badge>
           ))}
         </div>
+        {/* Unscored scraper cards carry a local keyword-relevance estimate (used
+            to interleave them with the scored library rows). Show it muted + as
+            an estimate — never a "Strong/Good match" tier, which it hasn't earned. */}
+        {r.matchScore === null && r.relevance !== null && (
+          <span
+            className="text-2xs text-text-tertiary"
+            title="Keyword-relevance estimate — this card isn't fully scored yet, so it's ranked by how well its headline matches your query."
+          >
+            ~{Math.round(r.relevance * 100)}% rel
+          </span>
+        )}
         {!importable && r.profileUrl && (
           <a
             href={r.profileUrl}
