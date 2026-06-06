@@ -19,7 +19,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const dbMocks = vi.hoisted(() => ({
   prisma: {
     $executeRaw: vi.fn().mockResolvedValue(0),
-    searchRun: { update: vi.fn().mockResolvedValue({}) },
+    searchRun: { update: vi.fn().mockResolvedValue({}), findUnique: vi.fn().mockResolvedValue(null) },
   } as Record<string, unknown>,
 }));
 vi.mock("@/lib/db", () => dbMocks);
