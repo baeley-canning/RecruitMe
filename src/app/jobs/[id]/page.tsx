@@ -241,6 +241,7 @@ export default function JobDetailPage({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkStatusChanging, setBulkStatusChanging] = useState(false);
+  const [bulkCapturing, setBulkCapturing] = useState(false);
   const [salaryMin, setSalaryMin] = useState<string>("");
   const [salaryMax, setSalaryMax] = useState<string>("");
   const [editingSalary, setEditingSalary] = useState(false);
@@ -1067,6 +1068,40 @@ export default function JobDetailPage({
     setSelectedIds(new Set());
     setBulkDeleting(false);
     await fetchJob();
+  };
+
+  // Action-plan #6: bulk profile capture. Enqueues paced LinkedIn/JobAdder
+  // profile fetches for the selected thin candidates (SEEK excluded — credits).
+  // The single-browser scraper works through them at a safe pace, so it's
+  // honest about timing: they hydrate over the next several minutes, then can
+  // be re-scored. No polling UI in v1 — refresh to see them fill in.
+  const handleBulkCapture = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkCapturing(true);
+    try {
+      const res = await fetch(`/api/jobs/${id}/candidates/bulk-capture`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selectedIds] }),
+      });
+      if (!res.ok) { showToast("Couldn't start profile capture — please try again", "error"); return; }
+      const data = await res.json() as { enqueued: number; alreadyFull: number; alreadyQueued: number; noCapturableUrl: number };
+      if (data.enqueued === 0) {
+        showToast(
+          data.noCapturableUrl > 0
+            ? "No LinkedIn/JobAdder profile to capture for those (SEEK isn't supported yet)."
+            : "Nothing to capture — those already have full profiles or a fetch is in progress.",
+          "info",
+        );
+      } else {
+        showToast(`Capturing ${data.enqueued} full profile${data.enqueued > 1 ? "s" : ""} — the scraper works through them at a safe pace (~½–1 min each), so they'll fill in over the next several minutes. Refresh to see them, then Re-score.`, "success");
+        setSelectedIds(new Set());
+      }
+    } catch {
+      showToast("Couldn't start profile capture — please try again", "error");
+    } finally {
+      setBulkCapturing(false);
+    }
   };
 
   const handleBulkStatusChange = async (status: string) => {
@@ -2049,6 +2084,16 @@ ${toHtml(job.rawJd)}
                   <option value="hired">Hired</option>
                   <option value="rejected">Rejected</option>
                 </select>
+                <Button
+                  size="md"
+                  variant="secondary"
+                  onClick={handleBulkCapture}
+                  loading={bulkCapturing}
+                  disabled={bulkCapturing || bulkDeleting || bulkStatusChanging}
+                  title="Fetch full LinkedIn / JobAdder profiles for the selected candidates (paced to stay safe; SEEK not included)"
+                >
+                  {bulkCapturing ? "Starting…" : `Capture ${selectedIds.size}`}
+                </Button>
                 <Button
                   size="md"
                   variant="danger"
