@@ -92,6 +92,7 @@ model ScrapeJob {
   kind        String   @default("profile") // "profile" (scrape a URL) | "search" (run a boolean search, harvest URLs) | "score" (run a Llama scoring prompt on the box, POST back raw text)
   profileUrl  String? // populated when kind == "profile" — the URL being scraped
   searchQuery String? // populated when kind == "search" — the boolean query the worker runs
+  searchLocation String? // kind == "search": region filter (e.g. "Wellington") for jobs WITHOUT a SearchRun (the job-context modal). SearchRun jobs enrich location from the run instead.
   scorePayload String? // JSON for kind=score: {system,prompt,temperature,maxTokens,model?,finalizeCtx}
   status      String   @default("pending") // pending | processing | completed | failed
   result      String? // JSON: { profileText, name, headline, location, seekUrl?, linkedinUrl? }

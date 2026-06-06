@@ -87,7 +87,10 @@ export async function GET(req: Request) {
   }
   const enriched = jobs.map((j) => ({
     ...j,
-    searchLocation: j.searchRunId ? locByRun.get(j.searchRunId) ?? null : null,
+    // Prefer the location stamped on the job (the job-context "Search talent"
+    // modal sets it directly); otherwise enrich from the job's SearchRun (the
+    // durable /search flow). Either way the worker scopes SEEK to the region.
+    searchLocation: j.searchLocation ?? (j.searchRunId ? locByRun.get(j.searchRunId) ?? null : null),
   }));
 
   return NextResponse.json({ jobs: enriched });

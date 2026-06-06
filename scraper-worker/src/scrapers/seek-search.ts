@@ -135,11 +135,16 @@ export async function scrapeSeekSearch(
       await locBox.click({ timeout: 8_000 }).catch(() => {});
       await locBox.fill(location, { timeout: 8_000 }).catch(() => {});
       await randomDelay(1_800, 2_800); // let the autocomplete dropdown render
+      // The region-wide option is a <li role="option">All <region></li> (probe-
+      // confirmed). waitFor (not a bare count check) so a slow dropdown doesn't
+      // make us skip the pick and silently fall back to a nation-wide search.
       const allOpt = page.getByText(new RegExp(`^All\\s+${escapeRegex(location)}`, "i")).first();
       let picked = false;
-      if (await allOpt.count().catch(() => 0)) {
-        await allOpt.click({ timeout: 5_000 }).then(() => { picked = true; }).catch(() => {});
-      }
+      try {
+        await allOpt.waitFor({ state: "visible", timeout: 6_000 });
+        await allOpt.click({ timeout: 5_000 });
+        picked = true;
+      } catch { /* option didn't render in time — fall back to keyboard select */ }
       if (!picked) {
         // fall back to the first suggestion
         await page.keyboard.press("ArrowDown").catch(() => {});
@@ -161,6 +166,18 @@ export async function scrapeSeekSearch(
 
   if (AUTH_WALL.test(page.url())) {
     throw new RateLimitError("seek_challenge: auth wall / login redirect during search (run login.ts seek)");
+  }
+
+  // Verify the region filter actually applied: SEEK puts locationList=<id> in
+  // the results URL when it accepted the pick. If a location was requested but
+  // it's absent, the search is running NATION-WIDE — log loudly so capped
+  // nation-wide results aren't silently presented as region-scoped (the bug
+  // behind "100 harvested vs 33 real Wellington matches").
+  if (location && !/[?&]locationList=/.test(page.url())) {
+    log.warn(
+      `seek-search: location "${location}" was NOT applied (no locationList in results URL) — ` +
+        `search ran nation-wide; harvest will be over-broad and capped. URL: ${page.url()}`,
+    );
   }
 
   // Harvest page 1, then paginate by incrementing pageNumber in the URL (the

@@ -86,6 +86,11 @@ export async function enqueueSearchJob(args: {
    *  harvested results attach to the run. When a dedup hit is found whose
    *  searchRunId is null, we stamp it so the live run still owns the work. */
   searchRunId?: string | null;
+  /** Region filter (e.g. "Wellington") for the worker to scope SEEK. Carried
+   *  on the job for flows WITHOUT a SearchRun (the job-context modal); SearchRun
+   *  flows enrich location from the run at claim time instead. Without this the
+   *  modal's SEEK search ran nation-wide and hit its 100-card harvest cap. */
+  searchLocation?: string | null;
 }): Promise<{ id: string } | null> {
   const priority = args.priority ?? 0;
   try {
@@ -97,16 +102,19 @@ export async function enqueueSearchJob(args: {
         searchQuery: args.searchQuery,
         status: { in: ["pending", "processing"] },
       },
-      select: { id: true, priority: true, searchRunId: true },
+      select: { id: true, priority: true, searchRunId: true, searchLocation: true },
     });
     if (existing) {
       // Promote priority + adopt the live run's searchRunId if the existing
       // row had none. Without the searchRunId stamp, a background flywheel
       // job would absorb the live run's enqueue and the run would complete
       // library-only, silently dropping discovery.
-      const data: { priority?: number; searchRunId?: string } = {};
+      const data: { priority?: number; searchRunId?: string; searchLocation?: string } = {};
       if (priority > existing.priority) data.priority = priority;
       if (args.searchRunId && existing.searchRunId == null) data.searchRunId = args.searchRunId;
+      // Stamp the location onto a location-less existing job (e.g. a background
+      // job being promoted to a located live search) so it scopes correctly.
+      if (args.searchLocation && existing.searchLocation == null) data.searchLocation = args.searchLocation;
       if (Object.keys(data).length > 0) {
         await prisma.scrapeJob.update({ where: { id: existing.id }, data });
       }
@@ -124,6 +132,7 @@ export async function enqueueSearchJob(args: {
         status: "pending",
         priority,
         searchRunId: args.searchRunId ?? null,
+        searchLocation: args.searchLocation ?? null,
       },
       select: { id: true },
     });
@@ -224,6 +233,7 @@ export interface ClaimedScrapeJob {
   kind: string;
   profileUrl: string | null;
   searchQuery: string | null;
+  searchLocation: string | null;
   searchRunId: string | null;
   priority: number;
   retryCount: number;
@@ -272,7 +282,7 @@ export async function claimScrapeJobs(
         LIMIT ${priorityLimit}
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount", "scorePayload", "candidateId"
+      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchLocation", "searchRunId", priority, "retryCount", "scorePayload", "candidateId"
     `;
 
     const reserved = await tx.$queryRaw<ClaimedScrapeJob[]>`
@@ -284,7 +294,7 @@ export async function claimScrapeJobs(
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchRunId", priority, "retryCount", "scorePayload", "candidateId"
+      RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchLocation", "searchRunId", priority, "retryCount", "scorePayload", "candidateId"
     `;
 
     return [...priorityClaim, ...reserved];

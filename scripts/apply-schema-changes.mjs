@@ -1018,6 +1018,16 @@ await step("CandidateFile.storageKey column (blob-store offload)", async () => {
   `;
 });
 
+// ScrapeJob.searchLocation — lets a kind="search" job carry its region filter
+// when it has no SearchRun to enrich from (the job-context "Search talent"
+// modal). Without it, SEEK ran nation-wide and harvested its 100-card cap
+// instead of the location-scoped matches. Nullable TEXT add = metadata-only.
+await step("ScrapeJob.searchLocation column (job-context search region filter)", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "ScrapeJob" ADD COLUMN IF NOT EXISTS "searchLocation" TEXT
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

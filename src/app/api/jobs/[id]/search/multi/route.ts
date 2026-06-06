@@ -145,6 +145,7 @@ export async function POST(
         orgId: auth.orgId,
         platform: "linkedin",
         searchQuery: queryRaw,
+        searchLocation: location,
         requestedBy: auth.userId,
         priority: 100,
       });
@@ -155,6 +156,9 @@ export async function POST(
         orgId: auth.orgId,
         platform: "seek",
         searchQuery: queryRaw,
+        // Without this the modal's SEEK leg ran nation-wide and harvested its
+        // 100-card cap; now it scopes to the recruiter's region like the library.
+        searchLocation: location,
         requestedBy: auth.userId,
         priority: 100,
       });
