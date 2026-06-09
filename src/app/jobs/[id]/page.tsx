@@ -196,6 +196,9 @@ export default function JobDetailPage({
   // Overflow (⋯) menu for low-frequency header actions
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
+  // Jobs whose role search has already auto-fired this session — so re-opening
+  // the search modal doesn't re-enqueue a fresh live LinkedIn scrape each time.
+  const autoRanJobsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!overflowOpen) return;
     const close = (e: MouseEvent) => {
@@ -2431,6 +2434,8 @@ ${toHtml(job.rawJd)}
           jobId={id}
           jobLocation={job.location ?? null}
           parsedRole={parsedRole}
+          autoRun={!autoRanJobsRef.current.has(id)}
+          onAutoRan={() => autoRanJobsRef.current.add(id)}
           onClose={() => closeModal("multiSearch")}
           onComplete={fetchJob}
         />

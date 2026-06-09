@@ -190,6 +190,13 @@ interface UnifiedSearchModalProps {
    *  The boolean field is demoted to a collapsed "Refine (advanced)" control.
    *  Null/absent (unparsed job) → manual boolean mode (the original behaviour). */
   parsedRole?: ParsedRole | null;
+  /** Whether to auto-fire the role search on open. The parent passes false on
+   *  re-opens of the same job so a plain re-open doesn't re-enqueue a fresh live
+   *  LinkedIn scrape — the boolean stays pre-filled, the recruiter hits Search. */
+  autoRun?: boolean;
+  /** Called once when the role search actually auto-fires, so the parent can
+   *  remember it ran for this job (and pass autoRun=false next time). */
+  onAutoRan?: () => void;
   onComplete: () => void;
   onClose: () => void;
 }
@@ -198,14 +205,19 @@ export function UnifiedSearchModal({
   jobId,
   jobLocation,
   parsedRole,
+  autoRun = true,
+  onAutoRan,
   onComplete,
   onClose,
 }: UnifiedSearchModalProps) {
-  // Role-driven mode: a parsed JD is available, so we search from the role
-  // instead of asking the recruiter to craft a boolean.
-  const roleMode = !!parsedRole;
-  // Form state
-  const [query, setQuery] = useState("");
+  // Build the role boolean once. Role-driven mode is gated on a NON-EMPTY query:
+  // a parsed role that yields nothing (e.g. a title that cleans away) falls back
+  // to manual entry, NOT a permanent "Searching…" dead-end.
+  const roleQuery = useMemo(() => (parsedRole ? parsedRoleToBooleanQuery(parsedRole) : ""), [parsedRole]);
+  const roleMode = !!roleQuery;
+  // Form state — pre-fill the boolean from the role so the (collapsed) Refine
+  // field and the manual Search button both work even when we don't auto-run.
+  const [query, setQuery] = useState(roleQuery);
   const [location, setLocation] = useState(jobLocation ?? "");
   const [useLibrary, setUseLibrary] = useState(true);
   const [useLinkedIn, setUseLinkedIn] = useState(true);
@@ -215,7 +227,9 @@ export function UnifiedSearchModal({
 
   // Results state
   const [response, setResponse] = useState<SearchResponse | null>(null);
-  const [searching, setSearching] = useState(false);
+  // Start in the searching state when we're about to auto-run, so the spinner
+  // shows from the first paint instead of flashing the empty-state copy first.
+  const [searching, setSearching] = useState(roleMode && autoRun);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
@@ -298,19 +312,20 @@ export function UnifiedSearchModal({
     await runSearch(query);
   };
 
-  // Role-driven auto-run: with a parsed JD, build the boolean from the role and
-  // fire the search ONCE on open — the recruiter searches straight from the
-  // role, no boolean typed. Guarded so it can't re-fire on re-render. Unparsed
-  // jobs (no parsedRole, or a role that yields no query) fall through to manual.
+  // Role-driven auto-run: fire the role search ONCE on open — the recruiter
+  // searches straight from the role, no boolean typed. Gated on `autoRun` (the
+  // parent passes false on re-opens so a plain re-open doesn't re-enqueue a live
+  // scrape) and on roleMode (a non-empty produced query). One-shot ref guard.
   const autoRanRef = useRef(false);
   useEffect(() => {
-    if (autoRanRef.current || !parsedRole) return;
-    const roleQuery = parsedRoleToBooleanQuery(parsedRole);
-    if (!roleQuery) return;
+    if (!autoRun || !roleMode || autoRanRef.current) return;
     autoRanRef.current = true;
-    setQuery(roleQuery);
+    onAutoRan?.();
     void runSearch(roleQuery);
-  }, [parsedRole]);
+    // runSearch/onAutoRan intentionally excluded: the autoRanRef one-shot guard
+    // makes any re-run on their identity change a no-op.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRun, roleMode, roleQuery]);
 
   // Phase H — poll active scraper jobs until each settles.
   //
@@ -426,7 +441,7 @@ export function UnifiedSearchModal({
           </h3>
           <p className="text-xs text-text-secondary mt-0.5">
             {roleMode
-              ? "Searching straight from this role across your library and LinkedIn — tick SEEK to include it. Library matches are already scored for the role; pick the best and add them."
+              ? "Searching straight from this role across your library and LinkedIn — tick SEEK to include it. Pick the best matches to add, then Score for this role to rank them."
               : "Boolean search across your library and LinkedIn. Pick candidates to add to this job."}
           </p>
         </div>
@@ -532,7 +547,7 @@ export function UnifiedSearchModal({
         {/* Initial empty state (before first search) */}
         {!hasSearched && !searching && (
           <div className="text-center py-16 text-base text-text-tertiary">
-            {roleMode ? "Searching candidates for this role…" : "Enter a boolean query above and hit Search."}
+            {roleMode ? "Hit Search to find candidates for this role." : "Enter a boolean query above and hit Search."}
           </div>
         )}
 
