@@ -2002,7 +2002,7 @@ ${toHtml(job.rawJd)}
                 disabled={job.status === "closed"}
               >
                 <Search className="w-3.5 h-3.5" />
-                Find Candidates
+                Find candidates for this role
               </Button>
             </CardBody>
           </Card>
@@ -2430,6 +2430,7 @@ ${toHtml(job.rawJd)}
         <UnifiedSearchModal
           jobId={id}
           jobLocation={job.location ?? null}
+          parsedRole={parsedRole}
           onClose={() => closeModal("multiSearch")}
           onComplete={fetchJob}
         />

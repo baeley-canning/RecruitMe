@@ -22,6 +22,8 @@ import { LinkedInIcon } from "@/components/candidate/icons";
 import { showToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import type { UnifiedResult } from "@/lib/talent-search/aggregate";
+import { parsedRoleToBooleanQuery } from "@/lib/talent-search/role-query";
+import type { ParsedRole } from "@/lib/ai";
 
 // -----------------------------------------------------------------------------
 // API response shape (mirrors POST /api/jobs/[id]/search/multi)
@@ -183,6 +185,11 @@ function SyntaxHelp() {
 interface UnifiedSearchModalProps {
   jobId: string;
   jobLocation?: string | null;
+  /** When present, the modal searches STRAIGHT FROM THE ROLE: it auto-builds a
+   *  boolean from the parsed JD and runs the search on open — no boolean typed.
+   *  The boolean field is demoted to a collapsed "Refine (advanced)" control.
+   *  Null/absent (unparsed job) → manual boolean mode (the original behaviour). */
+  parsedRole?: ParsedRole | null;
   onComplete: () => void;
   onClose: () => void;
 }
@@ -190,9 +197,13 @@ interface UnifiedSearchModalProps {
 export function UnifiedSearchModal({
   jobId,
   jobLocation,
+  parsedRole,
   onComplete,
   onClose,
 }: UnifiedSearchModalProps) {
+  // Role-driven mode: a parsed JD is available, so we search from the role
+  // instead of asking the recruiter to craft a boolean.
+  const roleMode = !!parsedRole;
   // Form state
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState(jobLocation ?? "");
@@ -229,13 +240,9 @@ export function UnifiedSearchModal({
 
   const canSubmit = !searching && sourcesPicked.length > 0;
 
-  const handleSubmit = async (e?: FormEvent) => {
-    e?.preventDefault();
-    if (!canSubmit) return;
-    if (query.trim().length === 0) {
-      showToast("Enter a search query first", "info");
-      return;
-    }
+  const runSearch = async (searchQuery: string) => {
+    const q = searchQuery.trim();
+    if (!q || sourcesPicked.length === 0) return;
     setSearching(true);
     setSearchError(null);
     setResponse(null);
@@ -246,7 +253,7 @@ export function UnifiedSearchModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          query: query.trim(),
+          query: q,
           location: location.trim() || null,
           sources: sourcesPicked,
         }),
@@ -267,7 +274,7 @@ export function UnifiedSearchModal({
             id: j.id,
             status: "pending" as const,
             platform: j.platform,
-            searchQuery: query.trim(),
+            searchQuery: q,
             error: null,
             urls: null,
             elapsedMs: 0,
@@ -280,6 +287,30 @@ export function UnifiedSearchModal({
       setSearching(false);
     }
   };
+
+  const handleSubmit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!canSubmit) return;
+    if (query.trim().length === 0) {
+      showToast("Enter a search query first", "info");
+      return;
+    }
+    await runSearch(query);
+  };
+
+  // Role-driven auto-run: with a parsed JD, build the boolean from the role and
+  // fire the search ONCE on open — the recruiter searches straight from the
+  // role, no boolean typed. Guarded so it can't re-fire on re-render. Unparsed
+  // jobs (no parsedRole, or a role that yields no query) fall through to manual.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (autoRanRef.current || !parsedRole) return;
+    const roleQuery = parsedRoleToBooleanQuery(parsedRole);
+    if (!roleQuery) return;
+    autoRanRef.current = true;
+    setQuery(roleQuery);
+    void runSearch(roleQuery);
+  }, [parsedRole]);
 
   // Phase H — poll active scraper jobs until each settles.
   //
@@ -391,10 +422,12 @@ export function UnifiedSearchModal({
       <div className="flex items-start justify-between px-5 py-3 border-b border-separator">
         <div>
           <h3 id="unified-search-title" className="text-md font-semibold text-text-primary">
-            Search talent
+            {roleMode ? "Find candidates for this role" : "Search talent"}
           </h3>
           <p className="text-xs text-text-secondary mt-0.5">
-            Boolean search across your library and LinkedIn. Pick candidates to add to this job.
+            {roleMode
+              ? "Searching straight from this role across your library and LinkedIn — tick SEEK to include it. Library matches are already scored for the role; pick the best and add them."
+              : "Boolean search across your library and LinkedIn. Pick candidates to add to this job."}
           </p>
         </div>
         <button
@@ -408,17 +441,38 @@ export function UnifiedSearchModal({
 
       {/* Search form */}
       <form onSubmit={handleSubmit} className="px-5 py-3 border-b border-separator space-y-2">
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-text-tertiary absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={`"Tech Lead" OR "Engineering Manager"`}
-            autoFocus
-            className="w-full h-8 pl-8 pr-3 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
-          />
-        </div>
+        {roleMode ? (
+          // Role-driven mode: the boolean is auto-built from the JD and demoted
+          // to an optional "Refine" disclosure. Editing it + Search re-runs.
+          <details className="group">
+            <summary className="cursor-pointer select-none flex items-center gap-1 text-2xs text-text-tertiary hover:text-text-primary">
+              <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
+              Refine (advanced) — edit the search and re-run
+            </summary>
+            <div className="relative mt-2">
+              <Search className="w-3.5 h-3.5 text-text-tertiary absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`"Tech Lead" OR "Engineering Manager"`}
+                className="w-full h-8 pl-8 pr-3 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
+              />
+            </div>
+          </details>
+        ) : (
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-text-tertiary absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={`"Tech Lead" OR "Engineering Manager"`}
+              autoFocus
+              className="w-full h-8 pl-8 pr-3 rounded bg-surface-sunken border border-separator text-md text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
+            />
+          </div>
+        )}
 
         <div className="flex items-center gap-2 flex-wrap">
           <input
@@ -465,8 +519,8 @@ export function UnifiedSearchModal({
         </div>
 
         <div className="flex items-center gap-1.5 text-2xs text-text-tertiary">
-          <SyntaxHelp />
-          <span>Boolean syntax: quoted phrases, OR, AND, NOT, -term, ( )</span>
+          {!roleMode && <SyntaxHelp />}
+          {!roleMode && <span>Boolean syntax: quoted phrases, OR, AND, NOT, -term, ( )</span>}
           {sourcesPicked.length === 0 && (
             <span className="ml-auto text-warning">Select at least one source.</span>
           )}
@@ -478,7 +532,7 @@ export function UnifiedSearchModal({
         {/* Initial empty state (before first search) */}
         {!hasSearched && !searching && (
           <div className="text-center py-16 text-base text-text-tertiary">
-            Enter a boolean query above and hit Search.
+            {roleMode ? "Searching candidates for this role…" : "Enter a boolean query above and hit Search."}
           </div>
         )}
 
