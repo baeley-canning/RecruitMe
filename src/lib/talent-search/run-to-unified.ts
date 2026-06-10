@@ -11,6 +11,7 @@
 
 import type { SearchRunResultDTO } from "../search-run";
 import type { UnifiedResult } from "./aggregate";
+import { isLinkedInProfileUrl } from "../linkedin";
 
 /** Map a durable run result row to the modal's UnifiedResult. */
 export function runResultToUnified(r: SearchRunResultDTO): UnifiedResult {
@@ -26,10 +27,13 @@ export function runResultToUnified(r: SearchRunResultDTO): UnifiedResult {
     name: r.name ?? "Unnamed profile",
     headline: r.headline,
     location: r.location,
-    // The external profile link (LinkedIn / SEEK). The run stores it in one
-    // `profileUrl` column; the modal keys its "open profile" affordance + import
-    // off `linkedinUrl`, so route it there.
-    linkedinUrl: r.profileUrl,
+    // Only route a GENUINE LinkedIn profile URL into linkedinUrl. The run's
+    // single `profileUrl` column also holds SEEK/JobAdder URLs; the modal's
+    // import normalises linkedinUrl as a linkedin.com/in/<slug> link, so feeding
+    // it a SEEK URL produced the mangled `linkedin.com/in/https://...seek...`
+    // links. A non-LinkedIn scraper hit gets ingested into the library with its
+    // correct seekUrl by the worker and attaches by candidateId instead.
+    linkedinUrl: r.profileUrl && isLinkedInProfileUrl(r.profileUrl) ? r.profileUrl : null,
     jobAdderUrl: null,
     photoUrl: r.photoUrl,
     matchScore: r.matchScore,

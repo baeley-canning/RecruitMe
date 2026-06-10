@@ -30,7 +30,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
-import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { normaliseLinkedInUrl, isLinkedInProfileUrl } from "@/lib/linkedin";
 import { reportError } from "@/lib/error-reporting";
 
 // Mirrors UnifiedResult from src/lib/talent-search/aggregate.ts but only
@@ -141,7 +141,11 @@ async function importOne(
   accessibleOrgIds: string[] | null,
 ): Promise<ImportOutcome> {
   const isLibrary = row.sources.includes("library") && row.candidateId;
-  const isLinkedinOnly = !isLibrary && row.sources.includes("linkedin") && row.linkedinUrl;
+  // Require a GENUINE linkedin.com/in/<slug> URL before treating a row as
+  // LinkedIn-only — otherwise normaliseLinkedInUrl() wraps a non-LinkedIn URL
+  // (e.g. a SEEK talentsearch URL) into a broken `linkedin.com/in/https://…`
+  // value and persists it. Such rows fall through to "skipped" instead.
+  const isLinkedinOnly = !isLibrary && row.sources.includes("linkedin") && !!row.linkedinUrl && isLinkedInProfileUrl(row.linkedinUrl);
 
   // ── Library path ─────────────────────────────────────────────────────
   if (isLibrary) {

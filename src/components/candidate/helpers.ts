@@ -138,8 +138,17 @@ export function locationFitBadge(score: number | null | undefined) {
 
 // Library imports without a real LinkedIn URL store a synthetic `library:src-*`
 // key so the (jobId, linkedinUrl) unique constraint can dedupe re-imports.
-// Anything not starting with http(s) is internal — never render as a link.
+// Return a clickable href ONLY for a genuine single-scheme linkedin.com URL.
+// This rejects: synthetic keys (not http), non-LinkedIn URLs mis-filed into
+// linkedinUrl (e.g. a SEEK talentsearch URL), and the mangled
+// `https://www.linkedin.com/in/https://…seek…` values produced when a non-
+// LinkedIn URL was normalised as a LinkedIn slug — all of which rendered as
+// dead "This page doesn't exist" links.
 export function displayableLinkedinUrl(url: string | null | undefined): string | null {
   if (!url) return null;
-  return /^https?:\/\//i.test(url) ? url : null;
+  const u = url.trim();
+  if (!/^https?:\/\//i.test(u)) return null;            // synthetic key / internal
+  if (/:\/\/[^\s]*:\/\//i.test(u)) return null;          // a second scheme embedded → mangled
+  if (!/(^|\/\/|\.)linkedin\.com\//i.test(u)) return null; // only genuine LinkedIn hosts
+  return u;
 }

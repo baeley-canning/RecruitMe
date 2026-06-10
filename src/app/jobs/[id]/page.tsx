@@ -28,7 +28,6 @@ import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { showToast } from "@/components/ui/toast";
 import { confirm } from "@/components/ui/confirm-dialog";
 import { CandidateCard } from "@/components/candidate-card";
-import { orchestrateFetchProfile, cleanupAbortedAfterSuccess, buildBlankTabAdapter } from "@/lib/fetch-profile-orchestrator";
 import { AiStatusBanner } from "@/components/ai-status-banner";
 import { BulkUploadModal } from "@/components/bulk-upload-modal";
 import { FetchQueuePanel } from "@/components/fetch-queue-panel";
@@ -785,19 +784,20 @@ export default function JobDetailPage({
   // LinkedIn. Race fix: opening LinkedIn directly meant the extension's
   // /pending check could fire before the session existed, bailing in
   // manual-only mode.
+  // Fetch a full profile via the BOX scraper (mini-PC), NOT the browser
+  // extension. Enqueues a priority profile job through the same proven path as
+  // Bulk Capture, then polls until the worker scrapes + ingests the profile onto
+  // this candidate row. No LinkedIn tab, no extension — the recruiter can walk
+  // away and the box finishes it. handleCancelFetch just stops the UI poll (the
+  // queued job is harmless / deduped if re-requested).
   const handleFetchProfile = useCallback((candidateId: string) => {
     const candidate = job?.candidates.find((c) => c.id === candidateId);
     if (!candidate?.linkedinUrl) return;
     if (activeFetchesRef.current.has(candidateId)) return;
-    const linkedinUrl = candidate.linkedinUrl;
     setFetchPanelDismissed(false);
 
-    // Reserve the active slot synchronously so a second click can't race.
-    // The `aborted` flag lets handleCancelFetch interrupt an in-flight POST
-    // — without it, cancelling mid-POST would still navigate the orphan tab
-    // and leak a polling interval against a deleted placeholder.
     const placeholder: FetchEntry = {
-      sessionId: "",
+      sessionId: "", // no extension session — box path
       candidateId,
       startedAt: Date.now(),
       processingStartedAt: null,
@@ -808,115 +808,64 @@ export default function JobDetailPage({
       aborted: false,
     };
     activeFetchesRef.current.set(candidateId, placeholder);
-
     setFetchStatuses((prev) => ({
       ...prev,
-      [candidateId]: { state: "waiting", message: "Starting capture...", startedAt: Date.now() },
+      [candidateId]: { state: "waiting", message: "Queued on the box…", startedAt: placeholder.startedAt },
     }));
 
-    // Open the blank tab inside the user gesture. NO `noopener` — Chrome and
-    // Safari return null when noopener is set, which would mean window.open
-    // gives us nothing to navigate later. We need the WindowProxy to call
-    // location.href once the session POST returns. We deliberately do NOT
-    // pass the LinkedIn URL: that's the race we're closing.
-    const win = window.open("about:blank", "_blank");
+    const finishBox = (state: "done" | "error", message: string) => {
+      const e = activeFetchesRef.current.get(candidateId);
+      if (e?.pollInterval) clearInterval(e.pollInterval);
+      activeFetchesRef.current.delete(candidateId);
+      setFetchStatuses((prev) => ({ ...prev, [candidateId]: { state, message } }));
+      if (state === "done") void fetchJob();
+      clearCandidateStatus(candidateId, state === "done" ? 4000 : 7000, state);
+    };
 
-    // Bind the page's React state to the testable cleanup helper.
-    const cleanupAfterCancel = (sessionId: string | null) =>
-      cleanupAbortedAfterSuccess({
-        sessionId,
-        deleteServerSession: (sid) => {
-          void fetch(`/api/extension/fetch-session?sessionId=${encodeURIComponent(sid)}`, {
-            method: "DELETE", credentials: "include",
-          }).catch(() => {});
-        },
-        removeFromActiveMap: () => activeFetchesRef.current.delete(candidateId),
-        clearUiStatus: () => setFetchStatuses((prev) => {
-          if (!(candidateId in prev)) return prev;
-          const next = { ...prev };
-          delete next[candidateId];
-          return next;
-        }),
-      });
-
-    void orchestrateFetchProfile({
-      linkedinUrl,
-      // buildBlankTabAdapter severs win.opener BEFORE setting location.href
-      // — see fetch-profile-orchestrator.ts. Both this caller and the unit
-      // test import the same builder, so the opener-clearing invariant
-      // can't drift between code and test.
-      openBlankTab: () => win ? buildBlankTabAdapter(win) : null,
-      postFetchSession: async () => {
-        const start = await fetch("/api/extension/fetch-session", {
+    void (async () => {
+      try {
+        // Reuse the Bulk Capture endpoint with a single id — it enqueues a paced
+        // box profile job (deduped on the URL) tied to this candidateId.
+        const res = await fetch(`/api/jobs/${id}/candidates/bulk-capture`, {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jobId: id, candidateId }),
+          body: JSON.stringify({ ids: [candidateId] }),
         });
-        const session = (await start.json()) as { sessionId?: string; error?: string; message?: string };
-        if (!start.ok || !session.sessionId) {
-          return { ok: false as const, error: session.error ?? "Could not start capture" };
-        }
-        return {
-          ok: true as const,
-          session: { sessionId: session.sessionId, message: session.message ?? null },
-        };
-      },
-      isAborted: () => placeholder.aborted,
-    }).then((outcome) => {
-      if (outcome.kind === "aborted") {
-        // Cancel landed before the tab navigated. The orchestrator already
-        // closed the tab; we just clean up server-side.
-        cleanupAfterCancel(outcome.sessionId);
-        return;
-      }
-      if (outcome.kind === "popup_blocked") {
-        activeFetchesRef.current.delete(candidateId);
+        const data = (await res.json().catch(() => null)) as
+          | { enqueued?: number; alreadyFull?: number; alreadyQueued?: number; noCapturableUrl?: number }
+          | null;
+        if (placeholder.aborted) return;
+        if (!res.ok || !data) { finishBox("error", "Couldn't queue the fetch on the box"); return; }
+        if (data.alreadyFull) { finishBox("done", "Already fetched"); return; }
+        if (data.noCapturableUrl) { finishBox("error", "No LinkedIn URL to fetch"); return; }
+
+        // Enqueued (or already in flight) → poll the job's capture progress until
+        // the profile lands on the candidate row.
         setFetchStatuses((prev) => ({
           ...prev,
-          [candidateId]: { state: "error", message: "Popup blocked — allow popups for this site to fetch profiles" },
+          [candidateId]: { state: "fetching", message: "Fetching on the box…", startedAt: placeholder.startedAt },
         }));
-        clearCandidateStatus(candidateId, 8000, "error");
-        return;
+        const interval = setInterval(() => {
+          const e = activeFetchesRef.current.get(candidateId);
+          if (!e || e.aborted) { clearInterval(interval); return; }
+          // The box scrapes at ~30–40s/profile; give it a generous ceiling
+          // before telling the recruiter to check back.
+          if (Date.now() - e.startedAt > 6 * 60_000) {
+            finishBox("error", "Still queued on the box — check back shortly");
+            return;
+          }
+          void fetch(`/api/jobs/${id}/candidates/bulk-capture?ids=${encodeURIComponent(candidateId)}`, { credentials: "include" })
+            .then((r) => (r.ok ? (r.json() as Promise<{ total: number; captured: number }>) : null))
+            .then((p) => { if (p && p.captured >= 1) finishBox("done", "Profile fetched"); })
+            .catch(() => {/* transient — next tick retries */});
+        }, 4000);
+        placeholder.pollInterval = interval;
+        if (placeholder.aborted) clearInterval(interval);
+      } catch {
+        if (!placeholder.aborted) finishBox("error", "Network error queuing the fetch");
       }
-      if (outcome.kind === "session_failed") {
-        activeFetchesRef.current.delete(candidateId);
-        setFetchStatuses((prev) => ({
-          ...prev,
-          [candidateId]: { state: "error", message: outcome.message },
-        }));
-        clearCandidateStatus(candidateId, 6000, "error");
-        return;
-      }
-      // Success path. Check abort BEFORE touching UI — if cancel landed
-      // between the orchestrator's last isAborted poll and this microtask,
-      // we must NOT resurrect the "waiting" UI. handleCancelFetch already
-      // cleared activeFetchesRef + fetchStatuses; cleanup here is defensive
-      // (and idempotent — guards against future caller reordering).
-      if (placeholder.aborted) {
-        cleanupAfterCancel(outcome.sessionId);
-        return;
-      }
-      placeholder.sessionId = outcome.sessionId;
-      setFetchStatuses((prev) => ({
-        ...prev,
-        [candidateId]: {
-          state: "waiting",
-          message: outcome.message,
-          startedAt: Date.now(),
-        },
-      }));
-      const interval = setInterval(() => {
-        void pollCandidateFetchRef.current(candidateId);
-      }, 2500);
-      placeholder.pollInterval = interval;
-      // Microtask race: cancel may have landed between the placeholder.aborted
-      // check above and setInterval here. If so, kill everything we just set.
-      if (placeholder.aborted) {
-        clearInterval(interval);
-        cleanupAfterCancel(outcome.sessionId);
-      }
-    });
+    })();
   }, [id, job]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wrap a candidate PATCH with consistent error handling + success toast.
