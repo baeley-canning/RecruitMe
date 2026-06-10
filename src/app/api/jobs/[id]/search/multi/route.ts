@@ -34,6 +34,7 @@ import { createRun, attachLibraryResults, setSourceStatus, loadRunSnapshot } fro
 import { reportError } from "@/lib/error-reporting";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { enqueueSearchJob } from "@/lib/scrape-queue";
+import { linkedinKeywordsFromParsed, seekKeywordsFromParsed } from "@/lib/boolean-query/emit";
 
 const SourceSchema = z.enum(["library", "linkedin", "seek"]);
 
@@ -94,6 +95,13 @@ export async function POST(
 
   const parsedQuery = parseBooleanQuery(query);
   const queryRaw = parsedQuery.raw.trim();
+  // Per-platform keyword strings for the scraper (was: the raw boolean for both).
+  // Each emitter renders the parsed AST in that platform's keyword syntax (quotes
+  // phrases, parenthesises OR-groups, LinkedIn strips `*`), so the box types a
+  // clean, platform-correct query rather than our internal raw string. Fall back
+  // to the raw query if an emitter yields nothing.
+  const linkedinKeywords = linkedinKeywordsFromParsed(parsedQuery) || queryRaw;
+  const seekKeywords = seekKeywordsFromParsed(parsedQuery) || queryRaw;
 
   // Library FTS scope (owners span their accessible orgs; non-owners pinned).
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
@@ -163,7 +171,7 @@ export async function POST(
       const j = await enqueueSearchJob({
         orgId: runOrgId!,
         platform: "linkedin",
-        searchQuery: queryRaw,
+        searchQuery: linkedinKeywords,
         searchLocation: location,
         requestedBy: auth.userId,
         priority: 100,
@@ -176,7 +184,7 @@ export async function POST(
       const j = await enqueueSearchJob({
         orgId: runOrgId!,
         platform: "seek",
-        searchQuery: queryRaw,
+        searchQuery: seekKeywords,
         // Scopes the SEEK leg to the recruiter's region (was nation-wide).
         searchLocation: location,
         requestedBy: auth.userId,

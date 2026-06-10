@@ -22,6 +22,7 @@ import { parseBooleanQuery } from "@/lib/boolean-query";
 import { searchLibrary } from "@/lib/talent-search/library";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { enqueueSearchJob } from "@/lib/scrape-queue";
+import { linkedinKeywordsFromParsed, seekKeywordsFromParsed } from "@/lib/boolean-query/emit";
 import { reportError } from "@/lib/error-reporting";
 import {
   createRun,
@@ -92,6 +93,9 @@ export async function POST(req: Request) {
   const queryRaw = parsedQuery.raw.trim();
   // A scraper job needs a concrete orgId — an untargeted owner run can't scrape.
   const canScrape = scraperOn && queryRaw.length > 0 && runOrgId != null;
+  // Platform-correct keyword strings for the box (vs. the internal raw boolean).
+  const linkedinKeywords = linkedinKeywordsFromParsed(parsedQuery) || queryRaw;
+  const seekKeywords = seekKeywordsFromParsed(parsedQuery) || queryRaw;
 
   // Initial per-source statuses.
   const initial = (want: boolean, isScraper: boolean): SourceStatus => {
@@ -136,7 +140,7 @@ export async function POST(req: Request) {
       const j = await enqueueSearchJob({
         orgId: runOrgId!,
         platform: "linkedin",
-        searchQuery: queryRaw,
+        searchQuery: linkedinKeywords,
         requestedBy: auth.userId,
         priority: 100,
         searchRunId: run.id,
@@ -148,7 +152,7 @@ export async function POST(req: Request) {
       const j = await enqueueSearchJob({
         orgId: runOrgId!,
         platform: "seek",
-        searchQuery: queryRaw,
+        searchQuery: seekKeywords,
         requestedBy: auth.userId,
         priority: 100,
         searchRunId: run.id,
