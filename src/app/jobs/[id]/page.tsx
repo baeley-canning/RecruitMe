@@ -320,7 +320,9 @@ export default function JobDetailPage({
 
   const fetchJob = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/jobs/${id}`, { signal });
+      // no-store so a post-add / post-status-change refetch never serves the
+      // browser's cached (stale) list — that's what forced a manual reload.
+      const res = await fetch(`/api/jobs/${id}`, { signal, cache: "no-store" });
       if (signal?.aborted) return;
       if (res.ok) {
         const data = await res.json() as Job;

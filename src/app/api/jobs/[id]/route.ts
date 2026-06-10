@@ -3,6 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
 
+// Never cache the job payload: the page refetches this immediately after adding
+// candidates / changing status, and a heuristically-cached stale response made
+// those updates "not show up until reload".
+export const dynamic = "force-dynamic";
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -109,7 +114,10 @@ export async function GET(
     otherActiveJobs: c.linkedinUrl ? otherJobsByUrl.get(c.linkedinUrl) ?? [] : [],
   }));
 
-  return NextResponse.json({ ...full, candidates: enrichedCandidates });
+  return NextResponse.json(
+    { ...full, candidates: enrichedCandidates },
+    { headers: { "Cache-Control": "no-store, must-revalidate" } },
+  );
 }
 
 const PatchJobSchema = z.object({
