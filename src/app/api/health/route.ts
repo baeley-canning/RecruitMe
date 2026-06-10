@@ -42,6 +42,9 @@ interface CheckResult {
   detail?: string;
   lastSeenAt?: string;
   skipped?: boolean;
+  /** ok=true but worth an amber top-level `degraded` flag (e.g. a stale scraper
+   *  heartbeat on an idle queue — the box is offline but mustn't 503 the app). */
+  degraded?: boolean;
 }
 
 interface HealthResponse {
@@ -126,7 +129,9 @@ async function checkScraper(): Promise<CheckResult> {
       const note = fresh
         ? `heartbeat ${Math.round(hbAgeMs / 1000)}s ago`
         : `heartbeat STALE ${Math.round(hbAgeMs / 60000)}m (box may be offline)`;
-      return { ok: true, lastSeenAt: hb.updatedAt.toISOString(), detail: `${note} · ${pending} pending · ${hb.pollErrors} poll errors` };
+      // Stale-but-idle stays ok (no 503) but flips `degraded` so an offline box
+      // is visible at the top level, not buried in the detail string.
+      return { ok: true, degraded: !fresh, lastSeenAt: hb.updatedAt.toISOString(), detail: `${note} · ${pending} pending · ${hb.pollErrors} poll errors` };
     }
 
     // Fallback (no heartbeat row yet): the original queue-stuck heuristic.
@@ -171,9 +176,15 @@ async function checkCvEncryption(): Promise<CheckResult> {
       return { ok: false, detail: `CV decrypt failed — CV_ENCRYPTION_KEY missing/wrong: ${err instanceof Error ? err.message : "error"}` };
     }
   })();
-  const timeout = new Promise<CheckResult>((resolve) =>
-    setTimeout(() => resolve({ ok: false, detail: "cv decrypt check timed out" }), 5000));
-  return Promise.race([run, timeout]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<CheckResult>((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false, detail: "cv decrypt check timed out" }), 5000);
+  });
+  try {
+    return await Promise.race([run, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function GET() {
@@ -191,7 +202,7 @@ export async function GET() {
   // download is failing, so it MUST surface — `degraded` flips amber so the
   // ops dashboard / alerting catches it instead of /api/health staying green.
   const overallOk = db.ok && scraper.ok;
-  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok);
+  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !!scraper.degraded);
   // Report the deployed commit SHA so a deploy is verifiable from /api/health.
   // RECRUITME_VERSION stays the highest-priority explicit override; otherwise
   // fall back to the build's git SHA (Railway sets RAILWAY_GIT_COMMIT_SHA;

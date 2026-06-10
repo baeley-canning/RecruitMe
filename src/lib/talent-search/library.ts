@@ -97,12 +97,15 @@ export async function searchLibrary(
 ): Promise<LibrarySearchResult[]> {
   const { parsedQuery, accessibleOrgIds, location, limit = 100 } = opts;
 
-  // "<role> at <Company>" lives in the headline — exclude on a case-insensitive
-  // substring of it. Empty list → the WHERE clause below is a boolean no-op.
-  const excludePatterns = (opts.excludeCompanies ?? [])
+  // The current employer sits AFTER " at " in the headline ("<role> at <Company>").
+  // We match each excluded company as a LITERAL substring of that segment only
+  // (position(), not LIKE) — so a short token like "DNA" excludes people employed
+  // AT DNA, not anyone whose ROLE text contains "dna" ("DNA Sequencing Analyst"),
+  // and a name with % or _ can't widen the match (position has no wildcards).
+  // Empty list → the WHERE clause below is a boolean no-op.
+  const excludeTerms = (opts.excludeCompanies ?? [])
     .map((c) => c.trim().toLowerCase())
-    .filter(Boolean)
-    .map((c) => `%${c}%`);
+    .filter(Boolean);
 
   // Non-owner with zero accessible orgs short-circuits.
   if (accessibleOrgIds !== null && accessibleOrgIds.length === 0) return [];
@@ -134,9 +137,12 @@ export async function searchLibrary(
           OR c."location" ILIKE '%' || ${trimmedLocation ?? ''} || '%'
         )
         AND (
-          ${excludePatterns.length === 0}::boolean
+          ${excludeTerms.length === 0}::boolean
           OR c."headline" IS NULL
-          OR NOT (lower(c."headline") LIKE ANY(${excludePatterns}::text[]))
+          OR NOT EXISTS (
+            SELECT 1 FROM unnest(${excludeTerms}::text[]) AS et
+            WHERE position(et IN split_part(lower(c."headline"), ' at ', 2)) > 0
+          )
         )
       ORDER BY c."createdAt" DESC
       LIMIT ${limit}
@@ -172,9 +178,12 @@ export async function searchLibrary(
         OR c."location" ILIKE '%' || ${trimmedLocation ?? ''} || '%'
       )
       AND (
-        ${excludePatterns.length === 0}::boolean
+        ${excludeTerms.length === 0}::boolean
         OR c."headline" IS NULL
-        OR NOT (lower(c."headline") LIKE ANY(${excludePatterns}::text[]))
+        OR NOT EXISTS (
+          SELECT 1 FROM unnest(${excludeTerms}::text[]) AS et
+          WHERE position(et IN split_part(lower(c."headline"), ' at ', 2)) > 0
+        )
       )
     ORDER BY (
       ts_rank_cd(ARRAY[0.1, 0.2, 0.4, 1.0]::real[], c."searchTsv", q) * ${RANK_WEIGHT}::real

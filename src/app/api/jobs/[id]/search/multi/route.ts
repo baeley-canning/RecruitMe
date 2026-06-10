@@ -84,7 +84,11 @@ export async function POST(
   const effectiveExclusions = excludeCompanies ?? storedExclusions;
   if (excludeCompanies !== undefined) {
     const normalised = excludeCompanies.map((s) => s.trim()).filter(Boolean).join(", ");
-    void prisma.job.update({ where: { id }, data: { excludedCompanies: normalised || null } }).catch(() => {});
+    // Persist ONLY when it actually changed, so a zero-interaction role auto-run
+    // can't silently make a transient exclusion sticky on the job.
+    if (normalised !== (job?.excludedCompanies ?? "").trim()) {
+      void prisma.job.update({ where: { id }, data: { excludedCompanies: normalised || null } }).catch(() => {});
+    }
   }
 
   const parsedQuery = parseBooleanQuery(query);

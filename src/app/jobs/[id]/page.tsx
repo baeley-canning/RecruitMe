@@ -2437,7 +2437,7 @@ ${toHtml(job.rawJd)}
           parsedRole={parsedRole}
           autoRun={!autoRanJobsRef.current.has(id)}
           onAutoRan={() => autoRanJobsRef.current.add(id)}
-          excludedCompanies={job.excludedCompanies ?? job.company ?? null}
+          excludedCompanies={job.excludedCompanies ?? null}
           onClose={() => closeModal("multiSearch")}
           onComplete={fetchJob}
         />
