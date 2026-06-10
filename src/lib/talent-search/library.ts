@@ -27,6 +27,10 @@ export interface LibrarySearchOptions {
   accessibleOrgIds: string[] | null;
   /** Plain-text location filter — matches against Candidate.location. */
   location?: string | null;
+  /** Company names to EXCLUDE — drops candidates whose current employer (in the
+   *  headline, "<role> at <Company>") matches any. Lets a recruiter exclude the
+   *  client they're hiring for + named competitors (e.g. DNA, Somar). */
+  excludeCompanies?: string[];
   /** Hard upper bound. Default 100. */
   limit?: number;
 }
@@ -93,6 +97,13 @@ export async function searchLibrary(
 ): Promise<LibrarySearchResult[]> {
   const { parsedQuery, accessibleOrgIds, location, limit = 100 } = opts;
 
+  // "<role> at <Company>" lives in the headline — exclude on a case-insensitive
+  // substring of it. Empty list → the WHERE clause below is a boolean no-op.
+  const excludePatterns = (opts.excludeCompanies ?? [])
+    .map((c) => c.trim().toLowerCase())
+    .filter(Boolean)
+    .map((c) => `%${c}%`);
+
   // Non-owner with zero accessible orgs short-circuits.
   if (accessibleOrgIds !== null && accessibleOrgIds.length === 0) return [];
 
@@ -121,6 +132,11 @@ export async function searchLibrary(
         AND (
           ${trimmedLocation === null}::boolean
           OR c."location" ILIKE '%' || ${trimmedLocation ?? ''} || '%'
+        )
+        AND (
+          ${excludePatterns.length === 0}::boolean
+          OR c."headline" IS NULL
+          OR NOT (lower(c."headline") LIKE ANY(${excludePatterns}::text[]))
         )
       ORDER BY c."createdAt" DESC
       LIMIT ${limit}
@@ -154,6 +170,11 @@ export async function searchLibrary(
       AND (
         ${trimmedLocation === null}::boolean
         OR c."location" ILIKE '%' || ${trimmedLocation ?? ''} || '%'
+      )
+      AND (
+        ${excludePatterns.length === 0}::boolean
+        OR c."headline" IS NULL
+        OR NOT (lower(c."headline") LIKE ANY(${excludePatterns}::text[]))
       )
     ORDER BY (
       ts_rank_cd(ARRAY[0.1, 0.2, 0.4, 1.0]::real[], c."searchTsv", q) * ${RANK_WEIGHT}::real

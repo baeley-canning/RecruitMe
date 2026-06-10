@@ -12,6 +12,7 @@ model Job {
   id                  String    @id @default(cuid())
   title               String
   company             String?
+  excludedCompanies   String? // comma-separated company names to EXCLUDE from search (the client you're hiring for + named competitors, e.g. "DNA, Somar"). Matched against the candidate's current employer in their headline.
   location            String?
   location2           String? // Optional secondary location for hybrid / dual-site roles (e.g. Wellington + Christchurch). Used by location-fit scoring so a candidate in either metro scores 100.
   rawJd               String

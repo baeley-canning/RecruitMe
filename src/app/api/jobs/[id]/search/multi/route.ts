@@ -24,6 +24,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { prisma } from "@/lib/db";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { parseBooleanQuery } from "@/lib/boolean-query";
@@ -42,6 +43,9 @@ const BodySchema = z.object({
   /** Per-source hard caps. Library defaults to 100, LinkedIn to 30. */
   libraryLimit: z.number().int().min(1).max(500).optional(),
   linkedinLimit: z.number().int().min(1).max(50).optional(),
+  /** Company names to exclude (the client + competitors). When sent, it's
+   *  authoritative + persisted on the job so the next search remembers it. */
+  excludeCompanies: z.array(z.string().max(120)).max(50).optional(),
 });
 
 export async function POST(
@@ -52,7 +56,7 @@ export async function POST(
   if (!auth) return unauthorized();
   const { id } = await params;
 
-  const { error: accessError } = await requireJobAccess(id, auth);
+  const { job, error: accessError } = await requireJobAccess(id, auth);
   if (accessError) return accessError;
 
   // Rate limit — multi-source search counts under the same "search"
@@ -71,7 +75,17 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { query, location, sources, libraryLimit, linkedinLimit } = parsed.data;
+  const { query, location, sources, libraryLimit, linkedinLimit, excludeCompanies } = parsed.data;
+
+  // Effective company exclusion: a list sent with the request is authoritative
+  // and persisted on the job (so the next search remembers it); otherwise fall
+  // back to the job's stored excludedCompanies.
+  const storedExclusions = (job?.excludedCompanies ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const effectiveExclusions = excludeCompanies ?? storedExclusions;
+  if (excludeCompanies !== undefined) {
+    const normalised = excludeCompanies.map((s) => s.trim()).filter(Boolean).join(", ");
+    void prisma.job.update({ where: { id }, data: { excludedCompanies: normalised || null } }).catch(() => {});
+  }
 
   const parsedQuery = parseBooleanQuery(query);
 
@@ -95,6 +109,7 @@ export async function POST(
         parsedQuery,
         accessibleOrgIds,
         location,
+        excludeCompanies: effectiveExclusions,
         limit: libraryLimit ?? 100,
       });
     } catch (err) {

@@ -1045,6 +1045,14 @@ await step("ScraperHeartbeat table (worker liveness)", async () => {
   `;
 });
 
+// Job.excludedCompanies — comma-separated company names to exclude from search
+// (the client + named competitors). Additive nullable TEXT, metadata-only.
+await step("Job.excludedCompanies column (search exclusion)", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "Job" ADD COLUMN IF NOT EXISTS "excludedCompanies" TEXT
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

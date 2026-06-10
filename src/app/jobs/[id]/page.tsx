@@ -88,6 +88,7 @@ interface Job {
   id: string;
   title: string;
   company: string | null;
+  excludedCompanies: string | null;
   location: string | null;
   location2: string | null;
   rawJd: string;
@@ -2436,6 +2437,7 @@ ${toHtml(job.rawJd)}
           parsedRole={parsedRole}
           autoRun={!autoRanJobsRef.current.has(id)}
           onAutoRan={() => autoRanJobsRef.current.add(id)}
+          excludedCompanies={job.excludedCompanies ?? job.company ?? null}
           onClose={() => closeModal("multiSearch")}
           onComplete={fetchJob}
         />

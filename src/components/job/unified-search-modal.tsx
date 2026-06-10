@@ -13,6 +13,7 @@ import {
   Briefcase,
   FileText,
   HelpCircle,
+  Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
@@ -197,6 +198,9 @@ interface UnifiedSearchModalProps {
   /** Called once when the role search actually auto-fires, so the parent can
    *  remember it ran for this job (and pass autoRun=false next time). */
   onAutoRan?: () => void;
+  /** The job's stored excluded companies (comma-separated). Seeds the exclude
+   *  field; edits are sent with the search + persisted back to the job. */
+  excludedCompanies?: string | null;
   onComplete: () => void;
   onClose: () => void;
 }
@@ -207,6 +211,7 @@ export function UnifiedSearchModal({
   parsedRole,
   autoRun = true,
   onAutoRan,
+  excludedCompanies,
   onComplete,
   onClose,
 }: UnifiedSearchModalProps) {
@@ -219,6 +224,12 @@ export function UnifiedSearchModal({
   // field and the manual Search button both work even when we don't auto-run.
   const [query, setQuery] = useState(roleQuery);
   const [location, setLocation] = useState(jobLocation ?? "");
+  // Company exclusion (the client you're hiring for + named competitors).
+  const [excludeInput, setExcludeInput] = useState(excludedCompanies ?? "");
+  const excludeList = useMemo(
+    () => excludeInput.split(",").map((s) => s.trim()).filter(Boolean),
+    [excludeInput],
+  );
   const [useLibrary, setUseLibrary] = useState(true);
   const [useLinkedIn, setUseLinkedIn] = useState(true);
   // SEEK Talent Search defaults OFF — it costs SEEK credits, so it only fires
@@ -270,6 +281,7 @@ export function UnifiedSearchModal({
           query: q,
           location: location.trim() || null,
           sources: sourcesPicked,
+          excludeCompanies: excludeList,
         }),
       });
       if (!res.ok) {
@@ -531,6 +543,20 @@ export function UnifiedSearchModal({
               </>
             )}
           </Button>
+        </div>
+
+        {/* Company exclusion — drop candidates whose current employer (in their
+            headline) matches. The client you're hiring for + named competitors. */}
+        <div className="relative">
+          <Ban className="w-3.5 h-3.5 text-text-tertiary absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={excludeInput}
+            onChange={(e) => setExcludeInput(e.target.value)}
+            placeholder="Exclude companies (comma-separated) — e.g. DNA, Somar"
+            title="Candidates currently at these companies are excluded from results. Applied on the next Search."
+            className="w-full h-7 pl-8 pr-3 rounded bg-surface-sunken border border-separator text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:shadow-focus"
+          />
         </div>
 
         <div className="flex items-center gap-1.5 text-2xs text-text-tertiary">
