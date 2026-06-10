@@ -61,6 +61,13 @@ const FK_SMOKE_INSIGHT = "__smoke_fk_insight__";
 const ISO_ORG_A = "__smoke_iso_org_a__";
 const ISO_ORG_B = "__smoke_iso_org_b__";
 const ISO_CAND = "__smoke_iso_cand__";
+// Company-exclusion probe: one org + three candidates whose headlines pin the
+// three behaviours the exclusion clause must get right (employer-anchored,
+// role-text kept, metacharacters literal). See the matching describe block.
+const EXC_ORG = "__smoke_exc_org__";
+const EXC_EMP = "__smoke_exc_emp__";   // employed AT DNA → must be excluded
+const EXC_ROLE = "__smoke_exc_role__"; // DNA in the ROLE, employed at Acme → kept
+const EXC_META = "__smoke_exc_meta__"; // company name carries % / _ metacharacters
 
 afterAll(async () => {
   for (const id of createdRunIds) {
@@ -71,7 +78,8 @@ afterAll(async () => {
   await prisma.profileInsight.deleteMany({ where: { id: FK_SMOKE_INSIGHT } }).catch(() => {});
   await prisma.candidateIdentity.deleteMany({ where: { id: FK_SMOKE_IDENTITY } }).catch(() => {});
   await prisma.candidate.deleteMany({ where: { id: ISO_CAND } }).catch(() => {});
-  await prisma.org.deleteMany({ where: { id: { in: [ISO_ORG_A, ISO_ORG_B] } } }).catch(() => {});
+  await prisma.candidate.deleteMany({ where: { id: { in: [EXC_EMP, EXC_ROLE, EXC_META] } } }).catch(() => {});
+  await prisma.org.deleteMany({ where: { id: { in: [ISO_ORG_A, ISO_ORG_B, EXC_ORG] } } }).catch(() => {});
   await prisma.$disconnect().catch(() => {});
 });
 
@@ -111,6 +119,58 @@ d("smoke: searchLibrary FTS (the path that broke with left(text,bigint))", () =>
     const out = await searchLibrary({ parsedQuery: parseBooleanQuery(""), accessibleOrgIds: null, limit: 5 });
     expect(Array.isArray(out)).toBe(true);
   });
+});
+
+d("smoke: searchLibrary company exclusion (the clause CI never exercised before)", () => {
+  // df74924 shipped the exclusion clause but the smoke test only ever called
+  // searchLibrary WITHOUT excludeCompanies, so the clause ran against Postgres
+  // for the first time in PRODUCTION. A later review edit to that clause
+  // (`LIKE ANY(...) ESCAPE '\'`) is a PARSE error Postgres rejects regardless of
+  // input — tsc + the mocked unit suite pass it vacuously; only a real-DB run
+  // with a non-empty list catches it. This test makes that run happen in CI and
+  // pins the three behaviours the clause must hold.
+  it("excludes employer matches, keeps role-text matches, treats metacharacters literally", async () => {
+    await prisma.org.upsert({ where: { id: EXC_ORG }, update: {}, create: { id: EXC_ORG, name: EXC_ORG } });
+    const seed = (id: string, headline: string) =>
+      prisma.candidate.upsert({
+        where: { id },
+        update: { orgId: EXC_ORG, jobId: null, headline },
+        create: {
+          id, orgId: EXC_ORG, jobId: null, name: id, headline,
+          linkedinUrl: `https://www.linkedin.com/in/${id}`, source: "manual", status: "new",
+        },
+      });
+    await seed(EXC_EMP, "Principal Developer at DNA Design");
+    await seed(EXC_ROLE, "DNA Sequencing Analyst at Acme Genomics");
+    await seed(EXC_META, "Platform Engineer at 100%_Cloud");
+
+    const ids = (rows: LibrarySearchResult[]) => new Set(rows.map((r) => r.id));
+    const run = (exclude: string[]) =>
+      searchLibrary({
+        parsedQuery: parseBooleanQuery(""), // recency path — deterministic over the seeded org
+        accessibleOrgIds: [EXC_ORG],
+        excludeCompanies: exclude,
+        limit: 50,
+      });
+
+    // Baseline: no exclusion → all three of the seeded candidates are visible.
+    const baseline = ids(await run([]));
+    expect(baseline.has(EXC_EMP) && baseline.has(EXC_ROLE) && baseline.has(EXC_META)).toBe(true);
+
+    // Exclude "dna": drops the candidate EMPLOYED at DNA, KEEPS the one with DNA
+    // only in the role title. A regression to unanchored substring matching
+    // (the original review finding) would wrongly drop EXC_ROLE and fail here.
+    const exDna = ids(await run(["dna"]));
+    expect(exDna.has(EXC_EMP)).toBe(false);
+    expect(exDna.has(EXC_ROLE)).toBe(true);
+
+    // Metacharacters in a company name are matched LITERALLY. The exact name
+    // excludes itself; a pattern that would only match if % / _ were SQL
+    // wildcards must NOT exclude it. A regression to LIKE-with-wildcards (or the
+    // ESCAPE-class parse error) would fail one of these two.
+    expect(ids(await run(["100%_cloud"])).has(EXC_META)).toBe(false); // literal self-match → excluded
+    expect(ids(await run(["1%d"])).has(EXC_META)).toBe(true);          // wildcard-only match → kept
+  }, 30_000); // several round trips: seed + 5 searches. Generous for a WAN/CI Postgres.
 });
 
 d("smoke: getLibraryCandidates (library SSR prefilter raw SQL)", () => {
