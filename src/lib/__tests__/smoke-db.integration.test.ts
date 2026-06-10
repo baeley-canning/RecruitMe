@@ -153,23 +153,31 @@ d("smoke: searchLibrary company exclusion (the clause CI never exercised before)
         limit: 50,
       });
 
-    // Baseline: no exclusion → all three of the seeded candidates are visible.
-    const baseline = ids(await run([]));
-    expect(baseline.has(EXC_EMP) && baseline.has(EXC_ROLE) && baseline.has(EXC_META)).toBe(true);
+    // Clean these rows up INLINE (not just in afterAll): on an empty CI DB three
+    // lingering owner-visible candidates would skew the later pagination test's
+    // row count. Scoping our READS to [EXC_ORG] isn't enough — other tests do
+    // owner-wide reads. try/finally so cleanup runs even if an assert throws.
+    try {
+      // Baseline: no exclusion → all three of the seeded candidates are visible.
+      const baseline = ids(await run([]));
+      expect(baseline.has(EXC_EMP) && baseline.has(EXC_ROLE) && baseline.has(EXC_META)).toBe(true);
 
-    // Exclude "dna": drops the candidate EMPLOYED at DNA, KEEPS the one with DNA
-    // only in the role title. A regression to unanchored substring matching
-    // (the original review finding) would wrongly drop EXC_ROLE and fail here.
-    const exDna = ids(await run(["dna"]));
-    expect(exDna.has(EXC_EMP)).toBe(false);
-    expect(exDna.has(EXC_ROLE)).toBe(true);
+      // Exclude "dna": drops the candidate EMPLOYED at DNA, KEEPS the one with DNA
+      // only in the role title. A regression to unanchored substring matching
+      // (the original review finding) would wrongly drop EXC_ROLE and fail here.
+      const exDna = ids(await run(["dna"]));
+      expect(exDna.has(EXC_EMP)).toBe(false);
+      expect(exDna.has(EXC_ROLE)).toBe(true);
 
-    // Metacharacters in a company name are matched LITERALLY. The exact name
-    // excludes itself; a pattern that would only match if % / _ were SQL
-    // wildcards must NOT exclude it. A regression to LIKE-with-wildcards (or the
-    // ESCAPE-class parse error) would fail one of these two.
-    expect(ids(await run(["100%_cloud"])).has(EXC_META)).toBe(false); // literal self-match → excluded
-    expect(ids(await run(["1%d"])).has(EXC_META)).toBe(true);          // wildcard-only match → kept
+      // Metacharacters in a company name are matched LITERALLY. The exact name
+      // excludes itself; a pattern that would only match if % / _ were SQL
+      // wildcards must NOT exclude it. A regression to LIKE-with-wildcards (or the
+      // ESCAPE-class parse error) would fail one of these two.
+      expect(ids(await run(["100%_cloud"])).has(EXC_META)).toBe(false); // literal self-match → excluded
+      expect(ids(await run(["1%d"])).has(EXC_META)).toBe(true);          // wildcard-only match → kept
+    } finally {
+      await prisma.candidate.deleteMany({ where: { id: { in: [EXC_EMP, EXC_ROLE, EXC_META] } } }).catch(() => {});
+    }
   }, 30_000); // several round trips: seed + 5 searches. Generous for a WAN/CI Postgres.
 });
 
