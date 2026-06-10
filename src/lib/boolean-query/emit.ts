@@ -37,6 +37,29 @@ function termToTsqueryAtom(term: string): string {
 }
 
 /**
+ * Every INDIVIDUAL positive term as its own to_tsquery atom — each mustHave
+ * term and each member of every anyOf group, flattened + de-duped.
+ *
+ * Used for relevance coverage scoring: the main FTS predicate AND's the groups,
+ * so every returned row already matches each group; counting how many of these
+ * individual atoms a row hits differentiates a candidate matching ALL the
+ * skills (Silverstripe + Vue + React) from one matching only one of them. Each
+ * atom is reserved-char-stripped via termToTsqueryAtom, so it's safe to pass to
+ * to_tsquery. Excludes negations (mustNot).
+ */
+export function positiveTermAtoms(q: ParsedQuery): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (term: string) => {
+    const atom = termToTsqueryAtom(term);
+    if (atom && !seen.has(atom)) { seen.add(atom); out.push(atom); }
+  };
+  for (const term of q.mustHave) push(term);
+  for (const group of q.anyOf) for (const term of group) push(term);
+  return out;
+}
+
+/**
  * Convert a ParsedQuery to a to_tsquery-compatible string.
  *
  * Returns null when there's nothing to query — the caller should then

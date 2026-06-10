@@ -7,9 +7,26 @@ import { describe, expect, it } from "vitest";
 import { parseBooleanQuery } from "../../boolean-query";
 import {
   tsqueryFromParsed,
+  positiveTermAtoms,
   seekKeywordsFromParsed,
   linkedinKeywordsFromParsed,
 } from "../emit";
+
+describe("positiveTermAtoms", () => {
+  it("flattens mustHave + every anyOf member into distinct atoms (for coverage)", () => {
+    const atoms = positiveTermAtoms(parseBooleanQuery('"senior developer" AND (silverstripe OR vue OR react)'));
+    expect(atoms).toEqual(["(senior <-> developer)", "silverstripe", "vue", "react"]);
+  });
+
+  it("de-dupes and excludes negations", () => {
+    const atoms = positiveTermAtoms(parseBooleanQuery("react OR react NOT contractor"));
+    expect(atoms).toEqual(["react"]);
+  });
+
+  it("empty query → no atoms", () => {
+    expect(positiveTermAtoms(parseBooleanQuery(""))).toEqual([]);
+  });
+});
 
 describe("tsqueryFromParsed", () => {
   it("empty query → null (signal to skip the FTS predicate)", () => {

@@ -68,6 +68,10 @@ const EXC_ORG = "__smoke_exc_org__";
 const EXC_EMP = "__smoke_exc_emp__";   // employed AT DNA → must be excluded
 const EXC_ROLE = "__smoke_exc_role__"; // DNA in the ROLE, employed at Acme → kept
 const EXC_META = "__smoke_exc_meta__"; // company name carries % / _ metacharacters
+// Anchor-coverage ranking probe: same title, different skill coverage.
+const COV_ORG = "__smoke_cov_org__";
+const COV_HIGH = "__smoke_cov_high__"; // matches all 3 anchor skills
+const COV_LOW = "__smoke_cov_low__";   // matches only 1 of the OR'd anchors
 
 afterAll(async () => {
   for (const id of createdRunIds) {
@@ -78,8 +82,8 @@ afterAll(async () => {
   await prisma.profileInsight.deleteMany({ where: { id: FK_SMOKE_INSIGHT } }).catch(() => {});
   await prisma.candidateIdentity.deleteMany({ where: { id: FK_SMOKE_IDENTITY } }).catch(() => {});
   await prisma.candidate.deleteMany({ where: { id: ISO_CAND } }).catch(() => {});
-  await prisma.candidate.deleteMany({ where: { id: { in: [EXC_EMP, EXC_ROLE, EXC_META] } } }).catch(() => {});
-  await prisma.org.deleteMany({ where: { id: { in: [ISO_ORG_A, ISO_ORG_B, EXC_ORG] } } }).catch(() => {});
+  await prisma.candidate.deleteMany({ where: { id: { in: [EXC_EMP, EXC_ROLE, EXC_META, COV_HIGH, COV_LOW] } } }).catch(() => {});
+  await prisma.org.deleteMany({ where: { id: { in: [ISO_ORG_A, ISO_ORG_B, EXC_ORG, COV_ORG] } } }).catch(() => {});
   await prisma.$disconnect().catch(() => {});
 });
 
@@ -119,6 +123,73 @@ d("smoke: searchLibrary FTS (the path that broke with left(text,bigint))", () =>
     const out = await searchLibrary({ parsedQuery: parseBooleanQuery(""), accessibleOrgIds: null, limit: 5 });
     expect(Array.isArray(out)).toBe(true);
   });
+});
+
+d("smoke: searchLibrary anchor-coverage ranking (the new ORDER BY raw SQL)", () => {
+  // Gate for the coverage subquery added to the FTS ORDER BY (unnest + per-atom
+  // to_tsquery). Same title + null matchScore for both rows, so coverage is the
+  // deciding signal: the profile mentioning all three OR'd skills must outrank
+  // the one mentioning only React. Also proves the new SQL is parse-safe.
+  it("a profile matching all the skills outranks one matching a single OR'd anchor", async () => {
+    await prisma.org.upsert({ where: { id: COV_ORG }, update: {}, create: { id: COV_ORG, name: COV_ORG } });
+    const seed = (id: string, profileText: string) =>
+      prisma.candidate.upsert({
+        where: { id },
+        update: { orgId: COV_ORG, jobId: null, profileText, matchScore: null },
+        create: {
+          id, orgId: COV_ORG, jobId: null, name: id, headline: "Senior Developer",
+          linkedinUrl: `https://www.linkedin.com/in/${id}`, profileText, matchScore: null,
+          source: "manual", status: "new",
+        },
+      });
+    try {
+      await seed(COV_HIGH, "Senior Developer building Silverstripe sites with Vue and React across the full stack.");
+      await seed(COV_LOW, "Senior Developer focused only on React applications and nothing else at all.");
+      const results = await searchLibrary({
+        parsedQuery: parseBooleanQuery('"senior developer" AND (silverstripe OR vue OR react)'),
+        accessibleOrgIds: [COV_ORG],
+        limit: 50,
+      });
+      const ids = results.map((r) => r.id);
+      expect(ids).toContain(COV_HIGH);
+      expect(ids).toContain(COV_LOW);
+      // Higher skill coverage ranks first.
+      expect(ids.indexOf(COV_HIGH)).toBeLessThan(ids.indexOf(COV_LOW));
+    } finally {
+      await prisma.candidate.deleteMany({ where: { id: { in: [COV_HIGH, COV_LOW] } } }).catch(() => {});
+    }
+  }, 30_000);
+
+  // Relax-on-empty: a role search hard-ANDs its dominant skill; if no profile has
+  // that exact term the recruiter must not dead-end on an empty list — the search
+  // retries with the required term demoted to optional.
+  it("retries relaxed when a hard-required term matches no row", async () => {
+    const ORG = "__smoke_relax_org__";
+    const C = "__smoke_relax_cand__";
+    await prisma.org.upsert({ where: { id: ORG }, update: {}, create: { id: ORG, name: ORG } });
+    try {
+      await prisma.candidate.upsert({
+        where: { id: C },
+        update: { orgId: ORG, jobId: null, profileText: "Senior Developer working with React every day." },
+        create: {
+          id: C, orgId: ORG, jobId: null, name: C, headline: "Senior Developer",
+          linkedinUrl: `https://www.linkedin.com/in/${C}`,
+          profileText: "Senior Developer working with React every day.", source: "manual", status: "new",
+        },
+      });
+      // "cobol" is hard-required but no row has it → strict returns 0 → relax →
+      // the React / senior-developer row comes back instead of an empty list.
+      const results = await searchLibrary({
+        parsedQuery: parseBooleanQuery('"senior developer" AND cobol AND (react)'),
+        accessibleOrgIds: [ORG],
+        limit: 20,
+      });
+      expect(results.map((r) => r.id)).toContain(C);
+    } finally {
+      await prisma.candidate.deleteMany({ where: { id: C } }).catch(() => {});
+      await prisma.org.deleteMany({ where: { id: ORG } }).catch(() => {});
+    }
+  }, 30_000);
 });
 
 d("smoke: searchLibrary company exclusion (the clause CI never exercised before)", () => {

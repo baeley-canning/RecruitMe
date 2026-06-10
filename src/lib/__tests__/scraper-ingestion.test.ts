@@ -5,6 +5,9 @@ import { normaliseSeekUrl } from "@/lib/seek";
 // and run for real so the test exercises the actual key/url logic.
 const dbMocks = vi.hoisted(() => ({
   prisma: {
+    org: {
+      count: vi.fn(),
+    },
     candidateIdentity: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -33,6 +36,9 @@ beforeEach(() => {
   // Merge-chain follow on found-existing identities: default to "not merged"
   // (null pointer) so the walk breaks immediately and the resolved identity is
   // unchanged. Tests that exercise a merge chain override this.
+  // Org FK guard: the org exists by default (a real search/job). Tests don't
+  // exercise the unknown-org path — that's covered by the smoke gate.
+  dbMocks.prisma.org.count.mockResolvedValue(1);
   dbMocks.prisma.candidateIdentity.findUnique.mockResolvedValue({ mergedIntoIdentityId: null });
   dbMocks.prisma.candidateIdentity.updateMany.mockResolvedValue({ count: 0 });
   dbMocks.prisma.candidateIdentityAlias.create.mockResolvedValue({});

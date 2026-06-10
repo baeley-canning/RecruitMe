@@ -99,6 +99,15 @@ function platformToIdentityField(platform: ScraperPlatform): {
 }
 
 export async function ingestScraperResult(args: IngestArgs): Promise<IngestResult> {
+  // Guard the org FK up-front. CandidateIdentity.orgId / Candidate.orgId are
+  // FK-constrained to Org; ingesting a job whose orgId isn't a real org (e.g. a
+  // stray "scraper-selfcheck" probe) otherwise blows up deep inside
+  // candidateIdentity.create() as an opaque `CandidateIdentity_orgId_fkey`
+  // violation. Fail fast with an actionable message instead.
+  if (await prisma.org.count({ where: { id: args.orgId } }) === 0) {
+    throw new Error(`ingest skipped — unknown orgId "${args.orgId}" (no such Org; not a real search/job)`);
+  }
+
   // Clean LinkedIn page-dump cruft (sidebar / buttons / prompts) before it ever
   // becomes a candidate's profileText. LinkedIn-only: SEEK isn't deep-scraped
   // and JobAdder goes to the archive, so this cleaner (LinkedIn-tuned) only

@@ -17,27 +17,37 @@ describe("parsedRoleToBooleanQuery", () => {
 
   it("title + anchors → (titles) AND (anchors OR-grouped, not all AND'd)", () => {
     const q = parsedRoleToBooleanQuery(role({ title: "PHP Developer", synonym_titles: [], anchor_terms: ["Laravel", "SilverStripe", "AWS"] }));
-    // Exactly ONE AND (between the two groups); anchors are OR'd so the FTS
-    // doesn't require all three simultaneously (the over-narrowing bug).
-    expect((q.match(/ AND /g) ?? []).length).toBe(1);
-    expect(q).toContain('"Laravel" OR "SilverStripe"');
-    expect(parseBooleanQuery(q).hasErrors).toBe(false);
+    const parsed = parseBooleanQuery(q);
+    // The AI-certified dominant anchor is hard-required; the remaining anchors
+    // stay optional (OR'd) so we don't over-narrow to all three at once.
+    expect(parsed.mustHave).toContain("laravel");
+    expect(q).toContain('"SilverStripe" OR "AWS"');
+    // titles-group AND "Laravel" AND (rest) = two ANDs.
+    expect((q.match(/ AND /g) ?? []).length).toBe(2);
+    expect(parsed.hasErrors).toBe(false);
   });
 
-  it("falls back to must_haves when anchor_terms is absent", () => {
+  it("falls back to must_haves (ALL OR'd, none required) when anchor_terms is absent", () => {
     const q = parsedRoleToBooleanQuery(role({ title: "Developer", must_haves: ["React", "TypeScript", "Node"] }));
-    expect(q).toContain('"React"');
+    // No anchor_terms → the skills stay an OR-group; none is promoted to a hard
+    // requirement (hybrid/ambiguous roles AND-to-zero). The single title is a
+    // bare mustHave as it always was, but no SKILL is required.
+    expect(q).toContain('"React" OR "TypeScript" OR "Node"');
+    expect(parseBooleanQuery(q).mustHave).not.toContain("react");
     expect(parseBooleanQuery(q).hasErrors).toBe(false);
   });
 
-  it("caps the title OR-group at 5 and anchors at 3, joined by a single AND", () => {
+  it("caps titles at 5 and anchors at 3; promotes the top anchor to a hard AND", () => {
     const q = parsedRoleToBooleanQuery(role({
       title: "T0",
       synonym_titles: ["T1", "T2", "T3", "T4", "T5", "T6"],
       anchor_terms: ["A0", "A1", "A2", "A3"],
     }));
-    expect((q.match(/ OR /g) ?? []).length).toBe(6); // 5 titles → 4 ORs, 3 anchors → 2 ORs
-    expect((q.match(/ AND /g) ?? []).length).toBe(1); // one AND between the two groups
+    // 5 titles → 4 ORs; remaining anchors A1,A2 → 1 OR = 5 ORs total.
+    expect((q.match(/ OR /g) ?? []).length).toBe(5);
+    // titles-group AND "A0" AND (A1 OR A2) = two ANDs.
+    expect((q.match(/ AND /g) ?? []).length).toBe(2);
+    expect(parseBooleanQuery(q).mustHave).toContain("a0");
     expect(parseBooleanQuery(q).hasErrors).toBe(false);
   });
 
