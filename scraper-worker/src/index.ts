@@ -25,10 +25,20 @@ import { scrapeJobAdderProfile } from "./scrapers/jobadder-profile.js";
 import { closeArchive } from "./archive.js";
 import { log } from "./util/log.js";
 import { isAuthChallengeMessage } from "./auth-failure.js";
+import { hostname } from "node:os";
 
 const RAILWAY_URL = (process.env.RAILWAY_API_URL ?? "").replace(/\/$/, "");
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET ?? "";
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS ?? "15000", 10);
+
+// Phase I2 — worker heartbeat. Stable per-box id so the upsert keeps ONE row.
+const WORKER_ID = (process.env.BOX_ID || hostname() || "scraper").trim();
+const HEARTBEAT_INTERVAL_MS = 60_000;
+let hbJobsOk = 0;
+let hbJobsFailed = 0;
+let hbPollErrors = 0;
+let hbLastPollAt: string | null = null;
+let hbLastSentAt = 0;
 
 // Phase B kill-switch (LinkedIn search discovery).
 const DISCOVERY_ENABLED = (process.env.SCRAPER_DISCOVERY_ENABLED ?? "").toLowerCase() === "true";
@@ -142,6 +152,7 @@ async function postResult(
     | { status: "completed"; result: object }
     | { status: "failed"; error: string },
 ): Promise<void> {
+  if (payload.status === "completed") hbJobsOk += 1; else hbJobsFailed += 1;
   const res = await fetch(`${RAILWAY_URL}/api/scraper/jobs/${jobId}`, {
     method: "PATCH",
     headers: {
@@ -154,6 +165,29 @@ async function postResult(
   if (!res.ok) {
     const text = await res.text().catch(() => "(no body)");
     log.warn(`postResult failed for job ${jobId}: ${res.status} ${text}`);
+  }
+}
+
+/** Fire-and-forget worker heartbeat (Phase I2) — never disrupts the poll loop. */
+async function postHeartbeat(detail: string): Promise<void> {
+  try {
+    await fetch(`${RAILWAY_URL}/api/scraper/heartbeat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-scraper-secret": SCRAPER_SECRET },
+      body: JSON.stringify({
+        workerId: WORKER_ID,
+        lastPollAt: hbLastPollAt,
+        jobsOk: hbJobsOk,
+        jobsFailed: hbJobsFailed,
+        pollErrors: hbPollErrors,
+        detail,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    // ignore — a failed heartbeat must never affect scraping
+  } finally {
+    hbLastSentAt = Date.now();
   }
 }
 
@@ -587,6 +621,7 @@ async function main() {
   while (true) {
     try {
       const jobs = await pollJobs();
+      hbLastPollAt = new Date().toISOString();
 
       if (jobs.length === 0) {
         log.debug("no pending jobs");
@@ -617,7 +652,14 @@ async function main() {
         await runSearchRunSweep();
       }
     } catch (err) {
+      hbPollErrors += 1;
       log.error("poll error:", err instanceof Error ? err.message : String(err));
+    }
+
+    // Heartbeat (throttled) so /api/health + the box-dashboard see real liveness
+    // even when the queue is idle. Fire-and-forget — never blocks the loop.
+    if (Date.now() - hbLastSentAt >= HEARTBEAT_INTERVAL_MS) {
+      void postHeartbeat(hbLastPollAt ? "polling" : "starting");
     }
 
     // Wait before next poll + small jitter so the timing isn't perfectly regular.

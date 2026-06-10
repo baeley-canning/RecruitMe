@@ -1028,6 +1028,23 @@ await step("ScrapeJob.searchLocation column (job-context search region filter)",
   `;
 });
 
+// ScraperHeartbeat — explicit worker-liveness row (Phase I2). Additive table,
+// deployed BEFORE any code reads/writes it so a rollback can't hit a missing
+// table. workerId is the PK; no orgId (single-org box).
+await step("ScraperHeartbeat table (worker liveness)", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ScraperHeartbeat" (
+      "workerId"   TEXT PRIMARY KEY,
+      "lastPollAt" TIMESTAMP(3),
+      "jobsOk"     INTEGER NOT NULL DEFAULT 0,
+      "jobsFailed" INTEGER NOT NULL DEFAULT 0,
+      "pollErrors" INTEGER NOT NULL DEFAULT 0,
+      "detail"     TEXT,
+      "updatedAt"  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

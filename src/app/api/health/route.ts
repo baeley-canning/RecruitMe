@@ -102,14 +102,34 @@ async function checkScraper(): Promise<CheckResult> {
   // cycle, which lets us flag a dead worker even when the queue is empty.
   // Until then, this is the closest proxy.
   try {
-    const [pending, lastTouched] = await Promise.all([
+    const [pending, lastTouched, hb] = await Promise.all([
       prisma.scrapeJob.count({ where: { status: "pending" } }),
       prisma.scrapeJob.findFirst({
         where: { status: { in: ["processing", "completed", "failed"] } },
         orderBy: { updatedAt: "desc" },
         select: { updatedAt: true },
       }),
+      prisma.scraperHeartbeat.findFirst({ orderBy: { updatedAt: "desc" } }),
     ]);
+
+    // Phase I2 — explicit worker heartbeat. When present it's the real liveness
+    // signal (works even with an idle queue). A STALE heartbeat is only FATAL
+    // when a backlog is also piling up (genuinely stuck); a stale heartbeat with
+    // an idle queue means the box is simply offline and must NOT 503 the app —
+    // surface it in the detail / dashboard instead.
+    if (hb) {
+      const hbAgeMs = Date.now() - hb.updatedAt.getTime();
+      const fresh = hbAgeMs <= SCRAPER_STALE_MS;
+      if (!fresh && pending > 0) {
+        return { ok: false, lastSeenAt: hb.updatedAt.toISOString(), detail: `worker silent ${Math.round(hbAgeMs / 60000)}m, ${pending} pending` };
+      }
+      const note = fresh
+        ? `heartbeat ${Math.round(hbAgeMs / 1000)}s ago`
+        : `heartbeat STALE ${Math.round(hbAgeMs / 60000)}m (box may be offline)`;
+      return { ok: true, lastSeenAt: hb.updatedAt.toISOString(), detail: `${note} · ${pending} pending · ${hb.pollErrors} poll errors` };
+    }
+
+    // Fallback (no heartbeat row yet): the original queue-stuck heuristic.
     if (pending === 0) return { ok: true, detail: "queue idle" };
     if (!lastTouched) {
       return { ok: false, detail: `${pending} pending job(s) and worker has never run` };

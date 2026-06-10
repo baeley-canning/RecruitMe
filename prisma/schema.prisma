@@ -120,6 +120,23 @@ model ScrapeJob {
   @@index([searchRunId, status]) // run completion check: count pending|processing children
 }
 
+// ── Scraper worker heartbeat (Phase I2) ────────────────────────────────────
+// One row per worker box (keyed by a stable workerId, e.g. env BOX_ID), upserted
+// each poll cycle so /api/health + the box-dashboard can see real liveness even
+// when the queue is idle — instead of only INFERRING it from stale ScrapeJob
+// rows. Single-org box: deliberately NO orgId (the shared SCRAPER_SECRET path
+// resolves no org). A stale heartbeat enriches the health detail / dashboard but
+// does NOT 503 the app — a box being offline must not take the app down.
+model ScraperHeartbeat {
+  workerId   String   @id // stable per-box fingerprint (env BOX_ID, else hostname)
+  lastPollAt DateTime? // last successful poll cycle
+  jobsOk     Int      @default(0) // cumulative this worker process
+  jobsFailed Int      @default(0)
+  pollErrors Int      @default(0)
+  detail     String? // free-text status (e.g. "polling", last error)
+  updatedAt  DateTime @updatedAt
+}
+
 // ── Durable multi-source search (Phase K) ──────────────────────────────────
 // Org-scoped background talent search. Captures the recruiter's intent once
 // and survives navigation: library FTS attaches synchronously, LinkedIn/SEEK
