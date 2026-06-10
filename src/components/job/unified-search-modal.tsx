@@ -275,6 +275,33 @@ export function UnifiedSearchModal({
   // Selection state — keyed by UnifiedResult.id (stable across results).
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
+  // Client-side "require a skill" filter. The role search OR-widens its anchor
+  // skills (e.g. Silverstripe OR Vue OR React), so a recruiter who needs ONE of
+  // them present can narrow the visible list here, then Select all + Add. Matches
+  // name + headline + snippet (the text we have on the card). NB: a LinkedIn row
+  // not yet ingested only has its headline, so this filters on what's shown.
+  const [resultFilter, setResultFilter] = useState("");
+
+  const filteredResults = useMemo(() => {
+    const rows = response?.results ?? [];
+    const q = resultFilter.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) =>
+      `${r.name} ${r.headline ?? ""} ${r.snippet ?? ""}`.toLowerCase().includes(q),
+    );
+  }, [response, resultFilter]);
+
+  // Select-all operates on the FILTERED set, so "filter to Silverstripe → select
+  // all → Add" selects exactly those. Toggles to deselect when all are picked.
+  const allFilteredSelected = filteredResults.length > 0 && filteredResults.every((r) => selected.has(r.id));
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) for (const r of filteredResults) next.delete(r.id);
+      else for (const r of filteredResults) next.add(r.id);
+      return next;
+    });
+  };
 
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
   const sourcesPicked = useMemo(() => {
@@ -294,6 +321,7 @@ export function UnifiedSearchModal({
     setSearchError(null);
     setResponse(null);
     setSelected(new Set());
+    setResultFilter("");
     setHasSearched(true);
     try {
       const res = await fetch(`/api/jobs/${jobId}/search/multi`, {
@@ -736,6 +764,38 @@ export function UnifiedSearchModal({
               </p>
             )}
 
+            {/* Filter + select-all toolbar — require a skill in the visible list
+                (the anchor skills are OR'd, so this lets you narrow to e.g. only
+                Silverstripe), then Select all to pick the whole filtered set. */}
+            {response.results.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
+                  <input
+                    type="text"
+                    value={resultFilter}
+                    onChange={(e) => setResultFilter(e.target.value)}
+                    placeholder="Filter these results — e.g. Silverstripe"
+                    className="w-full pl-8 pr-3 py-1.5 rounded-md bg-surface-sunken border border-separator text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+                  />
+                </div>
+                {resultFilter.trim() && (
+                  <span className="text-2xs text-text-tertiary whitespace-nowrap">
+                    <span className="data-mono">{filteredResults.length}</span> of{" "}
+                    <span className="data-mono">{response.results.length}</span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={toggleSelectAll}
+                  disabled={filteredResults.length === 0}
+                  className="text-xs font-medium text-accent hover:underline disabled:opacity-40 disabled:no-underline whitespace-nowrap"
+                >
+                  {allFilteredSelected ? "Deselect all" : `Select all${resultFilter.trim() ? " shown" : ""}`}
+                </button>
+              </div>
+            )}
+
             {/* Durable-run note — the whole point of the convergence: the search
                 runs server-side on the box, so the recruiter can leave and return. */}
             {runActive && (
@@ -795,9 +855,23 @@ export function UnifiedSearchModal({
               </div>
             )}
 
+            {/* Filtered to nothing */}
+            {response.results.length > 0 && filteredResults.length === 0 && (
+              <div className="text-center py-8 text-sm text-text-tertiary">
+                <p>No results contain “{resultFilter.trim()}”.</p>
+                <button
+                  type="button"
+                  onClick={() => setResultFilter("")}
+                  className="mt-1 text-xs text-accent hover:underline"
+                >
+                  Clear filter
+                </button>
+              </div>
+            )}
+
             {/* Result rows */}
             <div className="rounded-md border border-separator overflow-hidden">
-              {response.results.map((r) => (
+              {filteredResults.map((r) => (
                 <ResultRow
                   key={r.id}
                   result={r}
