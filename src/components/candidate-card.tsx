@@ -1322,6 +1322,17 @@ export const CandidateCard = memo(function CandidateCard({
             {candidate.profileText.length.toLocaleString()} chars saved
           </span>
         )}
+        {/* Cross-job presence — same person on N other active jobs in this org.
+            Surfaced on the collapsed card (not just the drawer) so recruiters
+            don't double-message; mirrors the drawer pill exactly. */}
+        {candidate.otherActiveJobs && candidate.otherActiveJobs.length > 0 && (
+          <span
+            className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm bg-warning-subtle text-warning"
+            title={`Also on:\n${candidate.otherActiveJobs.map((j) => ` • ${j.title}${j.company ? ` @ ${j.company}` : ""}${j.matchScore != null ? ` — ${j.matchScore}%` : ""}`).join("\n")}`}
+          >
+            Also on <span className="data-mono">{candidate.otherActiveJobs.length}</span> other job{candidate.otherActiveJobs.length === 1 ? "" : "s"}
+          </span>
+        )}
       </div>
 
       {/* "Bede problem" banner — surfaces JobAdder / talent-pool imports

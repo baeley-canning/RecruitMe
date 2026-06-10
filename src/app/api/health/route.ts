@@ -34,7 +34,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { isScraperDiscoveryEnabled, isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
-import { probeBlobStore } from "@/lib/blob-store";
+import { probeBlobStore, getBlob } from "@/lib/blob-store";
+import { isEncrypted, decryptCv } from "@/lib/cv-encryption";
 
 interface CheckResult {
   ok: boolean;
@@ -54,6 +55,7 @@ interface HealthResponse {
     ollama: CheckResult;
     scraper: CheckResult;
     blob: CheckResult;
+    cv: CheckResult;
   };
   version: string;
   uptimeSec: number;
@@ -126,12 +128,41 @@ async function checkScraper(): Promise<CheckResult> {
   }
 }
 
+// Decrypt health-check (NON-fatal / degraded). Verifies CV_ENCRYPTION_KEY can
+// actually decrypt a real stored CV — bucket-aware: most prod CVs are
+// blob-offloaded (storageKey set + the v1: envelope lives in the bucket, NOT in
+// inline `data`), so a data-only check would miss them all. A missing/wrong key
+// silently makes every CV unreadable; this surfaces it as amber instead of a
+// silent total-loss. Degraded, never fatal — one bad CV must not 503/restart
+// the app. Timeout-guarded so a slow bucket can't hang the healthcheck.
+async function checkCvEncryption(): Promise<CheckResult> {
+  const run = (async (): Promise<CheckResult> => {
+    try {
+      const sample = await prisma.candidateFile.findFirst({
+        where: { OR: [{ storageKey: { not: null } }, { data: { startsWith: "v1:" } }] },
+        select: { data: true, storageKey: true },
+      });
+      if (!sample) return { ok: true, skipped: true, detail: "no encrypted CVs" };
+      const stored = sample.storageKey ? await getBlob(sample.storageKey) : sample.data;
+      if (!stored || !isEncrypted(stored)) return { ok: true, detail: "sample not encrypted (legacy plaintext)" };
+      await decryptCv(stored); // throws if the key is missing or wrong
+      return { ok: true, detail: "decrypt ok" };
+    } catch (err) {
+      return { ok: false, detail: `CV decrypt failed — CV_ENCRYPTION_KEY missing/wrong: ${err instanceof Error ? err.message : "error"}` };
+    }
+  })();
+  const timeout = new Promise<CheckResult>((resolve) =>
+    setTimeout(() => resolve({ ok: false, detail: "cv decrypt check timed out" }), 5000));
+  return Promise.race([run, timeout]);
+}
+
 export async function GET() {
-  const [db, ollama, scraper, blob] = await Promise.all([
+  const [db, ollama, scraper, blob, cv] = await Promise.all([
     checkDb(),
     checkOllama(),
     checkScraper(),
     probeBlobStore(),
+    checkCvEncryption(),
   ]);
 
   // Only DB + scraper are FATAL. Ollama (Claude failover) and the blob store
@@ -140,7 +171,7 @@ export async function GET() {
   // download is failing, so it MUST surface — `degraded` flips amber so the
   // ops dashboard / alerting catches it instead of /api/health staying green.
   const overallOk = db.ok && scraper.ok;
-  const degraded = overallOk && (!ollama.ok || !blob.ok);
+  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok);
   // Report the deployed commit SHA so a deploy is verifiable from /api/health.
   // RECRUITME_VERSION stays the highest-priority explicit override; otherwise
   // fall back to the build's git SHA (Railway sets RAILWAY_GIT_COMMIT_SHA;
@@ -150,7 +181,7 @@ export async function GET() {
   const body: HealthResponse = {
     ok: overallOk,
     degraded,
-    checks: { db, ollama, scraper, blob },
+    checks: { db, ollama, scraper, blob, cv },
     version,
     uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
     timestamp: new Date().toISOString(),
