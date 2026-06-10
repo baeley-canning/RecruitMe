@@ -116,9 +116,23 @@ describe("POST /search/multi/import — body validation", () => {
     expect(res.status).toBe(422);
   });
 
-  it("422 when results exceeds 100", async () => {
-    const big = Array.from({ length: 101 }, (_, i) => row({ id: `r-${i}` }));
+  it("accepts a large select-all batch (185 rows) — does NOT 422", async () => {
+    // Regression: a 185-row "Select all" over library + LinkedIn + SEEK used to
+    // hit the old max(100) and 422 — so nothing got added.
+    const big = Array.from({ length: 185 }, (_, i) =>
+      row({ id: `r-${i}`, sources: ["linkedin"], linkedinUrl: `https://www.linkedin.com/in/person-${i}` }),
+    );
     const res = await POST(makeReq({ results: big }), PARAMS);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { counts: { attached: number; total: number } };
+    expect(body.counts.total).toBe(185);
+    expect(body.counts.attached).toBe(185);
+    expect(dbMocks.prisma.candidate.upsert).toHaveBeenCalledTimes(185);
+  });
+
+  it("422 when results exceeds the 500 cap", async () => {
+    const tooBig = Array.from({ length: 501 }, (_, i) => row({ id: `r-${i}` }));
+    const res = await POST(makeReq({ results: tooBig }), PARAMS);
     expect(res.status).toBe(422);
   });
 
@@ -486,13 +500,14 @@ describe("POST /search/multi/import — outcomes + partial failure", () => {
   });
 
   it("one row throws, others continue: failed + attached counts both populated", async () => {
-    // First upsert throws, second succeeds.
-    dbMocks.prisma.candidate.upsert
-      .mockRejectedValueOnce(new Error("DB write error"))
-      .mockImplementationOnce(async ({ create }: { create: Record<string, unknown> }) => ({
-        id: "ok-1",
-        ...create,
-      }));
+    // Reject by URL (not call order) so the assertion is deterministic even with
+    // the concurrent worker pool — the "bad" row always fails, "good" succeeds.
+    dbMocks.prisma.candidate.upsert.mockImplementation(
+      async ({ create }: { create: Record<string, unknown> }) => {
+        if (String(create.linkedinUrl).includes("/in/bad")) throw new Error("DB write error");
+        return { id: "ok-1", ...create };
+      },
+    );
 
     const res = await POST(
       makeReq({

@@ -554,7 +554,18 @@ export function UnifiedSearchModal({
         showToast(msg, "error");
         return;
       }
-      showToast(`Added ${selected.size} candidate${selected.size === 1 ? "" : "s"}`, "success");
+      // Report what actually landed — attached vs skipped — instead of just the
+      // selection count, so a partial result isn't silently misreported.
+      const data = await res.json().catch(() => null) as
+        { counts?: { attached: number; skipped: number; failed: number } } | null;
+      const attached = data?.counts?.attached ?? selected.size;
+      const notAttached = (data?.counts?.skipped ?? 0) + (data?.counts?.failed ?? 0);
+      showToast(
+        notAttached > 0
+          ? `Added ${attached} · ${notAttached} skipped (already on job or no link)`
+          : `Added ${attached} candidate${attached === 1 ? "" : "s"}`,
+        "success",
+      );
       onComplete();
       onClose();
     } catch (err) {

@@ -50,9 +50,18 @@ const ImportRowSchema = z.object({
   snippet: z.string().nullable(),
 });
 
+// Cap high enough to cover a full "Select all" over library + LinkedIn + SEEK
+// (the modal can surface ~200+ rows); the old max(100) rejected a 185-row
+// select-all with a 422 so nothing got added. Processed with bounded
+// concurrency below so a large batch still finishes in seconds.
 const BodySchema = z.object({
-  results: z.array(ImportRowSchema).min(1).max(100),
+  results: z.array(ImportRowSchema).min(1).max(500),
 });
+
+// How many rows to import at once. Each importOne upserts a distinct
+// (jobId, linkedinUrl) row, so concurrent writes don't collide; this keeps a
+// 185-row add at a few seconds instead of a 20s+ serial crawl.
+const IMPORT_CONCURRENCY = 10;
 
 type ImportRow = z.infer<typeof ImportRowSchema>;
 
@@ -94,21 +103,31 @@ export async function POST(
     return true;
   });
 
-  const outcomes: ImportOutcome[] = [];
-
-  for (const row of uniqueResults) {
-    try {
-      const outcome = await importOne(row, jobId, job.orgId ?? null, accessibleOrgIds);
-      outcomes.push(outcome);
-    } catch (err) {
-      reportError(err, { route: "search/multi/import", jobId, orgId: auth.orgId, resultId: row.id });
-      outcomes.push({
-        resultId: row.id,
-        status: "failed",
-        reason: err instanceof Error ? err.message : String(err),
-      });
+  // Bounded-concurrency worker pool — IMPORT_CONCURRENCY rows in flight at once.
+  // Each importOne keys on a distinct (jobId, linkedinUrl), so parallel upserts
+  // don't race; outcomes are written by index to preserve order.
+  const outcomes: ImportOutcome[] = new Array(uniqueResults.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= uniqueResults.length) return;
+      const row = uniqueResults[i];
+      try {
+        outcomes[i] = await importOne(row, jobId, job.orgId ?? null, accessibleOrgIds);
+      } catch (err) {
+        reportError(err, { route: "search/multi/import", jobId, orgId: auth.orgId, resultId: row.id });
+        outcomes[i] = {
+          resultId: row.id,
+          status: "failed",
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
-  }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(IMPORT_CONCURRENCY, uniqueResults.length) }, worker),
+  );
 
   const counts = {
     attached: outcomes.filter((o) => o.status === "attached").length,
