@@ -224,6 +224,16 @@ export default function JobDetailPage({
     return () => clearInterval(t);
   }, [runInFlight, fetchLatestRun]);
 
+  // Signature of the funnel's inputs (each candidate's status + scored-ness) so
+  // the Discovery funnel REFETCHES when a candidate is shortlisted/contacted/
+  // rejected or scored — not only when the count changes. Keying on
+  // job.candidates.length missed status changes, so shortlisting showed
+  // "SHORTLISTED 0" until a full reload (a stale-render bug, not lost data).
+  const funnelRefreshKey = useMemo(
+    () => (job ? job.candidates.map((c) => `${c.status}:${c.matchScore == null ? "" : "s"}`).join("|") : ""),
+    [job],
+  );
+
   useEffect(() => {
     if (!overflowOpen) return;
     const close = (e: MouseEvent) => {
@@ -2007,7 +2017,7 @@ ${toHtml(job.rawJd)}
         />
       )}
 
-      {parsedRole && <SearchFunnelCard jobId={id} refreshKey={job.candidates.length} />}
+      {parsedRole && <SearchFunnelCard jobId={id} refreshKey={funnelRefreshKey} />}
 
       {parsedRole && <JobWeightsCard jobId={id} />}
 

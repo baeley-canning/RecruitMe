@@ -1004,10 +1004,14 @@ export const CandidateCard = memo(function CandidateCard({
   // same breakdown — opens for an unloaded candidate. Subsequent toggles
   // re-use the cached state. Retry is wired through the panel's error UI.
   useEffect(() => {
-    if ((showReasoning || showProfile) && breakdownRaw === null && !breakdownLoading && !breakdownError) {
+    // Also load when the score-badge radar opens: its `aria-label` advertises
+    // "Click to view score breakdown", but the radar is gated on radarDimensions
+    // (derived from the breakdown). Without loading it here, clicking the score
+    // opened an EMPTY popup — looking like the card just expanded with no breakdown.
+    if ((showReasoning || showProfile || showRadar) && breakdownRaw === null && !breakdownLoading && !breakdownError) {
       void loadBreakdown();
     }
-  }, [showReasoning, showProfile, breakdownRaw, breakdownLoading, breakdownError, loadBreakdown]);
+  }, [showReasoning, showProfile, showRadar, breakdownRaw, breakdownLoading, breakdownError, loadBreakdown]);
 
   // If a parent re-fetches the candidate (e.g. after a re-score) and the
   // server now ships a breakdown, sync it down — otherwise the local state

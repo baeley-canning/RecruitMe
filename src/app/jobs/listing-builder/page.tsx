@@ -85,6 +85,9 @@ function inlineMarkdown(text: string): string {
 export default function ListingBuilderPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // The generated listing renders BELOW the fold; scroll to it on completion so
+  // a successful draft doesn't look like nothing happened.
+  const resultRef = useRef<HTMLDivElement>(null);
 
   const [title, setTitle] = useState("");
   const [company, setCompany] = useState("");
@@ -224,6 +227,10 @@ export default function ListingBuilderPage() {
       }
       setListingHeadline(data.headline ?? "");
       setListingBody(data.body ?? "");
+      // The result renders below the fold — scroll to it once it's painted so a
+      // successful draft doesn't look like nothing happened. setTimeout lets the
+      // conditional result block mount first (resultRef is null until then).
+      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
     } catch {
       setError("Network error. Try again.");
     } finally {
@@ -581,11 +588,15 @@ ${toHtml(listingBody)}
           </div>
         )}
 
-        <div className="flex justify-end">
+        <div className="flex flex-col items-end gap-1.5">
+          {/* Only the in-flight state disables the button now. The title/brief
+              requirements are surfaced as a hint + enforced in handleDraft (which
+              shows a specific message) — a DISABLED button swallowed the click
+              silently, so a rough one-liner under 40 chars looked broken. */}
           <Button
             type="button"
             onClick={handleDraft}
-            disabled={!title.trim() || brief.trim().length < 40 || drafting}
+            disabled={drafting}
             loading={drafting}
             variant="primary"
             size="lg"
@@ -593,9 +604,17 @@ ${toHtml(listingBody)}
             {!drafting && <Sparkles className="w-4 h-4" />}
             Draft Listing
           </Button>
+          {!drafting && (!title.trim() || brief.trim().length < 40) && (
+            <p className="text-2xs text-text-tertiary">
+              {!title.trim()
+                ? "Add a job title to draft a listing."
+                : `Add a bit more detail — ${brief.trim().length}/40 characters.`}
+            </p>
+          )}
         </div>
 
         {(listingHeadline || listingBody) && (
+          <div ref={resultRef}>
           <Card>
             <CardBody className="space-y-3">
               <div className="flex items-center justify-between gap-3">
@@ -683,6 +702,7 @@ ${toHtml(listingBody)}
               </div>
             </CardBody>
           </Card>
+          </div>
         )}
       </div>
     </div>
