@@ -1053,6 +1053,14 @@ await step("Job.excludedCompanies column (search exclusion)", async () => {
   `;
 });
 
+// SearchRun.jobId — set when a run is started from a job (durable job search),
+// so the job page can resume "this job's latest search". Additive nullable TEXT
+// + index. No FK (a run can outlive a deleted job; the page just won't find it).
+await step("SearchRun.jobId column + index (durable job search)", async () => {
+  await prisma.$executeRaw`ALTER TABLE "SearchRun" ADD COLUMN IF NOT EXISTS "jobId" TEXT`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRun_jobId_createdAt_idx" ON "SearchRun"("jobId", "createdAt")`;
+});
+
 await prisma.$disconnect();
 
 if (anyFailed) {

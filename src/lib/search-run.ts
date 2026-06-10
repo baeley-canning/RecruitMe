@@ -87,6 +87,9 @@ function mergeSources(existing: string[], add: SourceKey): string[] {
 
 export interface CreateRunArgs {
   orgId: string | null;
+  /** Set when the run is started from a job (durable job search); the job page
+   *  resumes "this job's latest run" by it. null for the standalone /search page. */
+  jobId?: string | null;
   requestedBy: string | null;
   rawQuery: string;
   parsedQuery: ParsedQuery;
@@ -102,6 +105,7 @@ export async function createRun(args: CreateRunArgs): Promise<{ id: string }> {
   const run = await prisma.searchRun.create({
     data: {
       orgId: args.orgId,
+      jobId: args.jobId ?? null,
       requestedBy: args.requestedBy,
       rawQuery: args.rawQuery,
       parsedQuery: JSON.stringify(args.parsedQuery),

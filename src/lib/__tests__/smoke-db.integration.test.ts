@@ -392,6 +392,38 @@ d("smoke: SearchRun write lifecycle (ON CONFLICT, jsonb merge, FOR UPDATE)", () 
   });
 });
 
+d("smoke: durable job search (SearchRun.jobId write + latest-run query)", () => {
+  // The job search now creates a jobId-scoped run so the job page can resume
+  // "this job's latest search" (see [[project-durable-job-search]]). This pins
+  // the new column + index against real Postgres: a run created with a jobId is
+  // found by the exact findFirst the GET /api/jobs/[id]/search/latest route runs.
+  it("createRun({jobId}) persists jobId and is found by the latest-run query", async () => {
+    const jobId = "__smoke_durable_job__";
+    const run = await createRun({
+      orgId: null,
+      jobId,
+      requestedBy: "smoke",
+      rawQuery: "__smoke_durable_job_search__",
+      parsedQuery: parseBooleanQuery("durable job search"),
+      location: null,
+      sources: ["library"],
+      libraryStatus: "complete",
+      linkedinStatus: "skipped",
+      seekStatus: "skipped",
+    });
+    createdRunIds.push(run.id);
+
+    // Exactly the query the latest-run endpoint runs (jobId filter + index).
+    const latest = await prisma.searchRun.findFirst({
+      where: { jobId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, jobId: true, status: true },
+    });
+    expect(latest?.id).toBe(run.id);
+    expect(latest?.jobId).toBe(jobId);
+  }, 30_000); // createRun + findFirst round trips — generous for a WAN/CI Postgres.
+});
+
 d("smoke: sweepStuckRuns (reclaim + settle raw SQL)", () => {
   it("runs the sweep without a Postgres error", async () => {
     const out = await sweepStuckRuns();

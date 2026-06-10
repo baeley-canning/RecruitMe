@@ -1,17 +1,19 @@
 /**
  * Integration tests for POST /api/jobs/[id]/search/multi.
  *
- * Mocks all sources + auth + rate limit. Tests the orchestration:
+ * The job search now runs THROUGH the durable SearchRun engine (see
+ * [[project-durable-job-search]]): it creates a jobId-scoped run, attaches the
+ * library FTS results to it, enqueues priority=100 scraper jobs LINKED to the
+ * run, then returns the run's snapshot mapped into the modal's UnifiedResult
+ * shape. So this suite mocks the search-run engine + db and asserts:
  *   • Auth chain (unauthenticated / forbidden)
  *   • Body validation (missing query / bad sources)
  *   • Source selection (library only / linkedin only / both)
- *   • Scraper-only LinkedIn/SEEK discovery (Phase K — SerpAPI removed):
- *       - enqueueSearchJob fired at priority=100 when discovery enabled
- *       - errors.linkedin when discovery disabled
- *   • Partial failure tolerance (library throws → still 200)
- *   • Rate limit
- *   • Aggregation + counts pass-through (fromLibrary / fromScraper)
- *   • recordUsage fire-and-forget call
+ *   • A run is created (createRun) scoped to the job, library attached
+ *   • Scraper jobs enqueued at priority=100 WITH the run id (searchRunId)
+ *   • errors.linkedin when discovery disabled
+ *   • Partial failure tolerance (library throws → 200, source marked failed)
+ *   • Rate limit, recordUsage, counts pass-through
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,36 +45,96 @@ const queueMocks = vi.hoisted(() => ({
   enqueueSearchJob: vi.fn(),
 }));
 
+const searchRunMocks = vi.hoisted(() => ({
+  createRun: vi.fn(),
+  attachLibraryResults: vi.fn(),
+  setSourceStatus: vi.fn(),
+  loadRunSnapshot: vi.fn(),
+}));
+
+const dbMocks = vi.hoisted(() => ({
+  prisma: { searchRun: { update: vi.fn() } },
+}));
+
 vi.mock("@/lib/session", () => sessionMocks);
 vi.mock("@/lib/org-access", () => orgAccessMocks);
 vi.mock("@/lib/usage", () => usageMocks);
 vi.mock("@/lib/talent-search/library", () => libraryMocks);
 vi.mock("@/lib/feature-flags", () => flagMocks);
 vi.mock("@/lib/scrape-queue", () => queueMocks);
+vi.mock("@/lib/search-run", () => searchRunMocks);
+vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/error-reporting", () => ({
   reportError: vi.fn(),
 }));
+// runResultToUnified is left REAL (pure mapping) so the snapshot→UnifiedResult
+// transform is exercised end-to-end, not stubbed away.
 
 import { POST } from "@/app/api/jobs/[id]/search/multi/route";
 
 let scraperJobSeq = 0;
+// Library rows the route "attached" to the run this call — the loadRunSnapshot
+// mock reads this back so the response reflects what was attached.
+let attachedLibrary: Array<ReturnType<typeof lib>> = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
   scraperJobSeq = 0;
+  attachedLibrary = [];
   // Sensible defaults — each test overrides what it cares about.
   sessionMocks.getAuth.mockResolvedValue({ userId: "u1", orgId: "org-A", isOwner: false });
-  sessionMocks.requireJobAccess.mockResolvedValue({ job: { id: "job-1" }, error: null });
+  sessionMocks.requireJobAccess.mockResolvedValue({ job: { id: "job-1", orgId: "org-A" }, error: null });
   orgAccessMocks.getAccessibleOrgIds.mockResolvedValue(["org-A"]);
   usageMocks.checkRateLimit.mockResolvedValue({ allowed: true });
   usageMocks.recordUsage.mockResolvedValue(undefined);
   libraryMocks.searchLibrary.mockResolvedValue([]);
-  // Discovery enabled by default — most tests exercise the live scraper path.
   flagMocks.isScraperDiscoveryEnabled.mockReturnValue(true);
-  // Each enqueue returns a fresh job id so liveJobs entries are distinguishable.
-  queueMocks.enqueueSearchJob.mockImplementation(async () => ({
-    id: `scrape-${++scraperJobSeq}`,
-  }));
+  queueMocks.enqueueSearchJob.mockImplementation(async () => ({ id: `scrape-${++scraperJobSeq}` }));
+
+  // Durable-run engine mocks.
+  searchRunMocks.createRun.mockResolvedValue({ id: "run-1" });
+  searchRunMocks.attachLibraryResults.mockImplementation(async (_id: string, results: Array<ReturnType<typeof lib>>) => {
+    attachedLibrary = results;
+  });
+  searchRunMocks.setSourceStatus.mockResolvedValue(undefined);
+  dbMocks.prisma.searchRun.update.mockResolvedValue({});
+  // The snapshot reflects whatever library rows were attached (scraper rows
+  // arrive asynchronously, so they're absent from the synchronous snapshot).
+  searchRunMocks.loadRunSnapshot.mockImplementation(async () => {
+    const rows = attachedLibrary.map((c) => ({
+      id: `res-${c.id}`,
+      mergeKey: c.linkedinUrl ?? `lib:${c.id}`,
+      sources: ["library"],
+      candidateId: c.id,
+      candidateIdentityId: c.candidateIdentityId ?? null,
+      profileUrl: c.linkedinUrl ?? null,
+      name: c.name,
+      headline: c.headline,
+      location: c.location,
+      snippet: c.profileTextSnippet ?? null,
+      matchScore: c.matchScore ?? null,
+      relevance: null,
+      rank: null,
+      photoUrl: null,
+    }));
+    return {
+      run: {
+        id: "run-1",
+        orgId: "org-A",
+        rawQuery: "react",
+        location: null,
+        sources: ["library"],
+        status: "complete",
+        sourceStatus: { library: "complete", linkedin: "skipped", seek: "skipped" },
+        counts: { library: rows.length, linkedin: 0, seek: 0, deduped: 0, total: rows.length },
+        error: null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+        updatedAtMs: 0,
+      },
+      results: rows,
+    };
+  });
 });
 
 function makeReq(body: unknown): Request {
@@ -118,6 +180,7 @@ describe("POST /search/multi — auth", () => {
     });
     const res = await POST(makeReq({ query: "react" }), PARAMS);
     expect(res.status).toBe(403);
+    expect(searchRunMocks.createRun).not.toHaveBeenCalled();
     expect(libraryMocks.searchLibrary).not.toHaveBeenCalled();
   });
 });
@@ -146,22 +209,37 @@ describe("POST /search/multi — body validation", () => {
 });
 
 describe("POST /search/multi — rate limit", () => {
-  it("429 when rate-limited; sources NOT called", async () => {
+  it("429 when rate-limited; nothing created", async () => {
     usageMocks.checkRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterMs: 120_000 });
     const res = await POST(makeReq({ query: "react" }), PARAMS);
     expect(res.status).toBe(429);
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/2 minutes/);
+    expect(searchRunMocks.createRun).not.toHaveBeenCalled();
     expect(libraryMocks.searchLibrary).not.toHaveBeenCalled();
     expect(queueMocks.enqueueSearchJob).not.toHaveBeenCalled();
   });
 });
 
-describe("POST /search/multi — library results", () => {
-  it("returns library rows from searchLibrary in the response", async () => {
+describe("POST /search/multi — durable run", () => {
+  it("creates a jobId-scoped run and returns its id", async () => {
     libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
     const res = await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);
     expect(res.status).toBe(200);
+    expect(searchRunMocks.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "job-1", orgId: "org-A", rawQuery: "react" }),
+    );
+    const body = (await res.json()) as { runId: string };
+    expect(body.runId).toBe("run-1");
+  });
+});
+
+describe("POST /search/multi — library results", () => {
+  it("returns library rows (mapped from the run snapshot) in the response", async () => {
+    libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
+    const res = await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);
+    expect(res.status).toBe(200);
+    expect(searchRunMocks.attachLibraryResults).toHaveBeenCalledWith("run-1", expect.any(Array));
     const body = (await res.json()) as { results: unknown[]; counts: { fromLibrary: number } };
     expect(body.results).toHaveLength(1);
     expect(body.counts.fromLibrary).toBe(1);
@@ -169,7 +247,7 @@ describe("POST /search/multi — library results", () => {
 });
 
 describe("POST /search/multi — live scraper discovery (LinkedIn)", () => {
-  it("enqueues a priority=100 linkedin scraper job + returns it in liveJobs", async () => {
+  it("enqueues a priority=100 linkedin job LINKED to the run + returns it in liveJobs", async () => {
     libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
     const res = await POST(
       makeReq({ query: "react", sources: ["library", "linkedin"] }),
@@ -183,6 +261,7 @@ describe("POST /search/multi — live scraper discovery (LinkedIn)", () => {
         platform: "linkedin",
         searchQuery: "react",
         priority: 100,
+        searchRunId: "run-1",
       }),
     );
     const body = (await res.json()) as {
@@ -206,7 +285,7 @@ describe("POST /search/multi — live scraper discovery (LinkedIn)", () => {
     await POST(makeReq({ query: "react" }), PARAMS);
     expect(libraryMocks.searchLibrary).toHaveBeenCalled();
     expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
-      expect.objectContaining({ platform: "linkedin", priority: 100 }),
+      expect.objectContaining({ platform: "linkedin", priority: 100, searchRunId: "run-1" }),
     );
   });
 });
@@ -219,10 +298,10 @@ describe("POST /search/multi — live scraper discovery (SEEK)", () => {
     );
     expect(res.status).toBe(200);
     expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
-      expect.objectContaining({ platform: "linkedin", priority: 100 }),
+      expect.objectContaining({ platform: "linkedin", priority: 100, searchRunId: "run-1" }),
     );
     expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
-      expect.objectContaining({ platform: "seek", priority: 100 }),
+      expect.objectContaining({ platform: "seek", priority: 100, searchRunId: "run-1" }),
     );
     const body = (await res.json()) as {
       liveJobs: Array<{ id: string; platform: string }>;
@@ -253,7 +332,7 @@ describe("POST /search/multi — discovery disabled", () => {
     expect(body.errors?.linkedin).toMatch(/offline/i);
     expect(queueMocks.enqueueSearchJob).not.toHaveBeenCalled();
     expect(body.liveJobs).toHaveLength(0);
-    // Library still returned its result.
+    // Library still returned its result (attached to the run).
     expect(body.results).toHaveLength(1);
   });
 });
@@ -283,18 +362,16 @@ describe("POST /search/multi — counts", () => {
 });
 
 describe("POST /search/multi — partial failure tolerance", () => {
-  it("library throws → 200 with errors.library + still enqueues scraper job", async () => {
+  it("library throws → 200 with errors.library, source marked failed, scraper still enqueued", async () => {
     libraryMocks.searchLibrary.mockRejectedValueOnce(new Error("DB down"));
     const res = await POST(makeReq({ query: "react" }), PARAMS);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      errors?: { library?: string };
-      counts: { total: number };
-    };
+    const body = (await res.json()) as { errors?: { library?: string } };
     expect(body.errors?.library).toBe("DB down");
-    // LinkedIn discovery still fires because the library shortfall is full.
+    expect(searchRunMocks.setSourceStatus).toHaveBeenCalledWith("run-1", "library", "failed");
+    // LinkedIn discovery still fires (default sources include it).
     expect(queueMocks.enqueueSearchJob).toHaveBeenCalledWith(
-      expect.objectContaining({ platform: "linkedin", priority: 100 }),
+      expect.objectContaining({ platform: "linkedin", priority: 100, searchRunId: "run-1" }),
     );
   });
 
@@ -306,7 +383,7 @@ describe("POST /search/multi — partial failure tolerance", () => {
   });
 });
 
-describe("POST /search/multi — query parsing + aggregation", () => {
+describe("POST /search/multi — query parsing", () => {
   it("parsed query echoes back in response", async () => {
     libraryMocks.searchLibrary.mockResolvedValueOnce([]);
     const res = await POST(
@@ -334,7 +411,7 @@ describe("POST /search/multi — limit propagation", () => {
 });
 
 describe("POST /search/multi — recordUsage", () => {
-  it("fires recordUsage with counts after successful search", async () => {
+  it("fires recordUsage with the run id after a successful search", async () => {
     libraryMocks.searchLibrary.mockResolvedValueOnce([lib()]);
     await POST(makeReq({ query: "react", sources: ["library", "linkedin"] }), PARAMS);
     expect(usageMocks.recordUsage).toHaveBeenCalledWith(
@@ -344,7 +421,7 @@ describe("POST /search/multi — recordUsage", () => {
       expect.objectContaining({
         route: "search/multi",
         jobId: "job-1",
-        libraryCount: 1,
+        runId: "run-1",
         hasErrors: false,
       }),
     );
@@ -358,7 +435,7 @@ describe("POST /search/multi — recordUsage", () => {
   });
 });
 
-describe("POST /search/multi — passes accessibleOrgIds through", () => {
+describe("POST /search/multi — passes accessibleOrgIds through to library", () => {
   it("owner (null orgIds) → library called with null", async () => {
     orgAccessMocks.getAccessibleOrgIds.mockResolvedValueOnce(null);
     await POST(makeReq({ query: "react", sources: ["library"] }), PARAMS);

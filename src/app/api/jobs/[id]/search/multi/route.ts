@@ -29,7 +29,8 @@ import { getAccessibleOrgIds } from "@/lib/org-access";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { parseBooleanQuery } from "@/lib/boolean-query";
 import { searchLibrary } from "@/lib/talent-search/library";
-import { aggregateSources } from "@/lib/talent-search/aggregate";
+import { runResultToUnified } from "@/lib/talent-search/run-to-unified";
+import { createRun, attachLibraryResults, setSourceStatus, loadRunSnapshot } from "@/lib/search-run";
 import { reportError } from "@/lib/error-reporting";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { enqueueSearchJob } from "@/lib/scrape-queue";
@@ -75,7 +76,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { query, location, sources, libraryLimit, linkedinLimit, excludeCompanies } = parsed.data;
+  const { query, location, sources, libraryLimit, excludeCompanies } = parsed.data;
 
   // Effective company exclusion: a list sent with the request is authoritative
   // and persisted on the job (so the next search remembers it); otherwise fall
@@ -92,114 +93,131 @@ export async function POST(
   }
 
   const parsedQuery = parseBooleanQuery(query);
+  const queryRaw = parsedQuery.raw.trim();
 
+  // Library FTS scope (owners span their accessible orgs; non-owners pinned).
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
+  // Scraper jobs + the run need a CONCRETE org (ingested profiles attach to it).
+  // A job always has one: use the job's org, falling back to the caller's.
+  const runOrgId = job?.orgId ?? auth.orgId ?? null;
 
-  // Track per-source errors without blowing up the whole request — one
-  // source failing should NOT prevent the other from delivering results.
+  // Track per-source errors without blowing up the whole request.
   const errors: Partial<Record<"library" | "linkedin", string>> = {};
 
   const wantLibrary = sources.includes("library");
   const wantLinkedin = sources.includes("linkedin");
+  const wantSeek = sources.includes("seek");
+  const scraperOn = isScraperDiscoveryEnabled();
+  // A scraper job needs a concrete org + a non-empty query.
+  const canScrape = scraperOn && queryRaw.length > 0 && runOrgId != null;
+  if (wantLinkedin && !scraperOn) {
+    errors.linkedin = "LinkedIn discovery is offline (scraper unavailable).";
+  }
 
-  // Target result count before reaching outward. Library-first: once the
-  // library returns this many, we don't need the scraper for this query.
-  const serpTarget = linkedinLimit ?? 30;
+  // Initial per-source statuses for the run row.
+  const initialStatus = (want: boolean, isScraper: boolean) => {
+    if (!want) return "skipped" as const;
+    if (!isScraper) return "running" as const; // library runs inline next
+    return canScrape ? ("running" as const) : ("skipped" as const);
+  };
 
-  let libraryResults: Awaited<ReturnType<typeof searchLibrary>> = [];
+  // ── 1. Commit the durable run FIRST (survives a tab close). Scoped to the
+  // job so the page can resume "this job's latest search" on return. ──
+  const run = await createRun({
+    orgId: runOrgId,
+    jobId: id,
+    requestedBy: auth.userId,
+    rawQuery: query,
+    parsedQuery,
+    location: location ?? null,
+    sources,
+    libraryStatus: initialStatus(wantLibrary, false),
+    linkedinStatus: initialStatus(wantLinkedin, true),
+    seekStatus: initialStatus(wantSeek, true),
+  });
+
+  // ── 2. Library FTS inline — instant results attach to the run ──
   if (wantLibrary) {
     try {
-      libraryResults = await searchLibrary({
+      const libraryResults = await searchLibrary({
         parsedQuery,
         accessibleOrgIds,
         location,
         excludeCompanies: effectiveExclusions,
         limit: libraryLimit ?? 100,
       });
+      await attachLibraryResults(run.id, libraryResults);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      reportError(err, { route: "search/multi/library", jobId: id, orgId: auth.orgId });
+      reportError(err, { route: "search/multi/library", jobId: id, runId: run.id, orgId: auth.orgId });
+      await setSourceStatus(run.id, "library", "failed");
       errors.library = msg;
     }
   }
 
-  // Phase K — SerpAPI removed. LinkedIn discovery is scraper-only: the live
-  // priority=100 scraper job enqueued below IS the LinkedIn fetch. There is
-  // no synchronous LinkedIn search anymore, so the aggregator's linkedin
-  // slot is always empty here; harvested profiles land in the library and
-  // surface on the next run (or via the durable /search SearchRun page).
-  const linkedinResults: never[] = [];
-  if (wantLinkedin && !isScraperDiscoveryEnabled()) {
-    errors.linkedin = "LinkedIn discovery is offline (scraper unavailable).";
-  }
-
-  const aggregated = aggregateSources({
-    library: libraryResults,
-    linkedin: linkedinResults,
-  });
-
-  // Phase H — Live scraper jobs. Whenever the library shortfall isn't
-  // covered, enqueue a priority=100 scraper search for each requested
-  // external source. The worker's priority-aware poll picks these up
-  // ahead of any background discovery work; the client polls
-  // /api/scraper/jobs/[id]/status to merge results as they land.
-  //
-  // We surface the job IDs in the response so the client knows which to
-  // poll. Empty list = nothing live in-flight (sources were satisfied by
-  // the library, or external discovery is disabled).
-  const libraryShortfall = wantLibrary
-    ? Math.max(0, serpTarget - libraryResults.length)
-    : serpTarget;
+  // ── 3. Enqueue priority=100 scraper search jobs, LINKED to the run, so the
+  // box drives them to completion and attaches hits even after the tab closes. ──
   const liveJobs: Array<{ id: string; platform: "linkedin" | "seek" }> = [];
-  const queryRaw = parsedQuery.raw.trim();
-  // Fire live discovery when the pool falls short (auto) OR whenever the
-  // recruiter explicitly toggled a live source ON. A well-stocked library must
-  // NOT suppress a deliberately-requested LinkedIn/SEEK search — that was the
-  // old behaviour and it meant fresh discovery silently never ran for common
-  // queries. Volume stays bounded by the hourly "search" rate limit above.
-  const liveRequested = wantLinkedin || sources.includes("seek");
-  if ((libraryShortfall > 0 || liveRequested) && queryRaw.length > 0 && isScraperDiscoveryEnabled() && auth.orgId) {
+  if (canScrape) {
     if (wantLinkedin) {
       const j = await enqueueSearchJob({
-        orgId: auth.orgId,
+        orgId: runOrgId!,
         platform: "linkedin",
         searchQuery: queryRaw,
         searchLocation: location,
         requestedBy: auth.userId,
         priority: 100,
+        searchRunId: run.id,
       });
       if (j) liveJobs.push({ id: j.id, platform: "linkedin" });
+      else await setSourceStatus(run.id, "linkedin", "failed");
     }
-    if (sources.includes("seek")) {
+    if (wantSeek) {
       const j = await enqueueSearchJob({
-        orgId: auth.orgId,
+        orgId: runOrgId!,
         platform: "seek",
         searchQuery: queryRaw,
-        // Without this the modal's SEEK leg ran nation-wide and harvested its
-        // 100-card cap; now it scopes to the recruiter's region like the library.
+        // Scopes the SEEK leg to the recruiter's region (was nation-wide).
         searchLocation: location,
         requestedBy: auth.userId,
         priority: 100,
+        searchRunId: run.id,
       });
       if (j) liveJobs.push({ id: j.id, platform: "seek" });
+      else await setSourceStatus(run.id, "seek", "failed");
     }
+  } else {
+    if (wantLinkedin) await setSourceStatus(run.id, "linkedin", "skipped");
+    if (wantSeek) await setSourceStatus(run.id, "seek", "skipped");
   }
 
-  // Record usage for rate-limit accounting + analytics. Fire-and-forget —
-  // never block the response on the audit write.
+  // ── 4. Overall status: running while any scraper source is live, else done ──
+  const anyScraperLive = liveJobs.length > 0;
+  await prisma.searchRun.update({
+    where: { id: run.id },
+    data: anyScraperLive
+      ? { status: "running" }
+      : { status: "complete", completedAt: new Date() },
+  });
+
   void recordUsage(auth.orgId, auth.userId, "search", {
     route: "search/multi",
     jobId: id,
+    runId: run.id,
     sources,
-    libraryCount: aggregated.counts.libraryRaw,
-    linkedinCount: aggregated.counts.linkedinRaw,
-    dedupedCount: aggregated.counts.deduped,
-    totalCount: aggregated.counts.total,
     liveJobs: liveJobs.length,
     hasErrors: Object.keys(errors).length > 0,
   });
 
+  // Load the just-committed snapshot and map it into the modal's UnifiedResult
+  // shape. The same run is now streamable at /api/search/[runId]/stream and
+  // re-fetchable at /api/search/[runId] — so a closed/reopened tab resumes it.
+  const snapshot = await loadRunSnapshot(run.id);
+  const counts = snapshot?.run.counts ?? { library: 0, linkedin: 0, seek: 0, deduped: 0, total: 0 };
   return NextResponse.json({
+    runId: run.id,
+    status: snapshot?.run.status ?? "queued",
+    sourceStatus: snapshot?.run.sourceStatus ?? { library: "skipped", linkedin: "skipped", seek: "skipped" },
     query: {
       raw: parsedQuery.raw,
       mustHave: parsedQuery.mustHave,
@@ -208,16 +226,16 @@ export async function POST(
       hasErrors: parsedQuery.hasErrors,
       errors: parsedQuery.errors,
     },
-    results: aggregated.results,
+    results: (snapshot?.results ?? []).map(runResultToUnified),
     counts: {
-      ...aggregated.counts,
-      // How many came from the local library vs the live scraper path.
-      fromLibrary: aggregated.counts.libraryRaw,
-      fromScraper: aggregated.counts.linkedinRaw,
+      // Keep the modal's existing keys; collapse seek into the scraper count.
+      libraryRaw: counts.library,
+      linkedinRaw: counts.linkedin + counts.seek,
+      deduped: counts.deduped,
+      total: counts.total,
+      fromLibrary: counts.library,
+      fromScraper: counts.linkedin + counts.seek,
     },
-    // Phase H — IDs of priority=100 scraper jobs the client should poll
-    // via /api/scraper/jobs/[id]/status. Empty array = no live work
-    // in-flight (library satisfied the request, or discovery is gated off).
     liveJobs,
     errors: Object.keys(errors).length > 0 ? errors : undefined,
   });

@@ -200,6 +200,31 @@ export default function JobDetailPage({
   // Jobs whose role search has already auto-fired this session — so re-opening
   // the search modal doesn't re-enqueue a fresh live LinkedIn scrape each time.
   const autoRanJobsRef = useRef<Set<string>>(new Set());
+
+  // The job's latest durable search run. Drives the "resume" affordance: the
+  // search lives server-side on the box, so reopening the modal continues it and
+  // the page shows whether one is still running even after a tab close.
+  const [latestRun, setLatestRun] = useState<{ id: string; status: string; total: number } | null>(null);
+  const fetchLatestRun = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/jobs/${id}/search/latest`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { run: { id: string; status: string; counts: { total: number } } | null };
+      setLatestRun(data.run ? { id: data.run.id, status: data.run.status, total: data.run.counts.total } : null);
+    } catch {
+      /* non-fatal — the resume affordance just won't show */
+    }
+  }, [id]);
+  useEffect(() => { void fetchLatestRun(); }, [fetchLatestRun]);
+  // While a run is in flight, poll so the page banner reflects completion even
+  // with the modal closed. Stops once the run reaches a terminal status.
+  const runInFlight = latestRun?.status === "queued" || latestRun?.status === "running";
+  useEffect(() => {
+    if (!runInFlight) return;
+    const t = setInterval(() => { void fetchLatestRun(); }, 5000);
+    return () => clearInterval(t);
+  }, [runInFlight, fetchLatestRun]);
+
   useEffect(() => {
     if (!overflowOpen) return;
     const close = (e: MouseEvent) => {
@@ -1458,8 +1483,17 @@ ${toHtml(job.rawJd)}
             <span className="hidden sm:inline">Library</span>
           </Button>
           <Button variant="secondary" size="md" onClick={() => openModal("multiSearch")}>
-            <Search className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Search talent</span>
+            {runInFlight ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="hidden sm:inline">Search running…</span>
+              </>
+            ) : (
+              <>
+                <Search className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Search talent</span>
+              </>
+            )}
           </Button>
           <Button onClick={() => openModal("addCandidate")}>
             <UserPlus className="w-3.5 h-3.5" />
@@ -2438,8 +2472,11 @@ ${toHtml(job.rawJd)}
           autoRun={!autoRanJobsRef.current.has(id)}
           onAutoRan={() => autoRanJobsRef.current.add(id)}
           excludedCompanies={job.excludedCompanies ?? null}
-          onClose={() => closeModal("multiSearch")}
-          onComplete={fetchJob}
+          // Resume the job's latest durable run on open (the "leave tab, come
+          // back" path) rather than firing a fresh search every time.
+          resumeRunId={latestRun?.id ?? null}
+          onClose={() => { closeModal("multiSearch"); void fetchLatestRun(); }}
+          onComplete={() => { fetchJob(); void fetchLatestRun(); }}
         />
       )}
       {modals.browseLibrary && (

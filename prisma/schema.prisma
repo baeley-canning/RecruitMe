@@ -148,6 +148,7 @@ model ScraperHeartbeat {
 model SearchRun {
   id          String  @id @default(cuid())
   orgId       String? // nullable: owner runs span all accessible orgs
+  jobId       String? // set when the run was started from a job (durable job search); null for the /search page
   requestedBy String? // userId who started the run; null = system
   rawQuery    String
   parsedQuery String // JSON: { raw, mustHave, anyOf, mustNot, hasErrors, errors }
@@ -180,6 +181,7 @@ model SearchRun {
 
   @@index([orgId, createdAt])
   @@index([orgId, status])
+  @@index([jobId, createdAt]) // resume "this job's latest search" cheaply
   @@index([status, updatedAt]) // sweep: find stuck non-terminal runs cheaply
 }
 

@@ -23,6 +23,8 @@ import { LinkedInIcon } from "@/components/candidate/icons";
 import { showToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import type { UnifiedResult } from "@/lib/talent-search/aggregate";
+import { runResultToUnified } from "@/lib/talent-search/run-to-unified";
+import type { RunSnapshot, RunDTO, SearchRunResultDTO } from "@/lib/search-run";
 import { parsedRoleToBooleanQuery } from "@/lib/talent-search/role-query";
 import type { ParsedRole } from "@/lib/ai";
 
@@ -48,6 +50,12 @@ interface SearchResponse {
   /** Phase H — IDs of priority scraper jobs the client should poll. */
   liveJobs?: Array<{ id: string; platform: "linkedin" | "seek" }>;
   errors?: { library?: string; linkedin?: string };
+  /** Durable run id — the search persists server-side under this id; the modal
+   *  streams it for live results and the job page resumes it on return. */
+  runId?: string;
+  /** Run lifecycle: queued | running | complete | partial | failed. */
+  status?: string;
+  sourceStatus?: { library: string; linkedin: string; seek: string };
 }
 
 // Phase H — per-job status response from /api/scraper/jobs/[id]/status.
@@ -201,6 +209,11 @@ interface UnifiedSearchModalProps {
   /** The job's stored excluded companies (comma-separated). Seeds the exclude
    *  field; edits are sent with the search + persisted back to the job. */
   excludedCompanies?: string | null;
+  /** When present, the modal RESUMES this durable run on open instead of running
+   *  a fresh search: it loads the persisted snapshot and streams live updates.
+   *  This is what makes "leave the tab, come back, the search is done" work — the
+   *  job page passes its latest run id here. Suppresses the role auto-run. */
+  resumeRunId?: string | null;
   onComplete: () => void;
   onClose: () => void;
 }
@@ -212,6 +225,7 @@ export function UnifiedSearchModal({
   autoRun = true,
   onAutoRan,
   excludedCompanies,
+  resumeRunId,
   onComplete,
   onClose,
 }: UnifiedSearchModalProps) {
@@ -249,6 +263,14 @@ export function UnifiedSearchModal({
   // "LinkedIn live · 14 urls" while scraping is in progress.
   const [liveJobStatuses, setLiveJobStatuses] = useState<Record<string, LiveJobStatus>>({});
   const pollAbortRef = useRef<AbortController | null>(null);
+
+  // Durable run: the search lives server-side. `runStatus` drives the "still
+  // running on the server" note; `streamRunId` holds the SSE stream open.
+  const [runStatus, setRunStatus] = useState<string | null>(null);
+  // Set ONLY when we want to begin streaming (run is queued/running). Keyed by
+  // this so the stream effect doesn't reopen on every status delta.
+  const [streamRunId, setStreamRunId] = useState<string | null>(null);
+  const runActive = runStatus === "queued" || runStatus === "running";
 
   // Selection state — keyed by UnifiedResult.id (stable across results).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -292,6 +314,12 @@ export function UnifiedSearchModal({
       }
       const data = (await res.json()) as SearchResponse;
       setResponse(data);
+      // The search is now a durable server-side run. Track it + open the stream
+      // so results flow in live (and keep flowing if the recruiter comes back).
+      setRunStatus(data.status ?? null);
+      if (data.runId && (data.status === "queued" || data.status === "running")) {
+        setStreamRunId(data.runId);
+      }
       // Seed status map so the UI shows "queued" pills immediately while the
       // first poll cycle is in flight. The useEffect below drives the rest.
       setLiveJobStatuses(
@@ -330,14 +358,88 @@ export function UnifiedSearchModal({
   // scrape) and on roleMode (a non-empty produced query). One-shot ref guard.
   const autoRanRef = useRef(false);
   useEffect(() => {
-    if (!autoRun || !roleMode || autoRanRef.current) return;
+    // A resumable run wins over a fresh auto-run: if the job already has a recent
+    // search, show/continue it rather than firing (and charging for) a new one.
+    if (resumeRunId || !autoRun || !roleMode || autoRanRef.current) return;
     autoRanRef.current = true;
     onAutoRan?.();
     void runSearch(roleQuery);
     // runSearch/onAutoRan intentionally excluded: the autoRanRef one-shot guard
     // makes any re-run on their identity change a no-op.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRun, roleMode, roleQuery]);
+  }, [autoRun, roleMode, roleQuery, resumeRunId]);
+
+  // ── Resume a durable run on open (the "leave tab, come back" path) ──
+  // Loads the persisted snapshot for the job's latest run and populates the
+  // modal exactly as if the search had just returned. The stream effect below
+  // then continues live updates if the run is still in flight.
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (!resumeRunId || resumedRef.current || hasSearched) return;
+    resumedRef.current = true;
+    setSearching(true);
+    setHasSearched(true);
+    fetch(`/api/search/${resumeRunId}`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ run: RunDTO; results: SearchRunResultDTO[] }>) : null))
+      .then((data) => {
+        if (!data?.run) return;
+        setRunStatus(data.run.status);
+        setQuery(data.run.rawQuery);
+        setResponse({
+          query: { raw: data.run.rawQuery, mustHave: [], anyOf: [], mustNot: [], hasErrors: false, errors: [] },
+          results: data.results.map(runResultToUnified),
+          counts: {
+            libraryRaw: data.run.counts.library,
+            linkedinRaw: data.run.counts.linkedin + data.run.counts.seek,
+            deduped: data.run.counts.deduped,
+            total: data.run.counts.total,
+          },
+          sourceStatus: data.run.sourceStatus,
+          status: data.run.status,
+        });
+        if (data.run.status === "queued" || data.run.status === "running") setStreamRunId(data.run.id);
+      })
+      .catch(() => {})
+      .finally(() => setSearching(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeRunId]);
+
+  // ── Live results stream — driven by the durable run, not per-scraper-job ──
+  // While the run is queued/running, subscribe to its SSE feed; each delta maps
+  // the run's result rows into the modal's shape and updates counts + status.
+  // Closes itself on a terminal status. Survives across a tab reopen because the
+  // run id comes from the server (resume) or the just-returned search.
+  useEffect(() => {
+    if (!streamRunId) return;
+    const es = new EventSource(`/api/search/${streamRunId}/stream`);
+    es.addEventListener("run", (e) => {
+      try {
+        const snap = JSON.parse((e as MessageEvent).data) as RunSnapshot;
+        setRunStatus(snap.run.status);
+        setResponse((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            status: snap.run.status,
+            sourceStatus: snap.run.sourceStatus,
+            counts: {
+              libraryRaw: snap.run.counts.library,
+              linkedinRaw: snap.run.counts.linkedin + snap.run.counts.seek,
+              deduped: snap.run.counts.deduped,
+              total: snap.run.counts.total,
+            },
+            // The tick omits `results` when unchanged — keep the prior set then.
+            results: snap.results === undefined ? prev.results : snap.results.map(runResultToUnified),
+          };
+        });
+        if (snap.run.status !== "queued" && snap.run.status !== "running") es.close();
+      } catch {
+        /* malformed frame — ignore, next tick recovers */
+      }
+    });
+    es.onerror = () => {/* EventSource auto-reconnects on transient drops */};
+    return () => es.close();
+  }, [streamRunId]);
 
   // Phase H — poll active scraper jobs until each settles.
   //
@@ -632,6 +734,18 @@ export function UnifiedSearchModal({
                   </>
                 )}
               </p>
+            )}
+
+            {/* Durable-run note — the whole point of the convergence: the search
+                runs server-side on the box, so the recruiter can leave and return. */}
+            {runActive && (
+              <div className="p-2.5 rounded-md bg-info-subtle border border-info/30 text-xs text-info flex items-start gap-2">
+                <Loader2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 animate-spin" />
+                <span>
+                  Searching on the server — you can close this tab and come back later.
+                  Results keep landing here and on the job automatically.
+                </span>
+              </div>
             )}
 
             {/* Phase H — live scraper status pills. One per active scraper job
