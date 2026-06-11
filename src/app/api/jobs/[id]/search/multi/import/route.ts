@@ -44,7 +44,8 @@ const ImportRowSchema = z.object({
   location: z.string().nullable(),
   linkedinUrl: z.string().nullable(),
   jobAdderUrl: z.string().nullable(),
-  sources: z.array(z.enum(["library", "linkedin"])).min(1),
+  seekUrl: z.string().nullable().optional(),
+  sources: z.array(z.enum(["library", "linkedin", "seek"])).min(1),
   candidateId: z.string().nullable(),
   candidateIdentityId: z.string().nullable(),
   snippet: z.string().nullable(),
@@ -159,12 +160,20 @@ async function importOne(
   jobOrgId: string | null,
   accessibleOrgIds: string[] | null,
 ): Promise<ImportOutcome> {
-  const isLibrary = row.sources.includes("library") && row.candidateId;
+  // Attach ANY result that already maps to a library Candidate by id — a SEEK or
+  // LinkedIn result that's been ingested has a candidateId too, so keying on
+  // candidateId (not just sources=library) lets those attach instead of skipping.
+  const isLibrary = !!row.candidateId;
   // Require a GENUINE linkedin.com/in/<slug> URL before treating a row as
   // LinkedIn-only — otherwise normaliseLinkedInUrl() wraps a non-LinkedIn URL
   // (e.g. a SEEK talentsearch URL) into a broken `linkedin.com/in/https://…`
   // value and persists it. Such rows fall through to "skipped" instead.
-  const isLinkedinOnly = !isLibrary && row.sources.includes("linkedin") && !!row.linkedinUrl && isLinkedInProfileUrl(row.linkedinUrl);
+  const isLinkedinOnly = !isLibrary && !!row.linkedinUrl && isLinkedInProfileUrl(row.linkedinUrl);
+  // A live SEEK card: no candidateId, no LinkedIn URL, but a real SEEK URL.
+  // Before this path these were SKIPPED ("no_usable_url_key") — which is why a
+  // search's SEEK results never made it onto the job and everything looked like
+  // library re-treads.
+  const isSeekOnly = !isLibrary && !isLinkedinOnly && !!row.seekUrl;
 
   // ── Library path ─────────────────────────────────────────────────────
   if (isLibrary) {
@@ -252,6 +261,33 @@ async function importOne(
         // wipe data. Only updates the source tag.
         source: "scraper",
       },
+    });
+    return { resultId: row.id, status: "attached", candidateId: upserted.id };
+  }
+
+  // ── SEEK-only path ───────────────────────────────────────────────────
+  if (isSeekOnly) {
+    const seekUrl = row.seekUrl!.trim();
+    // SEEK rows have no LinkedIn URL, so synthesise the (jobId, linkedinUrl)
+    // unique key from the SEEK URL — same shape as the library:<id> synthetic
+    // key. It starts with "seek:" (not http) so displayableLinkedinUrl never
+    // renders it as a link. The real seekUrl is stored so the SK badge shows.
+    const key = `seek:${seekUrl.toLowerCase().replace(/[?#].*$/, "").replace(/\/+$/, "")}`;
+    const upserted = await prisma.candidate.upsert({
+      where: { jobId_linkedinUrl: { jobId, linkedinUrl: key } },
+      create: {
+        jobId,
+        orgId: jobOrgId,
+        name: row.name || "Unknown",
+        headline: row.headline,
+        location: row.location,
+        linkedinUrl: key,
+        seekUrl,
+        profileText: row.snippet,
+        source: "seek_scraper",
+        status: "new",
+      },
+      update: { source: "seek_scraper" },
     });
     return { resultId: row.id, status: "attached", candidateId: upserted.id };
   }

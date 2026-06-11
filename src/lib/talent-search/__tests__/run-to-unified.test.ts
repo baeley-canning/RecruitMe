@@ -35,12 +35,13 @@ describe("runResultToUnified", () => {
     expect(r.linkedinUrl).toBe("https://www.linkedin.com/in/jane-doe");
   });
 
-  it("does NOT route a SEEK URL into linkedinUrl (the mangled-link bug)", () => {
+  it("routes a SEEK URL to seekUrl (NOT linkedinUrl) so the import can attach it", () => {
     const r = runResultToUnified(dto({
       profileUrl: "https://nz.employer.seek.com/talentsearch/profile/571239686/",
       sources: ["seek"],
     }));
     expect(r.linkedinUrl).toBeNull();
+    expect(r.seekUrl).toBe("https://nz.employer.seek.com/talentsearch/profile/571239686/");
   });
 
   it("rejects any other non-LinkedIn URL from linkedinUrl", () => {
@@ -48,9 +49,9 @@ describe("runResultToUnified", () => {
     expect(runResultToUnified(dto({ profileUrl: "https://example.com/x" })).linkedinUrl).toBeNull();
   });
 
-  it("collapses seek → linkedin in the source badges", () => {
-    expect(runResultToUnified(dto({ sources: ["seek"] })).sources).toEqual(["linkedin"]);
-    expect(runResultToUnified(dto({ sources: ["library", "seek"] })).sources).toEqual(["library", "linkedin"]);
+  it("PRESERVES the seek source tag (no longer collapsed to linkedin)", () => {
+    expect(runResultToUnified(dto({ sources: ["seek"] })).sources).toEqual(["seek"]);
+    expect(runResultToUnified(dto({ sources: ["library", "seek"] })).sources).toEqual(["library", "seek"]);
   });
 
   it("preserves library identity fields and id = mergeKey", () => {

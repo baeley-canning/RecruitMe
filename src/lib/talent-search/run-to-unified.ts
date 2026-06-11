@@ -15,25 +15,25 @@ import { isLinkedInProfileUrl } from "../linkedin";
 
 /** Map a durable run result row to the modal's UnifiedResult. */
 export function runResultToUnified(r: SearchRunResultDTO): UnifiedResult {
-  // The modal's source union is ("library" | "linkedin")[]; the run also tracks
-  // "seek". Collapse seek → linkedin for the badge (both are "external scrape").
-  const sources = Array.from(
-    new Set(r.sources.map((s) => (s === "library" ? "library" : "linkedin"))),
-  ) as Array<"library" | "linkedin">;
+  // Preserve the real source tags (library / linkedin / seek) so the UI labels
+  // SEEK results as SEEK — not "LinkedIn" — and the import can route them.
+  const sources = Array.from(new Set(r.sources)) as Array<"library" | "linkedin" | "seek">;
   if (sources.length === 0) sources.push(r.candidateId ? "library" : "linkedin");
+
+  const isLinkedinUrl = !!r.profileUrl && isLinkedInProfileUrl(r.profileUrl);
+  const isSeek = !!r.profileUrl && /(^|\.)seek\.com/i.test(r.profileUrl);
 
   return {
     id: r.mergeKey, // stable across re-runs of the same query (identity merge key)
     name: r.name ?? "Unnamed profile",
     headline: r.headline,
     location: r.location,
-    // Only route a GENUINE LinkedIn profile URL into linkedinUrl. The run's
-    // single `profileUrl` column also holds SEEK/JobAdder URLs; the modal's
-    // import normalises linkedinUrl as a linkedin.com/in/<slug> link, so feeding
-    // it a SEEK URL produced the mangled `linkedin.com/in/https://...seek...`
-    // links. A non-LinkedIn scraper hit gets ingested into the library with its
-    // correct seekUrl by the worker and attaches by candidateId instead.
-    linkedinUrl: r.profileUrl && isLinkedInProfileUrl(r.profileUrl) ? r.profileUrl : null,
+    // Only a GENUINE linkedin.com/in URL goes in linkedinUrl — the run's single
+    // `profileUrl` column also holds SEEK URLs, and feeding one to the import's
+    // linkedin normaliser produced the mangled `linkedin.com/in/https://…seek…`
+    // links. SEEK URLs go to seekUrl so the import can attach them as SEEK rows.
+    linkedinUrl: isLinkedinUrl ? r.profileUrl : null,
+    seekUrl: isSeek ? r.profileUrl : null,
     jobAdderUrl: null,
     photoUrl: r.photoUrl,
     matchScore: r.matchScore,

@@ -68,13 +68,16 @@ export interface UnifiedResult {
   location: string | null;
   linkedinUrl: string | null;
   jobAdderUrl: string | null;
+  /** SEEK profile URL — set for live SEEK results so the import can attach them
+   *  (they carry no candidateId or linkedinUrl). Optional: the legacy aggregator
+   *  doesn't set it; the durable-run adapter does. */
+  seekUrl?: string | null;
   photoUrl: string | null;
   /** Library matchScore, if present. LinkedIn results have null until
    *  AI scoring runs (which is post-import, not at search time). */
   matchScore: number | null;
-  /** Sources this result appears in, deduped. Always at least one
-   *  entry. Order: ["library", "linkedin"] when both. */
-  sources: Array<"library" | "linkedin">;
+  /** Sources this result appears in, deduped. Always at least one entry. */
+  sources: Array<"library" | "linkedin" | "seek">;
   /** When sources includes "library", the underlying Candidate row id.
    *  Multi-source import uses this to attach existing library rows to
    *  the new job without re-creating a Candidate row. */

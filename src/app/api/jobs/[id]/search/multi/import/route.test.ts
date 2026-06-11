@@ -234,6 +234,45 @@ describe("POST /search/multi/import — LinkedIn-only path", () => {
   });
 });
 
+describe("POST /search/multi/import — SEEK path", () => {
+  it("attaches a live SEEK row (seekUrl, no candidateId, no linkedinUrl) as seek_scraper", async () => {
+    const res = await POST(
+      makeReq({
+        results: [row({
+          id: "seek-1",
+          sources: ["seek"],
+          candidateId: null,
+          linkedinUrl: null,
+          seekUrl: "https://nz.employer.seek.com/talentsearch/profile/12345/",
+        })],
+      }),
+      PARAMS,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      counts: { attached: number; skipped: number; total: number };
+      outcomes: Array<{ status: string }>;
+    };
+    expect(body.counts).toMatchObject({ attached: 1, skipped: 0, total: 1 });
+    const call = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
+    expect(call.create.seekUrl).toBe("https://nz.employer.seek.com/talentsearch/profile/12345/");
+    expect(call.create.source).toBe("seek_scraper");
+    // Synthetic (jobId, linkedinUrl) key — must NOT be a real http URL.
+    expect(String(call.create.linkedinUrl)).toMatch(/^seek:/);
+    expect(call.where.jobId_linkedinUrl.linkedinUrl).toBe(call.create.linkedinUrl);
+  });
+
+  it("still skips a row with neither candidateId, linkedinUrl, nor seekUrl", async () => {
+    const res = await POST(
+      makeReq({ results: [row({ id: "bare", sources: ["seek"], candidateId: null, linkedinUrl: null, seekUrl: null })] }),
+      PARAMS,
+    );
+    const body = (await res.json()) as { outcomes: Array<{ status: string; reason?: string }> };
+    expect(body.outcomes[0]).toMatchObject({ status: "skipped", reason: "no_usable_url_key" });
+    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /search/multi/import — Library path", () => {
   it("copies source candidate fields onto the new job-tied row", async () => {
     dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({

@@ -135,13 +135,21 @@ function RowCVPreview({ candidateId }: { candidateId: string }) {
 }
 
 // -----------------------------------------------------------------------------
-// Source pill — neutral for library, accent-tinted for LinkedIn.
+// Source pill — neutral for library, accent for LinkedIn, green for SEEK, so a
+// recruiter can tell fresh SEEK/LinkedIn finds from existing library candidates.
 // -----------------------------------------------------------------------------
-function SourcePill({ source }: { source: "library" | "linkedin" }) {
+function SourcePill({ source }: { source: "library" | "linkedin" | "seek" }) {
   if (source === "library") {
     return (
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium bg-surface-hover text-text-secondary border border-separator">
         <Library className="w-2.5 h-2.5" /> Library
+      </span>
+    );
+  }
+  if (source === "seek") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium bg-success-subtle text-success">
+        SEEK
       </span>
     );
   }
