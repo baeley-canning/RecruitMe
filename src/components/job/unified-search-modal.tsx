@@ -57,6 +57,9 @@ interface SearchResponse {
   /** Run lifecycle: queued | running | complete | partial | failed. */
   status?: string;
   sourceStatus?: { library: string; linkedin: string; seek: string };
+  /** When the precise query found 0, the AI alternative the server auto-broadened
+   *  to. Lets the UI explain "no exact matches — showing results for «…»". */
+  broadenedTo?: string | null;
 }
 
 // Phase H — per-job status response from /api/scraper/jobs/[id]/status.
@@ -814,6 +817,17 @@ export function UnifiedSearchModal({
             )}
             {response.errors?.linkedin && (
               <PartialFailureBanner source="LinkedIn" message={response.errors.linkedin} />
+            )}
+
+            {/* Auto-broaden notice — the precise query found nothing, so the
+                server fell back to an AI alternative. Tell the recruiter. */}
+            {response.broadenedTo && (
+              <div className="p-2.5 rounded-md bg-accent-subtle border border-accent/30 text-xs text-accent flex items-start gap-2">
+                <Sparkles className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <span>
+                  No exact matches for your query — broadened to <span className="font-medium">{response.broadenedTo}</span> to surface relevant people. Refine above to narrow it back.
+                </span>
+              </div>
             )}
 
             {/* Results count */}

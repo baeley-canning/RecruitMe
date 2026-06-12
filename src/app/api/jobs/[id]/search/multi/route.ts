@@ -28,6 +28,8 @@ import { prisma } from "@/lib/db";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { parseBooleanQuery } from "@/lib/boolean-query";
+import { safeParseJson } from "@/lib/utils";
+import type { ParsedRole } from "@/lib/ai";
 import { searchLibrary } from "@/lib/talent-search/library";
 import { runResultToUnified } from "@/lib/talent-search/run-to-unified";
 import { createRun, attachLibraryResults, setSourceStatus, loadRunSnapshot } from "@/lib/search-run";
@@ -145,15 +147,34 @@ export async function POST(
   });
 
   // ── 2. Library FTS inline — instant results attach to the run ──
+  // AUTO-BROADEN: if the precise query finds nothing, don't dead-end the
+  // recruiter — automatically retry through the AI's own pre-generated
+  // alternative searches (parsedRole.search_queries — broader keyword combos)
+  // until results appear, then tell the UI what it broadened to. This is the
+  // "the AI tweaks the search instead of returning 0" behaviour.
+  let broadenedTo: string | null = null;
   if (wantLibrary) {
     try {
-      const libraryResults = await searchLibrary({
-        parsedQuery,
+      const lib = (q: ReturnType<typeof parseBooleanQuery>) => searchLibrary({
+        parsedQuery: q,
         accessibleOrgIds,
         location,
         excludeCompanies: effectiveExclusions,
         limit: libraryLimit ?? 100,
       });
+      let libraryResults = await lib(parsedQuery);
+      if (libraryResults.length === 0) {
+        const role = safeParseJson<ParsedRole | null>(job?.parsedRole ?? null, null);
+        // Try the AI's alternative searches, then each alternative title alone.
+        const fallbacks = [
+          ...(role?.search_queries ?? []),
+          ...(role?.synonym_titles ?? []).map((t) => `"${t.replace(/"/g, "")}"`),
+        ];
+        for (const fb of fallbacks) {
+          const r = await lib(parseBooleanQuery(fb));
+          if (r.length > 0) { libraryResults = r; broadenedTo = fb; break; }
+        }
+      }
       await attachLibraryResults(run.id, libraryResults);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -246,5 +267,8 @@ export async function POST(
     },
     liveJobs,
     errors: Object.keys(errors).length > 0 ? errors : undefined,
+    // When the precise query found nothing, this is the AI alternative we
+    // auto-broadened to (so the UI can say "no exact matches — showing …").
+    broadenedTo,
   });
 }
