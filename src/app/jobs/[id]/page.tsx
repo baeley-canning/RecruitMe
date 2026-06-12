@@ -1294,9 +1294,12 @@ ${toHtml(job.rawJd)}
       })
       .filter((candidate) => {
         // Snippet/partial-profile filter — recruiters who only want to call
-        // candidates with verified full profiles can toggle this.
+        // candidates with verified full profiles can toggle this. NB: the API
+        // strips profileText from the list payload, so key on profileCapturedAt
+        // (a full profile was actually captured) — checking profileText here
+        // matched NOTHING and made the "Full profiles only" toggle hide everything.
         if (!hideSnippetOnly) return true;
-        return Boolean(candidate.profileText && candidate.profileText.length >= 2000);
+        return Boolean(candidate.profileCapturedAt);
       })
       .sort((a, b) => {
         // 1. Active before terminal — moves hired/rejected to the bottom of the
@@ -1324,8 +1327,10 @@ ${toHtml(job.rawJd)}
         if (acceptDiff !== 0) return acceptDiff;
 
         // 5. Profile completeness — full profile beats placeholder.
-        const aComplete = (a.profileText ? 1 : 0) + (a.headline ? 1 : 0) + (a.location ? 1 : 0);
-        const bComplete = (b.profileText ? 1 : 0) + (b.headline ? 1 : 0) + (b.location ? 1 : 0);
+        // profileText is stripped from the list payload — use profileCapturedAt
+        // (full profile captured) as the completeness signal instead.
+        const aComplete = (a.profileCapturedAt ? 1 : 0) + (a.headline ? 1 : 0) + (a.location ? 1 : 0);
+        const bComplete = (b.profileCapturedAt ? 1 : 0) + (b.headline ? 1 : 0) + (b.location ? 1 : 0);
         return bComplete - aComplete;
       });
   }, [selectedStage, jobCandidates, normalizedSearchQuery, minScoreFilter, hideSnippetOnly]);
@@ -2124,7 +2129,7 @@ ${toHtml(job.rawJd)}
                     Clear filter
                   </button>
                 )}
-                {parsedRole && job.candidates.some((c) => c.profileText) && (
+                {parsedRole && job.candidates.length > 0 && (
                   <Button
                     size="md"
                     variant="secondary"
@@ -2141,7 +2146,7 @@ ${toHtml(job.rawJd)}
                       : "Re-score all"}
                   </Button>
                 )}
-                {parsedRole && job.candidates.some((c) => c.profileText) && (
+                {parsedRole && job.candidates.length > 0 && (
                   <Button
                     size="md"
                     variant="outline"
