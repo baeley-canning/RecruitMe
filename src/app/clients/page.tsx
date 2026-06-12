@@ -63,74 +63,74 @@ function ClientForm({
     <form onSubmit={submit} className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
-          <label className="block text-xs font-medium text-gray-500 mb-1">Company name *</label>
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Company name *</label>
           <input
             required
             value={form.name}
             onChange={e => set("name", e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Industry</label>
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Industry</label>
           <input
             value={form.industry}
             onChange={e => set("industry", e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Website</label>
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Website</label>
           <input
             value={form.website}
             onChange={e => set("website", e.target.value)}
             placeholder="https://"
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Primary contact</label>
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Primary contact</label>
           <input
             value={form.primaryContact}
             onChange={e => set("primaryContact", e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Email</label>
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Email</label>
           <input
             type="email"
             value={form.email}
             onChange={e => set("email", e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Phone</label>
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Phone</label>
           <input
             value={form.phone}
             onChange={e => set("phone", e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary"
           />
         </div>
         <div className="col-span-2">
-          <label className="block text-xs font-medium text-gray-500 mb-1">Notes</label>
+          <label className="block text-xs font-medium text-text-tertiary mb-1">Notes</label>
           <textarea
             rows={3}
             value={form.notes}
             onChange={e => set("notes", e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary resize-none"
           />
         </div>
       </div>
       <div className="flex gap-2 justify-end pt-1">
-        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
+        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary">
           Cancel
         </button>
         <button
           type="submit"
           disabled={saving}
-          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -208,13 +208,13 @@ export default function ClientsPage() {
     <div className="max-w-4xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Clients</h1>
-          <p className="text-sm text-gray-500 mt-1">{clients.length} client{clients.length !== 1 ? "s" : ""}</p>
+          <h1 className="text-2xl font-semibold text-text-primary">Clients</h1>
+          <p className="text-sm text-text-tertiary mt-1">{clients.length} client{clients.length !== 1 ? "s" : ""}</p>
         </div>
         {!creating && (
           <button
             onClick={() => setCreating(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent-hover"
           >
             <Plus className="w-4 h-4" />
             Add client
@@ -223,26 +223,26 @@ export default function ClientsPage() {
       </div>
 
       {creating && (
-        <div className="border border-blue-200 rounded-xl p-5 mb-4 bg-blue-50/40">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">New client</h2>
+        <div className="border border-accent/30 rounded-xl p-5 mb-4 bg-accent-subtle/40">
+          <h2 className="text-sm font-semibold text-text-primary mb-4">New client</h2>
           <ClientForm onSave={handleCreate} onCancel={() => setCreating(false)} />
         </div>
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400 text-sm">Loading…</div>
+        <div className="text-center py-16 text-text-tertiary text-sm">Loading…</div>
       ) : clients.length === 0 && !creating ? (
-        <div className="text-center py-16 text-gray-400">
+        <div className="text-center py-16 text-text-tertiary">
           <Building2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="text-sm">No clients yet — add your first one above.</p>
         </div>
       ) : (
         <div className="space-y-2">
           {clients.map(client => (
-            <div key={client.id} className="border border-gray-200 rounded-xl bg-white overflow-hidden">
+            <div key={client.id} className="border border-separator rounded-xl bg-surface-raised overflow-hidden">
               {editingId === client.id ? (
                 <div className="p-5">
-                  <h2 className="text-sm font-semibold text-gray-800 mb-4">Edit client</h2>
+                  <h2 className="text-sm font-semibold text-text-primary mb-4">Edit client</h2>
                   <ClientForm
                     initial={client}
                     onSave={data => handleEdit(client.id, data)}
@@ -254,11 +254,11 @@ export default function ClientsPage() {
                   <div className="flex-1 min-w-0">
                     <button
                       onClick={() => router.push(`/clients/${client.id}`)}
-                      className="text-sm font-semibold text-gray-900 hover:text-blue-600 text-left"
+                      className="text-sm font-semibold text-text-primary hover:text-accent text-left"
                     >
                       {client.name}
                     </button>
-                    <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+                    <div className="flex items-center gap-3 mt-0.5 text-xs text-text-tertiary">
                       {client.industry && <span>{client.industry}</span>}
                       {client.primaryContact && <span>{client.primaryContact}</span>}
                       {client.email && <span>{client.email}</span>}
@@ -268,7 +268,7 @@ export default function ClientsPage() {
                           href={client.website}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-0.5 hover:text-blue-600"
+                          className="flex items-center gap-0.5 hover:text-accent"
                           onClick={e => e.stopPropagation()}
                         >
                           <ExternalLink className="w-3 h-3" />
@@ -278,14 +278,14 @@ export default function ClientsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-xs text-gray-400">{client._count.jobs} job{client._count.jobs !== 1 ? "s" : ""}</span>
-                    <button onClick={() => setEditingId(client.id)} className="text-gray-400 hover:text-gray-700">
+                    <span className="text-xs text-text-tertiary">{client._count.jobs} job{client._count.jobs !== 1 ? "s" : ""}</span>
+                    <button onClick={() => setEditingId(client.id)} className="text-text-tertiary hover:text-text-secondary">
                       <Pencil className="w-4 h-4" />
                     </button>
-                    <button onClick={() => handleDelete(client.id, client.name)} className="text-gray-400 hover:text-red-600">
+                    <button onClick={() => handleDelete(client.id, client.name)} className="text-text-tertiary hover:text-danger">
                       <Trash2 className="w-4 h-4" />
                     </button>
-                    <button onClick={() => router.push(`/clients/${client.id}`)} className="text-gray-400 hover:text-gray-700">
+                    <button onClick={() => router.push(`/clients/${client.id}`)} className="text-text-tertiary hover:text-text-secondary">
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>

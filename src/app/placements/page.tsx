@@ -42,10 +42,10 @@ function feeLabel(p: Placement): string {
 function guaranteeBadge(p: Placement): React.ReactNode {
   if (!p.guaranteeExpiry) return null;
   const daysLeft = Math.round((new Date(p.guaranteeExpiry).getTime() - Date.now()) / (86400 * 1000));
-  if (daysLeft < 0) return <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Expired</span>;
-  if (daysLeft <= 14) return <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700">{daysLeft}d left</span>;
+  if (daysLeft < 0) return <span className="text-xs px-2 py-0.5 rounded-full bg-surface-hover text-text-tertiary">Expired</span>;
+  if (daysLeft <= 14) return <span className="text-xs px-2 py-0.5 rounded-full bg-danger-subtle text-danger">{daysLeft}d left</span>;
   if (daysLeft <= 30) return <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{daysLeft}d left</span>;
-  return <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{daysLeft}d</span>;
+  return <span className="text-xs px-2 py-0.5 rounded-full bg-success-subtle text-success">{daysLeft}d</span>;
 }
 
 export default function PlacementsPage() {
@@ -97,12 +97,12 @@ export default function PlacementsPage() {
     <div className="max-w-5xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Placements</h1>
-          <p className="text-sm text-gray-500 mt-1">{placements.length} placement{placements.length !== 1 ? "s" : ""}</p>
+          <h1 className="text-2xl font-semibold text-text-primary">Placements</h1>
+          <p className="text-sm text-text-tertiary mt-1">{placements.length} placement{placements.length !== 1 ? "s" : ""}</p>
         </div>
         <button
           onClick={() => router.push("/placements/new")}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+          className="flex items-center gap-2 px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent-hover"
         >
           <Plus className="w-4 h-4" />
           Record placement
@@ -112,49 +112,49 @@ export default function PlacementsPage() {
       {/* Stats strip */}
       {placements.length > 0 && (
         <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="border border-gray-200 rounded-xl p-4 bg-white">
-            <div className="text-xs text-gray-500 mb-1 flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />Total fees</div>
-            <div className="text-xl font-semibold text-gray-900">{totalFee > 0 ? fmtMoney(totalFee) : "—"}</div>
+          <div className="border border-separator rounded-xl p-4 bg-surface-raised">
+            <div className="text-xs text-text-tertiary mb-1 flex items-center gap-1"><DollarSign className="w-3.5 h-3.5" />Total fees</div>
+            <div className="text-xl font-semibold text-text-primary">{totalFee > 0 ? fmtMoney(totalFee) : "—"}</div>
           </div>
-          <div className="border border-gray-200 rounded-xl p-4 bg-white">
-            <div className="text-xs text-gray-500 mb-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" />Paid</div>
-            <div className="text-xl font-semibold text-green-700">{paidFee > 0 ? fmtMoney(paidFee) : "—"}</div>
+          <div className="border border-separator rounded-xl p-4 bg-surface-raised">
+            <div className="text-xs text-text-tertiary mb-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" />Paid</div>
+            <div className="text-xl font-semibold text-success">{paidFee > 0 ? fmtMoney(paidFee) : "—"}</div>
           </div>
-          <div className="border border-gray-200 rounded-xl p-4 bg-white">
-            <div className="text-xs text-gray-500 mb-1 flex items-center gap-1"><Shield className="w-3.5 h-3.5" />Guarantees expiring soon</div>
-            <div className={`text-xl font-semibold ${expiringCount > 0 ? "text-amber-700" : "text-gray-900"}`}>{expiringCount}</div>
+          <div className="border border-separator rounded-xl p-4 bg-surface-raised">
+            <div className="text-xs text-text-tertiary mb-1 flex items-center gap-1"><Shield className="w-3.5 h-3.5" />Guarantees expiring soon</div>
+            <div className={`text-xl font-semibold ${expiringCount > 0 ? "text-amber-700" : "text-text-primary"}`}>{expiringCount}</div>
           </div>
         </div>
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400 text-sm">Loading…</div>
+        <div className="text-center py-16 text-text-tertiary text-sm">Loading…</div>
       ) : placements.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
+        <div className="text-center py-16 text-text-tertiary">
           <DollarSign className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="text-sm">No placements yet — record your first one.</p>
         </div>
       ) : (
         <div className="space-y-2">
           {placements.map(p => (
-            <div key={p.id} className="flex items-center gap-4 border border-gray-200 rounded-xl px-4 py-3 bg-white">
+            <div key={p.id} className="flex items-center gap-4 border border-separator rounded-xl px-4 py-3 bg-surface-raised">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-900 truncate">{p.client?.name ?? "No client"}</span>
+                  <span className="text-sm font-medium text-text-primary truncate">{p.client?.name ?? "No client"}</span>
                   {guaranteeBadge(p)}
                   {p.paidAt && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 flex items-center gap-0.5">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-success-subtle text-success flex items-center gap-0.5">
                       <Check className="w-3 h-3" /> Paid
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+                <div className="flex items-center gap-3 mt-0.5 text-xs text-text-tertiary">
                   <span className="flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
                     {new Date(p.placedAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })}
                   </span>
                   {feeLabel(p) !== "—" && (
-                    <span className="flex items-center gap-0.5 font-medium text-gray-700">
+                    <span className="flex items-center gap-0.5 font-medium text-text-secondary">
                       <DollarSign className="w-3 h-3" />{feeLabel(p)}
                     </span>
                   )}
@@ -169,12 +169,12 @@ export default function PlacementsPage() {
                 {!p.paidAt && (feeLabel(p) !== "—") && (
                   <button
                     onClick={() => markPaid(p.id)}
-                    className="text-xs px-3 py-1.5 border border-green-300 text-green-700 rounded-lg hover:bg-green-50"
+                    className="text-xs px-3 py-1.5 border border-success/40 text-success rounded-lg hover:bg-success-subtle"
                   >
                     Mark paid
                   </button>
                 )}
-                <button onClick={() => router.push(`/placements/${p.id}`)} className="text-gray-400 hover:text-gray-700">
+                <button onClick={() => router.push(`/placements/${p.id}`)} className="text-text-tertiary hover:text-text-secondary">
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>

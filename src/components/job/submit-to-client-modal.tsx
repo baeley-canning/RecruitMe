@@ -68,33 +68,33 @@ export function SubmitToClientModal({ jobId, candidate, onClose, onSubmitted }: 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-          <h2 className="font-semibold text-gray-900">Submit to Client</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
+      <div className="bg-surface-raised rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-separator">
+          <h2 className="font-semibold text-text-primary">Submit to Client</h2>
+          <button onClick={onClose} className="text-text-tertiary hover:text-text-secondary">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <div className="p-3 bg-gray-50 rounded-lg">
-            <p className="text-sm font-medium text-gray-900">{candidate.name}</p>
+          <div className="p-3 bg-surface-sunken rounded-lg">
+            <p className="text-sm font-medium text-text-primary">{candidate.name}</p>
             {candidate.matchScore != null && (
-              <p className="text-xs text-gray-500 mt-0.5">Match score: {candidate.matchScore}%</p>
+              <p className="text-xs text-text-tertiary mt-0.5">Match score: {candidate.matchScore}%</p>
             )}
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Client</label>
+            <label className="block text-xs font-medium text-text-tertiary mb-1">Client</label>
             {clients.length === 0 ? (
-              <p className="text-xs text-gray-400">
-                No clients — <Link href="/clients" className="text-blue-600 hover:underline">add a client first</Link>
+              <p className="text-xs text-text-tertiary">
+                No clients — <Link href="/clients" className="text-accent hover:underline">add a client first</Link>
               </p>
             ) : (
               <select
                 value={clientId}
                 onChange={e => setClientId(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary"
               >
                 <option value="">— select client —</option>
                 {clients.map(c => (
@@ -105,24 +105,24 @@ export function SubmitToClientModal({ jobId, candidate, onClose, onSubmitted }: 
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Notes (optional)</label>
+            <label className="block text-xs font-medium text-text-tertiary mb-1">Notes (optional)</label>
             <textarea
               rows={3}
               value={notes}
               onChange={e => setNotes(e.target.value)}
               placeholder="Any context for the client about this candidate…"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              className="w-full border border-separator rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent bg-surface-sunken text-text-primary placeholder:text-text-tertiary resize-none"
             />
           </div>
 
           <div className="flex gap-2 justify-end pt-1">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary">
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5" />
               {submitting ? "Submitting…" : "Submit candidate"}
