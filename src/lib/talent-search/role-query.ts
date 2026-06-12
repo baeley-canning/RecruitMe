@@ -46,6 +46,24 @@ function uniqueTerms(values: string[]): string[] {
   return out;
 }
 
+// Search anchors must be SHORT KEYWORDS, not prose requirements. must_haves (and
+// occasionally anchor_terms) come back from the parser as full requirement
+// SENTENCES — "Experience with ITSM tools", "Understanding of ITIL service
+// management practices", "Experience in service transition, IT operations, or
+// endpoint management". Quoting those as FTS / SEEK / LinkedIn phrases matches
+// ~nothing, so the whole search returns 0 EVERYWHERE (lib + SEEK + LinkedIn — the
+// "no results at all" bug). Reject sentence-shaped terms (long, comma'd, or
+// prose-led); when none survive, the search is title-only — broad, but it returns
+// real people instead of nothing. Real skill anchors ("Silverstripe", "Vue.js",
+// "ServiceNow", "ITIL", "service transition") sail through.
+const PROSE_WORD = /\b(experience|experienced|understanding|knowledge|ability|able|proven|demonstrable|demonstrated|familiar|familiarity|expertise|practical|hands-on|strong|advanced|prior|working|across|managing|exceptional|skilled|track record)\b/i;
+function isKeywordLike(term: string): boolean {
+  const t = term.trim();
+  if (!t || t.length > 32 || t.includes(",")) return false;
+  if (PROSE_WORD.test(t)) return false;
+  return t.split(/\s+/).length <= 4;
+}
+
 /** OR-group a list of already-normalised terms into a single boolean group. */
 function orGroup(terms: string[]): string {
   const quoted = terms.map(quoteTerm).filter(Boolean);
@@ -61,7 +79,8 @@ export function parsedRoleToBooleanQuery(role: ParsedRole): string {
   // must_haves for roles parsed before anchor_terms existed.
   const usingAnchorTerms = (role.anchor_terms?.length ?? 0) > 0;
   const anchorSource = usingAnchorTerms ? role.anchor_terms! : (role.must_haves ?? []);
-  const anchors = uniqueTerms(anchorSource).slice(0, 3);
+  // Keyword-like only — drop prose must_haves/anchors that would 0 the search.
+  const anchors = uniqueTerms(anchorSource).filter(isKeywordLike).slice(0, 3);
 
   const titleGroup = orGroup(titles);
 

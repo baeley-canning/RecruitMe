@@ -51,6 +51,33 @@ describe("parsedRoleToBooleanQuery", () => {
     expect(parseBooleanQuery(q).hasErrors).toBe(false);
   });
 
+  it("drops PROSE must_haves (full sentences) → title-only, so the search isn't 0 everywhere", () => {
+    // The ITSM-role "no results at all" bug: must_haves came back as sentences and
+    // got quoted as FTS/SEEK phrases that match nothing.
+    const q = parsedRoleToBooleanQuery(role({
+      title: "Service Transition Manager",
+      synonym_titles: ["IT Service Manager", "IT Operations Specialist"],
+      anchor_terms: [],
+      must_haves: [
+        "Experience with ITSM tools",
+        "Understanding of ITIL service management practices",
+        "Proven track record in ITIL service transition, IT operations, or enterprise endpoint management",
+      ],
+    }));
+    expect(q).not.toMatch(/understanding of|experience with|track record/i);
+    expect(q).toContain('"Service Transition Manager"');
+    // Title-only — no AND constraint, so it returns people instead of nothing.
+    expect((q.match(/ AND /g) ?? []).length).toBe(0);
+    expect(parseBooleanQuery(q).hasErrors).toBe(false);
+  });
+
+  it("keeps real keyword anchors (short skills) — only prose is filtered", () => {
+    const q = parsedRoleToBooleanQuery(role({ title: "Developer", anchor_terms: ["Silverstripe", "service transition", "ITIL"] }));
+    expect(q).toContain('"Silverstripe"');
+    expect(q).toContain('"ITIL"');
+    expect(parseBooleanQuery(q).hasErrors).toBe(false);
+  });
+
   it("empty role → empty string (caller falls back to manual entry)", () => {
     expect(parsedRoleToBooleanQuery(role({ title: "" }))).toBe("");
   });
