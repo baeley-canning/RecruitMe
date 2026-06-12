@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import {
   X,
+  Sparkles,
   Loader2,
   Search,
   CheckCircle2,
@@ -242,6 +243,31 @@ export function UnifiedSearchModal({
   // to manual entry, NOT a permanent "Searching…" dead-end.
   const roleQuery = useMemo(() => (parsedRole ? parsedRoleToBooleanQuery(parsedRole) : ""), [parsedRole]);
   const roleMode = !!roleQuery;
+
+  // AI-suggested alternative searches, surfaced as one-click chips so a thin/zero
+  // result isn't a dead end. The parser already produces these: synonym_titles
+  // (run as single quoted phrases — broad, work on library + LinkedIn + SEEK) and
+  // search_queries (keyword combos; the library relaxes an over-strict AND to OR
+  // automatically, so they still return people). Excludes the current query.
+  const searchSuggestions = useMemo(() => {
+    if (!parsedRole) return [] as Array<{ label: string; query: string }>;
+    const out: Array<{ label: string; query: string }> = [];
+    const seen = new Set<string>();
+    const add = (label: string, q: string) => {
+      const key = q.toLowerCase().trim();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push({ label: label.trim(), query: q });
+    };
+    for (const t of (parsedRole.synonym_titles ?? []).slice(0, 6)) {
+      const clean = t.replace(/"/g, "").trim();
+      if (clean) add(clean, `"${clean}"`);
+    }
+    for (const q of (parsedRole.search_queries ?? []).slice(0, 4)) add(q, q);
+    return out.slice(0, 8);
+  }, [parsedRole]);
+
+  const runSuggestion = (q: string) => { setQuery(q); void runSearch(q); };
   // Form state — pre-fill the boolean from the role so the (collapsed) Refine
   // field and the manual Search button both work even when we don't auto-run.
   const [query, setQuery] = useState(roleQuery);
@@ -715,6 +741,28 @@ export function UnifiedSearchModal({
             <span className="ml-auto text-warning">Select at least one source.</span>
           )}
         </div>
+
+        {/* AI-suggested searches — always available so the recruiter can pivot the
+            angle (by title / skill / tool) without hitting a dead end first. */}
+        {searchSuggestions.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <span className="text-2xs text-text-tertiary inline-flex items-center gap-1">
+              <Sparkles className="w-3 h-3" /> AI ideas:
+            </span>
+            {searchSuggestions.slice(0, 6).map((s) => (
+              <button
+                key={s.query}
+                type="button"
+                onClick={() => runSuggestion(s.query)}
+                disabled={searching}
+                className="px-2 py-0.5 rounded-full text-2xs bg-surface-hover text-text-secondary hover:bg-accent-subtle hover:text-accent disabled:opacity-40 transition-colors"
+                title={`Search: ${s.query}`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
       </form>
 
       {/* Results area */}
@@ -858,15 +906,35 @@ export function UnifiedSearchModal({
               </div>
             )}
 
-            {/* No results */}
+            {/* No results — don't dead-end. Offer the AI's alternative searches
+                (alt titles + keyword combos) as one-click chips. */}
             {response.results.length === 0 && (
-              <div className="text-center py-12 text-base text-text-tertiary">
-                <p>No candidates matched. Try broadening the query{!useLinkedIn ? " or adding LinkedIn" : ""}.</p>
+              <div className="text-center py-10 text-base text-text-tertiary">
+                <p>No candidates matched{runActive ? " yet — live sources still searching" : ""}.</p>
+                {searchSuggestions.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs text-text-secondary mb-2">Try an AI-suggested search:</p>
+                    <div className="flex flex-wrap gap-2 justify-center max-w-2xl mx-auto">
+                      {searchSuggestions.map((s) => (
+                        <button
+                          key={s.query}
+                          type="button"
+                          onClick={() => runSuggestion(s.query)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-accent-subtle text-accent hover:bg-accent/25 transition-colors"
+                          title={`Search: ${s.query}`}
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {!useLinkedIn && (
                   <button
                     type="button"
                     onClick={() => setUseLinkedIn(true)}
-                    className="mt-2 text-sm text-accent hover:underline"
+                    className="mt-3 text-sm text-accent hover:underline block mx-auto"
                   >
                     Turn on LinkedIn search
                   </button>
