@@ -42,7 +42,7 @@ let hbLastSentAt = 0;
 
 // Phase B kill-switch (LinkedIn search discovery).
 const DISCOVERY_ENABLED = (process.env.SCRAPER_DISCOVERY_ENABLED ?? "").toLowerCase() === "true";
-const DAILY_SEARCH_CAP = parseInt(process.env.SCRAPER_DAILY_SEARCH_CAP ?? "10", 10);
+const DAILY_SEARCH_CAP = parseInt(process.env.SCRAPER_DAILY_SEARCH_CAP ?? "200", 10);
 let searchCountToday = 0;
 let searchCountDay = isoDay(new Date());
 
