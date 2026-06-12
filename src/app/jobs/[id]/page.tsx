@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Sparkles,
+  RefreshCw,
   Search,
   UserPlus,
   MapPin,
@@ -979,12 +980,14 @@ export default function JobDetailPage({
     });
   }, []);
 
-  const handleRescoreAll = async () => {
+  const handleRescoreAll = async (force = false) => {
     setRescoringAll(true);
     setRescoreResult(null);
     setRescoreProgress(null);
     try {
-      const res = await fetch(`/api/jobs/${id}/candidates/score-all`, { method: "POST" });
+      // force=1 bypasses the "profile unchanged" cache so every candidate is
+      // re-scored even when nothing changed (cost guards still apply server-side).
+      const res = await fetch(`/api/jobs/${id}/candidates/score-all${force ? "?force=1" : ""}`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
         showToast(data.error || "Scoring failed — please try again", "error");
@@ -2125,10 +2128,10 @@ ${toHtml(job.rawJd)}
                   <Button
                     size="md"
                     variant="secondary"
-                    onClick={handleRescoreAll}
+                    onClick={() => handleRescoreAll(false)}
                     loading={rescoringAll}
                     disabled={rescoringAll}
-                    title="Re-score all candidates with current job requirements"
+                    title="Re-score all candidates with current job requirements (skips ones that haven't changed)"
                   >
                     {!rescoringAll && <Sparkles className="w-3.5 h-3.5" />}
                     {rescoringAll
@@ -2136,6 +2139,25 @@ ${toHtml(job.rawJd)}
                         ? `Scoring ${rescoreProgress.scored} of ${rescoreProgress.total}…`
                         : "Scoring…"
                       : "Re-score all"}
+                  </Button>
+                )}
+                {parsedRole && job.candidates.some((c) => c.profileText) && (
+                  <Button
+                    size="md"
+                    variant="outline"
+                    onClick={async () => {
+                      if (!await confirm({
+                        title: "Force re-score everyone?",
+                        message: "Re-runs the AI on EVERY candidate, even ones that haven't changed — ignores the cache and uses AI credits. Use when you want a guaranteed fresh score.",
+                        confirmLabel: "Force re-score",
+                      })) return;
+                      void handleRescoreAll(true);
+                    }}
+                    disabled={rescoringAll}
+                    title="Force a fresh AI score on EVERY candidate, ignoring the unchanged-profile cache"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Force re-score
                   </Button>
                 )}
                 {filteredCandidates.length > 0 && (
@@ -2278,7 +2300,7 @@ ${toHtml(job.rawJd)}
                 <span>Requirements updated since last score — re-score all to apply new criteria.</span>
               </div>
               <button
-                onClick={handleRescoreAll}
+                onClick={() => handleRescoreAll(false)}
                 disabled={rescoringAll}
                 className="h-6 text-xs font-medium px-3 rounded bg-warning text-text-inverse hover:bg-warning-hover disabled:opacity-50 transition-colors"
               >

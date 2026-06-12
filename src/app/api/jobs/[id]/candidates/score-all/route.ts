@@ -34,6 +34,11 @@ export async function POST(
   // candidates get scored without re-rescoring the LinkedIn cohort.
   const url = new URL(req.url);
   const onlyUnscored = url.searchParams.get("onlyUnscored") === "1";
+  // ?force=1 — bypass the "profile unchanged" cache so EVERY candidate is
+  // re-scored even when nothing materially changed. The rate-limit + daily spend
+  // cap still apply (real cost guards); this only overrides the token-saving
+  // cache-hit skip. Mutually exclusive with onlyUnscored (force = rescore all).
+  const force = url.searchParams.get("force") === "1";
 
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
@@ -231,6 +236,7 @@ export async function POST(
             // hash + matchScore are already present — if the candidate has
             // a stored hash but no score (rare), fall through and rescore.
             if (
+              !force &&
               candidate.profileTextHash === scoreCacheKey &&
               candidate.matchScore !== null &&
               candidate.scoreBreakdown

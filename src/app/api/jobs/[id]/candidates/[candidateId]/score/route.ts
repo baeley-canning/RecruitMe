@@ -15,12 +15,16 @@ import { isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
 import { enqueueScoreJob } from "@/lib/scrape-queue";
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string; candidateId: string }> }
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
   const { id, candidateId } = await params;
+  // ?force=1 — bypass the "profile unchanged" cache and re-run the AI scorer no
+  // matter what. Rate-limit + spend cap still apply (cost guards); this only
+  // overrides the token-saving cache-hit skip below.
+  const force = new URL(req.url).searchParams.get("force") === "1";
   const { job, candidate, error } = await requireCandidateAccess(id, candidateId, auth);
   if (error || !job || !candidate) return error;
   if (!job.parsedRole) {
@@ -85,6 +89,7 @@ export async function POST(
       correctionsVersion,
     });
     if (
+      !force &&
       candidate.profileTextHash === scoreCacheKey &&
       candidate.matchScore !== null &&
       candidate.scoreBreakdown
