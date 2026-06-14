@@ -1,6 +1,6 @@
 # RecruitMe — Project Scope, Current State & Running Costs
 
-*Prepared 2026-06-04. Figures from live production data where measured; estimates flagged.*
+*Prepared 2026-06-04; last updated 2026-06-15. Figures from live production data where measured; estimates flagged.*
 
 ---
 
@@ -14,7 +14,7 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 
 ## 2. Current state (what's built & working)
 
-**Scale (live):** 14,961 candidates · 808 AI-scored · ~13,500 with CVs stored (encrypted at rest) · 9 active jobs.
+**Scale (live, 2026-06-15):** 15,317 candidates · 731 AI-scored · 14,662 with captured profiles · ~13.5k CVs stored (encrypted at rest) · 11 active jobs.
 
 ### Tech stack
 - **App:** Next.js 15 / React 19 / TypeScript, Prisma ORM, PostgreSQL 18 — hosted on **Railway** (auto-deploy from GitHub `main`).
@@ -27,23 +27,27 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 - **Multi-source candidate search** — internal pool (Postgres full-text + AI ranking), live LinkedIn scrape, live SEEK Talent Search scrape. Library-first (cheap pool results instant; live sources on demand).
 - **AI scoring** — per-candidate match score (0–100) with must-have coverage, category breakdown, and a recruiter summary; provisional (snippet) vs full-profile scoring; per-org configurable weights; cached so unchanged candidates aren't re-billed.
 - **SEEK Talent Search** — now ingests result cards as candidates (credit-safe: harvests free card data, no per-profile credit spend). *Validated 2026-06-04.*
-- **LinkedIn discovery** — NZ-constrained search → profiles scraped → ingested + scored.
+- **LinkedIn discovery** — people-search → profiles scraped → ingested + scored. *(Fixed 2026-06-15: a stale hardcoded NZ geo-filter parameter that LinkedIn had silently stopped honouring was making **every** LinkedIn search return "No results found" — verified on the box, then removed. Results are NZ-biased via the logged-in account; the app re-narrows by the requested location.)*
+- **CRM — clients / submissions / placements** *(built, flag-gated behind `FEATURES_CRM_ENABLED` pending enablement)* — client records, "submit candidate to client" from a job, placement tracking with fee/guarantee/invoice + auto-reminders. Finishes the previously half-built CRM; all create paths org-FK-validated.
 - **Talent pool / flywheel** — every search enriches the pool; future searches serve those candidates instantly.
 - **Candidate management** — library, per-job pipelines (shortlist/contacted/etc.), CV upload + text extraction, identity dedup across sources (LinkedIn / SEEK / JobAdder), screening data, recruiter notes, CSV export.
 - **CV handling** — extraction from PDF/Word/RTF, encryption at rest, original-format preservation.
 - **Ops** — on-box health dashboard (CPU/RAM/disk/temp, scraper status), cost attribution + daily spend cap, PII redaction on the seller heartbeat, CI real-DB test gate, error reporting.
+- **Security & data-safety floor** *(shipped 2026-06-15)* — CV encryption now fails closed (refuses to mint a new key when encrypted CVs exist, so a missing key can't silently orphan them); cross-org candidate-tag read/write leak closed; four AI-cost-attribution gaps closed (spend now always billed to the right org); Sentry PII scrubber so candidate names/emails/profile text don't leave the app; Llama-offload default flipped off (the box can't score, so a credit-out now fails cleanly instead of hanging).
 - **Live JobAdder feed** — the operator's JobAdder candidate data (~13k profiles) is available live and on demand, drawn from the operator's own JobAdder account, and kept current in the platform.
 
 ### Known constraints / debt
-- **Two parallel search systems** (legacy job-search vs newer multi-source) not yet unified — see roadmap §3.
+- **Two parallel search systems** — now largely converged onto one durable, resumable multi-source run (job-scoped, live-streaming). The legacy job-search path is mostly retired; final dead-code cleanup is the remaining item — see roadmap §3.
 - SEEK candidates are **snippet-level** (name/role/company/location); full-profile enrichment is a separate, credit-gated action (scraper exists, not auto-fired).
-- ~14k candidates, **808 scored** — large unscored backlog (scoring is on-demand + cost-capped).
+- ~15k candidates, **731 scored** — large unscored backlog (scoring is on-demand + cost-capped).
 - Single scraper worker (no redundancy); the box must stay online for live discovery.
 - Scraper still authenticates via a shared secret (org-binding token cutover incomplete).
 
 ---
 
 ## 3. Future implementations (roadmap)
+
+*The authoritative, sequenced plan to take the app to feature-complete + self-running lives in `docs/completion-plan.md` (7 phases, built from a verified 6-dimension audit). The items below are the strategic summary.*
 
 **A. Search architecture consolidation** *(planned, documented in `docs/search-architecture-plan.md`)* — collapse the two parallel search systems into one **federated dispatcher + pluggable source adapters** (pool/LinkedIn/SEEK/+future), one durable result model, and a **live-streaming results UI** (results appear as they're scraped). Makes adding a new source trivial and removes the current fragility. ~6 phases, each independently shippable.
 
@@ -53,7 +57,7 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 
 **D. Talent flywheel — later phases** — background discovery that continuously enriches the pool (cost-gated); profile freshness / re-fetch of stale profiles.
 
-**E. Candidate UX polish** — already largely shipped (email/screening/file-count surfacing, import-batch grouping, source badges); remaining refinements.
+**E. Candidate UX polish** — **shipped** (email/screening/file-count surfacing, import-batch grouping, source badges). Remaining: candidate-card density declutter.
 
 **F. Hardening** — complete the scraper org-binding token cutover; multi-worker / redundancy if scrape volume grows; observability.
 
