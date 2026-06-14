@@ -270,7 +270,13 @@ export function UnifiedSearchModal({
     return out.slice(0, 8);
   }, [parsedRole]);
 
-  const runSuggestion = (q: string) => { setQuery(q); void runSearch(q); };
+  const runSuggestion = (label: string, q: string) => {
+    setQuery(q);
+    // Immediate feedback: a chip click otherwise looks dead because the query
+    // lives in the collapsed Refine panel and the result view stays "searching".
+    showToast(`Searching: ${label}`, "info");
+    void runSearch(q);
+  };
   // Form state — pre-fill the boolean from the role so the (collapsed) Refine
   // field and the manual Search button both work even when we don't auto-run.
   const [query, setQuery] = useState(roleQuery);
@@ -756,7 +762,7 @@ export function UnifiedSearchModal({
               <button
                 key={s.query}
                 type="button"
-                onClick={() => runSuggestion(s.query)}
+                onClick={() => runSuggestion(s.label, s.query)}
                 disabled={searching}
                 className="px-2 py-0.5 rounded-full text-2xs bg-surface-hover text-text-secondary hover:bg-accent-subtle hover:text-accent disabled:opacity-40 transition-colors"
                 title={`Search: ${s.query}`}
@@ -883,8 +889,11 @@ export function UnifiedSearchModal({
               <div className="p-2.5 rounded-md bg-info-subtle border border-info/30 text-xs text-info flex items-start gap-2">
                 <Loader2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 animate-spin" />
                 <span>
-                  Searching on the server — you can close this tab and come back later.
-                  Results keep landing here and on the job automatically.
+                  {query.trim() && (
+                    <>Searching <span className="font-medium break-words">{query.trim()}</span> on the server — </>
+                  )}
+                  {!query.trim() && <>Searching on the server — </>}
+                  you can close this tab and come back later. Results keep landing here and on the job automatically.
                 </span>
               </div>
             )}
@@ -933,7 +942,7 @@ export function UnifiedSearchModal({
                         <button
                           key={s.query}
                           type="button"
-                          onClick={() => runSuggestion(s.query)}
+                          onClick={() => runSuggestion(s.label, s.query)}
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-accent-subtle text-accent hover:bg-accent/25 transition-colors"
                           title={`Search: ${s.query}`}
                         >
