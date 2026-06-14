@@ -104,4 +104,15 @@ describe("linkedinKeywordsFromParsed", () => {
     const out = linkedinKeywordsFromParsed(q);
     expect(out).toContain('"machine learning"');
   });
+
+  it("strips .js/.ts framework suffixes (LinkedIn matches them literally → 0 hits)", () => {
+    // Verified on the box 2026-06-15: `(react.js OR vue.js)` returned 0,
+    // `(react OR vue)` returned ~33. So drop the dotted suffix for LinkedIn.
+    const q = parseBooleanQuery('"react.js" OR "vue.js" OR node.js');
+    const out = linkedinKeywordsFromParsed(q);
+    expect(out).not.toContain(".js");
+    expect(out).toContain("react");
+    expect(out).toContain("vue");
+    expect(out).toContain("node");
+  });
 });

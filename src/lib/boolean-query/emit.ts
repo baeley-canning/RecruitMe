@@ -131,9 +131,17 @@ export function seekKeywordsFromParsed(q: ParsedQuery): string {
 //     and remains the canonical LinkedIn URL builder.
 
 const LINKEDIN_STRIP = /\*/g;
+// LinkedIn's basic people-search matches keywords LITERALLY, so a dotted
+// framework token like "react.js"/"vue.js"/"node.js" matches almost no profiles
+// (people write "React", "Vue", "Node"). Verified on the box 2026-06-15:
+// `(react OR vue)` → ~33 results, `(react.js OR vue.js)` → 0. Strip the trailing
+// `.js`/`.ts` so the skill group actually matches. (Postgres FTS + SEEK already
+// tokenise the dot away, so this normalisation is LinkedIn-only by design — it
+// lives in linkedinClean, not the shared parser.)
+const LINKEDIN_DOTTED_SUFFIX = /\.(js|ts)\b/gi;
 
 function linkedinClean(term: string): string {
-  return term.replace(LINKEDIN_STRIP, "").trim();
+  return term.replace(LINKEDIN_STRIP, "").replace(LINKEDIN_DOTTED_SUFFIX, "").trim();
 }
 
 export function linkedinKeywordsFromParsed(q: ParsedQuery): string {
