@@ -144,6 +144,33 @@ function linkedinClean(term: string): string {
   return term.replace(LINKEDIN_STRIP, "").replace(LINKEDIN_DOTTED_SUFFIX, "").trim();
 }
 
+/**
+ * Build a LinkedIn keyword query from a role's title synonyms ONLY.
+ *
+ * LinkedIn's basic (non-Recruiter) people-search reliably matches a single
+ * OR-group but returns "No results found" on the full `(titles) AND (skills)`
+ * boolean the role generates — verified on the box 2026-06-15: a 5-title
+ * OR-group → ~33 results, the same group AND a skill group → 0. So the LinkedIn
+ * leg searches titles only (the strongest single signal it handles) and lets AI
+ * scoring filter skills downstream. Returns "" when there are no usable titles
+ * (caller falls back to the emitted boolean). Capped to keep the query short.
+ */
+export function linkedinTitleQuery(titles: string[], cap = 6): string {
+  const seen = new Set<string>();
+  const clean: string[] = [];
+  for (const raw of titles) {
+    const c = (raw ?? "").replace(/["()]/g, "").replace(/\s+/g, " ").trim();
+    const key = c.toLowerCase();
+    if (c && !seen.has(key)) {
+      seen.add(key);
+      clean.push(c);
+      if (clean.length >= cap) break;
+    }
+  }
+  if (clean.length === 0) return "";
+  return clean.length === 1 ? `"${clean[0]}"` : `(${clean.map((t) => `"${t}"`).join(" OR ")})`;
+}
+
 export function linkedinKeywordsFromParsed(q: ParsedQuery): string {
   const parts: string[] = [];
   for (const term of q.mustHave) {

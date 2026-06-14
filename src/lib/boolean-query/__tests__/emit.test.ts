@@ -10,6 +10,7 @@ import {
   positiveTermAtoms,
   seekKeywordsFromParsed,
   linkedinKeywordsFromParsed,
+  linkedinTitleQuery,
 } from "../emit";
 
 describe("positiveTermAtoms", () => {
@@ -114,5 +115,30 @@ describe("linkedinKeywordsFromParsed", () => {
     expect(out).toContain("react");
     expect(out).toContain("vue");
     expect(out).toContain("node");
+  });
+});
+
+describe("linkedinTitleQuery", () => {
+  it("single title → one quoted phrase", () => {
+    expect(linkedinTitleQuery(["Service Transition Manager"])).toBe('"Service Transition Manager"');
+  });
+
+  it("multiple titles → OR-group (no skill AND — LinkedIn basic search 0s on that)", () => {
+    const out = linkedinTitleQuery(["Full Stack Developer", "Software Engineer", "Web Developer"]);
+    expect(out).toBe('("Full Stack Developer" OR "Software Engineer" OR "Web Developer")');
+    expect(out).not.toContain(" AND ");
+  });
+
+  it("dedupes case-insensitively, drops blanks/quotes, caps the list", () => {
+    const out = linkedinTitleQuery(["Dev", "dev", "", '"Lead"', "A", "B", "C", "D", "E", "F"], 6);
+    // dedupe Dev/dev → one; quote stripped from "Lead"; capped at 6 distinct
+    expect(out.match(/ OR /g)?.length).toBe(5); // 6 terms → 5 ORs
+    expect(out).toContain('"Dev"');
+    expect(out).toContain('"Lead"');
+  });
+
+  it("no usable titles → empty string (caller falls back)", () => {
+    expect(linkedinTitleQuery([])).toBe("");
+    expect(linkedinTitleQuery(["", "  "])).toBe("");
   });
 });

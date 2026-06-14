@@ -36,7 +36,7 @@ import { createRun, attachLibraryResults, setSourceStatus, loadRunSnapshot } fro
 import { reportError } from "@/lib/error-reporting";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { enqueueSearchJob } from "@/lib/scrape-queue";
-import { linkedinKeywordsFromParsed, seekKeywordsFromParsed } from "@/lib/boolean-query/emit";
+import { linkedinKeywordsFromParsed, linkedinTitleQuery, seekKeywordsFromParsed } from "@/lib/boolean-query/emit";
 
 const SourceSchema = z.enum(["library", "linkedin", "seek"]);
 
@@ -102,7 +102,17 @@ export async function POST(
   // phrases, parenthesises OR-groups, LinkedIn strips `*`), so the box types a
   // clean, platform-correct query rather than our internal raw string. Fall back
   // to the raw query if an emitter yields nothing.
-  const linkedinKeywords = linkedinKeywordsFromParsed(parsedQuery) || queryRaw;
+  //
+  // LinkedIn EXCEPTION: its basic people-search returns 0 on the full
+  // `(titles) AND (skills)` boolean (verified on the box), so when the job has a
+  // parsed role, search LinkedIn by the role's TITLE synonyms only — the signal
+  // it matches reliably — and let AI scoring filter skills. Manual/no-role
+  // searches fall back to the emitted boolean.
+  const roleForLi = safeParseJson<ParsedRole | null>(job?.parsedRole ?? null, null);
+  const liTitleQuery = roleForLi
+    ? linkedinTitleQuery([roleForLi.title, ...(roleForLi.synonym_titles ?? [])])
+    : "";
+  const linkedinKeywords = liTitleQuery || linkedinKeywordsFromParsed(parsedQuery) || queryRaw;
   const seekKeywords = seekKeywordsFromParsed(parsedQuery) || queryRaw;
 
   // Library FTS scope (owners span their accessible orgs; non-owners pinned).
