@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, DollarSign, Calendar, Shield, Check, X, ChevronRight } from "lucide-react";
+import { Plus, DollarSign, Calendar, Shield, Check, ChevronRight } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
 
 interface Placement {
@@ -44,7 +44,7 @@ function guaranteeBadge(p: Placement): React.ReactNode {
   const daysLeft = Math.round((new Date(p.guaranteeExpiry).getTime() - Date.now()) / (86400 * 1000));
   if (daysLeft < 0) return <span className="text-xs px-2 py-0.5 rounded-full bg-surface-hover text-text-tertiary">Expired</span>;
   if (daysLeft <= 14) return <span className="text-xs px-2 py-0.5 rounded-full bg-danger-subtle text-danger">{daysLeft}d left</span>;
-  if (daysLeft <= 30) return <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{daysLeft}d left</span>;
+  if (daysLeft <= 30) return <span className="text-xs px-2 py-0.5 rounded-full bg-warning-subtle text-warning">{daysLeft}d left</span>;
   return <span className="text-xs px-2 py-0.5 rounded-full bg-success-subtle text-success">{daysLeft}d</span>;
 }
 
@@ -122,7 +122,7 @@ export default function PlacementsPage() {
           </div>
           <div className="border border-separator rounded-xl p-4 bg-surface-raised">
             <div className="text-xs text-text-tertiary mb-1 flex items-center gap-1"><Shield className="w-3.5 h-3.5" />Guarantees expiring soon</div>
-            <div className={`text-xl font-semibold ${expiringCount > 0 ? "text-amber-700" : "text-text-primary"}`}>{expiringCount}</div>
+            <div className={`text-xl font-semibold ${expiringCount > 0 ? "text-warning" : "text-text-primary"}`}>{expiringCount}</div>
           </div>
         </div>
       )}

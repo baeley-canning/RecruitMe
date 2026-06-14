@@ -105,7 +105,7 @@ function InlineField({
 const STATUS_STYLES: Record<string, string> = {
   active:   "bg-success-subtle text-success",
   closed:   "bg-surface-hover text-text-secondary",
-  "on-hold": "bg-amber-100 text-amber-700",
+  "on-hold": "bg-warning-subtle text-warning",
 };
 
 export default function ClientDetailPage() {
