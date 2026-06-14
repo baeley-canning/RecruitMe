@@ -22,6 +22,30 @@ interface SidebarProps {
   jobs: Job[];
   /** When false, the CRM nav items (Clients/Placements) are hidden. */
   crmEnabled?: boolean;
+  /** White-label brand name (falls back to "RecruitMe"). */
+  brandName?: string;
+  /** White-label logo URL (falls back to the Users glyph). */
+  logoUrl?: string;
+}
+
+/** Sidebar brand lockup — logo (or org logo) + name + "Talent Manager". */
+function BrandMark({ brandName, logoUrl }: { brandName?: string; logoUrl?: string }) {
+  return (
+    <>
+      <div className="w-7 h-7 bg-accent rounded flex items-center justify-center flex-shrink-0">
+        {logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoUrl} alt="" className="w-full h-full object-contain rounded" />
+        ) : (
+          <Users className="w-3.5 h-3.5 text-white" />
+        )}
+      </div>
+      <div className="leading-tight min-w-0">
+        <div className="text-text-primary font-semibold text-base">{brandName || "RecruitMe"}</div>
+        <div className="text-text-tertiary text-2xs uppercase tracking-wider">Talent Manager</div>
+      </div>
+    </>
+  );
 }
 
 interface KeyStatus {
@@ -171,7 +195,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/placements",          icon: Handshake,          label: "Placements",         match: (p) => p === "/placements" || p.startsWith("/placements/") },
 ];
 
-export function Sidebar({ jobs, crmEnabled = false }: SidebarProps) {
+export function Sidebar({ jobs, crmEnabled = false, brandName, logoUrl }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
@@ -206,13 +230,7 @@ export function Sidebar({ jobs, crmEnabled = false }: SidebarProps) {
       {/* ── Mobile top bar ── */}
       <div className="fixed inset-x-0 top-0 z-40 flex h-12 items-center justify-between border-b border-separator bg-surface-raised px-3 md:hidden">
         <Link href="/dashboard" className="flex items-center gap-2 min-w-0">
-          <div className="w-7 h-7 bg-accent rounded flex items-center justify-center flex-shrink-0">
-            <Users className="w-3.5 h-3.5 text-white" />
-          </div>
-          <div className="min-w-0 leading-tight">
-            <div className="text-text-primary font-semibold text-base">RecruitMe</div>
-            <div className="text-text-tertiary text-2xs uppercase tracking-wider">Talent Manager</div>
-          </div>
+          <BrandMark brandName={brandName} logoUrl={logoUrl} />
         </Link>
         <div className="flex items-center gap-1.5">
           <Link
@@ -245,13 +263,7 @@ export function Sidebar({ jobs, crmEnabled = false }: SidebarProps) {
             {/* Drawer header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-separator">
               <div className="flex items-center gap-2">
-                <div className="w-7 h-7 bg-accent rounded flex items-center justify-center">
-                  <Users className="w-3.5 h-3.5 text-white" />
-                </div>
-                <div className="leading-tight">
-                  <div className="text-text-primary font-semibold text-base">RecruitMe</div>
-                  <div className="text-text-tertiary text-2xs uppercase tracking-wider">Talent Manager</div>
-                </div>
+                <BrandMark brandName={brandName} logoUrl={logoUrl} />
               </div>
               <button
                 onClick={() => setMobileOpen(false)}
@@ -392,13 +404,7 @@ export function Sidebar({ jobs, crmEnabled = false }: SidebarProps) {
         {/* Logo */}
         <div className="flex items-center justify-between px-3 py-3 border-b border-separator">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-7 h-7 bg-accent rounded flex items-center justify-center flex-shrink-0">
-              <Users className="w-3.5 h-3.5 text-white" />
-            </div>
-            <div className="leading-tight min-w-0">
-              <div className="text-text-primary font-semibold text-base">RecruitMe</div>
-              <div className="text-text-tertiary text-2xs uppercase tracking-wider">Talent Manager</div>
-            </div>
+            <BrandMark brandName={brandName} logoUrl={logoUrl} />
           </div>
           <Link
             href="/jobs/new"

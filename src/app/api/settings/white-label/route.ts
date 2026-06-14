@@ -5,7 +5,10 @@ import { getWhiteLabelConfig, saveWhiteLabelConfig } from "@/lib/white-label";
 import { isWhiteLabelEnabled } from "@/lib/feature-flags";
 
 const UpdateSchema = z.object({
-  logoUrl:       z.string().url().optional().or(z.literal("")),
+  // logoUrl is rendered as <img src>. Require an https:// URL — reject
+  // data:/javascript:/http: so an org-controlled value can't become a DoS
+  // (huge data: URI), a mixed-content/privacy beacon, or anything non-image.
+  logoUrl:       z.string().url().refine((u) => /^https:\/\//i.test(u), "Logo URL must start with https://").optional().or(z.literal("")),
   brandName:     z.string().max(60).optional(),
   primaryColour: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a 6-digit hex colour e.g. #1D4ED8").optional().or(z.literal("")),
   customDomain:  z.string().max(120).optional().or(z.literal("")),

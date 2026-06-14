@@ -4,6 +4,8 @@ import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
 import { authOptions, checkLoginLocked, recordLoginFailure, clearLoginFailures } from "./auth";
 import { prisma } from "./db";
+import { getWhiteLabelConfig } from "./white-label";
+import { isWhiteLabelEnabled } from "./feature-flags";
 
 export interface AuthResult {
   userId: string;
@@ -250,4 +252,18 @@ export async function getSidebarJobs(auth: AuthResult) {
     })
     .sort((a, b) => b.activityAt.getTime() - a.activityAt.getTime())
     .map(({ activityAt: _a, ...rest }) => rest);
+}
+
+/**
+ * The org's white-label brand bits for the sidebar (name + logo + report
+ * footer). Returns {} when white-label is off or the org has none set, so the
+ * UI falls back to the RecruitMe defaults. Centralised so the 9 section layouts
+ * don't each repeat the flag-check + fetch.
+ */
+export async function getSidebarBrand(
+  auth: AuthResult,
+): Promise<{ brandName?: string; logoUrl?: string; footerText?: string }> {
+  if (!isWhiteLabelEnabled() || !auth.orgId) return {};
+  const wl = await getWhiteLabelConfig(auth.orgId);
+  return { brandName: wl.brandName, logoUrl: wl.logoUrl, footerText: wl.footerText };
 }

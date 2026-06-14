@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { AuthSessionProvider } from "@/components/session-provider";
 import { Toaster } from "@/components/ui/toast";
 import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
+import { WhiteLabelStyles } from "@/components/white-label-styles";
 
 // SF Pro / system fonts only — no Google Fonts loader. The Logic Pro look
 // depends on the OS-native typeface; Inter was the wrong call for this
@@ -24,6 +25,7 @@ export default async function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="font-sans">
+        <WhiteLabelStyles />
         <AuthSessionProvider session={session}>{children}</AuthSessionProvider>
         <Toaster />
         <ConfirmDialogHost />

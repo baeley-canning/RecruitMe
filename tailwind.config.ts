@@ -49,9 +49,14 @@ const config: Config = {
         },
         accent: {
           // Apple "Blue" system color in dark mode — primary action.
-          DEFAULT: "#0a84ff",
-          hover:   "#409cff",
-          subtle:  "rgba(10, 132, 255, 0.15)",
+          // Channel-format CSS vars make the accent white-labelable: an org's
+          // brand colour overrides --brand-primary-rgb (set by WhiteLabelStyles)
+          // while the `<alpha-value>` placeholder keeps every `accent/NN`
+          // opacity modifier working. Fallback channels = the default blue, so
+          // with white-label off (the default) rendering is byte-identical.
+          DEFAULT: "rgb(var(--brand-primary-rgb, 10 132 255) / <alpha-value>)",
+          hover:   "rgb(var(--brand-primary-hover-rgb, 64 156 255) / <alpha-value>)",
+          subtle:  "rgb(var(--brand-primary-rgb, 10 132 255) / 0.15)",
         },
         success: {
           DEFAULT: "#30d158",
