@@ -46,6 +46,14 @@ export async function POST(
   });
   if (!candidate) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
 
+  // A supplied clientId must belong to the caller's org (audit L1) — the
+  // candidate is already org-scoped above, but clientId comes from the body.
+  if (result.data.clientId) {
+    const orgScope = auth.isOwner ? {} : { orgId: auth.orgId ?? "__none__" };
+    const client = await prisma.client.findFirst({ where: { id: result.data.clientId, ...orgScope }, select: { id: true } });
+    if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
+
   const submission = await prisma.submission.create({
     data: {
       orgId: auth.orgId ?? "",

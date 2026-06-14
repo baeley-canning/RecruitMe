@@ -413,7 +413,7 @@ export function Sidebar({ jobs, crmEnabled = false }: SidebarProps) {
         {/* Primary nav */}
         <div className="sidebar-section">Workspace</div>
         <nav className="px-2 pb-2 space-y-0.5">
-          {NAV_ITEMS.map(({ href, icon: Icon, label, match }) => {
+          {navItems.map(({ href, icon: Icon, label, match }) => {
             const active = match(pathname ?? "");
             return (
               <Link

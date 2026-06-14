@@ -1765,8 +1765,10 @@ export const CandidateCard = memo(function CandidateCard({
             </Button>
           )}
 
-          {/* Submit to client (CRM) — only when the handler is wired in */}
-          {onSubmitToClient && candidate.profileText && (
+          {/* Submit to client (CRM) — only when the handler is wired in.
+              Gate on profileCapturedAt (in the list payload), NOT profileText
+              which the job API strips — same trap as commit 16970b6. */}
+          {onSubmitToClient && candidate.profileCapturedAt && (
             <Button size="sm" variant="ghost" onClick={() => onSubmitToClient(candidate.id)} className="hidden sm:flex text-accent hover:text-accent hover:bg-accent-subtle" title="Submit to client" aria-label="Submit to client">
               <Building2 className="w-3.5 h-3.5" />
             </Button>

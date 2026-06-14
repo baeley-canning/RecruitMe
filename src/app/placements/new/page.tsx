@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
+import { firstApiError } from "@/lib/placement-format";
 
 interface ClientOption {
   id: string;
@@ -42,15 +43,17 @@ function NewPlacementForm() {
     }
     setSaving(true);
     try {
+      // salaryPlaced / feeAmount / guaranteeMonths are int columns — round so a
+      // decimal entry can't trigger a silent 422.
       const body: Record<string, unknown> = { candidateId: candidateId.trim() };
       if (jobId) body.jobId = jobId;
       if (clientId) body.clientId = clientId;
-      if (salaryPlaced) body.salaryPlaced = Number(salaryPlaced);
+      if (salaryPlaced) body.salaryPlaced = Math.round(Number(salaryPlaced));
       body.feeType = feeType;
       if (feeType === "percentage" && feePct) body.feePct = Number(feePct);
-      if (feeType === "fixed" && feeAmount) body.feeAmount = Number(feeAmount);
+      if (feeType === "fixed" && feeAmount) body.feeAmount = Math.round(Number(feeAmount));
       if (startDate) body.startDate = new Date(startDate).toISOString();
-      if (guaranteeMonths) body.guaranteeMonths = Number(guaranteeMonths);
+      if (guaranteeMonths) body.guaranteeMonths = Math.round(Number(guaranteeMonths));
       if (notes.trim()) body.notes = notes.trim();
 
       const res = await fetch("/api/placements", {
@@ -63,7 +66,7 @@ function NewPlacementForm() {
         showToast("Placement recorded", "success");
         router.push(`/placements/${data.id}`);
       } else {
-        showToast(typeof data.error === "string" ? data.error : "Failed to record placement", "error");
+        showToast(firstApiError(data.error, "Failed to record placement"), "error");
       }
     } finally {
       setSaving(false);
@@ -113,7 +116,7 @@ function NewPlacementForm() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelCls}>Salary placed (NZD)</label>
-            <input type="number" value={salaryPlaced} onChange={e => setSalaryPlaced(e.target.value)} placeholder="120000" className={inputCls} />
+            <input type="number" step="1" min="0" value={salaryPlaced} onChange={e => setSalaryPlaced(e.target.value)} placeholder="120000" className={inputCls} />
           </div>
           <div>
             <label className={labelCls}>Start date</label>
@@ -136,7 +139,7 @@ function NewPlacementForm() {
           {feeType === "percentage" ? (
             <input type="number" step="0.1" value={feePct} onChange={e => setFeePct(e.target.value)} placeholder="Fee % (e.g. 18)" className={inputCls} />
           ) : (
-            <input type="number" value={feeAmount} onChange={e => setFeeAmount(e.target.value)} placeholder="Fee amount (NZD)" className={inputCls} />
+            <input type="number" step="1" min="0" value={feeAmount} onChange={e => setFeeAmount(e.target.value)} placeholder="Fee amount (NZD)" className={inputCls} />
           )}
         </div>
 

@@ -26,6 +26,26 @@ export interface Placement {
   notes: string | null;
 }
 
+/**
+ * Surface a human message from an API error body. Routes return either a
+ * string `error` or a zod `flatten()` object ({ formErrors, fieldErrors }) on
+ * 422 — pull the first useful message instead of a generic fallback.
+ */
+export function firstApiError(err: unknown, fallback: string): string {
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const f = err as { formErrors?: string[]; fieldErrors?: Record<string, string[]> };
+    if (f.formErrors?.length) return f.formErrors[0];
+    if (f.fieldErrors) {
+      for (const k of Object.keys(f.fieldErrors)) {
+        const msgs = f.fieldErrors[k];
+        if (msgs?.length) return `${k}: ${msgs[0]}`;
+      }
+    }
+  }
+  return fallback;
+}
+
 export function fmtMoney(n: number): string {
   if (n >= 1000) return `$${(n / 1000).toFixed(0)}k`;
   return `$${n}`;

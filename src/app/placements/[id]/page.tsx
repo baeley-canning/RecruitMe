@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, Pencil, Check, X, Building2, DollarSign, Shield, Calendar } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
-import { type Placement, feeLabel, guaranteeBadge } from "@/lib/placement-format";
+import { type Placement, feeLabel, guaranteeBadge, firstApiError } from "@/lib/placement-format";
 
 /** Inline edit-in-place field (mirrors the clients detail page pattern). */
 function InlineField({
@@ -56,6 +56,7 @@ function InlineField({
 }
 
 const NUMERIC_FIELDS = new Set(["salaryPlaced", "feePct", "feeAmount", "guaranteeMonths"]);
+const INT_FIELDS = new Set(["salaryPlaced", "feeAmount", "guaranteeMonths"]); // int columns — round
 const DATE_FIELDS = new Set(["startDate", "invoicedAt", "paidAt"]);
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" }) : "—";
@@ -78,6 +79,7 @@ export default function PlacementDetailPage() {
   const patch = useCallback(async (field: string, value: string | null) => {
     let payload: unknown = value;
     if (value === null) payload = null;
+    else if (INT_FIELDS.has(field)) payload = Math.round(Number(value));
     else if (NUMERIC_FIELDS.has(field)) payload = Number(value);
     else if (DATE_FIELDS.has(field)) payload = new Date(value).toISOString();
     const res = await fetch(`/api/placements/${params.id}`, {
@@ -86,7 +88,11 @@ export default function PlacementDetailPage() {
       body: JSON.stringify({ [field]: payload }),
     });
     if (res.ok) { setP(await res.json() as Placement); }
-    else { showToast(`Failed to save ${field}`, "error"); throw new Error("save failed"); }
+    else {
+      const body = await res.json().catch(() => ({}));
+      showToast(firstApiError(body.error, `Failed to save ${field}`), "error");
+      throw new Error("save failed");
+    }
   }, [params.id]);
 
   if (loading) return <div className="flex items-center justify-center h-64 text-text-tertiary text-sm">Loading…</div>;
