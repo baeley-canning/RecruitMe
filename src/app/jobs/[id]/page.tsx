@@ -45,6 +45,7 @@ import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
 import { ClientReportModal } from "@/components/job/client-report-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
+import { SubmitToClientModal } from "@/components/job/submit-to-client-modal";
 import { cn, statusLabel, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 
@@ -99,6 +100,8 @@ interface Job {
   lastScoredAt: string | null;
   lastParsedAt: string | null;
   candidates: Candidate[];
+  /** Server-resolved feature flag — gates CRM-only UI (e.g. Submit to client). */
+  crmEnabled?: boolean;
 }
 
 type ParsedRoleSource = ParsedRole["title_source"];
@@ -193,6 +196,10 @@ export default function JobDetailPage({
   });
   const openModal  = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: true  })), []);
   const closeModal = useCallback((k: keyof typeof modals) => setModals(m => ({ ...m, [k]: false })), []);
+
+  // CRM "Submit to client" — tracks which candidate's modal is open.
+  const [submitCandidateId, setSubmitCandidateId] = useState<string | null>(null);
+  const handleSubmitToClient = useCallback((cid: string) => setSubmitCandidateId(cid), []);
 
   // Overflow (⋯) menu for low-frequency header actions
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -2405,6 +2412,7 @@ ${toHtml(job.rawJd)}
                     }
                     fetchQueueState={fetchStatuses[candidate.id]?.state}
                     contactCount={candidate._count?.contactEvents ?? 0}
+                    onSubmitToClient={job.crmEnabled ? handleSubmitToClient : undefined}
                   />
                 </div>
               </div>
@@ -2484,6 +2492,19 @@ ${toHtml(job.rawJd)}
           }}
         />
       )}
+
+      {submitCandidateId && (() => {
+        const c = job.candidates.find((x) => x.id === submitCandidateId);
+        if (!c) return null;
+        return (
+          <SubmitToClientModal
+            jobId={id}
+            candidate={{ id: c.id, name: c.name, matchScore: c.matchScore }}
+            onClose={() => setSubmitCandidateId(null)}
+            onSubmitted={() => { setSubmitCandidateId(null); void fetchJob(); }}
+          />
+        );
+      })()}
       </div>
     </div>
   );

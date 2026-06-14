@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getAuth, unauthorized } from "@/lib/session";
+import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
 import { isRemindersEnabled } from "@/lib/feature-flags";
 
 const CreateReminderSchema = z.object({
@@ -47,12 +47,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
   }
 
+  const d = result.data;
+
+  // Verify every supplied FK belongs to the caller's org (audit L1).
+  const orgScope = auth.isOwner ? {} : { orgId: auth.orgId ?? "__none__" };
+  if (d.candidateId) {
+    const c = await prisma.candidate.findFirst({ where: { id: d.candidateId, ...orgScope }, select: { id: true } });
+    if (!c) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
+  }
+  if (d.clientId) {
+    const c = await prisma.client.findFirst({ where: { id: d.clientId, ...orgScope }, select: { id: true } });
+    if (!c) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
+  if (d.placementId) {
+    const p = await prisma.placement.findFirst({ where: { id: d.placementId, ...orgScope }, select: { id: true } });
+    if (!p) return NextResponse.json({ error: "Placement not found" }, { status: 404 });
+  }
+  if (d.jobId) {
+    const { error } = await requireJobAccess(d.jobId, auth);
+    if (error) return error;
+  }
+
   const reminder = await prisma.reminder.create({
     data: {
       orgId: auth.orgId,
       userId: auth.userId,
-      ...result.data,
-      dueAt: new Date(result.data.dueAt),
+      ...d,
+      dueAt: new Date(d.dueAt),
     },
   });
   return NextResponse.json(reminder, { status: 201 });

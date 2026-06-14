@@ -4,49 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, DollarSign, Calendar, Shield, Check, ChevronRight } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
-
-interface Placement {
-  id: string;
-  orgId: string;
-  candidateId: string;
-  jobId: string | null;
-  clientId: string | null;
-  client: { id: string; name: string } | null;
-  submissionId: string | null;
-  placedAt: string;
-  startDate: string | null;
-  salaryPlaced: number | null;
-  feeType: string;
-  feePct: number | null;
-  feeAmount: number | null;
-  invoiceRef: string | null;
-  invoicedAt: string | null;
-  paidAt: string | null;
-  guaranteeMonths: number | null;
-  guaranteeExpiry: string | null;
-  notes: string | null;
-}
-
-function fmtMoney(n: number): string {
-  if (n >= 1000) return `$${(n / 1000).toFixed(0)}k`;
-  return `$${n}`;
-}
-
-function feeLabel(p: Placement): string {
-  if (p.feeAmount) return fmtMoney(p.feeAmount);
-  if (p.feePct && p.salaryPlaced) return `${fmtMoney(Math.round(p.salaryPlaced * p.feePct / 100))} (${p.feePct}%)`;
-  if (p.feePct) return `${p.feePct}%`;
-  return "—";
-}
-
-function guaranteeBadge(p: Placement): React.ReactNode {
-  if (!p.guaranteeExpiry) return null;
-  const daysLeft = Math.round((new Date(p.guaranteeExpiry).getTime() - Date.now()) / (86400 * 1000));
-  if (daysLeft < 0) return <span className="text-xs px-2 py-0.5 rounded-full bg-surface-hover text-text-tertiary">Expired</span>;
-  if (daysLeft <= 14) return <span className="text-xs px-2 py-0.5 rounded-full bg-danger-subtle text-danger">{daysLeft}d left</span>;
-  if (daysLeft <= 30) return <span className="text-xs px-2 py-0.5 rounded-full bg-warning-subtle text-warning">{daysLeft}d left</span>;
-  return <span className="text-xs px-2 py-0.5 rounded-full bg-success-subtle text-success">{daysLeft}d</span>;
-}
+import { type Placement, fmtMoney, feeLabel, feeValue, guaranteeBadge } from "@/lib/placement-format";
 
 export default function PlacementsPage() {
   const router = useRouter();
@@ -75,17 +33,8 @@ export default function PlacementsPage() {
     }
   }
 
-  const totalFee = placements.reduce((s, p) => {
-    if (p.feeAmount) return s + p.feeAmount;
-    if (p.feePct && p.salaryPlaced) return s + Math.round(p.salaryPlaced * p.feePct / 100);
-    return s;
-  }, 0);
-
-  const paidFee = placements.filter(p => p.paidAt).reduce((s, p) => {
-    if (p.feeAmount) return s + p.feeAmount;
-    if (p.feePct && p.salaryPlaced) return s + Math.round(p.salaryPlaced * p.feePct / 100);
-    return s;
-  }, 0);
+  const totalFee = placements.reduce((s, p) => s + feeValue(p), 0);
+  const paidFee = placements.filter(p => p.paidAt).reduce((s, p) => s + feeValue(p), 0);
 
   const expiringCount = placements.filter(p => {
     if (!p.guaranteeExpiry) return false;

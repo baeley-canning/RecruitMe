@@ -59,6 +59,14 @@ export async function PATCH(
   }
 
   const d = result.data;
+
+  // A re-pointed clientId must belong to the caller's org (audit L1).
+  if (d.clientId) {
+    const orgScope = auth.isOwner ? {} : { orgId: auth.orgId ?? "__none__" };
+    const client = await prisma.client.findFirst({ where: { id: d.clientId, ...orgScope }, select: { id: true } });
+    if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
+
   const data: Record<string, unknown> = { ...d };
   if (d.startDate !== undefined) data.startDate = d.startDate ? new Date(d.startDate) : null;
   if (d.invoicedAt !== undefined) data.invoicedAt = d.invoicedAt ? new Date(d.invoicedAt) : null;

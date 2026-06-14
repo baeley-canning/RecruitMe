@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getAuth, unauthorized } from "@/lib/session";
+import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
 import { isCrmEnabled } from "@/lib/feature-flags";
 
 const CreateSubmissionSchema = z.object({
@@ -77,4 +77,31 @@ export async function POST(
   }
 
   return NextResponse.json(submission, { status: 201 });
+}
+
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  if (!isCrmEnabled()) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const auth = await getAuth();
+  if (!auth) return unauthorized();
+
+  const { id: jobId } = await params;
+  const { error } = await requireJobAccess(jobId, auth);
+  if (error) return error;
+
+  // Submission has no `job` relation — query by the jobId column directly.
+  const submissions = await prisma.submission.findMany({
+    where: { jobId },
+    orderBy: { submittedAt: "desc" },
+    include: {
+      candidate: { select: { id: true, name: true, headline: true, status: true, matchScore: true } },
+      client:    { select: { id: true, name: true } },
+    },
+  });
+
+  return NextResponse.json(submissions);
 }

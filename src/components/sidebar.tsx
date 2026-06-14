@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, Menu, Search } from "lucide-react";
+import { Plus, Users, LayoutDashboard, Trash2, Settings, X, Eye, EyeOff, Bookmark, Shield, LogOut, FileText, Library, Menu, Search, Building2, Handshake } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isOwner as sessionIsOwner } from "@/lib/access";
 import { useState, useEffect } from "react";
@@ -20,6 +20,8 @@ interface Job {
 
 interface SidebarProps {
   jobs: Job[];
+  /** When false, the CRM nav items (Clients/Placements) are hidden. */
+  crmEnabled?: boolean;
 }
 
 interface KeyStatus {
@@ -165,9 +167,11 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/search",              icon: Search,             label: "Search",             match: (p) => p === "/search" || p.startsWith("/search/") },
   { href: "/candidates",          icon: Library,            label: "Candidates Library", match: (p) => p === "/candidates" || p.startsWith("/candidates/") },
   { href: "/linkedin-setup",      icon: Bookmark,           label: "LinkedIn Setup",     match: (p) => p === "/linkedin-setup" },
+  { href: "/clients",             icon: Building2,          label: "Clients",            match: (p) => p === "/clients" || p.startsWith("/clients/") },
+  { href: "/placements",          icon: Handshake,          label: "Placements",         match: (p) => p === "/placements" || p.startsWith("/placements/") },
 ];
 
-export function Sidebar({ jobs }: SidebarProps) {
+export function Sidebar({ jobs, crmEnabled = false }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
@@ -175,6 +179,11 @@ export function Sidebar({ jobs }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const username = session?.user?.name ?? "";
   const isOwner = sessionIsOwner(session);
+
+  // Hide CRM nav items unless the feature flag is on.
+  const navItems = crmEnabled
+    ? NAV_ITEMS
+    : NAV_ITEMS.filter((i) => i.href !== "/clients" && i.href !== "/placements");
 
   // Close mobile drawer whenever the route changes
   useEffect(() => { setMobileOpen(false); }, [pathname]);
@@ -267,7 +276,7 @@ export function Sidebar({ jobs }: SidebarProps) {
             {/* Drawer nav */}
             <div className="sidebar-section">Navigation</div>
             <nav className="px-2 pb-2 space-y-0.5">
-              {NAV_ITEMS.map(({ href, icon: Icon, label, match }) => {
+              {navItems.map(({ href, icon: Icon, label, match }) => {
                 const active = match(pathname ?? "");
                 return (
                   <Link

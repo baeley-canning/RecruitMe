@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
+import { isCrmEnabled } from "@/lib/feature-flags";
 
 // Never cache the job payload: the page refetches this immediately after adding
 // candidates / changing status, and a heuristically-cached stale response made
@@ -115,7 +116,9 @@ export async function GET(
   }));
 
   return NextResponse.json(
-    { ...full, candidates: enrichedCandidates },
+    // crmEnabled lets the client gate CRM-only affordances (e.g. the
+    // "Submit to client" action) without a build-time NEXT_PUBLIC flag.
+    { ...full, candidates: enrichedCandidates, crmEnabled: isCrmEnabled() },
     { headers: { "Cache-Control": "no-store, must-revalidate" } },
   );
 }

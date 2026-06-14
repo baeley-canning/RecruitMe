@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Pencil,
   ExternalLink,
+  Building2,
 } from "lucide-react";
 
 import { LinkedInIcon, JobAdderBadge, SeekBadge } from "./candidate/icons";
@@ -183,6 +184,8 @@ interface CandidateCardProps {
   fetchingProfile?: boolean;
   fetchQueueState?: FetchState;
   contactCount?: number;
+  /** When provided (CRM enabled), renders a "Submit to client" action. */
+  onSubmitToClient?: (id: string) => void;
 }
 
 function ScoringDebugPanel({
@@ -919,6 +922,7 @@ export const CandidateCard = memo(function CandidateCard({
   fetchingProfile = false,
   fetchQueueState,
   contactCount = 0,
+  onSubmitToClient,
 }: CandidateCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -1758,6 +1762,13 @@ export const CandidateCard = memo(function CandidateCard({
           {candidate.profileText && (
             <Button size="sm" variant="ghost" onClick={() => setOutreachOpen(true)} className="hidden sm:flex" title="Generate outreach message">
               <Send className="w-3.5 h-3.5" />
+            </Button>
+          )}
+
+          {/* Submit to client (CRM) — only when the handler is wired in */}
+          {onSubmitToClient && candidate.profileText && (
+            <Button size="sm" variant="ghost" onClick={() => onSubmitToClient(candidate.id)} className="hidden sm:flex text-accent hover:text-accent hover:bg-accent-subtle" title="Submit to client" aria-label="Submit to client">
+              <Building2 className="w-3.5 h-3.5" />
             </Button>
           )}
 

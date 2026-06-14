@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getAuth, unauthorized } from "@/lib/session";
+import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
 import { isCrmEnabled } from "@/lib/feature-flags";
 
 const CreatePlacementSchema = z.object({
@@ -54,6 +54,28 @@ export async function POST(req: Request) {
   }
 
   const d = result.data;
+
+  // Verify every supplied FK belongs to the caller's org (audit L1) — stops
+  // creating a placement that points at another tenant's candidate/client/sub.
+  const orgScope = auth.isOwner ? {} : { orgId: auth.orgId ?? "__none__" };
+  const candidate = await prisma.candidate.findFirst({
+    where: { id: d.candidateId, ...orgScope },
+    select: { id: true },
+  });
+  if (!candidate) return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
+  if (d.clientId) {
+    const client = await prisma.client.findFirst({ where: { id: d.clientId, ...orgScope }, select: { id: true } });
+    if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
+  if (d.jobId) {
+    const { error } = await requireJobAccess(d.jobId, auth);
+    if (error) return error;
+  }
+  if (d.submissionId) {
+    const sub = await prisma.submission.findFirst({ where: { id: d.submissionId, ...orgScope }, select: { id: true } });
+    if (!sub) return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+  }
+
   const guaranteeExpiry = d.guaranteeMonths && d.placedAt
     ? new Date(new Date(d.placedAt).getTime() + d.guaranteeMonths * 30 * 24 * 60 * 60 * 1000)
     : d.guaranteeMonths

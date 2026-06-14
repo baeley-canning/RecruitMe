@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Sidebar, SidebarWrapper } from "@/components/sidebar";
 import { getAuth, getSidebarJobs } from "@/lib/session";
+import { isCrmEnabled } from "@/lib/feature-flags";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export default async function JobsLayout({
 
   return (
     <SidebarWrapper>
-      <Sidebar jobs={jobs} />
+      <Sidebar jobs={jobs} crmEnabled={isCrmEnabled()} />
       <main className="flex-1 min-w-0">{children}</main>
     </SidebarWrapper>
   );
