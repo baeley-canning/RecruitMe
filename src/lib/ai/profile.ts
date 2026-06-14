@@ -69,7 +69,8 @@ Return ONLY the cleaned CV text. No commentary, no preamble.`;
 }
 
 export async function extractCandidateInfo(
-  profileText: string
+  profileText: string,
+  cost?: { orgId?: string | null; userId?: string | null }
 ): Promise<{ name: string; headline: string; location: string }> {
   if (!profileText || profileText.trim().length < 50) {
     return { name: "", headline: "", location: "" };
@@ -91,7 +92,7 @@ Return ONLY valid JSON:
   const localProvider = ollamaProviderFor("info_extract");
   if (localProvider) {
     try {
-      const text = await chat(prompt, 0, 300, { provider: localProvider });
+      const text = await chat(prompt, 0, 300, { provider: localProvider, orgId: cost?.orgId, userId: cost?.userId, costTag: "info_extract" });
       const parsed = parseJson<{ name?: string; headline?: string; location?: string }>(text);
       // A 1.5B model on noisy input can hallucinate or misassign fields
       // (e.g. put a company in `name`). ONLY accept the local result when the
@@ -116,7 +117,7 @@ Return ONLY valid JSON:
   }
 
   try {
-    const text = await chatWithMaybeFailover(prompt, 0, 300);
+    const text = await chatWithMaybeFailover(prompt, 0, 300, { orgId: cost?.orgId, userId: cost?.userId, costTag: "info_extract" });
     const parsed = parseJson<{ name?: string; headline?: string; location?: string }>(text);
     return {
       name:     parsed.name ?? "Unknown",

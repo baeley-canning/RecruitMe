@@ -591,7 +591,7 @@ async function runAiEnrichment(identity: IdentityData): Promise<{
   const enrichContext = { fn: "runAiEnrichment", jobId: job.id, orgId: job.orgId ?? null, linkedinUrl: identity.linkedinUrl };
   let scoringError: string | null = null;
   const [info, rawBreakdown, acceptance] = await Promise.all([
-    extractCandidateInfo(cleanedProfileText).catch((err) => {
+    extractCandidateInfo(cleanedProfileText, { orgId: job.orgId ?? null }).catch((err) => {
       reportError(err, { ...enrichContext, phase: "extractCandidateInfo" });
       return null;
     }),
@@ -603,7 +603,7 @@ async function runAiEnrichment(identity: IdentityData): Promise<{
         })
       : Promise.resolve(null),
     cleanedProfileText.length >= 250 && parsedRole
-      ? predictAcceptance(cleanedProfileText, parsedRole, salary).catch((err) => {
+      ? predictAcceptance(cleanedProfileText, parsedRole, salary, { orgId: job.orgId ?? null }).catch((err) => {
           reportError(err, { ...enrichContext, phase: "predictAcceptance" });
           return null;
         })

@@ -26,7 +26,8 @@ export async function POST(
     candidate.name,
     job.title,
     { name: ref.refereeName, title: ref.refereeTitle ?? undefined, company: ref.refereeCompany ?? undefined },
-    responses
+    responses,
+    { orgId: auth.orgId, userId: auth.userId }
   );
 
   const updated = await prisma.referenceCheck.update({

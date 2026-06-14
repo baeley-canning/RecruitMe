@@ -25,7 +25,8 @@ export async function POST(
     candidate.profileText ?? candidate.headline ?? "",
     parsedRole?.title ?? job.title,
     parsedRole?.skills_required ?? [],
-    ref.relationship ?? "colleague"
+    ref.relationship ?? "colleague",
+    { orgId: auth.orgId, userId: auth.userId }
   );
 
   const updated = await prisma.referenceCheck.update({

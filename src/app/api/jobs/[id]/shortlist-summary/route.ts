@@ -132,7 +132,7 @@ ${candidateBlurbs}`;
   try {
     // Allow up to 200 tokens per candidate for the output
     const tokenBudget = Math.min(4096, Math.max(1024, candidates.length * 200));
-    const text = await chatWithMaybeFailover(prompt, 0.3, tokenBudget);
+    const text = await chatWithMaybeFailover(prompt, 0.3, tokenBudget, { orgId: auth.orgId, userId: auth.userId, costTag: "shortlist_summary" });
 
     // parseJson handles the brace-balancing + trailing-comma fixup that the
     // greedy `match(/\[[\s\S]*\]/)` previously got wrong when the model

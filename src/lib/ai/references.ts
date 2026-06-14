@@ -16,7 +16,8 @@ export async function generateReferenceQuestions(
   candidateProfile: string,
   roleTitle: string,
   requiredSkills: string[],
-  relationship: string
+  relationship: string,
+  cost?: { orgId?: string | null; userId?: string | null }
 ): Promise<ReferenceQuestion[]> {
   const profileExcerpt = candidateProfile.slice(0, 1500);
   const prompt = `You are a senior recruiter preparing a structured reference check for a candidate.
@@ -43,7 +44,7 @@ Tailor the questions to the referee relationship (e.g. manager questions differ 
 Return ONLY a JSON array, no commentary:
 [{"question":"...", "category":"performance"}, ...]`;
 
-  const text = await chatWithMaybeFailover(prompt, 0.3, 1200);
+  const text = await chatWithMaybeFailover(prompt, 0.3, 1200, { orgId: cost?.orgId, userId: cost?.userId, costTag: "reference_questions" });
   try {
     const parsed = parseJson<ReferenceQuestion[]>(text);
     if (!Array.isArray(parsed)) return [];
@@ -57,7 +58,8 @@ export async function summariseReferenceCheck(
   candidateName: string,
   roleTitle: string,
   referee: { name: string; title?: string; company?: string; relationship?: string },
-  responses: Array<{ question: string; answer: string }>
+  responses: Array<{ question: string; answer: string }>,
+  cost?: { orgId?: string | null; userId?: string | null }
 ): Promise<string> {
   const qa = responses
     .filter((r) => r.answer.trim())
@@ -83,5 +85,5 @@ Write a 3–4 sentence professional summary of this reference check suitable for
 
 Be direct and specific. No bullet points. Professional tone. Return only the paragraph.`;
 
-  return (await chatWithMaybeFailover(prompt, 0.3, 400)).trim();
+  return (await chatWithMaybeFailover(prompt, 0.3, 400, { orgId: cost?.orgId, userId: cost?.userId, costTag: "reference_summary" })).trim();
 }

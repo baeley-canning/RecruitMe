@@ -12,7 +12,10 @@ const prismaMock = vi.hoisted(() => ({
       create:     vi.fn(),
     },
     candidateFile: {
-      update: vi.fn().mockResolvedValue({}),
+      update:    vi.fn().mockResolvedValue({}),
+      // Fail-closed guard probes for pre-existing encrypted rows before minting
+      // a key. Default: none exist (so the fresh-install bootstrap proceeds).
+      findFirst: vi.fn().mockResolvedValue(null),
     },
   },
 }));
@@ -99,6 +102,20 @@ describe("cv-encryption", () => {
     _resetKeyCacheForTests();
     const back = await decryptCv(cipher);
     expect(back).toBe(Buffer.from("first upload").toString("base64"));
+  });
+
+  it("fails closed: refuses to mint a new key when encrypted CVs already exist", async () => {
+    delete process.env.CV_ENCRYPTION_KEY;
+    _resetKeyCacheForTests();
+    // Simulate a key-loss scenario: no env key, no Setting row, but a v1: row
+    // is already in the table. Minting here would orphan it — must throw.
+    prismaMock.prisma.candidateFile.findFirst.mockResolvedValueOnce({ id: "enc-1" });
+
+    await expect(
+      encryptCv(Buffer.from("x").toString("base64")),
+    ).rejects.toThrow(/encrypted CVs already exist/i);
+    // And it must NOT have written a bootstrap Setting row.
+    expect(settingStore.has("cv.encryption.v1")).toBe(false);
   });
 
   it("rejects environment keys that are not 32 bytes", async () => {

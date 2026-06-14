@@ -27,7 +27,10 @@ import { prisma } from "./db";
  *   `v1:`-encrypted row becomes unreadable. The plaintext base64 is gone too,
  *   because we re-encrypt on read. Operationally: back up the Setting table
  *   alongside CandidateFile, or set `CV_ENCRYPTION_KEY` in Railway so the
- *   key is reproducible from outside the DB.
+ *   key is reproducible from outside the DB. To stop a silent-corruption
+ *   compounding, `loadKey` now FAILS CLOSED — it refuses to mint a fresh key
+ *   when encrypted rows already exist, so a missing key surfaces as a loud
+ *   error rather than a new divergent key written over lost data.
  */
 
 const SETTING_KEY = "cv.encryption.v1";
@@ -68,9 +71,29 @@ async function loadKey(): Promise<Buffer> {
     return cachedKey;
   }
 
-  // Bootstrap: no env, no Setting row. Generate one and persist it. The
-  // `create` may race with another worker; if so the second insert collides
-  // on the primary key and we just re-read.
+  // FAIL-CLOSED (audit Phase 0.3): no env key and no Setting row. Before we
+  // mint a brand-new key, make sure we're not about to ORPHAN existing
+  // encrypted CVs. If any `v1:`-encrypted row already exists, the real key was
+  // lost (DB restored from a pre-key backup, env wiped, Setting truncated) — a
+  // fresh key could never decrypt those rows, and minting one would also start
+  // writing NEW rows under a divergent key, compounding the corruption. Refuse
+  // loudly instead so the operator restores the key rather than silently losing
+  // every CV.
+  const existingEncrypted = await prisma.candidateFile.findFirst({
+    where: { data: { startsWith: VERSION_PREFIX } },
+    select: { id: true },
+  });
+  if (existingEncrypted) {
+    throw new Error(
+      "CV encryption key is missing but encrypted CVs already exist. Refusing " +
+      "to generate a new key (it could never decrypt them). Restore " +
+      "CV_ENCRYPTION_KEY (or the cv.encryption.v1 Setting row) before serving CVs.",
+    );
+  }
+
+  // Genuinely fresh install (no key anywhere, no encrypted data) — safe to
+  // bootstrap. The `create` may race with another worker; if so the second
+  // insert collides on the primary key and we just re-read.
   const generated = randomBytes(KEY_BYTES);
   try {
     await prisma.setting.create({
