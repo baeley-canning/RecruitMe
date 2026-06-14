@@ -130,10 +130,18 @@ export function SearchRunClient({ initial }: { initial: RunSnapshot }) {
         </div>
       )}
 
-      {/* Result count */}
+      {/* Result count — while a live run is in flight, don't show a stark
+          "0 results" (reads as broken); make it clear sources are still working. */}
       <p className="text-xs text-text-tertiary mb-2 data-mono">
-        {run.counts.total} result{run.counts.total === 1 ? "" : "s"}
-        {run.counts.deduped > 0 && ` · ${run.counts.deduped} in multiple sources`}
+        {isLive && run.counts.total === 0 ? (
+          <span className="inline-flex items-center gap-1.5 text-accent"><Loader2 className="w-3 h-3 animate-spin" /> Searching live sources…</span>
+        ) : (
+          <>
+            {run.counts.total} result{run.counts.total === 1 ? "" : "s"}
+            {isLive && " so far · live sources still searching"}
+            {run.counts.deduped > 0 && ` · ${run.counts.deduped} in multiple sources`}
+          </>
+        )}
       </p>
 
       {/* Results */}
@@ -141,7 +149,10 @@ export function SearchRunClient({ initial }: { initial: RunSnapshot }) {
         {results.length === 0 ? (
           <div className="text-center py-12 text-sm text-text-tertiary">
             {isLive ? (
-              <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Searching…</span>
+              <span className="inline-flex flex-col items-center gap-1.5">
+                <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Searching LinkedIn &amp; SEEK live…</span>
+                <span className="text-2xs text-text-tertiary">Live scrapes take ~1–2 min — results appear here as they land. Tip: include Library for instant matches.</span>
+              </span>
             ) : (
               "No matches."
             )}
