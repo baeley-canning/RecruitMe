@@ -44,7 +44,9 @@ if command -v cosign >/dev/null 2>&1 && [ -f "$COSIGN_PUB" ]; then
     exit 1
   fi
 else
-  echo "[update] WARNING: cosign not available — proceeding without signature check"
+  echo "[update] ERROR: cosign and/or $COSIGN_PUB missing — refusing to apply an UNVERIFIED update."
+  echo "[update] Set up signing: generate a cosign keypair, ship cosign.pub to $COSIGN_PUB, and sign the channel manifest."
+  exit 1
 fi
 
 NEW_VERSION=$(echo "$MANIFEST" | jq -r .version)

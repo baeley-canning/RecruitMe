@@ -23,7 +23,7 @@
  */
 
 import http from "node:http";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, unlinkSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
@@ -46,12 +46,32 @@ function loadState() {
 
 function saveState(s) {
   writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
+  // Holds the admin password (until finalize deletes it) — keep it root-only;
+  // the default umask would otherwise leave it world-readable (0644).
+  chmodSync(STATE_FILE, 0o600);
 }
 
 function randHex(n) { return randomBytes(n).toString("hex"); }
 function randB64(n) { return randomBytes(n).toString("base64url"); }
 
 const state = loadState();
+
+// One-time setup PIN — an out-of-band secret gating the privileged wizard
+// steps. The wizard listens unauthenticated on the LAN during first boot, so
+// without this any host on the same network could POST the admin password or a
+// tailnet key. The PIN is printed to the box console/journal and written
+// root-only to /etc/recruitme/setup-pin.txt; the on-site installer reads it off
+// the box (the LinkedIn/SEEK steps already require physical access to the box).
+const SETUP_PIN = randHex(3).toUpperCase(); // 6 hex chars
+try {
+  writeFileSync(`${CONFIG_DIR}/setup-pin.txt`, SETUP_PIN + "\n");
+  chmodSync(`${CONFIG_DIR}/setup-pin.txt`, 0o600);
+} catch { /* CONFIG_DIR is created above; the console line below still shows the PIN */ }
+console.log(`\n========================================\n  RecruitMe Box — SETUP PIN: ${SETUP_PIN}\n  Enter this on the first wizard screen.\n========================================\n`);
+
+function pinOk(params) {
+  return (params.get("setup_pin") ?? "").trim().toUpperCase() === SETUP_PIN;
+}
 
 const page = (body) => `<!doctype html>
 <html><head><meta charset="utf-8"><title>RecruitMe Box — Setup</title>
@@ -86,6 +106,8 @@ function renderCompany() {
   <h1>Welcome to RecruitMe Box</h1>
   <p class="help">Just a few details to set up your agency. This takes about 5 minutes.</p>
   <form method="post" action="/company">
+    <label>Setup PIN (shown on this box's screen)</label>
+    <input name="setup_pin" required placeholder="6-character PIN" autocomplete="off">
     <label>Agency name</label>
     <input name="agency_name" required value="${state.agency_name ?? ""}" placeholder="Acme Recruiting">
     <label>Admin email (your login)</label>
@@ -137,13 +159,17 @@ function renderDone() {
 
 function writeBaseConfig() {
   const dbPassword = randHex(16);
+  // ONE shared secret the worker presents and the app validates — it must be
+  // identical in both env blocks below. A second randHex(32) call would mint a
+  // mismatched value and 401 every worker->app call on the box.
+  const scraperSecret = randHex(32);
   const env = [
     "# Generated at first boot — do not edit by hand.",
     `DATABASE_URL=postgres://recruitme:${dbPassword}@localhost:5432/recruitme`,
     `NEXTAUTH_SECRET=${randHex(32)}`,
     `NEXTAUTH_URL=https://${state.box_hostname ?? "recruitme-box.local"}`,
     `NEXT_PUBLIC_APP_URL=https://${state.box_hostname ?? "recruitme-box.local"}`,
-    `SCRAPER_SECRET=${randHex(32)}`,
+    `SCRAPER_SECRET=${scraperSecret}`,
     `CONTACT_SYNC_CRON_SECRET=${randHex(16)}`,
     `SEED_OWNER_USERNAME=${state.admin_email}`,
     `SEED_OWNER_PASSWORD=${state.admin_password}`,
@@ -169,7 +195,7 @@ function writeBaseConfig() {
   // Worker .env shares some secrets with the app
   const workerEnv = [
     `RAILWAY_API_URL=http://localhost:3001`,
-    `SCRAPER_SECRET=${randHex(32)}`,
+    `SCRAPER_SECRET=${scraperSecret}`,
     `SESSION_ENCRYPTION_KEY=${randHex(32)}`,
     "LOG_LEVEL=info",
     "POLL_INTERVAL_MS=15000",
@@ -210,6 +236,15 @@ const server = http.createServer(async (req, res) => {
 
   const route = `${req.method} ${req.url.split("?")[0]}`;
 
+  // Gate every privileged/state-changing route behind the one-time PIN. Only
+  // viewing the wizard and submitting the company step (where the PIN itself is
+  // checked) are reachable before verification — so a random LAN host can't
+  // drive setup during the unauthenticated first-boot window.
+  const isPublic = route === "GET /" || route === "GET /index.html" || route === "POST /company";
+  if (!isPublic && !state.pinVerified) {
+    return send(403, page(`<h1>Setup locked</h1><p class="help">Enter the setup PIN on the first screen to begin. <a style="color:#60a5fa" href="/">Start setup</a>.</p>`));
+  }
+
   if (route === "GET /" || route === "GET /index.html") {
     const renders = {
       company:   renderCompany,
@@ -224,11 +259,15 @@ const server = http.createServer(async (req, res) => {
   if (route === "POST /company") {
     const body = await new Promise((r) => { let s = ""; req.on("data", (d) => s += d); req.on("end", () => r(s)); });
     const params = new URLSearchParams(body);
+    if (!pinOk(params)) {
+      return send(403, page(`${progress("company")}<h1>Wrong setup PIN</h1><p class="help">The setup PIN is printed on this box's screen/console. <a style="color:#60a5fa" href="/">Try again</a>.</p>`));
+    }
     Object.assign(state, {
       agency_name:    params.get("agency_name") ?? "",
       admin_email:    params.get("admin_email") ?? "",
       admin_password: params.get("admin_password") ?? "",
       box_hostname:   "recruitme-box.local",
+      pinVerified:    true,
       step: "linkedin",
     });
     saveState(state);
@@ -282,6 +321,11 @@ const server = http.createServer(async (req, res) => {
 
 function finalize() {
   writeFileSync(FIRSTBOOT_DONE, new Date().toISOString());
+  // The state file held the admin password in plaintext during setup — remove
+  // it (and the setup PIN) now that config is written, so neither lingers on
+  // disk for the life of the box.
+  try { unlinkSync(STATE_FILE); } catch { /* already gone — fine */ }
+  try { unlinkSync(`${CONFIG_DIR}/setup-pin.txt`); } catch { /* already gone — fine */ }
   console.log("[firstboot] complete — enabling main services");
   try {
     execFileSync("sudo", ["systemctl", "disable", "recruitme-firstboot.service"], { stdio: "inherit" });

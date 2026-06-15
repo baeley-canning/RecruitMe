@@ -99,6 +99,12 @@ build {
       "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null",
       "curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list",
       "sudo apt-get update && sudo apt-get install -y tailscale",
+      # cosign — verifies the signed update manifest (appliance/updater/update.sh).
+      # update.sh now fails closed without it, so no unsigned root update can run.
+      # The operator must still generate a cosign keypair, ship cosign.pub to
+      # /etc/recruitme/cosign.pub, and sign manifests; until then auto-updates
+      # are intentionally blocked rather than applied unverified.
+      "sudo curl -fsSL -o /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 && sudo chmod +x /usr/local/bin/cosign",
     ]
   }
 
@@ -110,10 +116,18 @@ build {
 
   provisioner "shell" {
     inline = [
+      # Dedicated unprivileged service account the systemd units run as
+      # (control-agent, heartbeat, pool-sync — and the app/scraper). The
+      # cloud-init image creates only `ubuntu`; without this the chown and
+      # `sudo -u recruitme` steps below fail and every `User=recruitme` unit
+      # refuses to start.
+      "sudo useradd --system --create-home --home-dir /home/recruitme --shell /usr/sbin/nologin recruitme || true",
       "sudo mkdir -p /opt/recruitme",
       "sudo cp -r /tmp/recruitme/* /opt/recruitme/",
       "sudo chown -R recruitme:recruitme /opt/recruitme || true",
       # systemd units
+      "sudo cp /opt/recruitme/appliance/app/recruitme-app.service /etc/systemd/system/",
+      "sudo cp /opt/recruitme/appliance/scraper/recruitme-scraper.service /etc/systemd/system/",
       "sudo cp /opt/recruitme/appliance/control-agent/recruitme-control-agent.service /etc/systemd/system/",
       "sudo cp /opt/recruitme/appliance/heartbeat/recruitme-heartbeat.service /etc/systemd/system/",
       "sudo cp /opt/recruitme/appliance/heartbeat/recruitme-heartbeat.timer /etc/systemd/system/",
@@ -121,10 +135,13 @@ build {
       # First-boot wizard service (runs once, then disables itself)
       "sudo cp /opt/recruitme/appliance/firstboot/recruitme-firstboot.service /etc/systemd/system/",
       "sudo systemctl enable recruitme-firstboot.service",
-      # Pre-install npm deps for both the main app and admin-portal so
-      # first boot doesn't need internet for `npm install`
-      "cd /opt/recruitme && sudo -u recruitme npm install --omit=dev",
-      "cd /opt/recruitme/scraper-worker && sudo -u recruitme npm install && sudo -u recruitme npm run build",
+      # Pre-build app + worker at image time so first boot needs no internet.
+      # The app keeps devDependencies on purpose: start-production.mjs shells out
+      # to the Prisma CLI at boot (a devDependency) and `next build` needs
+      # typescript + tailwind. `npm run build` = prisma generate + next build.
+      "cd /opt/recruitme && sudo -u recruitme -H npm install",
+      "cd /opt/recruitme && sudo -u recruitme -H npm run build",
+      "cd /opt/recruitme/scraper-worker && sudo -u recruitme -H npm install && sudo -u recruitme -H npm run build",
       # ufw default-deny
       "sudo ufw default deny incoming && sudo ufw default allow outgoing",
       "sudo ufw allow in 22/tcp && sudo ufw allow in 80/tcp && sudo ufw allow in 443/tcp",

@@ -56,6 +56,18 @@ if (!POOL_URL || !BOX_ID || !BOX_TOKEN) {
 }
 
 const prisma = new PrismaClient();
+
+// The CandidatePoolSync model is not yet in the Prisma schema (the table exists
+// only in apply-schema-changes.mjs), so prisma.candidatePoolSync is undefined
+// and any candidate query selecting the `poolSync` relation throws. Without this
+// guard the script silently uploads nothing while appearing healthy. Fail loudly
+// until the feature is finished (add the Prisma model + a migration).
+if (typeof prisma.candidatePoolSync?.upsert !== "function") {
+  console.error("[pool-sync] CandidatePoolSync Prisma model is missing from this build — candidate-pool sync is not finished. Add the model + migration before enabling OPT_IN_CANDIDATE_POOL. Refusing to run.");
+  await prisma.$disconnect();
+  process.exit(1);
+}
+
 const BATCH_SIZE = 100;
 const MAX_TICKS = 1000; // safety
 

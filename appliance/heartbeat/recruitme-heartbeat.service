@@ -5,7 +5,7 @@ After=network-online.target recruitme-app.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/recruitme-heartbeat
-User=baeley
+User=recruitme
 # Failure is logged but doesn't take down the timer. Portal unreachable
 # is the expected case during network blips; the next tick retries.
 SuccessExitStatus=0

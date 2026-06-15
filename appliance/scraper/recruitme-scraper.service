@@ -1,0 +1,21 @@
+[Unit]
+Description=RecruitMe scraper worker — polls the app job queue, scrapes LinkedIn/SEEK (Patchright)
+After=network-online.target recruitme-app.service
+Wants=network-online.target
+# Worker config (RAILWAY_API_URL, SCRAPER_SECRET, SESSION_ENCRYPTION_KEY,
+# HEADLESS) is written by first-boot; don't run before it exists.
+ConditionPathExists=/opt/recruitme/scraper-worker/.env
+
+[Service]
+Type=simple
+User=recruitme
+WorkingDirectory=/opt/recruitme/scraper-worker
+# The worker loads its own .env via Node's --env-file and polls the local app
+# over HTTP, so it tolerates the app not being up yet (it retries each cycle).
+# dist/ is built at image time (see packer). Mirrors `npm start`.
+ExecStart=/usr/bin/node --env-file=.env dist/index.js
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

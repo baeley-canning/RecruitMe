@@ -1,0 +1,26 @@
+[Unit]
+Description=RecruitMe app (Next.js) — applies DB schema, seeds owner, serves on $PORT behind Caddy
+After=network-online.target postgresql.service
+Wants=network-online.target
+# First-boot writes /etc/recruitme/app.env; don't boot-loop before it exists.
+# recruitme-firstboot.service also orders itself Before= this unit.
+ConditionPathExists=/etc/recruitme/app.env
+
+[Service]
+Type=simple
+User=recruitme
+WorkingDirectory=/opt/recruitme
+EnvironmentFile=/etc/recruitme/app.env
+# start-production.mjs: apply-schema-changes -> prisma db push (schema-hash
+# fast-path) -> seed owner -> `next start -H 0.0.0.0 -p $PORT`. PORT comes from
+# app.env; Caddy reverse-proxies :443 -> it. The Prisma CLI it shells out to is
+# a devDependency, so the image installs full deps (see packer) — do NOT prune.
+ExecStart=/usr/bin/node scripts/start-production.mjs
+Restart=on-failure
+RestartSec=10
+# Cold-box DB migration + FTS rebuild over the candidate table can take a while;
+# start-production also self-retries the DB steps. Give startup generous room.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=baeley
-ExecStart=/usr/bin/node /opt/recruitme/control-agent/agent.mjs
+User=recruitme
+ExecStart=/usr/bin/node /opt/recruitme/appliance/control-agent/agent.mjs
 Restart=always
 RestartSec=15
 # Memory cap small — long-poll loop barely uses RAM
