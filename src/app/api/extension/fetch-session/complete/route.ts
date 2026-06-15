@@ -10,6 +10,7 @@ import {
 } from "@/lib/linkedin-capture";
 import { isLinkedInProfileUrl } from "@/lib/linkedin";
 import { verifyExtensionAuth } from "@/lib/session";
+import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { reportError } from "@/lib/error-reporting";
 
 // Stage 1 (saveCapturedProfileFast) is synchronous and bounded — but the
@@ -133,6 +134,32 @@ export async function POST(req: Request) {
     await updateSessionInQueue({ sessionId, status: "error", message, error: message });
     return NextResponse.json({ error: message }, { status: 500, headers: extensionCorsHeaders(req) });
   }
+
+  // Per-org rate limit on the AI-scoring stage. The capture itself is already
+  // persisted above (the valuable part), so a rate-limited capture is kept, not
+  // lost — we only skip the expensive Claude scoring. Without this gate a
+  // compromised extension credential could create+complete sessions in a loop
+  // and drive unbounded AI spend (the /api/extension/import route gates the
+  // same way). recordUsage also closes the usage-ledger gap on this path.
+  const rateCheck = await checkRateLimit(auth.orgId, "capture");
+  if (!rateCheck.allowed) {
+    await updateSessionInQueue({
+      sessionId,
+      status: "completed",
+      message: "Profile captured — scoring skipped (rate limit reached)",
+      completedAt: new Date().toISOString(),
+    });
+    return NextResponse.json(
+      {
+        accepted: true,
+        sessionId,
+        status: "completed",
+        message: "Profile captured — scoring skipped (rate limit reached)",
+      },
+      { status: 202, headers: extensionCorsHeaders(req) },
+    );
+  }
+  void recordUsage(auth.orgId, auth.userId, "capture", { sessionId, source: "extension_fetch_session" });
 
   await updateSessionInQueue({
     sessionId,

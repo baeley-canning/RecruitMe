@@ -11,14 +11,15 @@
  *  1. Increments retryCount
  *  2. Requeues as "pending" if retryCount < 3, else marks "failed"
  *
- * Auth: x-scraper-secret header (same as the poll route).
+ * Auth: per-box Bearer token or the shared x-scraper-secret (authenticateScraper).
+ * A tenant-bound token may only finalise jobs belonging to its own org.
  */
 
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { isScraperEnabled } from "@/lib/feature-flags";
+import { authenticateScraper, resolveScraperOrgId } from "@/lib/scraper-auth";
 import { ingestScraperResult } from "@/lib/scraper-ingestion";
 import { reportError } from "@/lib/error-reporting";
 import { finalizeScoreFromText } from "@/lib/ai";
@@ -34,19 +35,6 @@ import {
 } from "@/lib/search-run";
 
 const MAX_RETRIES = 3;
-
-function checkScraperSecret(req: Request): boolean {
-  const provided = req.headers.get("x-scraper-secret");
-  const expected = process.env.SCRAPER_SECRET;
-  if (!provided || !expected) return false;
-  try {
-    const a = Buffer.from(provided);
-    const b = Buffer.from(expected);
-    return a.length === b.length && timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
 
 const PatchSchema = z.object({
   status: z.enum(["completed", "failed"]),
@@ -91,7 +79,8 @@ export async function PATCH(
   if (!isScraperEnabled()) {
     return NextResponse.json({ error: "Scraper not enabled." }, { status: 404 });
   }
-  if (!checkScraperSecret(req)) {
+  const principal = await authenticateScraper(req);
+  if (!principal) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
@@ -118,6 +107,14 @@ export async function PATCH(
 
   if (!job) {
     return NextResponse.json({ error: "ScrapeJob not found." }, { status: 404 });
+  }
+  // Tenant binding: a per-box token may only finalise jobs in its own org; an
+  // owner-scope principal (shared SCRAPER_SECRET / null-org token) may act on
+  // any org. Mirrors the GET/POST routes and closes the cross-tenant write
+  // where any holder of the shared secret could PATCH another org's job.
+  const bound = resolveScraperOrgId(principal.boundOrgId, job.orgId);
+  if ("error" in bound) {
+    return NextResponse.json({ error: bound.error }, { status: 403 });
   }
   if (job.status === "completed" || job.status === "failed") {
     return NextResponse.json({ message: "Already finalised.", job }, { status: 200 });

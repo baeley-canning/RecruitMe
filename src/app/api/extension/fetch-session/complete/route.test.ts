@@ -14,9 +14,14 @@ const sessionMocks = vi.hoisted(() => ({
     })
   ),
 }));
+const usageMocks = vi.hoisted(() => ({
+  checkRateLimit: vi.fn(async () => ({ allowed: true })),
+  recordUsage: vi.fn(async () => {}),
+}));
 
 vi.mock("@/lib/linkedin-capture", () => linkedinCaptureMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/usage", () => usageMocks);
 
 const AUTH_HEADER = { "Content-Type": "application/json", Authorization: "Basic dXNlcjpwYXNz" };
 
@@ -219,6 +224,35 @@ describe("extension capture completion route", () => {
         status: "error",
         message: expect.stringContaining("Captured but scoring failed"),
       })
+    );
+  });
+
+  it("keeps the captured profile but skips AI scoring when the org's rate limit is exceeded", async () => {
+    usageMocks.checkRateLimit.mockResolvedValueOnce({ allowed: false });
+
+    const req = new Request("http://localhost/api/extension/fetch-session/complete", {
+      method: "POST",
+      headers: AUTH_HEADER,
+      body: JSON.stringify({
+        sessionId: "sess-1",
+        linkedinUrl: "https://www.linkedin.com/in/pat-lee/",
+        profileText: "Pat Lee\nSenior Software Engineer at Acme Corp\nAbout\nExperienced engineer with a decade of full-stack development. Strong background in distributed systems, cloud infrastructure, and team leadership. Based in Wellington, New Zealand.",
+      }),
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+
+    // Stage 1 still ran — the captured profile is not lost to a rate limit.
+    expect(res.status).toBe(202);
+    expect(linkedinCaptureMocks.saveCapturedProfileFast).toHaveBeenCalledTimes(1);
+    expect(body.message).toContain("scoring skipped");
+    // The expensive Claude scoring was gated and never fired.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(linkedinCaptureMocks.applyAiEnrichmentInBackground).not.toHaveBeenCalled();
+    // Session is resolved (not left "processing") so the polling UI doesn't hang.
+    expect(linkedinCaptureMocks.updateSessionInQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "sess-1", status: "completed" })
     );
   });
 });
