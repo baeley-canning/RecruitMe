@@ -75,8 +75,13 @@ export async function POST(
   const candidatesPreflight = await prisma.candidate.findMany({
     where: {
       jobId: id,
-      profileText: { not: null },
       ...(onlyUnscored ? { matchScore: null } : {}),
+      // Scoreable = has profileText OR a headline/location we can synthesise a
+      // thin profile from. The old `profileText: { not: null }` silently
+      // EXCLUDED LinkedIn/SEEK snippet finds (which carry name+headline but no
+      // full profileText) — they never even entered the loop. The per-candidate
+      // score route already scores these via synthesis; score-all now matches.
+      OR: [{ profileText: { not: null } }, { headline: { not: null } }, { location: { not: null } }],
     },
     select: { id: true },
   });
@@ -109,12 +114,16 @@ export async function POST(
   const candidates = await prisma.candidate.findMany({
     where: {
       jobId: id,
-      profileText: { not: null },
       ...(onlyUnscored ? { matchScore: null } : {}),
+      // See preflight: include headline/location-only finds so LinkedIn/SEEK
+      // snippet cards are scored (via synthesis) instead of silently skipped.
+      OR: [{ profileText: { not: null } }, { headline: { not: null } }, { location: { not: null } }],
     },
     select: {
       id: true,
       profileText: true,
+      name: true,
+      headline: true,
       location: true,
       // Cache-hit signal: skip the API call when these match the freshly
       // computed cache key. Avoids re-scoring candidates whose profile +
@@ -216,10 +225,19 @@ export async function POST(
         const chunk = candidates.slice(i, i + CONCURRENCY);
         await Promise.all(
           chunk.map(async (candidate) => {
-            if (!candidate.profileText || candidate.profileText.trim().length < 100) return;
+            // Synthesise a thin profile from name/headline/location when there's
+            // no full profileText — so LinkedIn/SEEK snippet finds get scored
+            // (as a low-confidence ESTIMATE) instead of silently skipped. Mirror
+            // the per-candidate score route. Reject only when there's truly
+            // nothing (no profileText AND no headline AND no location).
+            const scoreText = (candidate.profileText && candidate.profileText.trim().length > 0)
+              ? candidate.profileText
+              : [candidate.name, candidate.headline, candidate.location].filter(Boolean).join("\n");
+            if (!scoreText || scoreText.trim().length < 10) return;
+            const allowThin = scoreText.trim().length < 100;
 
             const scoreCacheKey = buildScoreCacheKey({
-              profileText: candidate.profileText,
+              profileText: scoreText,
               parsedRole,
               salary,
               jobLocation: job.location,
@@ -254,8 +272,8 @@ export async function POST(
               // outage triggers up to 6 API calls per candidate
               // (3 × Claude + 3 × Ollama) instead of 2.
               const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-                scoreCandidateStructured(candidate.profileText!, parsedRole, salary, weights, auth.orgId, recruiterContext),
-                predictAcceptance(candidate.profileText!, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
+                scoreCandidateStructured(scoreText, parsedRole, salary, weights, auth.orgId, recruiterContext, allowThin),
+                predictAcceptance(scoreText, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
               ]);
               if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
               const breakdown = applyLocationFitOverride(
@@ -289,7 +307,7 @@ export async function POST(
               // through to the existing failure-flag path (unchanged).
               if (err instanceof AllProvidersFailedError && isLlamaScoreOffloadEnabled() && auth.orgId) {
                 const built = buildScorePrompt(
-                  candidate.profileText!,
+                  scoreText,
                   parsedRole,
                   salary,
                   weights,

@@ -165,7 +165,8 @@ describe("score-all route", () => {
       { min: 90000, max: 120000 },
       scoringConfigMocks.customWeights,
       "org-1",
-      ""
+      "",
+      false, // allowThin — PROFILE_TEXT is a full profile (>100 chars)
     );
   });
 
@@ -190,15 +191,43 @@ describe("score-all route", () => {
     expect(messages[messages.length - 1]).toMatchObject({ done: true, total: 2 });
   });
 
-  it("skips candidates with profile text under 100 chars", async () => {
-    const job = makeJob("job-short-profile");
+  it("scores thin snippet finds (name+headline, no full profileText) with allowThin instead of skipping", async () => {
+    // The fix: LinkedIn/SEEK snippet finds have no full profileText — synthesise
+    // one from name/headline/location and score it as a low-confidence estimate
+    // rather than silently skipping (the old < 100-char drop).
+    const job = makeJob("job-thin");
     sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
     dbMocks.prisma.candidate.findMany.mockResolvedValue([
-      { id: "cand-short", profileText: "Too short.", profileTextHash: null, matchScore: null, location: "Wellington" },
+      { id: "cand-snip", profileText: null, name: "Jane Dev", headline: "Senior React Engineer at Acme", matchScore: null, location: "Wellington" },
     ]);
 
     const res = await POST(new Request("http://localhost/", { method: "POST" }), {
-      params: Promise.resolve({ id: "job-short-profile" }),
+      params: Promise.resolve({ id: "job-thin" }),
+    });
+
+    const result = await readStreamResult(res);
+    expect(result).toMatchObject({ scored: 1, total: 1, done: true });
+    // Scored from synthesised text, with allowThin=true (7th arg).
+    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
+      expect.stringContaining("Senior React Engineer at Acme"),
+      expect.any(Object),
+      expect.anything(),
+      expect.anything(),
+      "org-1",
+      expect.anything(),
+      true,
+    );
+  });
+
+  it("skips a candidate with no profile text, headline, or location (nothing to score)", async () => {
+    const job = makeJob("job-empty");
+    sessionMocks.requireJobAccess.mockResolvedValue({ job, error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "cand-empty", profileText: null, name: null, headline: null, matchScore: null, location: null },
+    ]);
+
+    const res = await POST(new Request("http://localhost/", { method: "POST" }), {
+      params: Promise.resolve({ id: "job-empty" }),
     });
 
     const result = await readStreamResult(res);
