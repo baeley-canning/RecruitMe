@@ -32,6 +32,9 @@ export const JOB_LIST_CANDIDATE_SELECT = {
     take: 1,
     select: { type: true, userName: true, createdAt: true },
   },
+  // Candidate tags (reminders/tags feature). Cheap join — avoids an N+1 for
+  // per-card chips. The UI maps tagAssignments[].tag -> TagDto[].
+  tagAssignments: { select: { tag: { select: { id: true, label: true, color: true } } } },
 } satisfies Prisma.CandidateSelect;
 
 /** The exact row shape GET /api/jobs/[id] returns per candidate (before the

@@ -85,6 +85,7 @@ interface Candidate {
   interviewNotes?: string | null;
   status: string;
   statusHistory?: string | null;
+  tagAssignments?: Array<{ tag: { id: string; label: string; color: string } }>;
   source: string;
   createdAt: string;
 }
@@ -106,6 +107,8 @@ interface Job {
   candidates: Candidate[];
   /** Server-resolved feature flag — gates CRM-only UI (e.g. Submit to client). */
   crmEnabled?: boolean;
+  /** Reminders/Tags feature flag — gates tag chips/editor on cards. */
+  remindersEnabled?: boolean;
 }
 
 type ParsedRoleSource = ParsedRole["title_source"];
@@ -2421,6 +2424,7 @@ ${toHtml(job.rawJd)}
                     fetchQueueState={fetchStatuses[candidate.id]?.state}
                     contactCount={candidate._count?.contactEvents ?? 0}
                     onSubmitToClient={job.crmEnabled ? handleSubmitToClient : undefined}
+                    remindersEnabled={job.remindersEnabled}
                   />
                 </div>
               </div>

@@ -79,6 +79,8 @@ import { confirm } from "./ui/confirm-dialog";
 import { ScoreBreakdownPanel } from "./candidate/ScoreBreakdownPanel";
 import { MH_CONFIG } from "./candidate/ScoreBreakdownPanel";
 import { CandidateFilesSection } from "./candidate/CandidateFilesSection";
+import { CandidateTagsEditor } from "./candidate/candidate-tags-editor";
+import type { TagDto } from "@/lib/tags";
 import { ProfileTextSection } from "./candidate/ProfileTextSection";
 import { CandidateStatusHistory } from "./candidate/CandidateStatusHistory";
 import { ScoreCorrectionButton } from "./candidate/score-correction-button";
@@ -123,6 +125,9 @@ interface Candidate {
   interviewNotes?: string | null;
   status: string;
   statusHistory?: string | null;
+  /** Candidate tags (reminders/tags feature) — from JOB_LIST_CANDIDATE_SELECT's
+   *  tagAssignments join. Optional: absent on payloads that don't select it. */
+  tagAssignments?: Array<{ tag: TagDto }>;
   source: string;
   captureMetadata?: string | null;
   contactEvents?: Array<{ type: string; userName: string; createdAt: string }>;
@@ -193,6 +198,8 @@ interface CandidateCardProps {
   contactCount?: number;
   /** When provided (CRM enabled), renders a "Submit to client" action. */
   onSubmitToClient?: (id: string) => void;
+  /** Reminders/Tags feature flag — gates tag chips + the drawer tag editor. */
+  remindersEnabled?: boolean;
 }
 
 function ScoringDebugPanel({
@@ -359,9 +366,11 @@ function ProfileDrawer({
   fetchingProfile = false,
   fetchQueueState,
   scoreBreakdownRaw,
+  remindersEnabled = false,
 }: {
   candidate: Candidate;
   jobId: string;
+  remindersEnabled?: boolean;
   onClose: () => void;
   onLinkedInChange?: (id: string, url: string) => void;
   onJobAdderChange?: (id: string, url: string) => void;
@@ -875,6 +884,14 @@ function ProfileDrawer({
 
           {breakdown && <ScoringDebugPanel candidate={candidate} breakdown={breakdown} />}
 
+          {/* Tags (reminders/tags feature) */}
+          {remindersEnabled && (
+            <div>
+              <p className="text-2xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Tags</p>
+              <CandidateTagsEditor candidateId={candidate.id} initialTags={candidate.tagAssignments?.map((a) => a.tag) ?? []} />
+            </div>
+          )}
+
           {/* Notes */}
           {candidate.notes && (
             <div>
@@ -930,6 +947,7 @@ export const CandidateCard = memo(function CandidateCard({
   fetchQueueState,
   contactCount = 0,
   onSubmitToClient,
+  remindersEnabled = false,
 }: CandidateCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -1851,6 +1869,7 @@ export const CandidateCard = memo(function CandidateCard({
           fetchingProfile={fetchingProfile}
           fetchQueueState={fetchQueueState}
           scoreBreakdownRaw={breakdownRaw}
+          remindersEnabled={remindersEnabled}
         />
       )}
     </div>

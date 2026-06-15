@@ -4,8 +4,8 @@ import { getAuth } from "@/lib/session";
 import { getOrgScoringWeights, DEFAULT_SCORING_WEIGHTS } from "@/lib/scoring-config";
 import { ScoringWeightsEditor } from "@/components/scoring-weights-editor";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { SlidersHorizontal, ArrowLeft, Brain, ChevronRight, Palette } from "lucide-react";
-import { isWhiteLabelEnabled } from "@/lib/feature-flags";
+import { SlidersHorizontal, ArrowLeft, Brain, ChevronRight, Palette, Tags } from "lucide-react";
+import { isWhiteLabelEnabled, isRemindersEnabled } from "@/lib/feature-flags";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +62,26 @@ export default async function SettingsPage() {
           </div>
           <ChevronRight className="w-3.5 h-3.5 text-text-tertiary group-hover:text-text-secondary flex-shrink-0" />
         </Link>
+
+        {isRemindersEnabled() && (
+          <Link
+            href="/settings/tags"
+            className="flex items-center justify-between gap-4 px-4 py-3 bg-surface-raised rounded-md border border-separator hover:bg-surface-hover transition-colors group"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-7 h-7 bg-accent-subtle rounded flex items-center justify-center flex-shrink-0">
+                <Tags className="w-3.5 h-3.5 text-accent" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-md font-medium text-text-primary">Candidate tags</p>
+                <p className="text-xs text-text-tertiary mt-0.5">
+                  Create, recolour, and remove the tags you organise candidates with
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="w-3.5 h-3.5 text-text-tertiary group-hover:text-text-secondary flex-shrink-0" />
+          </Link>
+        )}
 
         {isWhiteLabelEnabled() && (
           <Link
