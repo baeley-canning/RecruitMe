@@ -26,6 +26,7 @@ import { formatBytes } from "@/lib/format";
 import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { IdentityMergePanel } from "@/components/candidate/identity-merge-panel";
 import { ScreeningSummary } from "@/components/candidate/screening-summary";
 import { CVPreview } from "@/components/candidate/cv-preview";
 import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
@@ -892,6 +893,9 @@ export default function CandidateDetailPage({
                 )}
               </CardBody>
             </Card>
+
+            {/* ── Identity & duplicates (merge-review; self-gates on the flag) ─ */}
+            <IdentityMergePanel candidateId={candidate.id} />
 
             {/* ── Empty-state warning ─────────────────────────────────────── */}
             {!candidate.profileText?.trim() && candidate.files.length === 0 && (
