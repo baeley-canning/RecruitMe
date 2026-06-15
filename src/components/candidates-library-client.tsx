@@ -431,7 +431,7 @@ export function CandidatesLibraryClient({ candidates: initialCandidates, initial
               )}
               <button
                 onClick={handleLoadMore}
-                disabled={loadingMore}
+                disabled={loadingMore || searchingServer}
                 className="px-4 py-2 rounded-md border border-separator bg-surface-raised hover:bg-surface-hover text-text-primary text-md disabled:opacity-50"
               >
                 {loadingMore ? "Loading…" : "Load more candidates"}
