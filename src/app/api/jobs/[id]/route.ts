@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
 import { isCrmEnabled } from "@/lib/feature-flags";
+import { JOB_LIST_CANDIDATE_SELECT } from "@/lib/job-candidate-select";
 
 // Never cache the job payload: the page refetches this immediately after adding
 // candidates / changing status, and a heuristically-cached stale response made
@@ -32,29 +33,14 @@ export async function GET(
   const full = await prisma.job.findUnique({
     where: { id },
     include: {
+      // Single source of truth for the stripped-for-size candidate payload —
+      // keeps the API shape and the UI Candidate types from drifting. See
+      // src/lib/job-candidate-select.ts (profileText / scoreBreakdown /
+      // screeningData / interviewNotes / statusHistory are intentionally absent
+      // and fetched per-candidate on demand).
       candidates: {
         orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }],
-        select: {
-          id: true, jobId: true, orgId: true, name: true, headline: true,
-          location: true, linkedinUrl: true, source: true, status: true, phone: true, email: true,
-          photoFileId: true,
-          matchScore: true, matchReason: true,
-          fetchPriorityScore: true, fetchPriorityReason: true,
-          acceptanceScore: true, acceptanceReason: true,
-          profileCapturedAt: true, profileTextHash: true,
-          captureMetadata: true,
-          jobAdderUrl: true, seekUrl: true, notes: true, createdAt: true, updatedAt: true,
-          archivedJobTitle: true, archivedJobCompany: true,
-          // Count + most recent event for the hover tooltip on the contact dot
-          _count: { select: { contactEvents: true } },
-          contactEvents: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: { type: true, userName: true, createdAt: true },
-          },
-          // profileText intentionally excluded — large field, fetched on demand
-          // interviewNotes, screeningData also excluded — fetched per-candidate
-        },
+        select: JOB_LIST_CANDIDATE_SELECT,
       },
     },
   });

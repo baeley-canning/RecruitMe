@@ -4,8 +4,8 @@ import type { RadarDimensions } from "../score-radar";
 // Minimal candidate shape these helpers need. The CandidateCard's full
 // Candidate type lives in the page; we only depend on a few fields here.
 type CandidateLike = {
-  source: string | null | undefined;
-  profileText: string | null | undefined;
+  source?: string | null;
+  profileText?: string | null;
 };
 
 /**

@@ -101,7 +101,14 @@ interface Candidate {
    *  appears. Used to surface "Also on N other jobs" so the recruiter
    *  doesn't double-message. Provided by the GET /api/jobs/:id endpoint. */
   otherActiveJobs?: Array<{ jobId: string; title: string; company: string | null; matchScore: number | null }>;
-  profileText: string | null;
+  // OPTIONAL on purpose: the GET /api/jobs/[id] candidate select STRIPS these
+  // heavy fields (profileText, scoreBreakdown, screeningData, interviewNotes,
+  // statusHistory) for payload size — they're `undefined` on the job list and
+  // only hydrated after a per-candidate fetch. Typing them optional makes the
+  // compiler force null/undefined-safe access, killing the contract-drift bug
+  // class (dead buttons, `=== null` gates that never fire). Keep in sync with
+  // JOB_LIST_CANDIDATE_SELECT in src/lib/job-candidate-select.ts.
+  profileText?: string | null;
   profileCapturedAt?: string | null;
   matchScore: number | null;
   profileTextHash: string | null;
@@ -110,12 +117,12 @@ interface Candidate {
   fetchPriorityReason?: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
-  scoreBreakdown: string | null;
+  scoreBreakdown?: string | null;
   notes: string | null;
-  screeningData: string | null;
-  interviewNotes: string | null;
+  screeningData?: string | null;
+  interviewNotes?: string | null;
   status: string;
-  statusHistory: string | null;
+  statusHistory?: string | null;
   source: string;
   captureMetadata?: string | null;
   contactEvents?: Array<{ type: string; userName: string; createdAt: string }>;
@@ -1621,20 +1628,20 @@ export const CandidateCard = memo(function CandidateCard({
           )}
 
           {/* Status timeline */}
-          <CandidateStatusHistory statusHistory={candidate.statusHistory} />
+          <CandidateStatusHistory statusHistory={candidate.statusHistory ?? null} />
 
           {/* Phone screening + Interview notes + Reference checks */}
           <ScreeningSection
             candidateId={candidate.id}
             jobId={jobId}
-            screeningData={candidate.screeningData}
+            screeningData={candidate.screeningData ?? null}
             onSaved={(updated) => onScreeningDataChange?.(candidate.id, updated)}
           />
           {["contacted", "interviewing", "offer_sent", "hired"].includes(candidate.status) ? (
             <InterviewSection
               candidateId={candidate.id}
               jobId={jobId}
-              interviewNotes={candidate.interviewNotes}
+              interviewNotes={candidate.interviewNotes ?? null}
               onSaved={(updated) => onInterviewNotesChange?.(candidate.id, updated)}
             />
           ) : null}

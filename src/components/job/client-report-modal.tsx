@@ -18,12 +18,14 @@ interface Candidate {
   location: string | null;
   matchScore: number | null;
   matchReason: string | null;
-  scoreBreakdown: string | null;
+  // Optional: the job-list payload strips these (see job-candidate-select.ts) —
+  // the report builds from what's present and tolerates their absence.
+  scoreBreakdown?: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
   notes: string | null;
   linkedinUrl: string | null;
-  profileText: string | null;
+  profileText?: string | null;
 }
 
 interface ClientReportModalProps {

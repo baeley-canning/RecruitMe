@@ -46,6 +46,7 @@ import { ParseHistoryCard } from "@/components/job/parse-history-card";
 import { ClientReportModal } from "@/components/job/client-report-modal";
 import { AddCandidateModal } from "@/components/job/add-candidate-modal";
 import { SubmitToClientModal } from "@/components/job/submit-to-client-modal";
+import { SubmissionsCard } from "@/components/job/submissions-card";
 import { cn, statusLabel, safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 
@@ -61,7 +62,10 @@ interface Candidate {
   phone: string | null;
   email: string | null;
   photoFileId: string | null;
-  profileText: string | null;
+  // Optional: stripped from the GET /api/jobs/[id] candidate select (payload
+  // size) — undefined on the list, hydrated on a per-candidate fetch. Optional
+  // typing forces null-safe access (see candidate-card.tsx + job-candidate-select.ts).
+  profileText?: string | null;
   /** Cross-job presence: this candidate's LinkedIn URL also matches one or
    *  more OTHER active jobs in the same org. Empty array = unique to this job. */
   otherActiveJobs?: Array<{ jobId: string; title: string; company: string | null; matchScore: number | null }>;
@@ -75,12 +79,12 @@ interface Candidate {
   fetchPriorityReason: string | null;
   acceptanceScore: number | null;
   acceptanceReason: string | null;
-  scoreBreakdown: string | null;
+  scoreBreakdown?: string | null;
   notes: string | null;
-  screeningData: string | null;
-  interviewNotes: string | null;
+  screeningData?: string | null;
+  interviewNotes?: string | null;
   status: string;
-  statusHistory: string | null;
+  statusHistory?: string | null;
   source: string;
   createdAt: string;
 }
@@ -200,6 +204,8 @@ export default function JobDetailPage({
   // CRM "Submit to client" — tracks which candidate's modal is open.
   const [submitCandidateId, setSubmitCandidateId] = useState<string | null>(null);
   const handleSubmitToClient = useCallback((cid: string) => setSubmitCandidateId(cid), []);
+  // Bumped after a successful submit so the SubmissionsCard refetches.
+  const [submissionsRefreshKey, setSubmissionsRefreshKey] = useState(0);
 
   // Overflow (⋯) menu for low-frequency header actions
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -2036,6 +2042,8 @@ ${toHtml(job.rawJd)}
 
       {parsedRole && <SearchFunnelCard jobId={id} refreshKey={funnelRefreshKey} />}
 
+      {job.crmEnabled && <div className="mb-4"><SubmissionsCard jobId={id} refreshKey={submissionsRefreshKey} /></div>}
+
       {parsedRole && <JobWeightsCard jobId={id} />}
 
       {parsedRole && <ParseHistoryCard jobId={id} />}
@@ -2501,7 +2509,7 @@ ${toHtml(job.rawJd)}
             jobId={id}
             candidate={{ id: c.id, name: c.name, matchScore: c.matchScore }}
             onClose={() => setSubmitCandidateId(null)}
-            onSubmitted={() => { setSubmitCandidateId(null); void fetchJob(); }}
+            onSubmitted={() => { setSubmitCandidateId(null); setSubmissionsRefreshKey((k) => k + 1); void fetchJob(); }}
           />
         );
       })()}

@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 interface ProfileTextSectionProps {
   candidate: {
     id: string;
-    profileText: string | null;
+    profileText?: string | null;
     profileCapturedAt?: Date | string | null;
     source?: string | null;
   };
