@@ -36,6 +36,7 @@ import { prisma } from "@/lib/db";
 import { isScraperDiscoveryEnabled, isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
 import { probeBlobStore, getBlob } from "@/lib/blob-store";
 import { isEncrypted, decryptCv } from "@/lib/cv-encryption";
+import { getAuth } from "@/lib/session";
 
 interface CheckResult {
   ok: boolean;
@@ -203,6 +204,31 @@ export async function GET() {
   // ops dashboard / alerting catches it instead of /api/health staying green.
   const overallOk = db.ok && scraper.ok;
   const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !!scraper.degraded);
+
+  // Unauthenticated callers get LIVENESS ONLY — boolean per-check pills plus the
+  // 200/503 status the systemd / Railway / updater healthchecks read (they don't
+  // parse the body). The detailed fields (git SHA, feature-flag states, uptime,
+  // and the per-check `detail` strings that can carry internal URLs/errors) are
+  // reconnaissance material, so they're gated behind an authenticated session.
+  const auth = await getAuth();
+  if (!auth) {
+    return NextResponse.json(
+      {
+        ok: overallOk,
+        degraded,
+        checks: {
+          db: { ok: db.ok },
+          ollama: { ok: ollama.ok, ...(ollama.skipped ? { skipped: true } : {}) },
+          scraper: { ok: scraper.ok, ...(scraper.degraded ? { degraded: true } : {}) },
+          blob: { ok: blob.ok },
+          cv: { ok: cv.ok },
+        },
+        timestamp: new Date().toISOString(),
+      },
+      { status: overallOk ? 200 : 503 },
+    );
+  }
+
   // Report the deployed commit SHA so a deploy is verifiable from /api/health.
   // RECRUITME_VERSION stays the highest-priority explicit override; otherwise
   // fall back to the build's git SHA (Railway sets RAILWAY_GIT_COMMIT_SHA;

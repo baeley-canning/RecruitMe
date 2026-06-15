@@ -42,10 +42,22 @@ function clearSession() {
   return response;
 }
 
-export function GET() {
-  return clearSession();
-}
-
-export function POST() {
+// No GET handler: clearing auth cookies on GET is a CSRF vector (an <img> tag or
+// link prefetch could force a logout). The login page POSTs here.
+export function POST(req: Request) {
+  // CSRF defence: only same-origin callers may force a logout. Same-origin
+  // requests omit Origin or match Host; a cross-site forgery carries a foreign
+  // Origin. Mirrors the box-dashboard control route's same-origin check.
+  const origin = req.headers.get("origin");
+  const host = req.headers.get("host");
+  if (origin && host) {
+    try {
+      if (new URL(origin).host !== host) {
+        return NextResponse.json({ error: "cross_origin" }, { status: 403 });
+      }
+    } catch {
+      return NextResponse.json({ error: "bad_origin" }, { status: 403 });
+    }
+  }
   return clearSession();
 }
