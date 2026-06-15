@@ -1,6 +1,6 @@
 # RecruitMe — Project Scope, Current State & Running Costs
 
-*Prepared 2026-06-04; last updated 2026-06-15. Figures from live production data where measured; estimates flagged.*
+*Prepared 2026-06-04; last updated 2026-06-15 — **all previously flag-gated features are now activated in production** (CRM, candidate tags + reminders, white-label theming, identity merge-review, and the insight-ranked talent flywheel). Figures from live production data where measured; estimates flagged.*
 
 ---
 
@@ -14,7 +14,7 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 
 ## 2. Current state (what's built & working)
 
-**Scale (live, 2026-06-15):** 15,317 candidates · 731 AI-scored · 14,662 with captured profiles · ~13.5k CVs stored (encrypted at rest) · 11 active jobs.
+**Scale (live, 2026-06-15):** 15,421 candidates · 731 AI-scored · 14,709 with captured profiles · 812 with AI-extracted insight-facts (across 1,513 dedup'd identities) · ~13.5k CVs stored (encrypted at rest) · 11 active jobs.
 
 ### Tech stack
 - **App:** Next.js 15 / React 19 / TypeScript, Prisma ORM, PostgreSQL 18 — hosted on **Railway** (auto-deploy from GitHub `main`).
@@ -28,8 +28,11 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 - **AI scoring** — per-candidate match score (0–100) with must-have coverage, category breakdown, and a recruiter summary; provisional (snippet) vs full-profile scoring; per-org configurable weights; cached so unchanged candidates aren't re-billed.
 - **SEEK Talent Search** — now ingests result cards as candidates (credit-safe: harvests free card data, no per-profile credit spend). *Validated 2026-06-04.*
 - **LinkedIn discovery** — people-search → profiles scraped → ingested + scored. *(Fixed 2026-06-15: a stale hardcoded NZ geo-filter parameter that LinkedIn had silently stopped honouring was making **every** LinkedIn search return "No results found" — verified on the box, then removed. Results are NZ-biased via the logged-in account; the app re-narrows by the requested location.)*
-- **CRM — clients / submissions / placements** *(built, flag-gated behind `FEATURES_CRM_ENABLED` pending enablement)* — client records, "submit candidate to client" from a job, placement tracking with fee/guarantee/invoice + auto-reminders. Finishes the previously half-built CRM; all create paths org-FK-validated.
-- **Talent pool / flywheel** — every search enriches the pool; future searches serve those candidates instantly.
+- **CRM — clients / submissions / placements** *(live)* — client records, "submit candidate to client" from a job, placement tracking with fee/guarantee/invoice + auto-reminders. Finishes the previously half-built CRM; all create paths org-FK-validated.
+- **Candidate tags + reminders** *(live)* — colour-coded tags (create / assign / manage at `/settings/tags`) and a reminders bell with due/overdue tracking (follow-up · guarantee-check · client-feedback · custom).
+- **White-label theming** *(live)* — per-org brand colour (inert until an org sets one; computes a distinct hover shade + luminance-darkens too-light colours so button text stays readable).
+- **Identity merge-review** *(live)* — recruiter-facing panel on the candidate page to confirm or split duplicate-person merges (same email / phone / name surfaced across sources), over the org-scoped, tombstone-safe merge/unmerge routes.
+- **Talent pool / flywheel** *(live, insight-ranked)* — every search enriches the pool; future searches serve those candidates instantly. **Insight-ranked search is now on**: 812 candidate profiles carry AI-extracted structured facts (primary stack / titles held / domains) that nudge library-search ranking — a bounded re-rank (own-org-scoped, a no-op for any candidate without an insight, never reorders across the FTS top results by more than a few places).
 - **Candidate management** — library, per-job pipelines (shortlist/contacted/etc.), CV upload + text extraction, identity dedup across sources (LinkedIn / SEEK / JobAdder), screening data, recruiter notes, CSV export.
 - **CV handling** — extraction from PDF/Word/RTF, encryption at rest, original-format preservation.
 - **Ops** — on-box health dashboard (CPU/RAM/disk/temp, scraper status), cost attribution + daily spend cap, PII redaction on the seller heartbeat, CI real-DB test gate, error reporting.
@@ -38,8 +41,9 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 
 ### Known constraints / debt
 - **Two parallel search systems** — now largely converged onto one durable, resumable multi-source run (job-scoped, live-streaming). The legacy job-search path is mostly retired; final dead-code cleanup is the remaining item — see roadmap §3.
-- SEEK candidates are **snippet-level** (name/role/company/location); full-profile enrichment is a separate, credit-gated action (scraper exists, not auto-fired).
-- ~15k candidates, **731 scored** — large unscored backlog (scoring is on-demand + cost-capped).
+- SEEK candidates are **snippet-level** (name/role/company/location); full-profile enrichment is a separate, credit-gated action (scraper exists, not auto-fired). *(Fixed 2026-06-15: "Score all" now scores these thin LinkedIn/SEEK finds as a low-confidence estimate instead of silently skipping them.)*
+- ~15.4k candidates, **731 scored** — large unscored backlog. Scoring is **manual + on-demand** by design (recruiter clicks *Score all* or per-card) and cost-capped; finds are not auto-scored on import/discovery.
+- **No AI fallback** — production is 100% Claude-dependent (no working local model on Railway *or* the box). If the Anthropic credit balance runs out or Claude is unavailable, all AI — scoring **and** insight extraction — hard-fails with no graceful degradation. Operationally: keep the Anthropic balance topped up.
 - Single scraper worker (no redundancy); the box must stay online for live discovery.
 - Scraper still authenticates via a shared secret (org-binding token cutover incomplete).
 
@@ -55,7 +59,7 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 
 **C. Scoring at scale** — score the unscored backlog; background/batch scoring; richer re-score-on-change.
 
-**D. Talent flywheel — later phases** — background discovery that continuously enriches the pool (cost-gated); profile freshness / re-fetch of stale profiles.
+**D. Talent flywheel — later phases** — the **read-path (insight-ranked search) is now live + backfilled (812 profiles)**. Remaining: background discovery that continuously enriches the pool (cost-gated); profile freshness / re-fetch of stale profiles; raising the insight coverage as the pool grows.
 
 **E. Candidate UX polish** — **shipped** (email/screening/file-count surfacing, import-batch grouping, source badges). Remaining: candidate-card density declutter.
 
@@ -69,7 +73,7 @@ Multi-tenant (org-scoped), single primary operator today. Deployed on Railway; l
 
 | Item | Cost / month | Basis |
 |---|---|---|
-| **Claude API (Anthropic)** | **~$15–40** | Measured **$13.37 over the last 30 days** (865 calls, ~3.7M tokens) — but that was mostly cheap Haiku. With Sonnet now scoring full profiles (~$0.05/score) cost rises with scoring volume; **hard-capped at $5/day** (≈ $150/mo ceiling) by the spend guard. Realistic steady-state ~$20–40. |
+| **Claude API (Anthropic)** | **~$15–40** | Mostly cheap Haiku (parsing, snippet scoring, insight extraction). With Sonnet scoring full profiles (~$0.05/score) cost rises with scoring volume; **hard-capped at $5/day** (≈ $150/mo ceiling) by the spend guard. Realistic steady-state ~$20–40. One-off: the talent-flywheel insight backfill (812 profiles, Haiku) cost **~$4** total. ⚠️ No fallback — if this balance hits zero, all AI stops (see constraints §2). |
 | **Railway** (app + Postgres + egress) | **$25** | Hosting: always-on Next app + Postgres (5 GB volume) + bandwidth. Operator-confirmed figure. |
 | **CV storage** (S3 / t3.storageapi.dev) | **~$1–3** | ~13.5k encrypted CVs (~8–12 GB est.) at S3-compatible rates + light egress. |
 | **Mini-PC scraper** (electricity) | **~$3–6** | Low-power i3 mini-PC 24/7 at NZ power rates. Internet = existing home line; Tailscale = free tier. |
