@@ -47,6 +47,13 @@ export const INSIGHT_PROMPT_VERSION = "insight-v1.0";
  *  ignore old extractions. Keep them in lock-step manually. */
 export const INSIGHT_EXTRACTION_VERSION = 1;
 
+/** The Stage-1 ranker (flywheel read-path) trusts only insight rows at or above
+ *  this version — the gate that lets a prompt/schema re-extraction quarantine
+ *  stale rows by bumping INSIGHT_EXTRACTION_VERSION without the ranker reading
+ *  them in the interim. Equal to the current version today; raise the floor
+ *  when a re-extraction sweep is in flight. */
+export const MIN_VERSION_FOR_RANKING = 1;
+
 export interface InsightEducation {
   institution: string;
   degree?: string;

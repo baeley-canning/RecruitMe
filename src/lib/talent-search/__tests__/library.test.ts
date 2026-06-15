@@ -14,12 +14,13 @@
  * Prisma client receives — that's the public contract of $queryRaw.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { parseBooleanQuery } from "../../boolean-query";
 
 const dbMocks = vi.hoisted(() => ({
   prisma: {
     $queryRaw: vi.fn(),
+    profileInsight: { findMany: vi.fn() },
   },
 }));
 
@@ -30,6 +31,8 @@ import { searchLibrary } from "../library";
 beforeEach(() => {
   dbMocks.prisma.$queryRaw.mockReset();
   dbMocks.prisma.$queryRaw.mockResolvedValue([]);
+  dbMocks.prisma.profileInsight.findMany.mockReset();
+  dbMocks.prisma.profileInsight.findMany.mockResolvedValue([]);
 });
 
 // Prisma's $queryRaw receives a TemplateStringsArray as the first arg and the
@@ -108,6 +111,49 @@ describe("searchLibrary — org scoping", () => {
       accessibleOrgIds: ["org_a", "org_b"],
     });
     expect(lastSqlValues()).toContainEqual(["org_a", "org_b"]);
+  });
+});
+
+describe("searchLibrary — flywheel insight read is OWN-ORG scoped (no cross-org leak)", () => {
+  const FLAG = "RECRUITME_PROFILE_INSIGHT_READ_ENABLED";
+  beforeEach(() => {
+    process.env[FLAG] = "true";
+    // FTS returns one row carrying a candidateIdentityId so the rerank engages.
+    dbMocks.prisma.$queryRaw.mockResolvedValue([
+      { id: "c1", candidateIdentityId: "ident-1", profileTextSnippet: null },
+    ]);
+  });
+  afterEach(() => { delete process.env[FLAG]; });
+
+  it("non-owner with a grant scopes insights to ownOrgId, NOT the accessible (grant-expanded) set", async () => {
+    await searchLibrary({
+      parsedQuery: parseBooleanQuery("react"),
+      accessibleOrgIds: ["org_a", "org_b"], // org_b reachable via an OrgAccessGrant
+      ownOrgId: "org_a",
+    });
+    expect(dbMocks.prisma.profileInsight.findMany).toHaveBeenCalledTimes(1);
+    const where = dbMocks.prisma.profileInsight.findMany.mock.calls[0][0].where;
+    expect(where.orgId).toBe("org_a");        // own org only
+    expect(where.orgId).not.toEqual({ in: ["org_a", "org_b"] }); // never the grant set
+  });
+
+  it("owner (accessibleOrgIds null) omits the orgId filter (identities are single-org)", async () => {
+    await searchLibrary({
+      parsedQuery: parseBooleanQuery("react"),
+      accessibleOrgIds: null,
+      ownOrgId: null,
+    });
+    const where = dbMocks.prisma.profileInsight.findMany.mock.calls[0][0].where;
+    expect(where.orgId).toBeUndefined();
+  });
+
+  it("fails safe: a non-owner with no known ownOrgId does NOT read insights at all", async () => {
+    await searchLibrary({
+      parsedQuery: parseBooleanQuery("react"),
+      accessibleOrgIds: ["org_a"],
+      // ownOrgId omitted
+    });
+    expect(dbMocks.prisma.profileInsight.findMany).not.toHaveBeenCalled();
   });
 });
 

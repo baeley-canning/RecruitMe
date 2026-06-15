@@ -37,6 +37,7 @@ export async function GET(req: Request) {
   const results = await searchLibrary({
     parsedQuery: parsed,
     accessibleOrgIds,
+    ownOrgId: auth.orgId, // own-org insight scope (never the grant set)
     location,
     limit,
   });

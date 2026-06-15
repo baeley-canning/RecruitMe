@@ -38,6 +38,25 @@ describe("insightMatchFraction", () => {
     expect(insightMatchFraction(["c#", "c++", ".net", "node.js"], f)).toBe(1);
   });
 
+  it("matches hyphenated single-word terms (full-stack survives as one token both sides)", () => {
+    expect(insightMatchFraction(["full-stack"], facts({ titlesHeld: ["Full-Stack Developer"] }))).toBe(1);
+    expect(insightMatchFraction(["ci-cd"], facts({ primaryStack: ["ci-cd", "docker"] }))).toBe(1);
+  });
+
+  it("does NOT crash on a valid-JSON-but-unshaped facts row (coerces to 0)", () => {
+    // A legacy / partial-backfill / hand-written row can be valid JSON but the
+    // wrong shape — spreading a non-array must not throw and 500 the search.
+    const bad = [
+      {} as unknown as InsightFacts,
+      { primaryStack: null } as unknown as InsightFacts,
+      { titlesHeld: "not-an-array", currentTitle: 42 } as unknown as InsightFacts,
+    ];
+    for (const f of bad) {
+      expect(() => insightMatchFraction(["react"], f)).not.toThrow();
+      expect(insightMatchFraction(["react"], f)).toBe(0);
+    }
+  });
+
   it("matches multi-word phrases by substring across the joined facts", () => {
     const f = facts({ titlesHeld: ["Senior Software Engineer"] });
     expect(insightMatchFraction(["software engineer"], f)).toBe(1);

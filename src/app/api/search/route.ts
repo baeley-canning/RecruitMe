@@ -123,6 +123,7 @@ export async function POST(req: Request) {
       const libraryResults = await searchLibrary({
         parsedQuery,
         accessibleOrgIds: libraryScope,
+        ownOrgId: auth.orgId, // own-org insight scope (never the grant set)
         location: location ?? null,
         limit: libraryLimit ?? 100,
       });

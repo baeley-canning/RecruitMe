@@ -175,6 +175,7 @@ export async function POST(
       const lib = (q: ReturnType<typeof parseBooleanQuery>) => searchLibrary({
         parsedQuery: q,
         accessibleOrgIds,
+        ownOrgId: auth.orgId, // own-org insight scope (never the grant set)
         location,
         excludeCompanies: effectiveExclusions,
         limit: libraryLimit ?? 100,

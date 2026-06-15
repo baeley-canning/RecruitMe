@@ -32,26 +32,36 @@ export function positiveQueryTerms(q: ParsedQuery): string[] {
   return [...out];
 }
 
-// Tokeniser that keeps #, +, . inside tokens so "c#", "c++", ".net",
-// "node.js" survive as single tokens — single-word query terms are matched by
-// token EQUALITY (so "java" does not match "javascript"); multi-word phrases
-// fall back to substring containment.
+// Tokeniser that keeps #, +, ., - inside tokens so "c#", "c++", ".net",
+// "node.js", "full-stack" survive as single tokens — single-word query terms
+// are matched by token EQUALITY (so "java" does not match "javascript");
+// multi-word phrases fall back to substring containment. The hyphen is kept so
+// hyphenated recruiter terms (full-stack, ci-cd, front-end) match on both sides
+// — the query tokenizer (boolean-query) already keeps the hyphen as one term.
 function tokenize(s: string): string[] {
-  return s.toLowerCase().match(/[a-z0-9#+.]+/g) ?? [];
+  return s.toLowerCase().match(/[a-z0-9#+.-]+/g) ?? [];
 }
 
 /** Fraction (0..1) of the query's positive terms that the candidate's
- *  structured insight facts support. 0 when there are no terms. */
+ *  structured insight facts support. 0 when there are no terms.
+ *
+ *  `facts` arrives via `JSON.parse(...) as InsightFacts` — an UNCHECKED cast.
+ *  A legacy / partially-backfilled / hand-written row can be valid JSON but the
+ *  wrong shape ({}, {primaryStack:null}, …); spreading a non-array would throw
+ *  and 500 the whole search. Coerce every field so a malformed row simply
+ *  contributes zero, never a crash. */
 export function insightMatchFraction(terms: string[], facts: InsightFacts): number {
   if (terms.length === 0) return 0;
+  const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
   const entries = [
-    facts.currentTitle,
-    facts.currentEmployer,
-    ...facts.primaryStack,
-    ...facts.secondaryStack,
-    ...facts.titlesHeld,
-    ...facts.domains,
-    ...facts.certifications,
+    str(facts.currentTitle),
+    str(facts.currentEmployer),
+    ...arr(facts.primaryStack),
+    ...arr(facts.secondaryStack),
+    ...arr(facts.titlesHeld),
+    ...arr(facts.domains),
+    ...arr(facts.certifications),
   ].filter((x): x is string => !!x).map((x) => x.toLowerCase());
 
   const tokenSet = new Set<string>();

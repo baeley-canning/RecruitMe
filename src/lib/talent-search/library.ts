@@ -22,12 +22,18 @@ import type { ParsedQuery } from "../boolean-query";
 import { tsqueryFromParsed, positiveTermAtoms } from "../boolean-query/emit";
 import { isProfileInsightReadEnabled } from "../feature-flags";
 import { positiveQueryTerms, rerankByInsights } from "./insight-rerank";
-import type { InsightFacts } from "../ai/insights";
+import { MIN_VERSION_FOR_RANKING, type InsightFacts } from "../ai/insights";
 
 export interface LibrarySearchOptions {
   parsedQuery: ParsedQuery;
   /** Result of getAccessibleOrgIds(auth). null = owner (no scope filter). */
   accessibleOrgIds: string[] | null;
+  /** The viewer's OWN home org (auth.orgId); null for an owner. Used ONLY to
+   *  scope the flywheel insight read — insights are NEVER read across orgs even
+   *  when an OrgAccessGrant widens accessibleOrgIds (non-negotiable contract,
+   *  schema.prisma + insight-cache.ts). Omit and the rerank safely no-ops for
+   *  non-owners. */
+  ownOrgId?: string | null;
   /** Plain-text location filter — matches against Candidate.location. */
   location?: string | null;
   /** Company names to EXCLUDE — drops candidates whose current employer (in the
@@ -105,7 +111,7 @@ interface RawRow {
 export async function searchLibrary(
   opts: LibrarySearchOptions,
 ): Promise<LibrarySearchResult[]> {
-  const { parsedQuery, accessibleOrgIds, location, limit = 100 } = opts;
+  const { parsedQuery, accessibleOrgIds, ownOrgId = null, location, limit = 100 } = opts;
 
   // The current employer sits AFTER " at " in the headline ("<role> at <Company>").
   // We match each excluded company as a LITERAL substring of that segment only
@@ -236,7 +242,7 @@ export async function searchLibrary(
   // ── Flywheel read-path: nudge ranking by structured insight facts. Dark by
   // default; a no-op when off, when no terms, or when no result has an insight.
   if (isProfileInsightReadEnabled()) {
-    rows = await applyInsightRerank(rows, parsedQuery, accessibleOrgIds);
+    rows = await applyInsightRerank(rows, parsedQuery, accessibleOrgIds, ownOrgId);
   }
 
   return rows.map(addSnippetSuffix);
@@ -244,25 +250,41 @@ export async function searchLibrary(
 
 /**
  * Batch-load the current insight for each result identity and re-rank. Kept
- * out of searchLibrary's body so the hot path stays readable. Org-scoped to
- * the caller's accessible orgs (mirrors the SQL filter; honours the
- * no-cross-org-insight-lookup contract in insight-cache.ts).
+ * out of searchLibrary's body so the hot path stays readable.
+ *
+ * CROSS-ORG CONTRACT (non-negotiable — schema.prisma:688-690 + insight-cache.ts):
+ * insights are NEVER read across orgs, even when an OrgAccessGrant widens
+ * `accessibleOrgIds` to include a provider org. A grant lets you DISCOVER a
+ * provider-org candidate row, but its extracted facts must not influence your
+ * ranking. So we scope the insight read to the viewer's OWN org only (NOT the
+ * grant-expanded set). Because each identityId belongs to exactly one org, a
+ * granted provider-org row simply finds no own-org insight → zero boost, which
+ * is the contract-correct behaviour. Owners (accessibleOrgIds === null) skip
+ * the filter — an identity is single-org so they only ever get its own insight.
+ * Fails safe: a non-owner with no known ownOrgId gets no rerank at all.
  */
 async function applyInsightRerank(
   rows: RawRow[],
   parsedQuery: ParsedQuery,
   accessibleOrgIds: string[] | null,
+  ownOrgId: string | null,
 ): Promise<RawRow[]> {
   const terms = positiveQueryTerms(parsedQuery);
   if (terms.length === 0) return rows;
   const ids = [...new Set(rows.map((r) => r.candidateIdentityId).filter((x): x is string => !!x))];
   if (ids.length === 0) return rows;
 
+  const isOwner = accessibleOrgIds === null;
+  // Non-owner whose own org we don't know → cannot scope safely → no-op (never
+  // fall through to an unscoped read, which would leak across the grant set).
+  if (!isOwner && !ownOrgId) return rows;
+
   const insightRows = await prisma.profileInsight.findMany({
     where: {
       identityId: { in: ids },
       supersededAt: null,
-      ...(accessibleOrgIds ? { orgId: { in: accessibleOrgIds } } : {}),
+      extractionVersion: { gte: MIN_VERSION_FOR_RANKING }, // trust only gated rows
+      ...(isOwner ? {} : { orgId: ownOrgId! }),             // OWN org only — never the grant set
     },
     select: { identityId: true, factsJson: true },
   });
