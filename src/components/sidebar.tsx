@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { isOwner as sessionIsOwner } from "@/lib/access";
 import { useState, useEffect } from "react";
 import { useSession, signOut } from "next-auth/react";
+import { ReminderBell } from "@/components/reminders/reminder-bell";
 import { Modal } from "./ui/modal";
 import { confirm } from "./ui/confirm-dialog";
 
@@ -26,6 +27,8 @@ interface SidebarProps {
   brandName?: string;
   /** White-label logo URL (falls back to the Users glyph). */
   logoUrl?: string;
+  /** When true, shows the reminders bell (reminders/tags feature). */
+  remindersEnabled?: boolean;
 }
 
 /** Sidebar brand lockup — logo (or org logo) + name + "Talent Manager". */
@@ -195,7 +198,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/placements",          icon: Handshake,          label: "Placements",         match: (p) => p === "/placements" || p.startsWith("/placements/") },
 ];
 
-export function Sidebar({ jobs, crmEnabled = false, brandName, logoUrl }: SidebarProps) {
+export function Sidebar({ jobs, crmEnabled = false, brandName, logoUrl, remindersEnabled = false }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
@@ -534,6 +537,7 @@ export function Sidebar({ jobs, crmEnabled = false, brandName, logoUrl }: Sideba
               )}
             </div>
             <div className="flex items-center gap-0.5 flex-shrink-0">
+              {remindersEnabled && <ReminderBell />}
               <button
                 onClick={() => setShowSettings(true)}
                 className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"

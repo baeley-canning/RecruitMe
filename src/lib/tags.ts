@@ -22,3 +22,25 @@ export const TAG_PRESET_COLORS = [
   "#0a84ff", "#30d158", "#ff9f0a", "#ff453a",
   "#5e5ce6", "#64d2ff", "#bf5af2", "#6366f1",
 ] as const;
+
+export type ReminderType = "follow_up" | "guarantee_check" | "client_feedback" | "custom";
+
+export interface ReminderDto {
+  id: string;
+  candidateId: string | null;
+  jobId: string | null;
+  clientId: string | null;
+  placementId: string | null;
+  type: ReminderType;
+  dueAt: string;
+  note: string | null;
+  dismissed: boolean;
+  dismissedAt: string | null;
+}
+
+export const REMINDER_TYPE_LABEL: Record<ReminderType, string> = {
+  follow_up: "Follow-up",
+  guarantee_check: "Guarantee check",
+  client_feedback: "Client feedback",
+  custom: "Reminder",
+};
