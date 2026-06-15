@@ -4,6 +4,7 @@ import { generateReferenceQuestions } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { checkSpendCap } from "@/lib/usage";
 
 export async function POST(
   _req: Request,
@@ -17,6 +18,14 @@ export async function POST(
 
   const ref = await prisma.referenceCheck.findUnique({ where: { id: refId, candidateId } });
   if (!ref) return NextResponse.json({ error: "Reference not found" }, { status: 404 });
+
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json(
+      { error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.` },
+      { status: 429 },
+    );
+  }
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
 

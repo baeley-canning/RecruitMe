@@ -299,7 +299,7 @@ export async function POST(
       let cvText = rawExtracted.trim();
       if (upload.name.toLowerCase().endsWith(".pdf") && cvText.length > 200) {
         try {
-          cvText = await cleanCvText(cvText);
+          cvText = await cleanCvText(cvText, { orgId: auth.orgId, userId: auth.userId });
         } catch {
           // If cleaning fails, proceed with raw text rather than blocking the upload
         }

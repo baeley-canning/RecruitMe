@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { parseJobDescription } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
-import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
+import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { safeParseJson } from "@/lib/utils";
 import { reportError } from "@/lib/error-reporting";
 
@@ -78,19 +78,15 @@ export async function POST(
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;
 
-  // Per-event rate-limit + daily spend cap. parseJobDescription fires
-  // up to 2 Sonnet calls (initial + nudged retry); without these guards
-  // a recruiter could mash "Re-analyse" and silently bypass the cap.
+  // Rate-limit ONLY — no daily spend cap. JD analysis is the cheap, foundational
+  // Step 1; gating it behind the shared AI spend cap would block a recruiter from
+  // analysing a new job once scoring/outreach had consumed the day's budget. The
+  // per-event "parse" rate limit still stops a recruiter mashing "Re-analyse"
+  // (parseJobDescription fires up to 2 calls per request).
   const rate = await checkRateLimit(auth.orgId, "parse");
   if (!rate.allowed) {
     const waitMin = Math.ceil((rate.retryAfterMs ?? 60_000) / 60_000);
     return NextResponse.json({ error: `JD parse rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
-  }
-  const spend = await checkSpendCap(auth.orgId);
-  if (!spend.allowed) {
-    return NextResponse.json({
-      error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
-    }, { status: 429 });
   }
 
   try {

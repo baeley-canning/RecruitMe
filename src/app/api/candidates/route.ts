@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { extractCandidateInfo } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
+import { checkSpendCap } from "@/lib/usage";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { getLibraryCandidates, LIBRARY_PAGE_SIZE } from "@/lib/library";
 import { reportError } from "@/lib/error-reporting";
@@ -76,8 +77,17 @@ export async function POST(req: Request) {
   let location = body.location ?? "";
 
   if (body.profileText && !name) {
+    // Gate AI extraction on the org's daily spend cap — the call attributes
+    // cost to auth.orgId, so an over-budget org must be stopped here.
+    const spend = await checkSpendCap(auth.orgId);
+    if (!spend.allowed) {
+      return NextResponse.json(
+        { error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Provide a name to skip AI extraction, or try again tomorrow.` },
+        { status: 429 },
+      );
+    }
     try {
-      const info = await extractCandidateInfo(body.profileText);
+      const info = await extractCandidateInfo(body.profileText, { orgId: auth.orgId, userId: auth.userId });
       name = info.name;
       headline = headline || info.headline;
       location = location || info.location;

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { summariseReferenceCheck } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { checkSpendCap } from "@/lib/usage";
 
 export async function POST(
   _req: Request,
@@ -21,6 +22,14 @@ export async function POST(
   type QA = { question: string; answer: string };
   const responses = safeParseJson<QA[]>(ref.responses, []);
   if (!responses.length) return NextResponse.json({ error: "No responses to summarise" }, { status: 422 });
+
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json(
+      { error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.` },
+      { status: 429 },
+    );
+  }
 
   const summary = await summariseReferenceCheck(
     candidate.name,

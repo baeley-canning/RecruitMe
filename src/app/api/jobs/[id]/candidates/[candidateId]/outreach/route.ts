@@ -4,6 +4,7 @@ import { generateOutreachMessage } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { checkSpendCap } from "@/lib/usage";
 import { reportError } from "@/lib/error-reporting";
 
 // If outreach was already drafted within this window, the response includes
@@ -30,6 +31,14 @@ export async function POST(
     return NextResponse.json(
       { error: "Candidate has no profile text to generate a message from." },
       { status: 400 }
+    );
+  }
+
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json(
+      { error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.` },
+      { status: 429 },
     );
   }
 

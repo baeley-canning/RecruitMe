@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateJobAd, parseJobDescription } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
+import { checkSpendCap } from "@/lib/usage";
 import { formatSalaryRange } from "@/lib/format";
 
 const DraftSchema = z.object({
@@ -25,6 +26,14 @@ export async function POST(req: Request) {
   }
 
   const { title, company, location, isRemote, salaryMin, salaryMax, brief } = parsed.data;
+
+  const spend = await checkSpendCap(auth.orgId);
+  if (!spend.allowed) {
+    return NextResponse.json(
+      { error: `Daily AI spend cap reached ($${spend.spentUsd.toFixed(2)} / $${spend.capUsd.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.` },
+      { status: 429 },
+    );
+  }
 
   const seedBrief = [
     `Role title: ${title}`,
