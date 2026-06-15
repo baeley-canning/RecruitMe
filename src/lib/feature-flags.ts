@@ -32,6 +32,14 @@ export function isProfileInsightWriteEnabled(): boolean {
   return readBool("RECRUITME_PROFILE_INSIGHT_WRITE_ENABLED", false);
 }
 
+/** Use ProfileInsight facts as a ranking signal in library search (the talent
+ *  flywheel read-path). Off-by-default and ships dark: when off, or when no
+ *  insight exists for a candidate, search ranking is byte-identical to today's
+ *  FTS+matchScore order. Flip on only after the backfill has populated rows. */
+export function isProfileInsightReadEnabled(): boolean {
+  return readBool("RECRUITME_PROFILE_INSIGHT_READ_ENABLED", false);
+}
+
 /** Identity-merge admin UI (PR 5). */
 export function isIdentityMergeUiEnabled(): boolean {
   return readBool("RECRUITME_IDENTITY_MERGE_UI_ENABLED", false);

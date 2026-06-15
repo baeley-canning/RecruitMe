@@ -20,6 +20,9 @@
 import { prisma } from "../db";
 import type { ParsedQuery } from "../boolean-query";
 import { tsqueryFromParsed, positiveTermAtoms } from "../boolean-query/emit";
+import { isProfileInsightReadEnabled } from "../feature-flags";
+import { positiveQueryTerms, rerankByInsights } from "./insight-rerank";
+import type { InsightFacts } from "../ai/insights";
 
 export interface LibrarySearchOptions {
   parsedQuery: ParsedQuery;
@@ -230,7 +233,47 @@ export async function searchLibrary(
     if (relaxedTsquery) rows = await runFts(relaxedTsquery, positiveTermAtoms(relaxed));
   }
 
+  // ── Flywheel read-path: nudge ranking by structured insight facts. Dark by
+  // default; a no-op when off, when no terms, or when no result has an insight.
+  if (isProfileInsightReadEnabled()) {
+    rows = await applyInsightRerank(rows, parsedQuery, accessibleOrgIds);
+  }
+
   return rows.map(addSnippetSuffix);
+}
+
+/**
+ * Batch-load the current insight for each result identity and re-rank. Kept
+ * out of searchLibrary's body so the hot path stays readable. Org-scoped to
+ * the caller's accessible orgs (mirrors the SQL filter; honours the
+ * no-cross-org-insight-lookup contract in insight-cache.ts).
+ */
+async function applyInsightRerank(
+  rows: RawRow[],
+  parsedQuery: ParsedQuery,
+  accessibleOrgIds: string[] | null,
+): Promise<RawRow[]> {
+  const terms = positiveQueryTerms(parsedQuery);
+  if (terms.length === 0) return rows;
+  const ids = [...new Set(rows.map((r) => r.candidateIdentityId).filter((x): x is string => !!x))];
+  if (ids.length === 0) return rows;
+
+  const insightRows = await prisma.profileInsight.findMany({
+    where: {
+      identityId: { in: ids },
+      supersededAt: null,
+      ...(accessibleOrgIds ? { orgId: { in: accessibleOrgIds } } : {}),
+    },
+    select: { identityId: true, factsJson: true },
+  });
+  if (insightRows.length === 0) return rows;
+
+  const factsById = new Map<string, InsightFacts>();
+  for (const ir of insightRows) {
+    try { factsById.set(ir.identityId, JSON.parse(ir.factsJson) as InsightFacts); }
+    catch { /* corrupt JSON in one row must not break search */ }
+  }
+  return rerankByInsights(rows, terms, factsById);
 }
 
 // Postgres LEFT returns the full prefix; add an ellipsis if it was cut.
