@@ -227,7 +227,7 @@ export default function ClientDetailPage() {
           </div>
           {client.website && (
             <a
-              href={client.website}
+              href={/^https?:\/\//i.test(client.website) ? client.website : `https://${client.website}`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 text-sm text-accent hover:underline"

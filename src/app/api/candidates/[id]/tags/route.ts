@@ -60,6 +60,12 @@ export async function PUT(
   const { id: candidateId } = await params;
   const candidate = await resolveInOrgCandidate(candidateId, auth);
   if (!candidate) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // WRITE path: only tag candidates in your OWN org. A cross-org library_read
+  // grant is read-only — it must not be able to wipe/replace the provider org's
+  // tag assignments (deleteMany below). 404 (not 403) to avoid leaking existence.
+  if (!auth.isOwner && candidate.orgId !== auth.orgId) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const body = await req.json().catch(() => ({})) as { tagIds?: string[] };
   const requestedIds: string[] = Array.isArray(body.tagIds) ? body.tagIds : [];

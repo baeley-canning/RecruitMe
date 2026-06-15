@@ -21,6 +21,9 @@ export async function POST(
   }
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  // Mirror placements/clients: a submission needs a concrete org to attribute
+  // to — don't write orphan rows with orgId="" that no org-scoped read matches.
+  if (!auth.orgId) return NextResponse.json({ error: "No org assigned" }, { status: 400 });
 
   const { id: jobId } = await params;
   const body = await req.json().catch(() => ({}));
@@ -54,9 +57,17 @@ export async function POST(
     if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
   }
 
+  // Idempotency: a double-click must not create duplicate Submission +
+  // duplicate client_feedback reminder rows. If this candidate was already
+  // submitted to this client for this job, return the existing row.
+  const dup = await prisma.submission.findFirst({
+    where: { jobId, candidateId, clientId: result.data.clientId ?? null },
+  });
+  if (dup) return NextResponse.json(dup, { status: 200 });
+
   const submission = await prisma.submission.create({
     data: {
-      orgId: auth.orgId ?? "",
+      orgId: auth.orgId,
       jobId,
       candidateId,
       submittedBy: auth.userId,
@@ -72,7 +83,7 @@ export async function POST(
   if (submission.clientId) {
     await prisma.reminder.create({
       data: {
-        orgId: auth.orgId ?? "",
+        orgId: auth.orgId,
         userId: auth.userId,
         candidateId,
         jobId,

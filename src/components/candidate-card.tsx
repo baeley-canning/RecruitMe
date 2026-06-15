@@ -984,7 +984,11 @@ export const CandidateCard = memo(function CandidateCard({
   // arrived with (still null in the current world, but kept as the source
   // of truth so a future server-side prefetch would Just Work) and fetch
   // on demand when the "Why?" panel opens.
-  const [breakdownRaw, setBreakdownRaw] = useState<string | null>(candidate.scoreBreakdown);
+  // Coerce to null: the job-list API strips scoreBreakdown, so this arrives
+  // `undefined` at runtime (TS thinks it's string|null). Without the ?? null the
+  // `=== null` gates below all see undefined → false → the "Why?" toggle + lazy
+  // auto-load never fire (the contract-drift bug class). ?? null restores them.
+  const [breakdownRaw, setBreakdownRaw] = useState<string | null>(candidate.scoreBreakdown ?? null);
   const [breakdownLoading, setBreakdownLoading] = useState(false);
   const [breakdownError, setBreakdownError] = useState(false);
 
@@ -1021,7 +1025,9 @@ export const CandidateCard = memo(function CandidateCard({
   // server now ships a breakdown, sync it down — otherwise the local state
   // would shadow the fresh value.
   useEffect(() => {
-    if (candidate.scoreBreakdown !== null) setBreakdownRaw(candidate.scoreBreakdown);
+    // != null so a re-fetch that ships a real breakdown syncs down, but an
+    // undefined (stripped) value doesn't clobber a locally-loaded one.
+    if (candidate.scoreBreakdown != null) setBreakdownRaw(candidate.scoreBreakdown);
   }, [candidate.scoreBreakdown]);
 
   const breakdown = useMemo(
@@ -1057,7 +1063,11 @@ export const CandidateCard = memo(function CandidateCard({
   const hasFetchedProfile = Boolean(
     candidate.linkedinUrl && (candidate.profileCapturedAt || hasExtensionCapture)
   );
-  const hasViewableProfile = profileChars >= 500;
+  // profileChars derives from profileText, which the job-list API strips — so on
+  // a fresh job page treat a captured profile as viewable (the detail/drawer
+  // lazy-loads the full text). Falls back to the char check for paths that DO
+  // ship profileText.
+  const hasViewableProfile = Boolean(candidate.profileCapturedAt) || profileChars >= 500;
 
   // Use breakdown's recruiter_summary as the primary display summary when available
   const displaySummary = breakdown?.recruiter_summary ?? matchReason?.summary ?? null;
@@ -1750,8 +1760,9 @@ export const CandidateCard = memo(function CandidateCard({
             )
           )}
 
-          {/* Score */}
-          {candidate.profileText && (
+          {/* Score — gate on profileCapturedAt (present in the job list payload),
+              NOT profileText which that endpoint strips (same trap as 16970b6). */}
+          {candidate.profileCapturedAt && (
             <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-accent hover:text-accent hover:bg-accent-subtle" disabled={scoring} aria-label={candidate.matchScore != null ? "Re-score this candidate" : "Score this candidate"}>
               {!scoring && <Loader2 className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline ml-1">{candidate.matchScore != null ? "Re-score" : "Score"}</span>
@@ -1759,7 +1770,7 @@ export const CandidateCard = memo(function CandidateCard({
           )}
 
           {/* Send outreach — hidden on mobile, accessible via expand */}
-          {candidate.profileText && (
+          {candidate.profileCapturedAt && (
             <Button size="sm" variant="ghost" onClick={() => setOutreachOpen(true)} className="hidden sm:flex" title="Generate outreach message">
               <Send className="w-3.5 h-3.5" />
             </Button>

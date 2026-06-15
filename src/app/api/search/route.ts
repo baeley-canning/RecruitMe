@@ -42,7 +42,7 @@ const SourceSchema = z.enum(["library", "linkedin", "seek"]);
 const BodySchema = z.object({
   query: z.string().max(2000),
   location: z.string().max(200).optional().nullable(),
-  sources: z.array(SourceSchema).min(1).default(["library", "linkedin", "seek"]),
+  sources: z.array(SourceSchema).min(1).default(["library", "linkedin"]), // SEEK opt-in (credits)
   libraryLimit: z.number().int().min(1).max(500).optional(),
   orgId: z.string().optional(), // owners only
 });

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { X, Send } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
+import { firstApiError } from "@/lib/placement-format";
 
 interface Candidate {
   id: string;
@@ -59,7 +60,9 @@ export function SubmitToClientModal({ jobId, candidate, onClose, onSubmitted }: 
         onClose();
       } else {
         const body = await res.json().catch(() => ({}));
-        showToast(body.error ?? "Submission failed", "error");
+        // body.error can be a zod flatten() object on 422 — firstApiError
+        // pulls a string (passing the object to showToast crashes the Toaster).
+        showToast(firstApiError(body.error, "Submission failed"), "error");
       }
     } finally {
       setSubmitting(false);
@@ -108,6 +111,7 @@ export function SubmitToClientModal({ jobId, candidate, onClose, onSubmitted }: 
             <label className="block text-xs font-medium text-text-tertiary mb-1">Notes (optional)</label>
             <textarea
               rows={3}
+              maxLength={2000}
               value={notes}
               onChange={e => setNotes(e.target.value)}
               placeholder="Any context for the client about this candidate…"
@@ -121,8 +125,9 @@ export function SubmitToClientModal({ jobId, candidate, onClose, onSubmitted }: 
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !clientId}
               className="flex items-center gap-2 px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50"
+              title={!clientId ? "Pick a client first" : undefined}
             >
               <Send className="w-3.5 h-3.5" />
               {submitting ? "Submitting…" : "Submit candidate"}

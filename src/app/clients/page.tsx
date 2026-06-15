@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Building2, ExternalLink, Pencil, Trash2, ChevronRight } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
 import { confirm } from "@/components/ui/confirm-dialog";
+import { firstApiError } from "@/lib/placement-format";
 
 interface Client {
   id: string;
@@ -166,7 +167,7 @@ export default function ClientsPage() {
       await load();
     } else {
       const body = await res.json().catch(() => ({}));
-      showToast(body.error?.message ?? "Failed to create client", "error");
+      showToast(firstApiError(body.error, "Failed to create client"), "error");
     }
   }
 
@@ -182,7 +183,7 @@ export default function ClientsPage() {
       await load();
     } else {
       const body = await res.json().catch(() => ({}));
-      showToast(body.error?.message ?? "Failed to save client", "error");
+      showToast(firstApiError(body.error, "Failed to save client"), "error");
     }
   }
 
@@ -265,7 +266,7 @@ export default function ClientsPage() {
                       {client.phone && <span>{client.phone}</span>}
                       {client.website && (
                         <a
-                          href={client.website}
+                          href={/^https?:\/\//i.test(client.website) ? client.website : `https://${client.website}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center gap-0.5 hover:text-accent"

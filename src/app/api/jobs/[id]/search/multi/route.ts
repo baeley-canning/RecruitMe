@@ -31,6 +31,7 @@ import { parseBooleanQuery } from "@/lib/boolean-query";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import { searchLibrary } from "@/lib/talent-search/library";
+import { parsedRoleToBooleanQuery } from "@/lib/talent-search/role-query";
 import { runResultToUnified } from "@/lib/talent-search/run-to-unified";
 import { createRun, attachLibraryResults, setSourceStatus, loadRunSnapshot } from "@/lib/search-run";
 import { reportError } from "@/lib/error-reporting";
@@ -108,8 +109,14 @@ export async function POST(
   // parsed role, search LinkedIn by the role's TITLE synonyms only — the signal
   // it matches reliably — and let AI scoring filter skills. Manual/no-role
   // searches fall back to the emitted boolean.
+  // Use the title-only LinkedIn query ONLY when this search IS the role's
+  // auto-run (the full generated boolean). For a manual / refined / chip query
+  // the recruiter typed something specific — respect it on LinkedIn too, or
+  // we'd search the role title while library+SEEK search their query.
   const roleForLi = safeParseJson<ParsedRole | null>(job?.parsedRole ?? null, null);
-  const liTitleQuery = roleForLi
+  const roleAutoQuery = roleForLi ? parsedRoleToBooleanQuery(roleForLi).trim() : "";
+  const isRoleAutoRun = roleAutoQuery !== "" && query.trim() === roleAutoQuery;
+  const liTitleQuery = isRoleAutoRun && roleForLi
     ? linkedinTitleQuery([roleForLi.title, ...(roleForLi.synonym_titles ?? [])])
     : "";
   const linkedinKeywords = liTitleQuery || linkedinKeywordsFromParsed(parsedQuery) || queryRaw;

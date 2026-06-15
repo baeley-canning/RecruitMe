@@ -56,15 +56,15 @@ export default function WhiteLabelPage() {
   const set = (field: keyof WLConfig) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }));
 
-  if (loading) return <div className="p-8 text-sm text-muted-foreground">Loading…</div>;
+  if (loading) return <div className="p-8 text-sm text-text-secondary">Loading…</div>;
 
   if (forbidden) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
-        <h1 className="text-xl font-semibold text-foreground">White-label Branding</h1>
+        <h1 className="text-xl font-semibold text-text-primary">White-label Branding</h1>
         <div className="mt-4 border border-warning/30 bg-warning-subtle rounded-lg p-5">
           <p className="text-sm font-medium text-warning">Agency plan required</p>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-sm text-text-secondary mt-1">
             White-label branding is available on the Agency plan ($999/mo). Includes custom logo,
             brand name, accent colour, custom domain, and footer text on exported reports.
           </p>
@@ -84,17 +84,17 @@ export default function WhiteLabelPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
       <div>
-        <h1 className="text-xl font-semibold text-foreground">White-label Branding</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-xl font-semibold text-text-primary">White-label Branding</h1>
+        <p className="text-sm text-text-secondary mt-1">
           Customise how RecruitMe looks for your agency.
         </p>
       </div>
 
-      <div className="border border-border rounded-lg divide-y divide-border">
+      <div className="border border-separator rounded-lg divide-y divide-separator">
         {/* Brand name */}
         <div className="p-5 space-y-2">
-          <label className="text-sm font-medium text-foreground block">Brand name</label>
-          <p className="text-xs text-muted-foreground">
+          <label className="text-sm font-medium text-text-primary block">Brand name</label>
+          <p className="text-xs text-text-secondary">
             Shown in the sidebar and page titles instead of &ldquo;RecruitMe&rdquo;.
           </p>
           <input
@@ -103,14 +103,14 @@ export default function WhiteLabelPage() {
             onChange={set("brandName")}
             placeholder="e.g. TechRecruit NZ"
             maxLength={60}
-            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-accent transition-colors"
+            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent transition-colors"
           />
         </div>
 
         {/* Logo URL */}
         <div className="p-5 space-y-2">
-          <label className="text-sm font-medium text-foreground block">Logo URL</label>
-          <p className="text-xs text-muted-foreground">
+          <label className="text-sm font-medium text-text-primary block">Logo URL</label>
+          <p className="text-xs text-text-secondary">
             HTTPS URL to your logo (SVG or PNG, max ~40px height recommended).
           </p>
           <input
@@ -118,7 +118,7 @@ export default function WhiteLabelPage() {
             value={form.logoUrl ?? ""}
             onChange={set("logoUrl")}
             placeholder="https://yoursite.com/logo.svg"
-            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-accent transition-colors"
+            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent transition-colors"
           />
           {form.logoUrl && (
             <div className="pt-1">
@@ -130,8 +130,8 @@ export default function WhiteLabelPage() {
 
         {/* Primary colour */}
         <div className="p-5 space-y-2">
-          <label className="text-sm font-medium text-foreground block">Primary accent colour</label>
-          <p className="text-xs text-muted-foreground">
+          <label className="text-sm font-medium text-text-primary block">Primary accent colour</label>
+          <p className="text-xs text-text-secondary">
             Hex colour used for buttons and active states (e.g. #1D4ED8).
           </p>
           <div className="flex items-center gap-3">
@@ -147,15 +147,15 @@ export default function WhiteLabelPage() {
               onChange={set("primaryColour")}
               placeholder="#6366F1"
               maxLength={7}
-              className="w-32 h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-accent transition-colors"
+              className="w-32 h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent transition-colors"
             />
           </div>
         </div>
 
         {/* Custom domain */}
         <div className="p-5 space-y-2">
-          <label className="text-sm font-medium text-foreground block">Custom domain</label>
-          <p className="text-xs text-muted-foreground">
+          <label className="text-sm font-medium text-text-primary block">Custom domain</label>
+          <p className="text-xs text-text-secondary">
             Your branded domain for link sharing and email footers.
           </p>
           <input
@@ -163,14 +163,14 @@ export default function WhiteLabelPage() {
             value={form.customDomain ?? ""}
             onChange={set("customDomain")}
             placeholder="recruit.yoursite.com"
-            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-accent transition-colors"
+            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent transition-colors"
           />
         </div>
 
         {/* Footer text */}
         <div className="p-5 space-y-2">
-          <label className="text-sm font-medium text-foreground block">Report footer text</label>
-          <p className="text-xs text-muted-foreground">
+          <label className="text-sm font-medium text-text-primary block">Report footer text</label>
+          <p className="text-xs text-text-secondary">
             Appears at the bottom of exported shortlist reports (max 200 characters).
           </p>
           <input
@@ -179,7 +179,7 @@ export default function WhiteLabelPage() {
             onChange={set("footerText")}
             placeholder="e.g. Prepared by TechRecruit NZ · techrecruit.co.nz"
             maxLength={200}
-            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-accent transition-colors"
+            className="w-full h-8 px-3 rounded bg-surface-sunken border border-separator text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-accent transition-colors"
           />
         </div>
       </div>

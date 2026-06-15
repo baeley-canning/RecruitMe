@@ -20,7 +20,9 @@ export function NewSearchPanel() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
-  const [sources, setSources] = useState<Set<Source>>(new Set<Source>(["library", "linkedin", "seek"]));
+  // SEEK off by default — it spends SEEK credits; the recruiter opts in (matches
+  // the job modal's default).
+  const [sources, setSources] = useState<Set<Source>>(new Set<Source>(["library", "linkedin"]));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

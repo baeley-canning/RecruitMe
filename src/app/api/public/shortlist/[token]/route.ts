@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { safeParseJson } from "@/lib/utils";
 import type { ParsedRole } from "@/lib/ai";
 import type { ScoreBreakdown } from "@/lib/scoring";
+import { getWhiteLabelConfig, type WhiteLabelConfig } from "@/lib/white-label";
+import { isWhiteLabelEnabled } from "@/lib/feature-flags";
 
 // Public, unauthenticated read-only shortlist endpoint.
 // Returns ONLY shortlisted candidates with safe-to-share fields.
@@ -26,6 +28,7 @@ export async function GET(
     where: { shareToken: token },
     select: {
       id: true,
+      orgId: true,
       title: true,
       company: true,
       location: true,
@@ -61,6 +64,13 @@ export async function GET(
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
 
+  // White-label branding for this org (client-facing surface — the most
+  // important place to honour an agency's brand). Gated on the flag; empty when
+  // off so the page falls back to the RecruitMe default.
+  const brand: WhiteLabelConfig = (isWhiteLabelEnabled() && job.orgId)
+    ? await getWhiteLabelConfig(job.orgId).catch(() => ({}))
+    : {};
+
   // Strip score breakdowns down to the recruiter-summary + reasons; the
   // client doesn't need raw category weights.
   const candidates = job.candidates.map((c) => {
@@ -84,6 +94,11 @@ export async function GET(
       company: job.company,
       location: job.location,
       mustHaves: parsedRole?.must_haves ?? [],
+    },
+    brand: {
+      brandName: brand.brandName ?? null,
+      logoUrl: brand.logoUrl ?? null,
+      footerText: brand.footerText ?? null,
     },
     candidates,
   });

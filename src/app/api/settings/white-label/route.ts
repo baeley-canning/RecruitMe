@@ -29,7 +29,10 @@ export async function PATCH(req: Request) {
   if (!isWhiteLabelEnabled()) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const auth = await getAuth();
   if (!auth) return unauthorized();
-  if (!auth.isOwner) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
+  // White-label config is org-scoped (saveWhiteLabelConfig(auth.orgId)) — any
+  // user WITH an org sets their own org's branding. The previous isOwner gate
+  // made it unsavable by the org tenants it's sold to (owner has no per-feature
+  // need; the feature flag already gates availability).
   if (!auth.orgId) return NextResponse.json({ error: "No organisation" }, { status: 400 });
 
   const parsed = UpdateSchema.safeParse(await req.json().catch(() => ({})));

@@ -388,9 +388,11 @@ export function UnifiedSearchModal({
       // The search is now a durable server-side run. Track it + open the stream
       // so results flow in live (and keep flowing if the recruiter comes back).
       setRunStatus(data.status ?? null);
-      if (data.runId && (data.status === "queued" || data.status === "running")) {
-        setStreamRunId(data.runId);
-      }
+      // Always (re)set streamRunId — to the new run when live, else null. Setting
+      // null on a terminal (e.g. library-only) run changes the effect dep so the
+      // PREVIOUS run's EventSource is torn down; otherwise a stale stream keeps
+      // overwriting this run's results.
+      setStreamRunId(data.runId && (data.status === "queued" || data.status === "running") ? data.runId : null);
       // Seed status map so the UI shows "queued" pills immediately while the
       // first poll cycle is in flight. The useEffect below drives the rest.
       setLiveJobStatuses(
