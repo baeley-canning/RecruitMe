@@ -49,4 +49,15 @@ describe("provenancePillProps", () => {
     expect(provenancePillProps("openai" as never, "match")).toBeNull();
     expect(provenancePillProps(""       as never, "match")).toBeNull();
   });
+
+  it("returns a Base pill for scoredBy='heuristic' on match (deterministic, no AI)", () => {
+    const props = provenancePillProps("heuristic", "match");
+    expect(props?.label).toBe("Base");
+    expect(props?.tone).toBe("base");
+    expect(props?.title).toMatch(/No AI ran/i);
+  });
+
+  it("returns null for heuristic on acceptance context (acceptance is always model-produced)", () => {
+    expect(provenancePillProps("heuristic", "acceptance")).toBeNull();
+  });
 });

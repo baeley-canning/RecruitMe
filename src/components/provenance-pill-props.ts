@@ -6,8 +6,8 @@
  */
 
 export interface ProvenancePillProps {
-  label: "Claude" | "Llama";
-  tone:  "claude" | "ollama";
+  label: "Claude" | "Llama" | "Base";
+  tone:  "claude" | "ollama" | "base";
   title: string;
 }
 
@@ -21,9 +21,19 @@ export interface ProvenancePillProps {
  * of misleading the recruiter.
  */
 export function provenancePillProps(
-  source: "claude" | "ollama" | undefined | null,
+  source: "claude" | "ollama" | "heuristic" | undefined | null,
   context: "match" | "acceptance",
 ): ProvenancePillProps | null {
+  // Deterministic, no-AI base score (snippet heuristic). Only meaningful for
+  // match scoring — the acceptance likelihood is always model-produced.
+  if (source === "heuristic") {
+    if (context !== "match") return null;
+    return {
+      label: "Base",
+      tone:  "base",
+      title: "Base score — a deterministic match from the SEEK/LinkedIn snippet (name, headline, location) against the role. No AI ran; re-score with AI for a full, evidence-grounded assessment.",
+    };
+  }
   if (source !== "claude" && source !== "ollama") return null;
   if (source === "claude") {
     return {

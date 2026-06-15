@@ -4,6 +4,11 @@ import { prisma } from "@/lib/db";
 import { getAuth, unauthorized, requireJobAccess } from "@/lib/session";
 import { isCrmEnabled, isRemindersEnabled } from "@/lib/feature-flags";
 import { JOB_LIST_CANDIDATE_SELECT } from "@/lib/job-candidate-select";
+import { safeParseJson } from "@/lib/utils";
+import { getJobScoringWeights } from "@/lib/scoring-config";
+import { baseScoreUpdateData } from "@/lib/base-score";
+import { reportError } from "@/lib/error-reporting";
+import type { ParsedRole } from "@/lib/ai";
 
 // Never cache the job payload: the page refetches this immediately after adding
 // candidates / changing status, and a heuristically-cached stale response made
@@ -46,6 +51,51 @@ export async function GET(
   });
 
   if (!full) return NextResponse.json(full);
+
+  // ── Automatic base score (deterministic, no AI) ──────────────────────────
+  // Any candidate without a score yet gets a snippet-based base score against
+  // this job's parsed role, so the list never shows "—" before anyone spends an
+  // AI token. AI scoring overrides it on the next Re-score (these rows keep
+  // profileTextHash null, so score-all never treats them as cached). Best-effort:
+  // a scoring hiccup must never break the job load.
+  const baseScores = new Map<string, { matchScore: number; matchReason: string }>();
+  const parsedRoleForBase = full.parsedRole
+    ? safeParseJson<ParsedRole | null>(full.parsedRole, null)
+    : null;
+  if (parsedRoleForBase) {
+    const needsBaseScore = full.candidates.filter(
+      (c) => c.matchScore == null && (c.headline || c.location),
+    );
+    if (needsBaseScore.length > 0) {
+      const weights = await getJobScoringWeights(full.scoringWeights, auth.orgId);
+      const writes: Promise<unknown>[] = [];
+      for (const c of needsBaseScore) {
+        try {
+          // Scoring is pure CPU (no AI, no I/O) and fast — compute synchronously
+          // so the score is in `baseScores` for the response merge below.
+          const data = baseScoreUpdateData(
+            { name: c.name, headline: c.headline, location: c.location },
+            full,
+            parsedRoleForBase,
+            weights,
+          );
+          baseScores.set(c.id, { matchScore: data.matchScore, matchReason: data.matchReason });
+          // Guard on matchScore: null — never clobber a concurrent AI score.
+          writes.push(
+            prisma.candidate
+              .updateMany({ where: { id: c.id, matchScore: null }, data })
+              .catch((err) => reportError(err, { route: "jobs/[id]:base-score", jobId: id, candidateId: c.id })),
+          );
+        } catch (err) {
+          reportError(err, { route: "jobs/[id]:base-score", jobId: id, candidateId: c.id });
+        }
+      }
+      // Persist out of band: the scores are already merged into the response, so
+      // the recruiter sees them immediately and the job load stays fast even on
+      // a 500-candidate job; durability catches up (idempotent on next load).
+      void Promise.allSettled(writes);
+    }
+  }
 
   // ── Cross-job presence: for each candidate, find OTHER active jobs (in
   // any org the caller can read) that have a candidate with the same
@@ -96,10 +146,16 @@ export async function GET(
 
   // Annotate each candidate with its cross-job presence. Empty array when
   // not on any other active job.
-  const enrichedCandidates = full.candidates.map((c) => ({
-    ...c,
-    otherActiveJobs: c.linkedinUrl ? otherJobsByUrl.get(c.linkedinUrl) ?? [] : [],
-  }));
+  const enrichedCandidates = full.candidates.map((c) => {
+    // Surface the freshly-computed base score on first load (the DB write above
+    // is guarded/idempotent; merging here means the number shows immediately).
+    const base = baseScores.get(c.id);
+    return {
+      ...c,
+      ...(base ? { matchScore: base.matchScore, matchReason: base.matchReason } : {}),
+      otherActiveJobs: c.linkedinUrl ? otherJobsByUrl.get(c.linkedinUrl) ?? [] : [],
+    };
+  });
 
   return NextResponse.json(
     // crmEnabled lets the client gate CRM-only affordances (e.g. the

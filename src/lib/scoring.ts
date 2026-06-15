@@ -91,9 +91,10 @@ export interface ScoreBreakdown {
    * for the default pipeline; "ollama" when Claude failed and the local
    * Ollama failover ran. Both providers are first-class — no penalty is
    * applied either way — the field exists so the UI can render a
-   * provenance pill.
+   * provenance pill. "heuristic" = the deterministic, no-AI base score
+   * (src/lib/base-score.ts) — rendered as a "Base" pill, never an AI pill.
    */
-  scoredBy?: "claude" | "ollama";
+  scoredBy?: "claude" | "ollama" | "heuristic";
 }
 
 // ─── Category weights — v3 (must sum to 1.0) ───────────────────────────────────

@@ -78,7 +78,7 @@ export function ProvenancePill({
   source,
   context,
 }: {
-  source: "claude" | "ollama" | undefined | null;
+  source: "claude" | "ollama" | "heuristic" | undefined | null;
   context: "match" | "acceptance";
 }) {
   const props = provenancePillProps(source, context);
@@ -86,7 +86,9 @@ export function ProvenancePill({
   const toneClass =
     props.tone === "ollama"
       ? "bg-success-subtle text-success"
-      : "bg-accent-subtle text-accent";
+      : props.tone === "base"
+        ? "bg-surface-hover text-text-secondary"
+        : "bg-accent-subtle text-accent";
   return (
     <span
       className={cn(
