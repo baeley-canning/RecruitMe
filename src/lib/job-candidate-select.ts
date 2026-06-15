@@ -34,6 +34,13 @@ export const JOB_LIST_CANDIDATE_SELECT = {
   },
   // Candidate tags (reminders/tags feature). Cheap join — avoids an N+1 for
   // per-card chips. The UI maps tagAssignments[].tag -> TagDto[].
+  //
+  // Deliberately UNconditional on the reminders flag: keeping it in the static
+  // select is what lets `JobListCandidate` derive a precise type (the whole
+  // point of this file). When the flag is off no tags can be created, so this
+  // is one indexed FK lookup returning empty arrays, and the card UI is gated
+  // by `remindersEnabled` so nothing renders. A runtime-conditional join would
+  // widen the payload type and reopen the contract-drift hole — not worth it.
   tagAssignments: { select: { tag: { select: { id: true, label: true, color: true } } } },
 } satisfies Prisma.CandidateSelect;
 

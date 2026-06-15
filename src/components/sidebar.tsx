@@ -380,6 +380,7 @@ export function Sidebar({ jobs, crmEnabled = false, brandName, logoUrl, reminder
                 <span className="text-xs text-text-secondary truncate">{username}</span>
               </div>
               <div className="flex items-center gap-0.5">
+                {remindersEnabled && <ReminderBell />}
                 <button
                   onClick={() => { setMobileOpen(false); setShowSettings(true); }}
                   className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"

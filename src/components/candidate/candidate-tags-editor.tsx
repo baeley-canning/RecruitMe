@@ -34,6 +34,19 @@ export function CandidateTagsEditor({
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
+  // Reconcile this candidate's OWN assignments from the server on mount.
+  // initialTags (from the job payload) is only an instant seed — it can be
+  // stale if tags were edited in a prior drawer-open without a full refetch.
+  // Fetching here removes that staleness seam.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await fetch(`/api/candidates/${candidateId}/tags`, { cache: "no-store" });
+      if (res.ok && !cancelled) setTags(await res.json());
+    })();
+    return () => { cancelled = true; };
+  }, [candidateId]);
+
   const persist = useCallback(async (next: TagDto[]) => {
     setSaving(true);
     const prev = tags;
@@ -46,6 +59,11 @@ export function CandidateTagsEditor({
         body: JSON.stringify({ tagIds: next.map((t) => t.id) }),
       });
       if (!res.ok) throw new Error();
+      // The PUT route is the authority on the final set — it drops tag-ids it
+      // won't honour (cross-org, since-deleted) and returns the persisted list.
+      // Reconcile to that truth so the chips can't lie about what was saved.
+      const saved = (await res.json()) as TagDto[];
+      setTags(saved); onChange?.(saved);
     } catch {
       setTags(prev); onChange?.(prev);
       showToast("Failed to update tags", "error");
@@ -56,12 +74,15 @@ export function CandidateTagsEditor({
 
   const remove = (id: string) => void persist(tags.filter((t) => t.id !== id));
   const add = (tag: TagDto) => {
-    if (tags.some((t) => t.id === tag.id)) return;
+    // Guard on `saving` too: each PUT is a full replace-set, so a second add
+    // landing before the first commits would overwrite (drop) the first tag.
+    if (saving || tags.some((t) => t.id === tag.id)) return;
     void persist([...tags, tag]);
     setPicking(false);
   };
 
   async function createAndAdd() {
+    if (saving) return;
     const label = newLabel.trim();
     if (!label) return;
     const res = await fetch("/api/candidates/tags", {
@@ -107,7 +128,8 @@ export function CandidateTagsEditor({
                 key={t.id}
                 type="button"
                 onClick={() => add(t)}
-                className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover"
+                disabled={saving}
+                className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover disabled:opacity-50"
               >
                 <TagChip tag={t} />
               </button>
@@ -121,7 +143,7 @@ export function CandidateTagsEditor({
                 maxLength={50}
                 className="flex-1 min-w-0 h-6 px-2 text-2xs rounded border border-separator bg-surface-sunken text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
               />
-              <button type="button" onClick={() => void createAndAdd()} disabled={!newLabel.trim()} className="text-2xs text-accent disabled:opacity-40 px-1">Add</button>
+              <button type="button" onClick={() => void createAndAdd()} disabled={!newLabel.trim() || saving} className="text-2xs text-accent disabled:opacity-40 px-1">Add</button>
             </div>
           </div>
         )}
