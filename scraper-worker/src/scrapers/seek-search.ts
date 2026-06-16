@@ -75,9 +75,14 @@ function extractSeekCards(page: Page, host: string) {
       const m = href.match(/\/profile\/(\d+)/);
       return m ? m[1] : null;
     };
-    // "Updated 2 hours ago", "Modified today", "Profile updated last week" — the
-    // line SEEK renders near the card date. Tolerant of an optional "Profile"/
-    // "Last" prefix; captures the trailing "...ago" or "today" phrase.
+    // "Updated 2 hours ago", "Modified today" — the line SEEK renders near the
+    // card date. For candidates synced from JobAdder, SEEK renders a COMBINED
+    // line: "Updated JobAdder 6 months ago, SEEK today" / "Updated JobAdder
+    // today, SEEK 8 days ago". This is a SEEK profile-update watch, so we want
+    // the SEEK recency — prefer the date after "SEEK"; never the JobAdder sync
+    // date (capturing it would misread a fresh SEEK mover as months-old and miss
+    // the alert). Live-verified card forms on the box, 2026-06-17.
+    const SEEK_UPDATED = /(?:^|[,\s])SEEK\s+(.+?\s+ago|today|yesterday)/i;
     const UPDATED_LINE = /(?:updated|modified)\s+(.+?\s+ago|today|yesterday)/i;
     for (const a of Array.from(document.querySelectorAll('a[href*="/profile/"]')) as HTMLAnchorElement[]) {
       const id = idOf(a.href);
@@ -105,11 +110,18 @@ function extractSeekCards(page: Page, host: string) {
         name = lines[0] ?? null;
         headline = lines[1] ?? null;
         location = lines.find((l) => /,\s*[A-Z]{2}$/.test(l)) ?? null;
-        // The "Updated X ago" sibling line — search the card's text lines for the
-        // first match. Stored verbatim ("today", "2 hours ago"); the app parses it.
+        // The "Updated X ago" sibling line — search the card's text lines.
+        // Combined "...SEEK <date>" wins (take the SEEK recency); else the plain
+        // "Updated <date>" form, ignoring a JobAdder-only sync date. Stored
+        // verbatim ("today", "8 days ago"); the app parses it.
         for (const l of lines) {
+          const seekM = l.match(SEEK_UPDATED);
+          if (seekM) {
+            updatedAgo = seekM[1].trim();
+            break;
+          }
           const m = l.match(UPDATED_LINE);
-          if (m) {
+          if (m && !/^jobadder\b/i.test(m[1].trim())) {
             updatedAgo = m[1].trim();
             break;
           }
@@ -224,75 +236,63 @@ export async function scrapeSeekSearch(
   // Role-based selectors only (no hashed class names); WARN loudly + log the final
   // results URL if a control isn't found so a SEEK UI change is visible in logs.
   if (process.env.SCRAPER_WATCH_FEATURES_ENABLED === "true") {
-    // (1) SORT BY DATE UPDATED. SEEK exposes sort as a combobox labelled
-    // "Sort by" / "Sort"; open it and click the "Date updated" option. We click
-    // (not selectOption) because the option label is regex-matched — SEEK renders
-    // a custom ARIA combobox, not a native <select>. WARN if the control or the
-    // option isn't found.
+    // SORT BY "DATE UPDATED" so the first pages carry the freshest movers — the
+    // exact thing a profile-update watch wants. The boolean already constrains
+    // who appears; this just orders those matches newest-update-first, so the
+    // ~100 cards we harvest are the 100 most-recently-updated matching people.
+    //
+    // LIVE-VERIFIED on the box SEEK session (2026-06-17): the sort control is a
+    // native <select aria-label="Options">, NOT an ARIA combobox — which is why
+    // the old getByRole("combobox", {name:/sort/i}) click never matched. Its
+    // <option> values ARE the sortBy URL param: relevance (default) | freshness
+    // ("Date updated + Relevance") | modifiedDate ("Date updated") | createdDate
+    // ("Date created"). selectOption-by-value makes the SPA re-sort and rewrite
+    // sortBy= in the URL (confirmed), which we then verify. The value is env-
+    // overridable (SEEK_SORT_PARAM) so a future SEEK rename is a one-env-var fix,
+    // not a redeploy — e.g. flip to "freshness" for relevance-weighted recency.
+    // WARN + leave relevance order intact if anything doesn't take, so the
+    // harvest stays byte-safe (never crashes, never empties).
+    const SEEK_SORT_PARAM = process.env.SEEK_SORT_PARAM ?? "modifiedDate";
     try {
-      let sorted = false;
-      const sortSelect = page.getByRole("combobox", { name: /sort/i }).first();
-      if (await sortSelect.count().catch(() => 0)) {
-        await sortSelect.click({ timeout: 5_000 }).catch(() => {});
-        await randomDelay(600, 1_200);
-        const opt = page.getByRole("option", { name: /date updated/i }).first();
-        if (await opt.count().catch(() => 0)) {
-          await opt.click({ timeout: 5_000 }).catch(() => {});
-          sorted = true;
+      const named = page.locator('select[aria-label="Options"]').first();
+      const sel = (await named.count().catch(() => 0)) ? named : page.locator("select").first();
+      if (await sel.count().catch(() => 0)) {
+        await sel.selectOption({ value: SEEK_SORT_PARAM }, { timeout: 6_000 });
+        await page
+          .waitForURL(new RegExp(`[?&]sortBy=${escapeRegex(SEEK_SORT_PARAM)}\\b`), { timeout: 12_000 })
+          .catch(() => {});
+        await randomDelay(2_500, 4_000);
+        if (AUTH_WALL.test(page.url())) {
+          throw new RateLimitError("seek_challenge: auth wall during sort (run login.ts seek)");
         }
-      }
-      if (sorted) {
-        await page.waitForURL(/\/search\/profiles/, { timeout: 15_000 }).catch(() => {});
-        await randomDelay(2_000, 3_500);
+        if (new URL(page.url()).searchParams.get("sortBy") === SEEK_SORT_PARAM) {
+          log.info(`seek-search: sorted by sortBy=${SEEK_SORT_PARAM}; URL: ${page.url()}`);
+        } else {
+          log.warn(
+            `seek-search: SCRAPER_WATCH_FEATURES_ENABLED on but sortBy=${SEEK_SORT_PARAM} did NOT take ` +
+              `(SEEK <select> values may have changed) — results stay default-sorted. URL: ${page.url()}`,
+          );
+        }
       } else {
         log.warn(
-          `seek-search: SCRAPER_WATCH_FEATURES_ENABLED on but "Date updated" sort control NOT found — ` +
+          `seek-search: SCRAPER_WATCH_FEATURES_ENABLED on but the sort <select> was NOT found — ` +
             `results stay default-sorted. URL: ${page.url()}`,
         );
       }
     } catch (err) {
+      if (err instanceof RateLimitError) throw err;
       log.warn(
-        `seek-search: applying "Date updated" sort failed (${err instanceof Error ? err.message : String(err)}) — ` +
-          `URL: ${page.url()}`,
+        `seek-search: applying "${SEEK_SORT_PARAM}" sort failed (${err instanceof Error ? err.message : String(err)}) — ` +
+          `results stay default-sorted. URL: ${page.url()}`,
       );
     }
 
-    // (2) FILTER TO LAST UPDATED. SEEK's "Last updated" facet is a combobox of
-    // recency buckets; open it and pick the broadest recent option ("Last week"/
-    // "Last month") so we capture all recent movers. Role-based; WARN if absent.
-    try {
-      let filtered = false;
-      // Anchor to "last updated" so this can't accidentally match the Sort-by
-      // control above (whose accessible name may contain the word "updated",
-      // e.g. "Sort by: Date updated"). Live-SEEK verification (Stage F) confirms
-      // the real facet's accessible name before the box flag is flipped.
-      const updatedFilter = page.getByRole("combobox", { name: /^last updated/i }).first();
-      if (await updatedFilter.count().catch(() => 0)) {
-        await updatedFilter.click({ timeout: 5_000 }).catch(() => {});
-        await randomDelay(600, 1_200);
-        const opt = page.getByRole("option", { name: /last (week|month)/i }).first();
-        if (await opt.count().catch(() => 0)) {
-          await opt.click({ timeout: 5_000 }).catch(() => {});
-          filtered = true;
-        }
-      }
-      if (filtered) {
-        await page.waitForURL(/\/search\/profiles/, { timeout: 15_000 }).catch(() => {});
-        await randomDelay(2_000, 3_500);
-      } else {
-        log.warn(
-          `seek-search: SCRAPER_WATCH_FEATURES_ENABLED on but "Last updated" filter control NOT found — ` +
-            `results NOT recency-filtered. URL: ${page.url()}`,
-        );
-      }
-    } catch (err) {
-      log.warn(
-        `seek-search: applying "Last updated" filter failed (${err instanceof Error ? err.message : String(err)}) — ` +
-          `URL: ${page.url()}`,
-      );
-    }
-
-    log.info(`seek-search: watch-features applied; final results URL: ${page.url()}`);
+    // NOTE: no SEEK-side "Last updated" recency FILTER is applied. Sorting by
+    // modifiedDate already front-loads the freshest movers, and the watch
+    // re-thresholds every harvested card against notifyFrom on the parsed
+    // `updatedAgo` (detectHits in src/lib/watched-search.ts) — so a SEEK-side
+    // date filter is redundant for correctness. Re-introduce it here (probe its
+    // param first) only if harvest volume ever needs trimming.
   }
 
   // Harvest page 1, then paginate by incrementing pageNumber in the URL (the

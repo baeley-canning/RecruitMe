@@ -118,6 +118,38 @@ describe("parseUpdatedAgo — unparseable → null", () => {
   });
 });
 
+describe("parseUpdatedAgo — JobAdder-synced combined label takes the SEEK date", () => {
+  // SEEK renders "Updated JobAdder <sync>, SEEK <profile-update>" for candidates
+  // synced from JobAdder. The watch is about SEEK profile updates, so the SEEK
+  // part wins and the JobAdder sync date is ignored (else "...JobAdder today..."
+  // would misbucket a stale profile as updated today — a false positive).
+  it('"Updated JobAdder 6 months ago, SEEK today" → today (not 6 months)', () => {
+    const r = parseUpdatedAgo("Updated JobAdder 6 months ago, SEEK today", NOW);
+    expect(r!.bucket.toISOString()).toBe("2026-06-15T00:00:00.000Z");
+  });
+
+  it('"Updated JobAdder today, SEEK 8 days ago" → 8 days ago (not today)', () => {
+    const r = parseUpdatedAgo("Updated JobAdder today, SEEK 8 days ago", NOW);
+    expect(r!.bucket.toISOString()).toBe(floored(8 * DAY_MS));
+    expect(r!.bucket.toISOString()).toBe("2026-06-07T00:00:00.000Z");
+  });
+
+  it('"Updated JobAdder 11 months ago, SEEK 3 weeks ago" → 3 weeks ago', () => {
+    const r = parseUpdatedAgo("Updated JobAdder 11 months ago, SEEK 3 weeks ago", NOW);
+    expect(r!.bucket.toISOString()).toBe(floored(3 * 7 * DAY_MS));
+  });
+
+  it("JobAdder-only sync date (no SEEK part) → null (not a SEEK update)", () => {
+    expect(parseUpdatedAgo("Updated JobAdder 4 months ago", NOW)).toBeNull();
+    expect(parseUpdatedAgo("Updated JobAdder today", NOW)).toBeNull();
+  });
+
+  it('plain SEEK-only "Updated today" still parses (no regression)', () => {
+    const r = parseUpdatedAgo("Updated today", NOW);
+    expect(r!.bucket.toISOString()).toBe("2026-06-15T00:00:00.000Z");
+  });
+});
+
 describe("parseUpdatedAgo — relative buckets are ordered newest→oldest", () => {
   it("today ≥ days ≥ week ≥ year", () => {
     const today = parseUpdatedAgo("Updated today", NOW)!.bucket.getTime();

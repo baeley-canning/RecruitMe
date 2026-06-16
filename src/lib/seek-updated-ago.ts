@@ -60,8 +60,19 @@ function numberWord(word: string): number | null {
  */
 export function parseUpdatedAgo(text: string, now: Date): { bucket: Date } | null {
   if (text == null) return null;
+  // JobAdder-synced SEEK cards render a COMBINED label: "Updated JobAdder 6
+  // months ago, SEEK today" / "Updated JobAdder today, SEEK 8 days ago". This is
+  // a SEEK profile-update signal, so isolate the SEEK recency and DROP the
+  // JobAdder sync date — otherwise the "...JobAdder today..." part would match
+  // the /\btoday\b/ branch below and misbucket a months-stale profile as updated
+  // today (a false-positive alert). The scraper now sends the SEEK date directly
+  // (extractSeekCards), but guard here too so the threshold can never be polluted
+  // by a combined string from a historical row or a SEEK format tweak.
+  const seekPart = text.match(/(?:^|[,\s])SEEK\s+(.+?\s+ago|today|yesterday)/i);
+  if (!seekPart && /jobadder/i.test(text)) return null; // JobAdder-only sync date — not a SEEK update
+  const source = seekPart ? seekPart[1] : text;
   // Normalise: lowercase, strip the optional "updated" prefix, collapse space.
-  const s = text
+  const s = source
     .toLowerCase()
     .replace(/^\s*updated\b/, "")
     .replace(/\bago\b/, "")
