@@ -195,7 +195,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: "/jobs/listing-builder",icon: FileText,           label: "Listing Builder",    match: (p) => p === "/jobs/listing-builder" },
   { href: "/search",              icon: Search,             label: "Search",             match: (p) => p === "/search" || p.startsWith("/search/") },
   { href: "/candidates",          icon: Library,            label: "Candidates Library", match: (p) => p === "/candidates" || p.startsWith("/candidates/") },
-  { href: "/updates",             icon: Radar,              label: "Updates",            match: (p) => p === "/updates" || p.startsWith("/updates/") },
+  { href: "/pulse",             icon: Radar,              label: "Pulse",            match: (p) => p === "/pulse" || p.startsWith("/pulse/") },
   { href: "/linkedin-setup",      icon: Bookmark,           label: "LinkedIn Setup",     match: (p) => p === "/linkedin-setup" },
   { href: "/clients",             icon: Building2,          label: "Clients",            match: (p) => p === "/clients" || p.startsWith("/clients/") },
   { href: "/placements",          icon: Handshake,          label: "Placements",         match: (p) => p === "/placements" || p.startsWith("/placements/") },
@@ -214,7 +214,7 @@ export function Sidebar({ jobs, crmEnabled = false, brandName, logoUrl, reminder
   // Placements; profile-watch → Updates).
   const navItems = NAV_ITEMS.filter((i) => {
     if ((i.href === "/clients" || i.href === "/placements") && !crmEnabled) return false;
-    if (i.href === "/updates" && !profileWatchEnabled) return false;
+    if (i.href === "/pulse" && !profileWatchEnabled) return false;
     return true;
   });
 

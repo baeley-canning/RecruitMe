@@ -110,7 +110,7 @@ export function ReminderBell() {
           </div>
 
           {profileUpdates > 0 && (
-            <a href="/updates" className="block px-3 py-2 border-b border-separator text-xs text-accent hover:bg-surface-hover">
+            <a href="/pulse" className="block px-3 py-2 border-b border-separator text-xs text-accent hover:bg-surface-hover">
               {profileUpdates} new profile {profileUpdates === 1 ? "update" : "updates"} →
             </a>
           )}
