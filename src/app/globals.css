@@ -100,3 +100,19 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Profile-update feed liveliness ─────────────────────────────────────────
+   New feed rows fade+slide in (a fresh hit feels like it "arrives"); the
+   reduced-motion block above flattens these to ~0ms for users who opt out. */
+@keyframes feed-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-feed-in { animation: feed-in 0.4s ease-out both; }
+
+/* A soft "still listening" breathing pulse for the live-watch label. */
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+.animate-breathe { animation: breathe 2.2s ease-in-out infinite; }

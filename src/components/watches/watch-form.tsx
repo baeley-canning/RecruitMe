@@ -1,36 +1,47 @@
 "use client";
 
 import { useState } from "react";
-
-export interface WatchFormValues {
-  name: string;
-  query: string;
-  location: string;
-  notifyFrom: string; // datetime-local value ("" = default to now server-side)
-  intervalMinutes: number;
-  active: boolean;
-}
+import type { WatchedSearchDTO } from "@/lib/watched-search";
 
 const MIN_INTERVAL = 30;
 const MAX_INTERVAL = 1440;
 
+/** ISO → the value a <input type="datetime-local"> expects (local, no seconds). */
+function toLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /**
- * Watch setup form (Stage D). A controlled form for creating a profile-update
- * watch: name + boolean query + location + notifyFrom date + intervalMinutes +
- * active. POSTs to /api/watches; on success calls onCreated so the parent feed
- * can refresh. Mirrors the mono/terminal aesthetic of the /updates page.
+ * Watch setup form — CREATE or EDIT a profile-update watch.
  *
- * Renders nothing itself when the feature is off — the parent only mounts it on
- * the /updates page, which already notFound()s when isProfileWatchEnabled() is
- * false, so this component never reaches the client in the dark state.
+ * Create mode (no `watch`): POSTs /api/watches; clears + calls onCreated.
+ * Edit mode (`watch` provided): pre-fills, PATCHes /api/watches/[id]; calls
+ * onSaved. Same mono/terminal aesthetic as the /updates page. Only mounted on
+ * /updates (which notFound()s when the flag is off), so it never reaches the
+ * client in the dark state.
  */
-export function WatchForm({ onCreated }: { onCreated?: () => void }) {
-  const [name, setName] = useState("");
-  const [query, setQuery] = useState("");
-  const [location, setLocation] = useState("");
-  const [notifyFrom, setNotifyFrom] = useState("");
-  const [intervalMinutes, setIntervalMinutes] = useState(1440);
-  const [active, setActive] = useState(true);
+export function WatchForm({
+  watch,
+  onCreated,
+  onSaved,
+  onCancel,
+}: {
+  watch?: WatchedSearchDTO;
+  onCreated?: () => void;
+  onSaved?: () => void;
+  onCancel?: () => void;
+}) {
+  const editing = !!watch;
+  const [name, setName] = useState(watch?.name ?? "");
+  const [query, setQuery] = useState(watch?.query ?? "");
+  const [location, setLocation] = useState(watch?.location ?? "");
+  const [notifyFrom, setNotifyFrom] = useState(editing ? toLocalInput(watch!.notifyFrom) : "");
+  const [intervalMinutes, setIntervalMinutes] = useState(watch?.intervalMinutes ?? 1440);
+  const [active, setActive] = useState(watch?.active ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,8 +63,22 @@ export function WatchForm({ onCreated }: { onCreated?: () => void }) {
         intervalMinutes: clampedInterval,
         active,
       };
-      // Only send notifyFrom when the recruiter set one; omit → server defaults to now.
       if (notifyFrom) body.notifyFrom = new Date(notifyFrom).toISOString();
+
+      if (editing) {
+        const res = await fetch(`/api/watches/${watch!.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const b = (await res.json().catch(() => ({}))) as { error?: unknown };
+          setError(typeof b.error === "string" ? b.error : `save failed (${res.status})`);
+          return;
+        }
+        onSaved?.();
+        return;
+      }
 
       const res = await fetch("/api/watches", {
         method: "POST",
@@ -65,7 +90,7 @@ export function WatchForm({ onCreated }: { onCreated?: () => void }) {
         setError(typeof b.error === "string" ? b.error : `create failed (${res.status})`);
         return;
       }
-      // If active was unticked, the create endpoint always makes it active; patch it off.
+      // The create endpoint always creates active; honour an unticked box.
       if (!active) {
         const created = (await res.json().catch(() => ({}))) as { watch?: { id?: string } };
         if (created.watch?.id) {
@@ -76,12 +101,7 @@ export function WatchForm({ onCreated }: { onCreated?: () => void }) {
           }).catch(() => {});
         }
       }
-      setName("");
-      setQuery("");
-      setLocation("");
-      setNotifyFrom("");
-      setIntervalMinutes(1440);
-      setActive(true);
+      setName(""); setQuery(""); setLocation(""); setNotifyFrom(""); setIntervalMinutes(1440); setActive(true);
       onCreated?.();
     } finally {
       setBusy(false);
@@ -89,11 +109,11 @@ export function WatchForm({ onCreated }: { onCreated?: () => void }) {
   }
 
   const fieldCls =
-    "w-full px-2 py-1.5 text-xs rounded border border-separator bg-surface-base text-text-primary placeholder:text-text-tertiary font-mono focus:outline-none focus:border-accent";
+    "w-full px-2 py-1.5 text-xs rounded border border-separator bg-surface-base text-text-primary placeholder:text-text-tertiary font-mono focus:outline-none focus:border-accent transition-colors";
 
   return (
     <form onSubmit={submit} className="bg-surface-raised border border-separator rounded-md p-4 font-mono text-sm space-y-3">
-      <div className="text-text-tertiary uppercase text-2xs tracking-wider">New watch</div>
+      {!editing && <div className="text-text-tertiary uppercase text-2xs tracking-wider">New watch</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="block">
@@ -135,9 +155,16 @@ export function WatchForm({ onCreated }: { onCreated?: () => void }) {
 
       {error && <div className="text-2xs text-danger">{error}</div>}
 
-      <button type="submit" disabled={busy} className="h-8 px-4 text-xs rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50">
-        {busy ? "creating…" : "create watch"}
-      </button>
+      <div className="flex items-center gap-2">
+        <button type="submit" disabled={busy} className="h-8 px-4 text-xs rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50 transition-colors">
+          {busy ? (editing ? "saving…" : "creating…") : (editing ? "save changes" : "create watch")}
+        </button>
+        {editing && onCancel && (
+          <button type="button" onClick={onCancel} disabled={busy} className="h-8 px-3 text-xs rounded border border-separator text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-50">
+            cancel
+          </button>
+        )}
+      </div>
     </form>
   );
 }
