@@ -27,12 +27,20 @@ import { RateLimitError } from "./linkedin.js";
 
 /** A harvested search-result card: the profile URL plus the name/headline/
  *  location already visible on the results page, so the UI can show a real
- *  row immediately instead of a "fetching…" placeholder. */
+ *  row immediately instead of a "fetching…" placeholder.
+ *
+ *  `seekId` is the numeric SEEK profile id (parsed from /profile/(\d+)); it is
+ *  the stable dedupe key for profile-update watches (LinkedIn cards leave it
+ *  null). `updatedAgo` is the verbatim "Updated X ago" line SEEK renders per
+ *  card ("today", "2 hours ago", "over a year ago"); the app parses it into an
+ *  updatedAt bucket. Both are additive — LinkedIn harvests leave them null. */
 export interface SearchCard {
   url: string;
   name: string | null;
   headline: string | null;
   location: string | null;
+  seekId?: string | null;
+  updatedAgo?: string | null;
 }
 
 export interface LinkedInSearchHarvest {

@@ -53,14 +53,32 @@ const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // to /talentsearch/profile/<id>; name = line 0, headline = line 1, location =
 // the line ending in a 2-letter country code ("Wellington, NZ"). Structure-only
 // parse, no hashed class names.
+//
+// ADDITIVE (always-on, profile-update-watch support): also surface the numeric
+// SEEK profile id (`seekId`, already parsed from /profile/(\d+)) and parse the
+// "Updated X ago" line SEEK renders per card into `updatedAgo`. Both are derived
+// from the same card text we already read, so they cost nothing and can't change
+// the existing url/name/headline/location output. The app turns `updatedAgo`
+// into an updatedAt bucket; null when SEEK doesn't render an "updated" line.
 function extractSeekCards(page: Page, host: string) {
   return page.evaluate((h: string) => {
-    const out: { url: string; name: string | null; headline: string | null; location: string | null }[] = [];
+    const out: {
+      url: string;
+      name: string | null;
+      headline: string | null;
+      location: string | null;
+      seekId: string | null;
+      updatedAgo: string | null;
+    }[] = [];
     const seen = new Set<string>();
     const idOf = (href: string): string | null => {
       const m = href.match(/\/profile\/(\d+)/);
       return m ? m[1] : null;
     };
+    // "Updated 2 hours ago", "Modified today", "Profile updated last week" — the
+    // line SEEK renders near the card date. Tolerant of an optional "Profile"/
+    // "Last" prefix; captures the trailing "...ago" or "today" phrase.
+    const UPDATED_LINE = /(?:updated|modified)\s+(.+?\s+ago|today|yesterday)/i;
     for (const a of Array.from(document.querySelectorAll('a[href*="/profile/"]')) as HTMLAnchorElement[]) {
       const id = idOf(a.href);
       if (!id || seen.has(id)) continue;
@@ -81,13 +99,30 @@ function extractSeekCards(page: Page, host: string) {
       let name: string | null = null;
       let headline: string | null = null;
       let location: string | null = null;
+      let updatedAgo: string | null = null;
       if (card) {
         const lines = (card.innerText || "").split("\n").map((s) => s.trim()).filter(Boolean);
         name = lines[0] ?? null;
         headline = lines[1] ?? null;
         location = lines.find((l) => /,\s*[A-Z]{2}$/.test(l)) ?? null;
+        // The "Updated X ago" sibling line — search the card's text lines for the
+        // first match. Stored verbatim ("today", "2 hours ago"); the app parses it.
+        for (const l of lines) {
+          const m = l.match(UPDATED_LINE);
+          if (m) {
+            updatedAgo = m[1].trim();
+            break;
+          }
+        }
       }
-      out.push({ url: `${h}/talentsearch/profile/${id}`, name, headline, location });
+      out.push({
+        url: `${h}/talentsearch/profile/${id}`,
+        name,
+        headline,
+        location,
+        seekId: id,
+        updatedAgo,
+      });
     }
     return out;
   }, host);
@@ -180,11 +215,91 @@ export async function scrapeSeekSearch(
     );
   }
 
+  // Profile-update-watch tuning (BEHAVIOR-GATED, default OFF): when watching for
+  // freshly-updated profiles we want the results page sorted "Date updated" and
+  // filtered to recently-updated candidates, so the first pages carry the newest
+  // movers. This is gated behind SCRAPER_WATCH_FEATURES_ENABLED so that, when the
+  // flag is off (the only state the shared core-search path ever runs in today),
+  // this entire block is skipped and scrapeSeekSearch is byte-identical to before.
+  // Role-based selectors only (no hashed class names); WARN loudly + log the final
+  // results URL if a control isn't found so a SEEK UI change is visible in logs.
+  if (process.env.SCRAPER_WATCH_FEATURES_ENABLED === "true") {
+    // (1) SORT BY DATE UPDATED. SEEK exposes sort as a combobox labelled
+    // "Sort by" / "Sort"; open it and click the "Date updated" option. We click
+    // (not selectOption) because the option label is regex-matched — SEEK renders
+    // a custom ARIA combobox, not a native <select>. WARN if the control or the
+    // option isn't found.
+    try {
+      let sorted = false;
+      const sortSelect = page.getByRole("combobox", { name: /sort/i }).first();
+      if (await sortSelect.count().catch(() => 0)) {
+        await sortSelect.click({ timeout: 5_000 }).catch(() => {});
+        await randomDelay(600, 1_200);
+        const opt = page.getByRole("option", { name: /date updated/i }).first();
+        if (await opt.count().catch(() => 0)) {
+          await opt.click({ timeout: 5_000 }).catch(() => {});
+          sorted = true;
+        }
+      }
+      if (sorted) {
+        await page.waitForURL(/\/search\/profiles/, { timeout: 15_000 }).catch(() => {});
+        await randomDelay(2_000, 3_500);
+      } else {
+        log.warn(
+          `seek-search: SCRAPER_WATCH_FEATURES_ENABLED on but "Date updated" sort control NOT found — ` +
+            `results stay default-sorted. URL: ${page.url()}`,
+        );
+      }
+    } catch (err) {
+      log.warn(
+        `seek-search: applying "Date updated" sort failed (${err instanceof Error ? err.message : String(err)}) — ` +
+          `URL: ${page.url()}`,
+      );
+    }
+
+    // (2) FILTER TO LAST UPDATED. SEEK's "Last updated" facet is a combobox of
+    // recency buckets; open it and pick the broadest recent option ("Last week"/
+    // "Last month") so we capture all recent movers. Role-based; WARN if absent.
+    try {
+      let filtered = false;
+      // Anchor to "last updated" so this can't accidentally match the Sort-by
+      // control above (whose accessible name may contain the word "updated",
+      // e.g. "Sort by: Date updated"). Live-SEEK verification (Stage F) confirms
+      // the real facet's accessible name before the box flag is flipped.
+      const updatedFilter = page.getByRole("combobox", { name: /^last updated/i }).first();
+      if (await updatedFilter.count().catch(() => 0)) {
+        await updatedFilter.click({ timeout: 5_000 }).catch(() => {});
+        await randomDelay(600, 1_200);
+        const opt = page.getByRole("option", { name: /last (week|month)/i }).first();
+        if (await opt.count().catch(() => 0)) {
+          await opt.click({ timeout: 5_000 }).catch(() => {});
+          filtered = true;
+        }
+      }
+      if (filtered) {
+        await page.waitForURL(/\/search\/profiles/, { timeout: 15_000 }).catch(() => {});
+        await randomDelay(2_000, 3_500);
+      } else {
+        log.warn(
+          `seek-search: SCRAPER_WATCH_FEATURES_ENABLED on but "Last updated" filter control NOT found — ` +
+            `results NOT recency-filtered. URL: ${page.url()}`,
+        );
+      }
+    } catch (err) {
+      log.warn(
+        `seek-search: applying "Last updated" filter failed (${err instanceof Error ? err.message : String(err)}) — ` +
+          `URL: ${page.url()}`,
+      );
+    }
+
+    log.info(`seek-search: watch-features applied; final results URL: ${page.url()}`);
+  }
+
   // Harvest page 1, then paginate by incrementing pageNumber in the URL (the
   // searchId in the URL persists the search context). Cap at SEEK_MAX_PAGES and
   // stop early once we've covered the reported total.
-  const byUrl = new Map<string, { url: string; name: string | null; headline: string | null; location: string | null }>();
-  const absorb = (rows: { url: string; name: string | null; headline: string | null; location: string | null }[]) => {
+  const byUrl = new Map<string, SearchCard>();
+  const absorb = (rows: SearchCard[]) => {
     for (const r of rows) if (!byUrl.has(r.url)) byUrl.set(r.url, r);
   };
   absorb(await extractSeekCards(page, SEEK_HOST));

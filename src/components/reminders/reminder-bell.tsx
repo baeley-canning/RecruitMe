@@ -26,6 +26,11 @@ export function ReminderBell() {
   const [type, setType] = useState<ReminderType>("follow_up");
   const [dueAt, setDueAt] = useState("");
   const [note, setNote] = useState("");
+  // Profile-Update Alerts (Stage D): a separate COUNT of unseen profile updates,
+  // shown as an extra line. Fed by /api/watches/feed?count=1 — NOT Reminder rows.
+  // That endpoint 404s when FEATURES_PROFILE_WATCH_ENABLED is off, so the line
+  // stays inert (count 0, no link) when the feature ships dark.
+  const [profileUpdates, setProfileUpdates] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -33,7 +38,23 @@ export function ReminderBell() {
     if (res.ok) setItems(await res.json());
   }, []);
 
-  useEffect(() => { void load(); const t = setInterval(() => void load(), 60_000); return () => clearInterval(t); }, [load]);
+  const loadProfileUpdates = useCallback(async () => {
+    // 404 (flag off) or any error → treat as zero; the line stays hidden.
+    const res = await fetch("/api/watches/feed?count=1", { cache: "no-store" }).catch(() => null);
+    if (res && res.ok) {
+      const b = (await res.json().catch(() => ({}))) as { unseen?: number };
+      setProfileUpdates(typeof b.unseen === "number" ? b.unseen : 0);
+    } else {
+      setProfileUpdates(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    void loadProfileUpdates();
+    const t = setInterval(() => { void load(); void loadProfileUpdates(); }, 60_000);
+    return () => clearInterval(t);
+  }, [load, loadProfileUpdates]);
 
   // Close on outside click.
   useEffect(() => {
@@ -44,6 +65,9 @@ export function ReminderBell() {
   }, [open]);
 
   const dueCount = items.filter((r) => new Date(r.dueAt).getTime() <= Date.now()).length;
+  // Badge folds in unseen profile updates so a recruiter notices them without
+  // opening the popover; the popover separates the two (reminders vs updates).
+  const badgeCount = dueCount + profileUpdates;
 
   const patch = async (id: string, body: Record<string, unknown>) => {
     const res = await fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -73,8 +97,8 @@ export function ReminderBell() {
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((v) => !v)} className="relative h-7 w-7 rounded flex items-center justify-center hover:bg-surface-hover text-text-secondary" aria-label="Reminders" title="Reminders">
         <Bell className="w-4 h-4" />
-        {dueCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-danger text-white text-[9px] leading-[14px] text-center font-semibold">{dueCount}</span>
+        {badgeCount > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-danger text-white text-[9px] leading-[14px] text-center font-semibold">{badgeCount}</span>
         )}
       </button>
 
@@ -84,6 +108,12 @@ export function ReminderBell() {
             <span className="text-sm font-semibold text-text-primary">Reminders</span>
             <button onClick={() => setCreating((v) => !v)} className="text-xs text-accent inline-flex items-center gap-0.5"><Plus className="w-3 h-3" /> New</button>
           </div>
+
+          {profileUpdates > 0 && (
+            <a href="/updates" className="block px-3 py-2 border-b border-separator text-xs text-accent hover:bg-surface-hover">
+              {profileUpdates} new profile {profileUpdates === 1 ? "update" : "updates"} →
+            </a>
+          )}
 
           {creating && (
             <div className="p-3 space-y-2 border-b border-separator">

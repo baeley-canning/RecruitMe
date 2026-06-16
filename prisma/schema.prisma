@@ -206,6 +206,11 @@ model SearchRunResult {
   headline   String?
   location   String?
   snippet    String?
+  // SEEK Talent-Search "Updated X ago" recency label, harvested verbatim from
+  // the result card (additive/nullable; null for library + LinkedIn rows and any
+  // SEEK harvest from a worker without the watch features). Profile-update-alert
+  // hit-detection (src/lib/watched-search.ts detectHits) parses this per-row.
+  updatedAgo String?
   matchScore Int?
   relevance  Float?
   rank       Int?
@@ -827,4 +832,54 @@ model ReferenceCheck {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Profile-Update Alerts — a recruiter-defined SEEK watch. A watch run is a
+// system-initiated SearchRun (seeded by the run-due cron route); hit-detection
+// reads that run's existing SearchRunResult rows. Org-scoped; jobId nullable so
+// a watch can exist without a job (unlike SavedSearch — do NOT extend that).
+model WatchedSearch {
+  id              String   @id @default(cuid())
+  orgId           String
+  jobId           String?
+  createdBy       String?
+  name            String
+  query           String
+  location        String?
+  notifyFrom      DateTime
+  intervalMinutes Int      @default(1440)
+  active          Boolean  @default(true)
+  lastRunAt       DateTime?
+  nextRunAfter    DateTime?
+  lastRunId       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  hits            ProfileUpdateHit[]
+  @@index([orgId, active])
+  @@index([active, nextRunAfter])
+  @@unique([orgId, name])
+}
+
+// Dedupe ledger + feed source + bell-count for profile-update alerts. The DB
+// @@unique([watchId, seekId, updatedAtBucket]) backs a raw ON CONFLICT DO
+// NOTHING upsert so the same profile at the same bucketed update-time is flagged
+// once per watch. orgId non-null; the feed query filters watchId AND orgId.
+model ProfileUpdateHit {
+  id              String   @id @default(cuid())
+  watchId         String
+  watch           WatchedSearch @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  orgId           String
+  seekId          String
+  profileUrl      String
+  candidateId     String?
+  name            String?
+  headline        String?
+  location        String?
+  updatedAgo      String?
+  updatedAtBucket DateTime
+  flaggedAt       DateTime @default(now())
+  seen            Boolean  @default(false)
+  @@unique([watchId, seekId, updatedAtBucket])
+  @@index([orgId, seen, flaggedAt])
+  @@index([watchId, flaggedAt])
 }

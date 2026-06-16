@@ -63,6 +63,9 @@ const PatchSchema = z.object({
             name: z.string().max(500).nullable().optional(),
             headline: z.string().max(500).nullable().optional(),
             location: z.string().max(500).nullable().optional(),
+            // SEEK "Updated X ago" recency label (additive; null/absent for
+            // LinkedIn + pre-watch-feature SEEK harvests).
+            updatedAgo: z.string().max(200).nullable().optional(),
           }),
         )
         .max(200)

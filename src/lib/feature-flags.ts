@@ -78,6 +78,21 @@ export function isRemindersEnabled(): boolean {
   return readBool("FEATURES_REMINDERS_ENABLED", false);
 }
 
+/** Profile-Update Alerts — recruiter-defined SEEK watches + the feed/bell.
+ *  Off by default; gates the /api/watches routes + the /updates feed UI (404 /
+ *  render nothing when off). Set FEATURES_PROFILE_WATCH_ENABLED=true to activate. */
+export function isProfileWatchEnabled(): boolean {
+  return readBool("FEATURES_PROFILE_WATCH_ENABLED", false);
+}
+
+/** Profile-Update Alerts scheduler — gates POST /api/watches/run-due (the
+ *  cron-driven due-watch sweep). Off by default and independent of the feature
+ *  flag so the scheduler can be armed separately. Set
+ *  FEATURES_PROFILE_WATCH_SCHEDULER_ENABLED=true to activate. */
+export function isProfileWatchSchedulerEnabled(): boolean {
+  return readBool("FEATURES_PROFILE_WATCH_SCHEDULER_ENABLED", false);
+}
+
 /** White-label theming (triage Stage 4). Off by default.
  *  Set FEATURES_WHITE_LABEL_ENABLED=true to activate. */
 export function isWhiteLabelEnabled(): boolean {

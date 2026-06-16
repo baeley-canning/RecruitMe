@@ -907,6 +907,7 @@ await step("SearchRunResult table + unique + FK", async () => {
       "headline"            TEXT,
       "location"            TEXT,
       "snippet"             TEXT,
+      "updatedAgo"          TEXT,
       "matchScore"          INTEGER,
       "relevance"           DOUBLE PRECISION,
       "rank"                INTEGER,
@@ -915,6 +916,9 @@ await step("SearchRunResult table + unique + FK", async () => {
       CONSTRAINT "SearchRunResult_pkey" PRIMARY KEY ("id")
     )
   `;
+  // Additive (nullable) column for SEEK profile-update-alert recency parsing.
+  // ADD COLUMN IF NOT EXISTS so a pre-existing table picks it up too.
+  await prisma.$executeRaw`ALTER TABLE "SearchRunResult" ADD COLUMN IF NOT EXISTS "updatedAgo" TEXT`;
   await prisma.$executeRaw`
     CREATE UNIQUE INDEX IF NOT EXISTS "SearchRunResult_searchRunId_mergeKey_key"
     ON "SearchRunResult"("searchRunId", "mergeKey")
@@ -1059,6 +1063,77 @@ await step("Job.excludedCompanies column (search exclusion)", async () => {
 await step("SearchRun.jobId column + index (durable job search)", async () => {
   await prisma.$executeRaw`ALTER TABLE "SearchRun" ADD COLUMN IF NOT EXISTS "jobId" TEXT`;
   await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "SearchRun_jobId_createdAt_idx" ON "SearchRun"("jobId", "createdAt")`;
+});
+
+// Profile-Update Alerts (Stage A — headless core). Two org-scoped tables for
+// recruiter-defined SEEK watches + their dedupe/feed ledger. Built dark; both
+// FEATURES_PROFILE_WATCH_* flags default off, so nothing reads/writes these
+// until flipped. Same additive raw-DDL approach as the SearchRun tables: the
+// @@unique indexes are created here with Prisma's exact generated names so
+// `prisma db push` finds them in place and skips its data-loss pre-check.
+await step("WatchedSearch table + unique + indexes", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "WatchedSearch" (
+      "id"              TEXT NOT NULL,
+      "orgId"           TEXT NOT NULL,
+      "jobId"           TEXT,
+      "createdBy"       TEXT,
+      "name"            TEXT NOT NULL,
+      "query"           TEXT NOT NULL,
+      "location"        TEXT,
+      "notifyFrom"      TIMESTAMP(3) NOT NULL,
+      "intervalMinutes" INTEGER NOT NULL DEFAULT 1440,
+      "active"          BOOLEAN NOT NULL DEFAULT true,
+      "lastRunAt"       TIMESTAMP(3),
+      "nextRunAfter"    TIMESTAMP(3),
+      "lastRunId"       TEXT,
+      "createdAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "WatchedSearch_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "WatchedSearch_orgId_active_idx" ON "WatchedSearch"("orgId", "active")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "WatchedSearch_active_nextRunAfter_idx" ON "WatchedSearch"("active", "nextRunAfter")`;
+  // Name matches Prisma's @@unique([orgId, name]) convention so db push no-ops it.
+  await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "WatchedSearch_orgId_name_key" ON "WatchedSearch"("orgId", "name")`;
+});
+
+await step("ProfileUpdateHit table + unique + indexes + FK", async () => {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ProfileUpdateHit" (
+      "id"              TEXT NOT NULL,
+      "watchId"         TEXT NOT NULL,
+      "orgId"           TEXT NOT NULL,
+      "seekId"          TEXT NOT NULL,
+      "profileUrl"      TEXT NOT NULL,
+      "candidateId"     TEXT,
+      "name"            TEXT,
+      "headline"        TEXT,
+      "location"        TEXT,
+      "updatedAgo"      TEXT,
+      "updatedAtBucket" TIMESTAMP(3) NOT NULL,
+      "flaggedAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "seen"            BOOLEAN NOT NULL DEFAULT false,
+      CONSTRAINT "ProfileUpdateHit_pkey" PRIMARY KEY ("id")
+    )
+  `;
+  // Dedupe key — name matches Prisma's @@unique([watchId, seekId, updatedAtBucket]).
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "ProfileUpdateHit_watchId_seekId_updatedAtBucket_key"
+    ON "ProfileUpdateHit"("watchId", "seekId", "updatedAtBucket")
+  `;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ProfileUpdateHit_orgId_seen_flaggedAt_idx" ON "ProfileUpdateHit"("orgId", "seen", "flaggedAt")`;
+  await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "ProfileUpdateHit_watchId_flaggedAt_idx" ON "ProfileUpdateHit"("watchId", "flaggedAt")`;
+  await prisma.$executeRaw`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ProfileUpdateHit_watchId_fkey') THEN
+        ALTER TABLE "ProfileUpdateHit"
+          ADD CONSTRAINT "ProfileUpdateHit_watchId_fkey"
+          FOREIGN KEY ("watchId") REFERENCES "WatchedSearch"("id")
+          ON DELETE CASCADE ON UPDATE CASCADE;
+      END IF;
+    END $$
+  `;
 });
 
 await prisma.$disconnect();

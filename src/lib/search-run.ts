@@ -171,6 +171,10 @@ export interface ScraperCard {
   name?: string | null;
   headline?: string | null;
   location?: string | null;
+  /** SEEK "Updated X ago" recency label, harvested verbatim. Additive/nullable;
+   *  null for LinkedIn cards and SEEK harvests from a worker without the watch
+   *  features. Profile-update-alert hit-detection parses this per-row. */
+  updatedAgo?: string | null;
 }
 
 export async function attachScraperHits(args: {
@@ -209,6 +213,9 @@ export async function attachScraperHits(args: {
     const name = looksLikeCapturedName(card?.name) ? card!.name! : null;
     const headline = sanitizeCardField(card?.headline);
     const location = sanitizeCardField(card?.location);
+    // SEEK recency label, stored verbatim (the app parses it later). Always null
+    // for LinkedIn and for SEEK harvests without the watch features.
+    const updatedAgo = args.source === "seek" ? card?.updatedAgo ?? null : null;
     // Local relevance from the harvested card text (null if we couldn't parse
     // the query). COALESCE in the conflict clause means a pre-existing library
     // row keeps its own relevance — only a fresh scraper-only row takes this.
@@ -217,9 +224,9 @@ export async function attachScraperHits(args: {
       : null;
     await prisma.$executeRaw`
       INSERT INTO "SearchRunResult"
-        ("id","searchRunId","mergeKey","sources","profileUrl","name","headline","location","relevance","createdAt","updatedAt")
+        ("id","searchRunId","mergeKey","sources","profileUrl","name","headline","location","updatedAgo","relevance","createdAt","updatedAt")
       VALUES (${randomUUID()}, ${args.searchRunId}, ${mergeKey},
-              ${JSON.stringify([args.source])}, ${url}, ${name}, ${headline}, ${location}, ${relevance}, now(), now())
+              ${JSON.stringify([args.source])}, ${url}, ${name}, ${headline}, ${location}, ${updatedAgo}, ${relevance}, now(), now())
       ON CONFLICT ("searchRunId","mergeKey") DO UPDATE SET
         "sources"   = (
           SELECT to_jsonb(array(SELECT DISTINCT unnest(
@@ -232,6 +239,9 @@ export async function attachScraperHits(args: {
         "name"       = COALESCE("SearchRunResult"."name", EXCLUDED."name"),
         "headline"   = COALESCE("SearchRunResult"."headline", EXCLUDED."headline"),
         "location"   = COALESCE("SearchRunResult"."location", EXCLUDED."location"),
+        -- Recency refreshes: a re-harvest carries a newer "Updated X ago" label,
+        -- so take the latest non-null rather than pinning the first-seen value.
+        "updatedAgo" = COALESCE(EXCLUDED."updatedAgo", "SearchRunResult"."updatedAgo"),
         "relevance"  = COALESCE("SearchRunResult"."relevance", EXCLUDED."relevance"),
         "updatedAt"  = now()
     `;
