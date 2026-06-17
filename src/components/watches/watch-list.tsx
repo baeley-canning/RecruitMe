@@ -125,6 +125,7 @@ export function WatchList({
                   <span className="text-text-secondary">{w.query}</span>
                   {w.location && <span> · {w.location}</span>}
                   <span> · every {w.intervalMinutes}m · checked {fmtWhen(w.lastRunAt)}</span>
+                  {w.createdByName && <span> · by {w.createdByName}</span>}
                   {!w.active && <span className="text-warning"> · paused</span>}
                 </div>
               </div>

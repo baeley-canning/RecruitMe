@@ -6,8 +6,43 @@ import { reportError } from "./error-reporting";
 /** Event types that go through the count-based rate limiter. */
 export type RateLimitedType = "search" | "score" | "score_all" | "capture" | "parse" | "insight_extract";
 /** All event types persisted in UsageEvent. "ai_call" is cost-tracked
- *  separately by checkSpendCap and is NOT count-rate-limited. */
-export type UsageType = RateLimitedType | "ai_call";
+ *  separately by checkSpendCap and is NOT count-rate-limited. "ai_error"
+ *  records a FAILED AI call (credit-exhausted, rate-limited, crash) so the
+ *  admin can see who hit a wall and when. */
+export type UsageType = RateLimitedType | "ai_call" | "ai_error";
+
+/** Coarse reason an AI call failed — derived from the provider error so the
+ *  activity log can say *why* (e.g. "out of credit") not just "failed". */
+export type AiFailureReason =
+  | "insufficient_credit"
+  | "rate_limit"
+  | "overloaded"
+  | "auth"
+  | "timeout"
+  | "other";
+
+/**
+ * Classify a thrown AI-provider error into a coarse, human-meaningful reason.
+ * Anthropic/OpenAI SDK errors carry an HTTP `status`; we also sniff the message
+ * for the credit-vs-rate distinction (both are 429). Defensive against any
+ * shape — unknown errors fall through to "other".
+ */
+export function classifyAiFailure(err: unknown): AiFailureReason {
+  const status = typeof (err as { status?: unknown })?.status === "number" ? (err as { status: number }).status : undefined;
+  const name = (err as { name?: unknown })?.name;
+  const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+
+  if (status === 429 || /\b429\b|too many requests|rate limit/.test(msg)) {
+    // 429 covers BOTH billing-exhaustion and request-rate throttling — split by message.
+    if (/credit|billing|quota|insufficient|balance|payment|plan/.test(msg)) return "insufficient_credit";
+    return "rate_limit";
+  }
+  if (status === 402 || /credit|billing|quota|insufficient|balance|payment/.test(msg)) return "insufficient_credit";
+  if (status === 529 || /overloaded/.test(msg)) return "overloaded";
+  if (status === 401 || status === 403 || /api key|x-api-key|unauthor|forbidden|authentication/.test(msg)) return "auth";
+  if (name === "APIConnectionTimeoutError" || /timeout|timed out|etimedout|econnreset|aborted|socket hang up/.test(msg)) return "timeout";
+  return "other";
+}
 
 /** Default daily AI spend ceiling per org. Override via env var.
  *  The recent $10-rescore-burn motivated this — a cap that's high enough
@@ -144,6 +179,41 @@ export async function recordAiCall(args: {
     },
   }).catch((err) => {
     reportError(err, { fn: "recordAiCall", model: args.model, orgId: args.orgId ?? null, userId: args.userId ?? undefined });
+  });
+}
+
+/**
+ * Record a FAILED AI call so the admin activity log can show who hit a wall and
+ * when (the headline case: "out of credit"). Called from chat.ts's catch BEFORE
+ * the error re-throws. Fire-and-forget — must never mask the original failure.
+ * userId is whatever the caller passed (present for parse/search/acceptance/
+ * capture; null for the frozen scoring path — the reason+time are still
+ * captured and correlate to the triggering user via the action log).
+ */
+export async function recordAiError(args: {
+  orgId: string | null | undefined;
+  userId: string | null | undefined;
+  model: string;
+  reason: AiFailureReason;
+  tag?: string;
+  message?: string;
+}): Promise<void> {
+  await prisma.usageEvent.create({
+    data: {
+      id:     randomUUID(),
+      orgId:  args.orgId  ?? null,
+      userId: args.userId ?? null,
+      type:   "ai_error",
+      meta:   JSON.stringify({
+        model:   args.model,
+        reason:  args.reason,
+        ...(args.tag ? { tag: args.tag } : {}),
+        // Truncate — the message can be a long provider blob; the reason is the signal.
+        ...(args.message ? { message: args.message.slice(0, 300) } : {}),
+      }),
+    },
+  }).catch((err) => {
+    reportError(err, { fn: "recordAiError", model: args.model, reason: args.reason, orgId: args.orgId ?? null });
   });
 }
 

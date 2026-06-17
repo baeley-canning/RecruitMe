@@ -37,13 +37,37 @@ interface OrgUsage {
   score_all: number;
   parse: number;
   capture: number;
+  errors: number;
+  total: number;
+}
+
+interface UserUsage {
+  userId: string;
+  userName: string;
+  orgName: string;
+  search: number;
+  score: number;
+  score_all: number;
+  parse: number;
+  capture: number;
+  errors: number;
   total: number;
 }
 
 interface AnalyticsData {
-  totals: { search: number; score: number; score_all: number; parse: number; capture: number; total: number };
+  totals: { search: number; score: number; score_all: number; parse: number; capture: number; errors: number; total: number };
   byOrg: OrgUsage[];
-  recent: { id: string; orgName: string | null; type: string; meta: string | null; createdAt: string }[];
+  byUser: UserUsage[];
+  recent: {
+    id: string;
+    userName: string;
+    orgName: string | null;
+    type: string;
+    target: string | null;
+    reason: string | null;
+    meta: string | null;
+    createdAt: string;
+  }[];
   days: number;
 }
 
@@ -780,6 +804,7 @@ export default function AdminPage() {
                           <th className={THR}>Scores</th>
                           <th className={THR}>Parses</th>
                           <th className={THR}>Captures</th>
+                          <th className={THR}>AI errors</th>
                           <th className={THR}>Total</th>
                         </tr>
                       </thead>
@@ -791,6 +816,7 @@ export default function AdminPage() {
                             <td className="px-4 py-2.5 text-base text-right data-mono text-text-secondary">{(row.score + row.score_all) || "—"}</td>
                             <td className="px-4 py-2.5 text-base text-right data-mono text-text-secondary">{row.parse || "—"}</td>
                             <td className="px-4 py-2.5 text-base text-right data-mono text-text-secondary">{row.capture || "—"}</td>
+                            <td className={`px-4 py-2.5 text-base text-right data-mono ${row.errors ? "text-danger font-semibold" : "text-text-tertiary"}`}>{row.errors || "—"}</td>
                             <td className="px-4 py-2.5 text-base text-right data-mono font-semibold text-text-primary">{row.total}</td>
                           </tr>
                         ))}
@@ -800,30 +826,86 @@ export default function AdminPage() {
                 </Card>
               )}
 
-              {/* Recent activity */}
+              {/* By user — who's doing what within each org (+ who hit AI walls) */}
+              {analytics.byUser.length > 0 && (
+                <Card className="overflow-hidden">
+                  <CardHeader>
+                    <h3 className="text-md font-semibold text-text-primary">By User</h3>
+                  </CardHeader>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-separator">
+                          <th className={TH}>User</th>
+                          <th className={TH}>Org</th>
+                          <th className={THR}>Searches</th>
+                          <th className={THR}>Scores</th>
+                          <th className={THR}>Parses</th>
+                          <th className={THR}>Captures</th>
+                          <th className={THR}>AI errors</th>
+                          <th className={THR}>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analytics.byUser.map((u) => (
+                          <tr key={u.userId} className="border-b border-separator-subtle last:border-0 hover:bg-surface-hover">
+                            <td className="px-4 py-2.5 text-base font-medium text-text-primary">{u.userName}</td>
+                            <td className="px-4 py-2.5 text-sm text-text-tertiary">{u.orgName}</td>
+                            <td className="px-4 py-2.5 text-base text-right data-mono text-text-secondary">{u.search || "—"}</td>
+                            <td className="px-4 py-2.5 text-base text-right data-mono text-text-secondary">{(u.score + u.score_all) || "—"}</td>
+                            <td className="px-4 py-2.5 text-base text-right data-mono text-text-secondary">{u.parse || "—"}</td>
+                            <td className="px-4 py-2.5 text-base text-right data-mono text-text-secondary">{u.capture || "—"}</td>
+                            <td className={`px-4 py-2.5 text-base text-right data-mono ${u.errors ? "text-danger font-semibold" : "text-text-tertiary"}`}>{u.errors || "—"}</td>
+                            <td className="px-4 py-2.5 text-base text-right data-mono font-semibold text-text-primary">{u.total}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              )}
+
+              {/* Recent activity — clean action log: who · action · job · (why) · when */}
               {analytics.recent.length > 0 && (
                 <Card className="overflow-hidden">
                   <CardHeader>
                     <h3 className="text-md font-semibold text-text-primary">Recent Activity</h3>
                   </CardHeader>
                   <div className="divide-y divide-separator-subtle">
-                    {analytics.recent.slice(0, 20).map((e) => {
+                    {analytics.recent.slice(0, 30).map((e) => {
                       const meta = e.meta ? (() => { try { return JSON.parse(e.meta); } catch { return null; } })() : null;
+                      const isError = e.type === "ai_error";
                       const label = {
                         search: "Search",
                         score: "Re-score",
                         score_all: "Score all",
                         parse: "JD parse",
                         capture: "Capture",
+                        ai_error: "AI error",
                       }[e.type] ?? e.type;
-                      const detail = meta?.jobId ? ` · job ${meta.jobId.slice(-6)}` : meta?.scored != null ? ` · ${meta.scored} scored` : "";
+                      const reasonLabel: Record<string, string> = {
+                        insufficient_credit: "out of AI credit",
+                        rate_limit: "rate-limited",
+                        overloaded: "AI overloaded",
+                        auth: "auth failure",
+                        timeout: "timeout",
+                        other: "AI failure",
+                      };
+                      // "doing" detail: job title (target) + a count when present.
+                      const count = meta?.scored != null ? `${meta.scored} scored` : null;
+                      const detail = [e.target, count].filter(Boolean).join(" · ");
                       return (
-                        <div key={e.id} className="flex items-center justify-between px-4 py-2">
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-medium text-text-secondary w-16">{label}</span>
-                            <span className="text-xs text-text-tertiary">{e.orgName}{detail}</span>
+                        <div key={e.id} className={`flex items-center justify-between px-4 py-2 ${isError ? "bg-danger/5" : ""}`}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className={`text-xs font-medium w-16 shrink-0 ${isError ? "text-danger" : "text-text-secondary"}`}>{label}</span>
+                            <span className="text-xs text-text-primary font-medium shrink-0">{e.userName}</span>
+                            <span className="text-xs text-text-tertiary truncate">
+                              {e.orgName}
+                              {detail && ` · ${detail}`}
+                              {isError && <span className="text-danger"> · {reasonLabel[e.reason ?? "other"] ?? "AI failure"}</span>}
+                            </span>
                           </div>
-                          <span className="text-xs text-text-tertiary data-mono" suppressHydrationWarning>
+                          <span className="text-xs text-text-tertiary data-mono shrink-0 ml-3" suppressHydrationWarning>
                             {new Date(e.createdAt).toLocaleString()}
                           </span>
                         </div>

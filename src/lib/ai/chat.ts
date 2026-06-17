@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { recordProviderFailure, recordProviderSuccess } from "../provider-health";
-import { recordAiCall } from "../usage";
+import { recordAiCall, recordAiError, classifyAiFailure } from "../usage";
 
 // ─── Unified chat helper ───────────────────────────────────────────────────────
 // Abstracts over Claude (hosted) and Ollama (local) so all AI functions stay
@@ -117,6 +117,19 @@ export async function chat(
       // here (not only inside chatWithFailover) because some callers bypass
       // the failover wrapper and hit chat() directly.
       recordProviderFailure("claude", err instanceof Error ? err.message : String(err));
+      // Persist a per-user failure event so the admin activity log can show WHO
+      // hit a wall and WHEN (out-of-credit, rate-limit, crash). Fire-and-forget;
+      // must not mask the original error. userId is present for attributed
+      // callers (parse/search/acceptance/capture); null for the frozen scoring
+      // path — reason+time are still captured.
+      void recordAiError({
+        orgId:   options?.orgId,
+        userId:  options?.userId,
+        model,
+        reason:  classifyAiFailure(err),
+        tag:     options?.costTag,
+        message: err instanceof Error ? err.message : String(err),
+      });
       throw err;
     }
 

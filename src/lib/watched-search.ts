@@ -48,6 +48,9 @@ export interface WatchedSearchDTO {
   orgId: string;
   jobId: string | null;
   createdBy: string | null;
+  /** Resolved username of the creator (null if unknown/system). Surfaced as
+   *  "by <user>" in the Pulse watch list. */
+  createdByName: string | null;
   name: string;
   query: string;
   location: string | null;
@@ -66,12 +69,13 @@ function toDTO(w: {
   name: string; query: string; location: string | null; notifyFrom: Date;
   intervalMinutes: number; active: boolean; lastRunAt: Date | null;
   nextRunAfter: Date | null; lastRunId: string | null; createdAt: Date; updatedAt: Date;
-}): WatchedSearchDTO {
+}, createdByName: string | null = null): WatchedSearchDTO {
   return {
     id: w.id,
     orgId: w.orgId,
     jobId: w.jobId,
     createdBy: w.createdBy,
+    createdByName,
     name: w.name,
     query: w.query,
     location: w.location,
@@ -120,14 +124,20 @@ export async function createWatch(args: CreateWatchArgs): Promise<WatchedSearchD
   return toDTO(w);
 }
 
-/** List a single org's watches, newest first. */
+/** List a single org's watches, newest first — with the creator's username
+ *  resolved (one batched User query) so the UI can show "by <user>". */
 export async function listWatches(orgId: string): Promise<WatchedSearchDTO[]> {
   const rows = await prisma.watchedSearch.findMany({
     where: { orgId },
     orderBy: { createdAt: "desc" },
     take: 200,
   });
-  return rows.map(toDTO);
+  const creatorIds = [...new Set(rows.map((r) => r.createdBy).filter((x): x is string => !!x))];
+  const creators = creatorIds.length
+    ? await prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, username: true } })
+    : [];
+  const nameMap = new Map(creators.map((u) => [u.id, u.username]));
+  return rows.map((r) => toDTO(r, r.createdBy ? (nameMap.get(r.createdBy) ?? null) : null));
 }
 
 export interface UpdateWatchArgs {
@@ -461,6 +471,8 @@ export interface ProfileUpdateHitDTO {
   id: string;
   watchId: string;
   watchName: string | null;
+  /** Resolved username of the watch's creator — "who set this up". */
+  watchCreatedByName: string | null;
   seekId: string;
   profileUrl: string;
   candidateId: string | null;
@@ -491,12 +503,18 @@ export async function listHits(
     },
     orderBy: { flaggedAt: "desc" },
     take: limit,
-    include: { watch: { select: { name: true } } },
+    include: { watch: { select: { name: true, createdBy: true } } },
   });
+  const creatorIds = [...new Set(rows.map((r) => r.watch?.createdBy).filter((x): x is string => !!x))];
+  const creators = creatorIds.length
+    ? await prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, username: true } })
+    : [];
+  const nameMap = new Map(creators.map((u) => [u.id, u.username]));
   return rows.map((r) => ({
     id: r.id,
     watchId: r.watchId,
     watchName: r.watch?.name ?? null,
+    watchCreatedByName: r.watch?.createdBy ? (nameMap.get(r.watch.createdBy) ?? null) : null,
     seekId: r.seekId,
     profileUrl: r.profileUrl,
     candidateId: r.candidateId,

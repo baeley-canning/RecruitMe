@@ -183,6 +183,7 @@ export function UpdatesFeed() {
                     {h.headline && <div className="text-2xs text-text-secondary truncate">{h.headline}</div>}
                     <div className="text-2xs text-text-tertiary truncate">
                       {h.watchName && <span>{h.watchName}</span>}
+                      {h.watchCreatedByName && <span> · by {h.watchCreatedByName}</span>}
                       {h.location && <span> · {h.location}</span>}
                     </div>
                   </div>

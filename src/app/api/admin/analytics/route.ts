@@ -8,6 +8,18 @@ type UsageType = typeof USAGE_TYPES[number];
 
 type AnySession = { user?: { role?: string } } | null;
 
+/** Safely pull a known key out of a stored meta JSON string. */
+function metaField(meta: string | null, key: string): string | null {
+  if (!meta) return null;
+  try {
+    const o = JSON.parse(meta) as Record<string, unknown>;
+    const v = o[key];
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions) as AnySession;
   if (session?.user?.role !== "owner") {
@@ -18,7 +30,7 @@ export async function GET(req: Request) {
   const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days") ?? 30)));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-  const [events, orgs, recentRaw] = await Promise.all([
+  const [events, byUserEvents, orgs, users, recentRaw] = await Promise.all([
     prisma.usageEvent.groupBy({
       by: ["orgId", "type"],
       where: { createdAt: { gte: since } },
@@ -30,73 +42,119 @@ export async function GET(req: Request) {
       _sum: { costUsd: true, inputTokens: true, outputTokens: true },
       orderBy: { orgId: "asc" },
     }),
+    // Per-USER breakdown (the "track who's doing what" view). Counts actions +
+    // ai_error per user; ai_call is excluded (it's the rolled-up noise and is
+    // mostly unattributed on the frozen scoring path).
+    prisma.usageEvent.groupBy({
+      by: ["userId", "orgId", "type"],
+      where: { createdAt: { gte: since }, userId: { not: null }, type: { not: "ai_call" } },
+      _count: { id: true },
+    }),
     prisma.org.findMany({ select: { id: true, name: true } }),
+    prisma.user.findMany({ select: { id: true, username: true, orgId: true } }),
+    // Clean ACTION log: actions + failures, NOT the raw per-candidate ai_call
+    // firehose (the owner asked for "who did what", not 1700 anonymous AI calls).
     prisma.usageEvent.findMany({
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, type: { not: "ai_call" } },
       orderBy: { createdAt: "desc" },
-      take: 50,
-      select: { id: true, orgId: true, type: true, meta: true, createdAt: true },
+      take: 60,
+      select: { id: true, orgId: true, userId: true, type: true, meta: true, createdAt: true },
     }),
   ]);
 
   const orgMap = new Map(orgs.map((o) => [o.id, o.name]));
+  const userMap = new Map(users.map((u) => [u.id, u.username]));
 
-  // Per-org breakdown.
-  // orgId is null for owner (role="owner") actions — these are explicitly bucketed
-  // under the "__owner__" key so they don't get merged with any tenant org.
+  // Resolve job titles referenced in the recent rows' meta (one batched query)
+  // so "doing notes" read "score-all · Senior .NET Developer" not "job 8f2a1c".
+  const jobIds = [...new Set(recentRaw.map((e) => metaField(e.meta, "jobId")).filter((x): x is string => !!x))];
+  const jobs = jobIds.length
+    ? await prisma.job.findMany({ where: { id: { in: jobIds } }, select: { id: true, title: true } })
+    : [];
+  const jobMap = new Map(jobs.map((j) => [j.id, j.title]));
+
+  // ── Per-org breakdown (+ AI-error count). orgId null = owner. ──
   type OrgRow = { orgId: string | null; orgName: string | null } & Record<UsageType, number> & {
-    total: number; costUsd: number; inputTokens: number; outputTokens: number;
+    errors: number; total: number; costUsd: number; inputTokens: number; outputTokens: number;
   };
   const byOrgMap = new Map<string, OrgRow>();
 
   for (const row of events) {
-    // Owners have orgId=null by design (they have no org assignment)
     const key = row.orgId ?? "__owner__";
     if (!byOrgMap.has(key)) {
       byOrgMap.set(key, {
         orgId: row.orgId,
         orgName: row.orgId ? (orgMap.get(row.orgId) ?? `Unknown org (${row.orgId})`) : "Owner",
-        search: 0, score: 0, score_all: 0, parse: 0, capture: 0, total: 0,
+        search: 0, score: 0, score_all: 0, parse: 0, capture: 0, errors: 0, total: 0,
         costUsd: 0, inputTokens: 0, outputTokens: 0,
       });
     }
     const entry = byOrgMap.get(key)!;
     const t = row.type as UsageType;
-    if (USAGE_TYPES.includes(t)) entry[t] += row._count.id;
-    entry.total += row._count.id;
+    if (USAGE_TYPES.includes(t)) { entry[t] += row._count.id; entry.total += row._count.id; }
+    if (row.type === "ai_error") entry.errors += row._count.id;
     entry.costUsd += row._sum.costUsd ?? 0;
     entry.inputTokens += row._sum.inputTokens ?? 0;
     entry.outputTokens += row._sum.outputTokens ?? 0;
   }
 
   const byOrg = [...byOrgMap.values()].sort((a, b) => b.total - a.total);
-  // "Who's burning money right now" — same rows, ranked by actual USD spend.
   const topSpenders = [...byOrgMap.values()]
     .filter((o) => o.costUsd > 0)
     .sort((a, b) => b.costUsd - a.costUsd)
     .slice(0, 10)
     .map((o) => ({ orgId: o.orgId, orgName: o.orgName, costUsd: Number(o.costUsd.toFixed(4)), inputTokens: o.inputTokens, outputTokens: o.outputTokens }));
 
-  // Global totals
-  const totals = { search: 0, score: 0, score_all: 0, parse: 0, capture: 0, total: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 };
+  // ── Per-user breakdown (who's doing what within each org + who hit AI walls). ──
+  type UserRow = { userId: string; userName: string; orgName: string } & Record<UsageType, number> & {
+    errors: number; total: number;
+  };
+  const byUserMap = new Map<string, UserRow>();
+  for (const row of byUserEvents) {
+    if (!row.userId) continue;
+    if (!byUserMap.has(row.userId)) {
+      byUserMap.set(row.userId, {
+        userId: row.userId,
+        userName: userMap.get(row.userId) ?? `Unknown user (${row.userId.slice(-6)})`,
+        orgName: row.orgId ? (orgMap.get(row.orgId) ?? "Unknown org") : "Owner",
+        search: 0, score: 0, score_all: 0, parse: 0, capture: 0, errors: 0, total: 0,
+      });
+    }
+    const u = byUserMap.get(row.userId)!;
+    const t = row.type as UsageType;
+    if (USAGE_TYPES.includes(t)) { u[t] += row._count.id; u.total += row._count.id; }
+    if (row.type === "ai_error") u.errors += row._count.id;
+  }
+  const byUser = [...byUserMap.values()].sort((a, b) => (b.total + b.errors) - (a.total + a.errors));
+
+  // ── Global totals (+ AI errors). ──
+  const totals = { search: 0, score: 0, score_all: 0, parse: 0, capture: 0, errors: 0, total: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 };
   for (const row of events) {
     const t = row.type as UsageType;
-    if (USAGE_TYPES.includes(t)) totals[t] += row._count.id;
-    totals.total += row._count.id;
+    if (USAGE_TYPES.includes(t)) { totals[t] += row._count.id; totals.total += row._count.id; }
+    if (row.type === "ai_error") totals.errors += row._count.id;
     totals.costUsd += row._sum.costUsd ?? 0;
     totals.inputTokens += row._sum.inputTokens ?? 0;
     totals.outputTokens += row._sum.outputTokens ?? 0;
   }
   totals.costUsd = Number(totals.costUsd.toFixed(4));
 
-  // Recent activity with org names
-  const recent = recentRaw.map((e) => ({
-    id: e.id,
-    orgName: e.orgId ? (orgMap.get(e.orgId) ?? e.orgId) : "Owner",
-    type: e.type,
-    meta: e.meta,
-    createdAt: e.createdAt.toISOString(),
-  }));
+  // ── Clean action log: WHO · action · WHAT target · (why, if failed) · WHEN. ──
+  const recent = recentRaw.map((e) => {
+    const jobId = metaField(e.meta, "jobId");
+    return {
+      id: e.id,
+      userName: e.userId ? (userMap.get(e.userId) ?? `user ${e.userId.slice(-6)}`) : "System",
+      orgName: e.orgId ? (orgMap.get(e.orgId) ?? e.orgId) : "Owner",
+      type: e.type,
+      // Human "doing" target: the job title when known, else a short id hint.
+      target: jobId ? (jobMap.get(jobId) ?? `job ${jobId.slice(-6)}`) : null,
+      // Only set for ai_error rows — the failure reason ("insufficient_credit"…).
+      reason: e.type === "ai_error" ? metaField(e.meta, "reason") : null,
+      meta: e.meta,
+      createdAt: e.createdAt.toISOString(),
+    };
+  });
 
-  return NextResponse.json({ totals, byOrg, topSpenders, recent, days, since: since.toISOString() });
+  return NextResponse.json({ totals, byOrg, byUser, topSpenders, recent, days, since: since.toISOString() });
 }
