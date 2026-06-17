@@ -33,6 +33,22 @@ export function ReminderBell() {
   const [profileUpdates, setProfileUpdates] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Local "last seen" marker: the red badge counts only reminders that became
+  // due SINCE the bell was last opened, so opening it clears the count (the
+  // items stay listed until completed/snoozed). Per-device localStorage — fine
+  // for a single-operator tool, and needs no API/DB.
+  const SEEN_KEY = "reminderBellSeenAt";
+  const [seenAt, setSeenAt] = useState(0);
+  useEffect(() => {
+    const v = Number(localStorage.getItem(SEEN_KEY) ?? 0);
+    if (Number.isFinite(v) && v > 0) setSeenAt(v);
+  }, []);
+  const markSeen = useCallback(() => {
+    const now = Date.now();
+    setSeenAt(now);
+    try { localStorage.setItem(SEEN_KEY, String(now)); } catch { /* private mode / disabled */ }
+  }, []);
+
   const load = useCallback(async () => {
     const res = await fetch("/api/reminders", { cache: "no-store" });
     if (res.ok) setItems(await res.json());
@@ -64,7 +80,13 @@ export function ReminderBell() {
     return () => document.removeEventListener("mousedown", h);
   }, [open]);
 
-  const dueCount = items.filter((r) => new Date(r.dueAt).getTime() <= Date.now()).length;
+  // Badge counts only reminders that became due since the bell was last opened
+  // (markSeen on open clears it). The popover list below still shows EVERY due
+  // reminder until it's completed or snoozed.
+  const dueCount = items.filter((r) => {
+    const due = new Date(r.dueAt).getTime();
+    return due <= Date.now() && due > seenAt;
+  }).length;
   // Badge folds in unseen profile updates so a recruiter notices them without
   // opening the popover; the popover separates the two (reminders vs updates).
   const badgeCount = dueCount + profileUpdates;
@@ -95,7 +117,7 @@ export function ReminderBell() {
 
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((v) => !v)} className="relative h-7 w-7 rounded flex items-center justify-center hover:bg-surface-hover text-text-secondary" aria-label="Reminders" title="Reminders">
+      <button onClick={() => { if (!open) markSeen(); setOpen((v) => !v); }} className="relative h-7 w-7 rounded flex items-center justify-center hover:bg-surface-hover text-text-secondary" aria-label="Reminders" title="Reminders">
         <Bell className="w-4 h-4" />
         {badgeCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-danger text-white text-[9px] leading-[14px] text-center font-semibold">{badgeCount}</span>
@@ -103,7 +125,7 @@ export function ReminderBell() {
       </button>
 
       {open && (
-        <div className="absolute bottom-9 left-0 z-50 w-80 max-w-[calc(100vw-1.5rem)] max-h-[28rem] overflow-auto rounded-lg border border-separator bg-surface-overlay shadow-2xl">
+        <div className="absolute bottom-9 left-0 z-50 w-80 max-w-[calc(100vw-1.5rem)] max-h-[28rem] overflow-auto rounded-lg border border-separator-strong bg-surface-overlay shadow-overlay">
           <div className="flex items-center justify-between px-3 py-2 border-b border-separator sticky top-0 bg-surface-overlay">
             <span className="text-sm font-semibold text-text-primary">Reminders</span>
             <button onClick={() => setCreating((v) => !v)} className="text-xs text-accent inline-flex items-center gap-0.5"><Plus className="w-3 h-3" /> New</button>
