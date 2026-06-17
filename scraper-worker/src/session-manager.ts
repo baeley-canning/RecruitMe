@@ -120,7 +120,9 @@ export async function loadSession(platform: string, context: BrowserContext): Pr
 }
 
 export async function isSessionValid(platform: string, page: Page): Promise<boolean> {
-  try {
+  // A single probe: navigate to an authed page and check we weren't bounced to a
+  // login URL. Throws only on a navigation error (timeout / network).
+  const probe = async (): Promise<boolean> => {
     if (platform === "linkedin") {
       await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded", timeout: 15_000 });
       return !page.url().includes("/login") && !page.url().includes("/checkpoint");
@@ -149,9 +151,25 @@ export async function isSessionValid(platform: string, page: Page): Promise<bool
       return /\.jobadder\.com/.test(u) && !onAuthPath;
     }
     return false;
-  } catch {
-    return false;
+  };
+
+  // Retry ONCE on a thrown error (a transient nav timeout / network blip). A
+  // single slow navigation must not be misread as "session expired" — that
+  // misread is what triggered a doomed SEEK auto-re-auth (Turnstile-gated) and
+  // tripped the 2h circuit on a still-valid session. A clean landing on a login
+  // URL still returns false immediately (genuine expiry — no retry needed).
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await probe();
+    } catch (err) {
+      if (attempt === 2) {
+        log.warn(`${platform}: isSessionValid probe errored twice (${err instanceof Error ? err.message : String(err)}) — treating as invalid`);
+        return false;
+      }
+      await randomDelay(1500, 3000);
+    }
   }
+  return false;
 }
 
 export async function authenticate(platform: string, page: Page): Promise<void> {
@@ -244,11 +262,24 @@ export async function ensureSession(
   page: Page,
 ): Promise<void> {
   if (isCircuitOpen(authBreaker, platform, Date.now())) {
-    // Prefix with "<platform>_challenge:" so this is classified as an AUTH
-    // failure, not a transient one: the worker (isAuthChallengeMessage) skips
-    // the rate-limit backoff, and the API PATCH route treats it as a final
-    // no-retry failure instead of requeuing until the retry budget is spent.
-    // A circuit-open job needs a manual re-login, not a retry.
+    // SELF-HEAL: a transient blip can trip the breaker while the session is
+    // still VALID — without this, the 2h cooldown needlessly locks out a working
+    // session (observed: a misread "session expired" → doomed Turnstile re-auth
+    // → circuit OPEN → every SEEK job blocked for 2h on a perfectly valid
+    // session, only cleared by a manual restart). Cheaply re-probe BEFORE
+    // blocking: isSessionValid only navigates — it does NOT call authenticate() —
+    // so it can't re-spam the login that opened the circuit. If the session is
+    // actually fine, close the circuit and resume.
+    if ((await loadSession(platform, context)) && (await isSessionValid(platform, page))) {
+      authBreaker = recordAuthSuccess(authBreaker, platform);
+      log.info(`${platform}: circuit was open but the session is valid — closing circuit, resuming`);
+      return;
+    }
+    // Genuinely still invalid → needs a manual re-login. Prefix with
+    // "<platform>_challenge:" so this is classified as an AUTH failure, not a
+    // transient one: the worker (isAuthChallengeMessage) skips the rate-limit
+    // backoff, and the API PATCH route treats it as a final no-retry failure
+    // instead of requeuing until the retry budget is spent.
     throw new Error(
       `${platform}_challenge: auth circuit open after repeated re-auth failures — run \`npx tsx login.ts ${platform}\` on the box; it clears automatically on the next success or after the cooldown.`,
     );
