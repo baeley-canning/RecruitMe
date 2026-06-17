@@ -1020,53 +1020,94 @@ export default function JobDetailPage({
     setRescoringAll(true);
     setRescoreResult(null);
     setRescoreProgress(null);
+
+    // The stream can be cut by a proxy/duration timeout on a big run. The server
+    // commits each candidate's score as it goes and a re-run SKIPS already-scored
+    // candidates (the profileTextHash cache), so we AUTO-RESUME instead of making
+    // the user re-run and watch the counter restart. Resume passes always use the
+    // cache (force=false) — so work already done is skipped, never re-billed.
+    // Progress shows scored+cached (cumulative done), so it visibly picks up where
+    // it left off rather than looking like it restarted at 0.
+    const MAX_ITERS = 20;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let total = 0;
+    let bestDone = 0;          // high-water mark of (scored+cached) across passes
+    let finishedClean = false;
+    let failedIds: string[] = [];
+    let cappedMsg: string | null = null;
+    let hardError: string | null = null;
+    let noGain = 0;            // consecutive streamed passes with no new progress
+
     try {
-      // force=1 bypasses the "profile unchanged" cache so every candidate is
-      // re-scored even when nothing changed (cost guards still apply server-side).
-      const res = await fetch(`/api/jobs/${id}/candidates/score-all${force ? "?force=1" : ""}`, { method: "POST" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({})) as { error?: string };
-        showToast(data.error || "Scoring failed — please try again", "error");
-        return;
-      }
-      if (!res.body) return;
+      for (let iter = 0; iter < MAX_ITERS; iter++) {
+        const useForce = force && iter === 0; // only the FIRST pass forces; resumes skip the done
+        const res = await fetch(`/api/jobs/${id}/candidates/score-all${useForce ? "?force=1" : ""}`, { method: "POST" });
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let streamFinished = false;
-      let lastProgress: { scored: number; total: number } | null = null;
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const msg = JSON.parse(line) as { scored: number; total: number; done?: boolean; failedIds?: string[] };
-              lastProgress = { scored: msg.scored, total: msg.total };
-              setRescoreProgress(lastProgress);
-              if (msg.done) {
-                setRescoreResult({ scored: msg.scored, total: msg.total, failedIds: msg.failedIds });
-                streamFinished = true;
-              }
-            } catch { /* ignore malformed lines */ }
-          }
+        if (res.status === 429) {
+          // Run-claim cooldown still active (the prior pass's server run hasn't
+          // aged out / is still finishing). Wait and resume — do NOT restart.
+          if (bestDone > 0) { await sleep(10_000); continue; }
+          const data = await res.json().catch(() => ({})) as { error?: string };
+          hardError = data.error || "Score-all is already running. Try again in a minute.";
+          break;
         }
-      } catch {
-        // Network dropped mid-stream — fall through to partial result below
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({})) as { error?: string };
+          hardError = data.error || "Scoring failed — please try again";
+          break;
+        }
+        if (!res.body) break;
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let passDone = 0;          // (scored+cached) within this pass
+        let passFinished = false;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const msg = JSON.parse(line) as { scored: number; cached?: number; total: number; done?: boolean; failedIds?: string[]; capped?: boolean; error?: string };
+                total = msg.total;
+                passDone = msg.scored + (msg.cached ?? 0);
+                setRescoreProgress({ scored: Math.max(bestDone, passDone), total: msg.total });
+                if (msg.capped) cappedMsg = msg.error ?? "Daily AI spend cap reached.";
+                if (msg.done) { passFinished = true; failedIds = msg.failedIds ?? []; }
+              } catch { /* ignore malformed lines */ }
+            }
+          }
+        } catch { /* stream dropped mid-pass — fall through to the resume decision */ }
+
+        const gained = passDone > bestDone;
+        bestDone = Math.max(bestDone, passDone);
+
+        if (passFinished) { finishedClean = true; break; }   // server sent done:true
+        if (cappedMsg) break;                                  // spend cap hit — stop
+        // Stream dropped without finishing. Stop if two passes in a row made no
+        // forward progress (a candidate stuck mid-pass), else loop to resume.
+        noGain = gained ? 0 : noGain + 1;
+        if (noGain >= 2) break;
+        await sleep(1_500);
       }
 
-      // If the stream ended without a done:true message, show a partial result
-      // so the user knows something was scored (not complete silence on failure).
-      if (!streamFinished && lastProgress) {
-        setRescoreResult({ scored: lastProgress.scored, total: lastProgress.total, failedIds: [], partial: true });
+      if (hardError && bestDone === 0) {
+        showToast(hardError, "error");
+      } else if (cappedMsg) {
+        setRescoreResult({ scored: bestDone, total, failedIds: [], partial: true });
+        showToast(cappedMsg, "error");
+      } else if (finishedClean) {
+        setRescoreResult({ scored: bestDone, total, failedIds });
+      } else {
+        // Couldn't fully finish even after auto-resume — show what's done; a
+        // manual re-run will pick up the remainder (cache skips the done).
+        setRescoreResult({ scored: bestDone, total, failedIds: [], partial: true });
       }
-
       await fetchJob();
     } finally {
       setRescoringAll(false);
@@ -2365,8 +2406,8 @@ ${toHtml(job.rawJd)}
               ? <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
               : <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />}
             {rescoreResult.partial
-              ? <span>Scored <span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> — connection dropped, re-run to finish</span>
-              : <span>Re-scored <span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> candidates</span>}
+              ? <span><span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> done — couldn&apos;t finish the rest; click Re-score all to resume (it skips what&apos;s already scored)</span>
+              : <span>Scored <span className="data-mono">{rescoreResult.scored}</span> of <span className="data-mono">{rescoreResult.total}</span> candidates</span>}
             {!rescoreResult.partial && rescoreResult.failedIds && rescoreResult.failedIds.length > 0 && (
               <span className="ml-2 text-warning">· <span className="data-mono">{rescoreResult.failedIds.length}</span> failed</span>
             )}
