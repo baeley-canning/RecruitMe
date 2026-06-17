@@ -345,8 +345,9 @@ export default function JobDetailPage({
         const data = await res.json() as Job;
         if (signal?.aborted) return;
         setJob(data);
-        setSalaryMin(data.salaryMin ? String(data.salaryMin / 1000) : "");
-        setSalaryMax(data.salaryMax ? String(data.salaryMax / 1000) : "");
+        // Inputs are in FULL NZD dollars (e.g. 100000), matching the "$" prefix.
+        setSalaryMin(data.salaryMin ? String(data.salaryMin) : "");
+        setSalaryMax(data.salaryMax ? String(data.salaryMax) : "");
         setFetchError(false);
       } else {
         setFetchError(true);
@@ -457,25 +458,44 @@ export default function JobDetailPage({
 
   const handleSaveSalary = async () => {
     if (!job) return;
-    const min = salaryMin ? Math.round(parseFloat(salaryMin) * 1000) : null;
-    const max = salaryMax ? Math.round(parseFloat(salaryMax) * 1000) : null;
+    // Inputs are FULL NZD dollars (e.g. 100000 = $100k) — stored as-is.
+    const min = salaryMin ? Math.round(parseFloat(salaryMin)) : null;
+    const max = salaryMax ? Math.round(parseFloat(salaryMax)) : null;
+    if ((min != null && (Number.isNaN(min) || min < 0)) || (max != null && (Number.isNaN(max) || max < 0))) {
+      setSalaryError("Enter a valid amount in NZD");
+      return;
+    }
     if (min != null && max != null && min > max) {
       setSalaryError("Minimum cannot exceed maximum");
       return;
     }
+    const MAX_SALARY = 2_000_000;
+    if ((min != null && min > MAX_SALARY) || (max != null && max > MAX_SALARY)) {
+      setSalaryError("Amount looks too large — enter the full salary in NZD (e.g. 120000)");
+      return;
+    }
     setSalaryError("");
     setSavingSalary(true);
-    const res = await fetch(`/api/jobs/${job.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ salaryMin: min, salaryMax: max }),
-    });
-    if (res.ok) {
-      const updated = await res.json() as Job;
-      setJob((prev) => prev ? { ...prev, salaryMin: updated.salaryMin, salaryMax: updated.salaryMax } : prev);
-      setEditingSalary(false);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ salaryMin: min, salaryMax: max }),
+      });
+      if (res.ok) {
+        const updated = await res.json() as Job;
+        setJob((prev) => prev ? { ...prev, salaryMin: updated.salaryMin, salaryMax: updated.salaryMax } : prev);
+        setEditingSalary(false);
+      } else {
+        // Never fail silently — surface why the save didn't take.
+        const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+        setSalaryError(typeof body.error === "string" ? body.error : `Couldn't save salary (${res.status})`);
+      }
+    } catch {
+      setSalaryError("Couldn't save salary — check your connection and try again");
+    } finally {
+      setSavingSalary(false);
     }
-    setSavingSalary(false);
   };
 
   const handleSaveLocation = async () => {
@@ -1797,7 +1817,7 @@ ${toHtml(job.rawJd)}
                             className="w-full h-7 pl-5 pr-2 text-md bg-surface-sunken border border-separator rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-all data-mono"
                           />
                         </div>
-                        <span className="text-text-tertiary text-xs">k NZD</span>
+                        <span className="text-text-tertiary text-xs">NZD</span>
                         <button onClick={handleSaveSalary} disabled={savingSalary} className="h-7 px-3 bg-accent hover:bg-accent-hover text-white text-md font-medium rounded disabled:opacity-50 transition-colors">
                           {savingSalary ? "…" : "Save"}
                         </button>
