@@ -103,7 +103,7 @@ export function ReminderBell() {
       </button>
 
       {open && (
-        <div className="absolute bottom-9 right-0 z-50 w-80 max-h-[28rem] overflow-auto rounded-lg border border-separator bg-surface-overlay shadow-2xl">
+        <div className="absolute bottom-9 left-0 z-50 w-80 max-w-[calc(100vw-1.5rem)] max-h-[28rem] overflow-auto rounded-lg border border-separator bg-surface-overlay shadow-2xl">
           <div className="flex items-center justify-between px-3 py-2 border-b border-separator sticky top-0 bg-surface-overlay">
             <span className="text-sm font-semibold text-text-primary">Reminders</span>
             <button onClick={() => setCreating((v) => !v)} className="text-xs text-accent inline-flex items-center gap-0.5"><Plus className="w-3 h-3" /> New</button>
