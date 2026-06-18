@@ -38,15 +38,34 @@ export function ReminderBell() {
   // items stay listed until completed/snoozed). Per-device localStorage — fine
   // for a single-operator tool, and needs no API/DB.
   const SEEN_KEY = "reminderBellSeenAt";
+  // Pulse-update "seen watermark": the unseen profile-update COUNT acknowledged
+  // the last time the bell was opened. The badge shows only updates ABOVE this
+  // watermark, so opening the bell clears the Pulse part of the count too (it
+  // never used to — that's why the number wouldn't disappear). It does NOT mark
+  // the hits seen server-side, so the /pulse live feed keeps its "new" dots until
+  // the user marks them seen there.
+  const PULSE_SEEN_KEY = "reminderBellPulseSeenCount";
   const [seenAt, setSeenAt] = useState(0);
+  const [pulseSeen, setPulseSeen] = useState(0);
+  // Latest unseen count, readable from markSeen without re-creating the callback.
+  const profileUpdatesRef = useRef(0);
+  useEffect(() => { profileUpdatesRef.current = profileUpdates; }, [profileUpdates]);
   useEffect(() => {
     const v = Number(localStorage.getItem(SEEN_KEY) ?? 0);
     if (Number.isFinite(v) && v > 0) setSeenAt(v);
+    const p = Number(localStorage.getItem(PULSE_SEEN_KEY) ?? 0);
+    if (Number.isFinite(p) && p > 0) setPulseSeen(p);
   }, []);
+  // If the unseen count drops (e.g. "mark all seen" on /pulse, or hits expire),
+  // lower the watermark so genuinely-new updates surface again afterwards.
+  useEffect(() => { setPulseSeen((p) => Math.min(p, profileUpdates)); }, [profileUpdates]);
   const markSeen = useCallback(() => {
     const now = Date.now();
     setSeenAt(now);
     try { localStorage.setItem(SEEN_KEY, String(now)); } catch { /* private mode / disabled */ }
+    const cur = profileUpdatesRef.current;
+    setPulseSeen(cur);
+    try { localStorage.setItem(PULSE_SEEN_KEY, String(cur)); } catch { /* private mode / disabled */ }
   }, []);
 
   const load = useCallback(async () => {
@@ -87,9 +106,12 @@ export function ReminderBell() {
     const due = new Date(r.dueAt).getTime();
     return due <= Date.now() && due > seenAt;
   }).length;
-  // Badge folds in unseen profile updates so a recruiter notices them without
-  // opening the popover; the popover separates the two (reminders vs updates).
-  const badgeCount = dueCount + profileUpdates;
+  // Badge folds in profile updates NEW SINCE the bell was last opened (so a
+  // recruiter notices them without opening), and opening the bell acknowledges
+  // them — so the number actually clears. The popover line below still shows the
+  // full unseen count + a link to /pulse to review them.
+  const pulseNew = Math.max(0, profileUpdates - pulseSeen);
+  const badgeCount = dueCount + pulseNew;
 
   const patch = async (id: string, body: Record<string, unknown>) => {
     const res = await fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
