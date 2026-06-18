@@ -256,6 +256,28 @@ export async function authenticate(platform: string, page: Page): Promise<void> 
 // forever (see auth-failure.ts header).
 let authBreaker = createBreakerState();
 
+// Roll the saved session forward. SEEK (and others) rotate their session cookies
+// over time, but the worker only ever LOADED the saved file and never re-saved
+// it — so the stored session aged out to the ORIGINAL capture's cookie expiry
+// and eventually died, forcing a manual re-login (the saved seek.enc was weeks
+// old). Re-persisting the now-server-refreshed cookies whenever the session is
+// confirmed valid keeps a regularly-used session alive on its own. Throttled by
+// the file's age so we don't churn the encrypted file every job.
+const SESSION_REFRESH_MS = 3 * 60 * 60 * 1000; // re-save at most every 3h
+async function rollSessionForward(platform: string, context: BrowserContext): Promise<void> {
+  try {
+    const p = sessionPath(platform);
+    const ageMs = existsSync(p) ? Date.now() - statSync(p).mtimeMs : Infinity;
+    if (ageMs > SESSION_REFRESH_MS) {
+      await saveSession(platform, context);
+      log.info(`${platform}: session re-saved (rolling refresh; was ~${Math.round(ageMs / 3.6e6)}h old)`);
+    }
+  } catch (err) {
+    // Non-fatal — a failed refresh just means the session ages as before.
+    log.warn(`${platform}: rolling session re-save failed (${err instanceof Error ? err.message : String(err)})`);
+  }
+}
+
 export async function ensureSession(
   platform: string,
   context: BrowserContext,
@@ -272,6 +294,7 @@ export async function ensureSession(
     // actually fine, close the circuit and resume.
     if ((await loadSession(platform, context)) && (await isSessionValid(platform, page))) {
       authBreaker = recordAuthSuccess(authBreaker, platform);
+      await rollSessionForward(platform, context);
       log.info(`${platform}: circuit was open but the session is valid — closing circuit, resuming`);
       return;
     }
@@ -290,6 +313,7 @@ export async function ensureSession(
     const valid = await isSessionValid(platform, page);
     if (valid) {
       authBreaker = recordAuthSuccess(authBreaker, platform);
+      await rollSessionForward(platform, context);
       log.debug(`${platform}: session valid`);
       return;
     }
