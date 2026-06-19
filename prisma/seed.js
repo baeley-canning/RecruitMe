@@ -8,9 +8,15 @@ async function main() {
   const password = process.env.SEED_OWNER_PASSWORD;
   const isProd = process.env.NODE_ENV === "production";
 
-  const existing = await prisma.user.findUnique({ where: { username } });
+  // Skip if ANY owner already exists — not just one matching `username`. The
+  // seeder only needs to provision an owner on a FRESH database; once one exists,
+  // its exact username is irrelevant. Checking a hardcoded username broke prod:
+  // the owner was renamed (Cassius → Baeley), the seeder looked for "Cassius",
+  // couldn't find it, tried to CREATE one, and hard-failed every deploy for lack
+  // of SEED_OWNER_PASSWORD. Checking by role makes a rename unable to brick boots.
+  const existing = await prisma.user.findFirst({ where: { role: "owner" } });
   if (existing) {
-    console.log(`[seed] Owner account "${username}" already exists — skipping.`);
+    console.log(`[seed] An owner account already exists ("${existing.username}") — skipping.`);
     return;
   }
 
