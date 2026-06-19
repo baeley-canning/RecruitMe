@@ -16,7 +16,6 @@ import {
   X,
   AlertTriangle,
   Phone,
-  Globe,
   Camera,
   ExternalLink,
 } from "lucide-react";
@@ -31,7 +30,7 @@ import { IdentityMergePanel } from "@/components/candidate/identity-merge-panel"
 import { ScreeningSummary } from "@/components/candidate/screening-summary";
 import { CVPreview } from "@/components/candidate/cv-preview";
 import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
-import { LinkedInIcon } from "@/components/candidate/icons";
+import { LinkedInIcon, JobAdderIcon, SeekIcon } from "@/components/candidate/icons";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { confirm } from "@/components/ui/confirm-dialog";
@@ -824,10 +823,10 @@ export default function CandidateDetailPage({
               href={candidate.jobAdderUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent-subtle hover:bg-accent/25 text-accent text-md border border-separator transition-colors"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-overlay text-text-primary text-md border border-separator transition-colors"
               title="Open this candidate's JobAdder record"
             >
-              <Globe className="w-3.5 h-3.5" />
+              <JobAdderIcon className="w-3.5 h-3.5" />
               JobAdder
             </a>
           )}
@@ -836,10 +835,10 @@ export default function CandidateDetailPage({
               href={candidate.seekUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-warning-subtle hover:bg-warning/25 text-warning text-md border border-separator transition-colors"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-overlay text-text-primary text-md border border-separator transition-colors"
               title="Open this candidate's SEEK profile"
             >
-              <Globe className="w-3.5 h-3.5" />
+              <SeekIcon className="w-3.5 h-3.5" />
               SEEK
             </a>
           )}
@@ -973,14 +972,14 @@ export default function CandidateDetailPage({
                       candidateId={candidate.id} field="jobAdderUrl" value={candidate.jobAdderUrl}
                       label="JobAdder" emptyLabel="Not linked" type="url" placeholder="https://…jobadder.com/candidate/…"
                       validate={(v) => /^https?:\/\//i.test(v) ? null : "Must start with http(s)://"}
-                      renderValue={(v) => <a href={v} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent-hover transition-colors">Open in JobAdder ↗</a>}
+                      renderValue={(v) => <a href={v} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent transition-colors"><JobAdderIcon className="w-3.5 h-3.5" />View JobAdder</a>}
                       onSaved={(v) => setCandidate((prev) => prev ? { ...prev, jobAdderUrl: v } : prev)}
                     />
                     <EditableField
                       candidateId={candidate.id} field="seekUrl" value={candidate.seekUrl}
                       label="SEEK" emptyLabel="Not linked" type="url" placeholder="https://…seek.com…/profile/…"
                       renderValue={(v) => /^https?:\/\//i.test(v)
-                        ? <a href={v} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent-hover transition-colors">Open in SEEK ↗</a>
+                        ? <a href={v} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent transition-colors"><SeekIcon className="w-3.5 h-3.5" />View SEEK</a>
                         : <span className="break-all">{v}</span>}
                       onSaved={(v) => setCandidate((prev) => prev ? { ...prev, seekUrl: v } : prev)}
                     />

@@ -8,6 +8,29 @@ export function LinkedInIcon({ className }: { className?: string }) {
   );
 }
 
+// Brand-mark icons for JobAdder + SEEK — clean rounded-square glyphs in each
+// platform's colour (SEEK magenta, JobAdder teal), sized + shaped like the
+// LinkedIn logo so the three links read as a consistent set. SEEK/JobAdder are
+// wordmark brands with no single-glyph logo, so a tight letter mark ("SK"/"JA")
+// in the brand colour is the recognisable icon.
+export function JobAdderIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="24" height="24" rx="5" fill="#13b6a8" />
+      <text x="12" y="16.6" textAnchor="middle" fontFamily="ui-sans-serif, system-ui, -apple-system, sans-serif" fontSize="10.5" fontWeight="700" letterSpacing="-0.5" fill="#ffffff">JA</text>
+    </svg>
+  );
+}
+
+export function SeekIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="24" height="24" rx="5" fill="#e6007e" />
+      <text x="12" y="16.6" textAnchor="middle" fontFamily="ui-sans-serif, system-ui, -apple-system, sans-serif" fontSize="10.5" fontWeight="700" letterSpacing="-0.5" fill="#ffffff">SK</text>
+    </svg>
+  );
+}
+
 // JobAdder "JA" badge — shows when a candidate is linked in JobAdder
 // Only render as a link if the URL is http(s). Anything else (javascript:,
 // data:, vbscript:, etc.) would execute on click — those get the muted
