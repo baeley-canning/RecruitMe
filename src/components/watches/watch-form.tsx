@@ -6,15 +6,6 @@ import type { WatchedSearchDTO } from "@/lib/watched-search";
 const MIN_INTERVAL = 30;
 const MAX_INTERVAL = 1440;
 
-/** ISO → the value a <input type="datetime-local"> expects (local, no seconds). */
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 /**
  * Watch setup form — CREATE or EDIT a profile-update watch.
  *
@@ -39,7 +30,6 @@ export function WatchForm({
   const [name, setName] = useState(watch?.name ?? "");
   const [query, setQuery] = useState(watch?.query ?? "");
   const [location, setLocation] = useState(watch?.location ?? "");
-  const [notifyFrom, setNotifyFrom] = useState(editing ? toLocalInput(watch!.notifyFrom) : "");
   const [intervalMinutes, setIntervalMinutes] = useState(watch?.intervalMinutes ?? 1440);
   const [active, setActive] = useState(watch?.active ?? true);
   const [busy, setBusy] = useState(false);
@@ -63,7 +53,9 @@ export function WatchForm({
         intervalMinutes: clampedInterval,
         active,
       };
-      if (notifyFrom) body.notifyFrom = new Date(notifyFrom).toISOString();
+      // notifyFrom is intentionally NOT sent — a watch always notifies from the
+      // moment it's created (createWatch defaults it to now), so there's no
+      // start-date picker to get wrong.
 
       if (editing) {
         const res = await fetch(`/api/watches/${watch!.id}`, {
@@ -101,7 +93,7 @@ export function WatchForm({
           }).catch(() => {});
         }
       }
-      setName(""); setQuery(""); setLocation(""); setNotifyFrom(""); setIntervalMinutes(1440); setActive(true);
+      setName(""); setQuery(""); setLocation(""); setIntervalMinutes(1440); setActive(true);
       onCreated?.();
     } finally {
       setBusy(false);
@@ -131,11 +123,7 @@ export function WatchForm({
         <textarea value={query} onChange={(e) => setQuery(e.target.value)} maxLength={2000} rows={2} placeholder={'"Java" AND ("Spring" OR "Spring Boot")'} className={fieldCls + " resize-none"} />
       </label>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-        <label className="block">
-          <span className="text-2xs text-text-tertiary">notify from</span>
-          <input type="datetime-local" value={notifyFrom} onChange={(e) => setNotifyFrom(e.target.value)} className={fieldCls} />
-        </label>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
         <label className="block">
           <span className="text-2xs text-text-tertiary">interval (min, {MIN_INTERVAL}–{MAX_INTERVAL})</span>
           <input
