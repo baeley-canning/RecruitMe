@@ -10,10 +10,16 @@
 import { notFound } from "next/navigation";
 import { isProfileWatchEnabled } from "@/lib/feature-flags";
 import { UpdatesFeed } from "./updates-feed";
+import { PulseCursor } from "@/components/pulse/pulse-cursor";
 
 export const dynamic = "force-dynamic";
 
 export default function UpdatesPage() {
   if (!isProfileWatchEnabled()) notFound();
-  return <UpdatesFeed />;
+  return (
+    <>
+      <PulseCursor />
+      <UpdatesFeed />
+    </>
+  );
 }
