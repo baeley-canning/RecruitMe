@@ -25,6 +25,7 @@ import { cn, timeAgo, safeParseJson } from "@/lib/utils";
 import { formatBytes } from "@/lib/format";
 import { scoreTier as canonicalScoreTier, type ScoreTier } from "@/lib/score-utils";
 import { displayableLinkedinUrl } from "@/components/candidate/helpers";
+import { EditableField } from "@/components/candidate/editable-field";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
 import { IdentityMergePanel } from "@/components/candidate/identity-merge-panel";
 import { ScreeningSummary } from "@/components/candidate/screening-summary";
@@ -937,55 +938,52 @@ export default function CandidateDetailPage({
                   <div>
                     <DetailField label="Current employer" value={employer} emptyLabel="Not extracted" />
                     <DetailField label="Current title" value={title} emptyLabel="Not extracted" />
-                    <DetailField label="Phone">
-                      {candidate.phone ? (
-                        <a href={`tel:${candidate.phone}`} className="text-accent hover:text-accent-hover transition-colors">
-                          {candidate.phone}
-                        </a>
-                      ) : null}
-                    </DetailField>
-                    <DetailField label="Email">
-                      {candidate.email ? (
-                        <a href={`mailto:${candidate.email}`} className="text-accent hover:text-accent-hover transition-colors break-all">
-                          {candidate.email}
-                        </a>
-                      ) : null}
-                    </DetailField>
-                    <DetailField label="Location" value={candidate.location} emptyLabel="Not set" />
+                    <EditableField
+                      candidateId={candidate.id} field="phone" value={candidate.phone}
+                      label="Phone" emptyLabel="Not set" type="tel" placeholder="+64 21 123 4567"
+                      renderValue={(v) => <a href={`tel:${v}`} className="text-accent hover:text-accent-hover transition-colors">{v}</a>}
+                      onSaved={(v) => setCandidate((prev) => prev ? { ...prev, phone: v } : prev)}
+                    />
+                    <EditableField
+                      candidateId={candidate.id} field="email" value={candidate.email}
+                      label="Email" emptyLabel="Not set" type="email" placeholder="name@example.com"
+                      renderValue={(v) => <a href={`mailto:${v}`} className="text-accent hover:text-accent-hover transition-colors break-all">{v}</a>}
+                      onSaved={(v) => setCandidate((prev) => prev ? { ...prev, email: v } : prev)}
+                    />
+                    <EditableField
+                      candidateId={candidate.id} field="location" value={candidate.location}
+                      label="Location" emptyLabel="Not set" placeholder="Wellington, NZ"
+                      onSaved={(v) => setCandidate((prev) => prev ? { ...prev, location: v } : prev)}
+                    />
                     <DetailField label="Source" value={candidate.source.replace(/_/g, " ")} />
                   </div>
 
                   {/* ─── Right column: links + recruiter markers ─────────── */}
                   <div>
-                    <DetailField label="LinkedIn" emptyLabel="Not linked">
-                      {displayableLinkedinUrl(candidate.linkedinUrl)
-                        ? <LinkedInBadge url={candidate.linkedinUrl} />
-                        : null}
-                    </DetailField>
-                    <DetailField label="JobAdder" emptyLabel="Not linked">
-                      {candidate.jobAdderUrl ? (
-                        <a
-                          href={candidate.jobAdderUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-accent hover:text-accent-hover transition-colors"
-                        >
-                          Open in JobAdder ↗
-                        </a>
-                      ) : null}
-                    </DetailField>
-                    <DetailField label="SEEK" emptyLabel="Not linked">
-                      {candidate.seekUrl && /^https?:\/\//i.test(candidate.seekUrl) ? (
-                        <a
-                          href={candidate.seekUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-accent hover:text-accent-hover transition-colors"
-                        >
-                          Open in SEEK ↗
-                        </a>
-                      ) : null}
-                    </DetailField>
+                    <EditableField
+                      candidateId={candidate.id} field="linkedinUrl" value={candidate.linkedinUrl}
+                      label="LinkedIn" emptyLabel="Not linked" type="url" placeholder="https://www.linkedin.com/in/…"
+                      validate={(v) => /^https?:\/\//i.test(v) ? null : "Must start with http(s)://"}
+                      renderValue={(v) => displayableLinkedinUrl(v)
+                        ? <LinkedInBadge url={v} />
+                        : <a href={v} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent-hover transition-colors break-all">{v} ↗</a>}
+                      onSaved={(v) => setCandidate((prev) => prev ? { ...prev, linkedinUrl: v } : prev)}
+                    />
+                    <EditableField
+                      candidateId={candidate.id} field="jobAdderUrl" value={candidate.jobAdderUrl}
+                      label="JobAdder" emptyLabel="Not linked" type="url" placeholder="https://…jobadder.com/candidate/…"
+                      validate={(v) => /^https?:\/\//i.test(v) ? null : "Must start with http(s)://"}
+                      renderValue={(v) => <a href={v} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent-hover transition-colors">Open in JobAdder ↗</a>}
+                      onSaved={(v) => setCandidate((prev) => prev ? { ...prev, jobAdderUrl: v } : prev)}
+                    />
+                    <EditableField
+                      candidateId={candidate.id} field="seekUrl" value={candidate.seekUrl}
+                      label="SEEK" emptyLabel="Not linked" type="url" placeholder="https://…seek.com…/profile/…"
+                      renderValue={(v) => /^https?:\/\//i.test(v)
+                        ? <a href={v} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent-hover transition-colors">Open in SEEK ↗</a>
+                        : <span className="break-all">{v}</span>}
+                      onSaved={(v) => setCandidate((prev) => prev ? { ...prev, seekUrl: v } : prev)}
+                    />
                     <DetailField label="Suitability">
                       <SuitabilityControl
                         value={candidate.suitability}

@@ -102,6 +102,14 @@ const PatchSchema = z.object({
     .refine((v) => isSeekProfileUrl(v), { message: "Must be a valid SEEK profile URL" })
     .optional()
     .or(z.literal("")),
+  // Manually-editable identity links + contact fields. Empty string clears the
+  // value (→ null); a non-empty value is validated. The owner sets these by hand
+  // (JobAdder has no API on this plan; LinkedIn/contact details come from manual
+  // entry until enrichment fills them).
+  linkedinUrl: z.string().max(500).url({ message: "Must be a valid URL (https://…)" }).optional().or(z.literal("")),
+  jobAdderUrl: z.string().max(500).url({ message: "Must be a valid URL (https://…)" }).optional().or(z.literal("")),
+  phone: z.string().max(50).optional().or(z.literal("")),
+  email: z.string().max(200).email({ message: "Must be a valid email address" }).optional().or(z.literal("")),
 });
 
 export async function PATCH(
@@ -118,15 +126,31 @@ export async function PATCH(
   const result = PatchSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
 
-  const { seekUrl, ...rest } = result.data;
+  const { seekUrl, linkedinUrl, jobAdderUrl, phone, email, ...rest } = result.data;
+  // Trim, and treat a blank string as an explicit clear (→ null).
+  const blankToNull = (v: string | undefined) =>
+    v === undefined ? undefined : v.trim() === "" ? null : v.trim();
   const data: Record<string, unknown> = {
     ...rest,
     ...(seekUrl !== undefined && { seekUrl: seekUrl ? normaliseSeekUrl(seekUrl) : null }),
+    ...(linkedinUrl !== undefined && { linkedinUrl: blankToNull(linkedinUrl) }),
+    ...(jobAdderUrl !== undefined && { jobAdderUrl: blankToNull(jobAdderUrl) }),
+    ...(phone !== undefined && { phone: blankToNull(phone) }),
+    ...(email !== undefined && { email: blankToNull(email) }),
   };
 
-  const updated = await prisma.candidate.update({
-    where: { id },
-    data,
-  });
-  return NextResponse.json(updated);
+  try {
+    const updated = await prisma.candidate.update({ where: { id }, data });
+    return NextResponse.json(updated);
+  } catch (e) {
+    // @@unique([jobId, linkedinUrl]) — another candidate on this job already
+    // holds that LinkedIn URL. Surface a clear 409 instead of a 500.
+    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
+      return NextResponse.json(
+        { error: "Another candidate on this job already has that LinkedIn URL." },
+        { status: 409 },
+      );
+    }
+    throw e;
+  }
 }
