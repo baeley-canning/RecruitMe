@@ -20,7 +20,7 @@ Multi-tenant (org-scoped); currently one organisation (placeMe IT) with a 5-pers
 - **App:** Next.js 15 / React 19 / TypeScript, Prisma ORM, PostgreSQL 18 — hosted on **Railway** (auto-deploy from GitHub `main`).
 - **AI:** Anthropic Claude — **Haiku 4.5** for parsing & snippet scoring (cheap), **Sonnet 4.6** for full-profile scoring (quality). Cost-tracked per call with a daily spend cap.
 - **Scraper:** self-hosted mini-PC ("the box") running a persistent logged-in browser (Patchright) for LinkedIn + SEEK; reached over Tailscale. Single-worker by design (ban-avoidance).
-- **Storage:** CVs in an S3-compatible bucket (`t3.storageapi.dev`), **AES-256-GCM encrypted at rest**, original sender format preserved.
+- **Storage:** CVs **AES-256-GCM encrypted at rest**, original sender format preserved.
 
 ### Features shipped & working
 - **JD analysis** — Claude parses a pasted JD into structured requirements + search expansion + title variants.
@@ -81,7 +81,6 @@ Multi-tenant (org-scoped); currently one organisation (placeMe IT) with a 5-pers
 |---|---|---|
 | **Claude API (Anthropic)** | **~$15–40** | Mostly cheap Haiku (parsing, snippet scoring, insight extraction). With Sonnet scoring full profiles (~$0.05/score) cost rises with scoring volume; **hard-capped at $5/day** (≈ $150/mo ceiling) by the spend guard. Realistic steady-state ~$20–40. One-off: the talent-flywheel insight backfill (812 profiles, Haiku) cost **~$4** total. ⚠️ No fallback — if this balance hits zero, all AI stops (see constraints §2). |
 | **Railway** (app + Postgres + egress) | **$25** | Hosting: always-on Next app + Postgres (5 GB volume) + bandwidth. Operator-confirmed figure. |
-| **CV storage** (S3 / t3.storageapi.dev) | **~$1–3** | ~13.5k encrypted CVs (~8–12 GB est.) at S3-compatible rates + light egress. |
 | **Mini-PC scraper** (electricity) | **~$3–6** | Low-power i3 mini-PC 24/7 at NZ power rates. Internet = existing home line; Tailscale = free tier. |
 | **Domain** | **$0** | Railway subdomain (`*.up.railway.app`). Custom domain would add ~$1–2/mo. |
 | **Platform infra subtotal** | **~$45–75 / month** | Everything RecruitMe itself costs to run (recurring). |
@@ -101,5 +100,5 @@ Multi-tenant (org-scoped); currently one organisation (placeMe IT) with a 5-pers
 - **Data:** PostgreSQL 18 + Prisma; Postgres full-text search (FTS) for the talent pool.
 - **AI:** Anthropic SDK (Claude Haiku 4.5 + Sonnet 4.6); structured scoring pipeline with caching + cost tracking + spend caps.
 - **Scraping:** Node/TypeScript worker on a mini-PC, Patchright (patched Chromium), one persistent session per platform; polls the app's job queue (Postgres-backed `ScrapeJob`, priority + dedup).
-- **Infra:** Railway (CI real-DB gate on deploy), Tailscale (box networking), S3-compatible blob storage (encrypted CVs).
+- **Infra:** Railway (CI real-DB gate on deploy), Tailscale (box networking), encrypted blob storage for CVs.
 - **Repo:** GitHub `baeley-canning/RecruitMe`, deploy = push to `main`.
