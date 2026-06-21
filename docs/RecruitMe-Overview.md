@@ -2,18 +2,34 @@
 
 ## What it is
 
-RecruitMe finds and ranks candidates for your open roles. You paste in a job description, and the app pulls matching people from three places — our own talent pool (~16,000 profiles), **LinkedIn**, and **SEEK** — then uses **AI to score each person against the role** and hand you a ranked shortlist with a short, plain-English reason for every candidate. It keeps the rest organised too: candidate pipelines, notes, CVs, client companies, and placements — all in one place, with a login for each team member.
+RecruitMe is our in-house recruitment tool. It takes a job description and does the heavy lifting of sourcing: it searches across our **live JobAdder candidate base (~16,000 people)**, **LinkedIn**, and **SEEK** all at once, then uses **AI to score every candidate against that specific role** and hands back a ranked shortlist — each candidate with a short, plain-English explanation of why they fit (or don't).
 
-## How to use it
+In short, it turns *"here's a vacancy"* into *"here are your best-matched, ranked candidates, with reasons"* in minutes — and keeps the whole process (pipelines, notes, CVs, clients, and placements) in one place. Each team member has their own login.
 
-1. **Create a job.** Click *New Job* and paste the job description. The app automatically reads it into must-haves, nice-to-haves, seniority, location, and salary.
-2. **Find candidates.** Open the job and hit *Search*. It instantly shows matches from our talent pool, and pulls fresh results from LinkedIn and SEEK on demand.
-3. **Score them.** Click *Score all* — every candidate gets a **0–100 match score** with a written rationale, ranked best-first. (Scoring is on-demand so it only costs money when you ask for it.)
-4. **Shortlist & manage.** Move people through the pipeline (*Fetched → Scored → Shortlist → Contacted → Hired*), add notes, upload CVs, and tag candidates.
-5. **Pulse — catch people when they're looking.** Set a "watch" (e.g. *"Java" AND "Spring", Wellington*). RecruitMe re-checks SEEK on a schedule and pings you the moment someone matching **updates their profile** — an early signal they're open to a move.
-6. **Clients & placements.** Track client companies, submit candidates to them, and log placements with fees and follow-up reminders.
+## How it works — step by step
 
-Everything runs in the browser — nothing to install.
+1. **Create the job.** Click *New Job* and paste in the job description. The app's AI reads it and pulls out the must-haves, nice-to-haves, seniority, location, and salary automatically — no manual form-filling. You can adjust any of it afterwards.
+
+2. **Find candidates.** Open the job and hit *Search*. It instantly returns matches from our **live JobAdder pool**, and — on demand — pulls **fresh results from LinkedIn and SEEK** as well. Everything lands in one candidate list for that job, and the same person showing up across sources is automatically merged into one record.
+
+3. **Score them.** Click *Score all*. The AI rates each candidate **0–100** against the role's actual requirements, shows which must-haves they meet, and writes a short rationale — then ranks them best-first. Scoring only runs when you ask for it, so it only costs money when you choose to use it.
+
+4. **Work the shortlist.** Move candidates through the pipeline — *Fetched → Scored → Shortlist → Contacted → Hired* — and keep everything on each candidate's record: notes, screening details, uploaded CVs, tags, and their LinkedIn / JobAdder / SEEK links and contact details (all editable in place).
+
+5. **Pulse — catch people when they're actually looking.** This is the standout feature. You set up a "watch" — a saved search such as *"Java" AND ("Spring" OR "Spring Boot"), Wellington*. RecruitMe then re-checks SEEK on a schedule and alerts you the **moment someone matching updates their profile** — a strong early signal they're open to a move. It's like having someone watching the market for you around the clock; the updates stream into a live feed and the notifications bell, with the candidate linked.
+
+6. **Clients & placements.** Track your client companies, submit candidates to them from inside a job, and log placements with fees, guarantee periods, and automatic follow-up reminders — so nothing slips through the cracks.
+
+Everything runs in the browser — there's nothing to install, and it works from anywhere.
+
+## What makes it useful
+
+- **One search, three sources.** Instead of checking JobAdder, LinkedIn, and SEEK separately, a single search covers all three — and de-duplicates the same person across them.
+- **AI shortlisting with reasons.** You don't wade through 100 profiles; you read the top handful, each with a written reason — and you can trust the order because every candidate is scored against *this* role's real requirements, not a generic keyword match.
+- **Passive-candidate radar (Pulse).** Most of the strongest candidates aren't actively applying. Pulse surfaces them the instant they show a sign of moving — often before competitors notice.
+- **Everything in one place.** Sourcing, scoring, notes, CVs, client submissions, and placements — no spreadsheets, no juggling separate tools.
+- **Built for the team.** Each recruiter has their own login, and the admin view shows who's doing what (searches, scores, etc.), so activity and usage are visible at a glance.
+- **Cost-controlled.** The only usage-based cost (the AI) is capped daily, so it can never run away — and most actions (browsing, searching the pool) cost nothing.
 
 ## Costs
 
@@ -35,4 +51,4 @@ Everything runs in the browser — nothing to install.
 | Mini-PC electricity | ~$3–6 |
 | **Total** | **~$45–75 / month** |
 
-This is on top of the **SEEK and LinkedIn subscriptions** we already pay for. The AI line is the only one that varies — it scales with how much scoring is done and is capped so it can't run away.
+This is on top of the **SEEK, LinkedIn, and JobAdder subscriptions** we already pay for. The AI line is the only one that varies — it scales with how much scoring is done, and is capped so it can't run away. Everything else is essentially fixed.
