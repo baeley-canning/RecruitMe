@@ -25,6 +25,7 @@
 import type { Page } from "patchright";
 import { randomDelay } from "../humanizer.js";
 import { log } from "../util/log.js";
+import { warmSeekAccount } from "../session-manager.js";
 import { RateLimitError } from "./linkedin.js";
 import type { SearchCard } from "./linkedin-search.js";
 
@@ -153,6 +154,18 @@ export async function scrapeSeekSearch(
   // region" box optionally scopes location; the pink "SEEK" button submits.
   await page.goto(`${SEEK_HOST}/talentsearch/search`, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await randomDelay(2_000, 4_000);
+
+  // A cold talent-search nav can land in SEEK's advertiser-scope shuffle
+  // (/account/select ↔ /oauth/integration) when the account session isn't warm —
+  // this loops forever and was the real cause of the recurring "SEEK down".
+  // ensureSession→isSessionValid normally warms the scope first; if we still
+  // landed there (and it's NOT a genuine login bounce), warm it and retry once.
+  if (/\/account\/select|\/oauth\//i.test(page.url()) && !/authenticate\.seek\.com/i.test(page.url())) {
+    log.warn(`seek-search: landed on account/scope flow (${page.url()}) — warming advertiser scope and retrying`);
+    await warmSeekAccount(page).catch(() => {});
+    await page.goto(`${SEEK_HOST}/talentsearch/search`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await randomDelay(2_000, 4_000);
+  }
 
   if (AUTH_WALL.test(page.url())) {
     // The session isn't valid for this region's employer portal — run

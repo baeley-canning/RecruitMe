@@ -119,6 +119,32 @@ export async function loadSession(platform: string, context: BrowserContext): Pr
   }
 }
 
+// SEEK multi-advertiser accounts (placeMe has more than one) need the
+// account/advertiser scope established BEFORE /talentsearch/search will load.
+// Going straight to talent search "cold" spins forever in a
+// /account/select → /oauth/integration(loginWithScope) → /oauth/callback →
+// /talentsearch/search → /account/select loop. THIS — not auth — is the real
+// cause of the recurring "SEEK session expired / Pulse down": the patchright
+// login itself always succeeds, but the cold scope acquisition never settles.
+// Hitting /account/select WITHOUT a returnUrl lets SEEK resolve the single
+// effective account and land on /dashboard, warming the advertiser scope into
+// this browser context; the very next /talentsearch/search nav (scrapeSeekSearch,
+// same page) then loads instantly. Returns false (leaving the page wherever it
+// bounced) when the session is genuinely expired, so the caller re-authenticates.
+// Live-verified on the box 2026-06-22.
+export async function warmSeekAccount(page: Page): Promise<boolean> {
+  const host = process.env.SEEK_EMPLOYER_HOST ?? "https://nz.employer.seek.com";
+  await page.goto(`${host}/account/select`, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  // Resolves through /oauth/callback to /dashboard once the account is set; a
+  // genuinely expired session instead bounces to authenticate.seek.com/login.
+  await page
+    .waitForURL(/employer\.seek\.com\/(dashboard|talentsearch)/, { timeout: 20_000 })
+    .catch(() => {});
+  // Success = settled on an authed app page (dashboard/talentsearch), not still
+  // stuck in the account-select/oauth shuffle and not bounced to login.
+  return /employer\.seek\.com\/(dashboard|talentsearch)/.test(page.url());
+}
+
 export async function isSessionValid(platform: string, page: Page): Promise<boolean> {
   // A single probe: navigate to an authed page and check we weren't bounced to a
   // login URL. Throws only on a navigation error (timeout / network).
@@ -128,14 +154,13 @@ export async function isSessionValid(platform: string, page: Page): Promise<bool
       return !page.url().includes("/login") && !page.url().includes("/checkpoint");
     }
     if (platform === "seek") {
-      // SEEK Talent Search is region-specific. placeMe is an NZ account, so the
-      // session must be valid for the NZ employer portal (nz.employer.seek.com)
-      // — an AU-only session bounces to authenticate.seek.com here. Override the
-      // host with SEEK_EMPLOYER_HOST if the account region differs.
-      const host = process.env.SEEK_EMPLOYER_HOST ?? "https://nz.employer.seek.com";
-      await page.goto(`${host}/talentsearch/search`, { waitUntil: "domcontentloaded", timeout: 15_000 });
-      const u = page.url();
-      return u.includes("employer.seek.com") && !/authenticate\.seek\.com|\/(login|signin|sign-in|oauth)/i.test(u);
+      // Validate AND warm the advertiser scope in one step (placeMe is an NZ
+      // account on nz.employer.seek.com; override via SEEK_EMPLOYER_HOST). We
+      // deliberately do NOT probe /talentsearch/search directly: that loops on
+      // cold advertiser-scope acquisition (see warmSeekAccount). Warming via
+      // /account/select both checks the session IS authed (lands on /dashboard)
+      // and primes this context so the following scrapeSeekSearch nav loads.
+      return await warmSeekAccount(page);
     }
     if (platform === "jobadder") {
       // JobAdder uses regional subdomains (au6, us1, etc.) — match any
@@ -237,6 +262,11 @@ export async function authenticate(platform: string, page: Page): Promise<void> 
     // app). Accept either employer or talent host as the logged-in signal.
     await page.waitForURL(/(talent\.seek\.com\.au|employer\.seek\.com)(?!.*\/(login|oauth|sign-in))/, { timeout: 30_000 });
     log.info("seek: authenticated");
+    // Establish the advertiser scope so the session we save next can hit talent
+    // search directly — a fresh login lands on /account/select, which loops if
+    // not resolved first (multi-account portal; see warmSeekAccount). Best-effort:
+    // the per-job isSessionValid re-warms anyway.
+    await warmSeekAccount(page).catch(() => {});
   } else if (platform === "jobadder") {
     // No automated re-auth for JobAdder — credentials aren't in env and the
     // login flow has multi-step / 2FA dependent on the agency's setup. If the
