@@ -202,8 +202,17 @@ export async function GET() {
   // shouldn't restart-loop the app. But a blob-store outage means every CV
   // download is failing, so it MUST surface — `degraded` flips amber so the
   // ops dashboard / alerting catches it instead of /api/health staying green.
-  const overallOk = db.ok && scraper.ok;
-  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !!scraper.degraded);
+  // FATAL = only what the WEB APP itself needs to serve a request: the database.
+  // The box scraper runs on a SEPARATE machine (the mini-PC); the website serves
+  // perfectly well without it. Treating the scraper as fatal here was a migration
+  // artifact from when the app + scraper co-ran on the box — and because
+  // railway.toml uses /api/health as the DEPLOY healthcheck, a box/scraper outage
+  // flipped this to 503 and Railway restart-looped/failed the entire website (a
+  // box outage cascading into "can't open the app"). A down scraper is now
+  // DEGRADED (amber), never a 503 — its real state stays visible in
+  // checks.scraper.ok and the ops dashboard, but it can't take the site down.
+  const overallOk = db.ok;
+  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !scraper.ok || !!scraper.degraded);
 
   // Unauthenticated callers get LIVENESS ONLY — boolean per-check pills plus the
   // 200/503 status the systemd / Railway / updater healthchecks read (they don't
