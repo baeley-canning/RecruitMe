@@ -1,7 +1,9 @@
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured, predictAcceptance, buildScorePrompt } from "@/lib/ai";
+import { predictAcceptance } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
-import { AllProvidersFailedError } from "@/lib/ai/chat-with-failover";
+import { scoreCandidatesBatch } from "@/lib/ai/scoring";
+import type { BatchScoreInput } from "@/lib/ai/scoring";
+import { providerHealth, deriveProviderState } from "@/lib/provider-health";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
@@ -11,15 +13,21 @@ import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getRecruitingContext, getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { reportError } from "@/lib/error-reporting";
 import { mergeScoringError } from "@/lib/linkedin-capture";
-import { isLlamaScoreOffloadEnabled } from "@/lib/feature-flags";
-import { enqueueScoreJob } from "@/lib/scrape-queue";
 import { NextResponse } from "next/server";
 
 // Allow up to 5 minutes for large scoring runs. Without this, Vercel (and some
 // Railway proxy configurations) cut the connection at ~30s leaving partial results.
 export const maxDuration = 300;
 
-const CONCURRENCY = 3;
+// Outer group size for batched scoring (M1). Each group's candidates go to
+// scoreCandidatesBatch, which chunks internally at SCORE_BATCH_SIZE (5) and shares
+// the cached system block + per-role context across the batch — a ~5:1 cut in the
+// (often-Sonnet) scoring calls. The group also bounds the spend-cap re-check
+// cadence and the concurrent fan-out.
+const BATCH_GROUP_SIZE = 10;
+// Acceptance prediction has no batch form, so it stays 1:1; bound its fan-out so a
+// group doesn't fire BATCH_GROUP_SIZE concurrent (cheap Haiku) calls at once.
+const ACCEPTANCE_CONCURRENCY = 5;
 
 export async function POST(
   req: Request,
@@ -158,10 +166,10 @@ export async function POST(
   const total = candidates.length;
   let scored = 0;
   let cached = 0;
-  // Llama scoring offload: candidates handed to the box's local model because
-  // Claude AND Ollama-on-Railway were both down. Counted separately from
-  // `failed` — these aren't failures, they're deferred to the box.
-  let queued = 0;
+  // Box-Llama scoring offload was per-candidate and is dropped from the batched
+  // path (LLAMA_SCORE_OFFLOAD is off / no GPU; the single-score route retains it).
+  // Kept as a constant 0 so the streamed message shape stays unchanged for the UI.
+  const queued = 0;
   const failed: string[] = [];
   // Subset of `failed` that failed specifically because every AI provider was
   // down (Claude out + Ollama unreachable) while the offload flag was OFF. When
@@ -180,23 +188,12 @@ export async function POST(
       // Send total upfront so the client can show "0 of N" immediately.
       send({ scored: 0, total });
 
-      // Mid-loop spend-cap re-check cadence. The cap was checked once before
-      // we started — but with 11k+ candidates now scoreable in any org's
-      // library, a single bad run could blow past the cap before completing.
-      //
-      // The check runs at TWO cadences:
-      //   (1) Before every CONCURRENCY-wide chunk fires (concurrency boundary).
-      //       This is the precise gate: when the cap is tripped we abort
-      //       BEFORE the chunk's API calls are dispatched, so at most
-      //       CONCURRENCY (currently 3) calls land over the cap, not 25.
-      //   (2) Every SPEND_CHECK_EVERY candidates as a coarser backstop —
-      //       same logging cadence as before, kept so the abort message
-      //       still surfaces with a known periodic count if the per-chunk
-      //       check were ever bypassed (e.g. when CONCURRENCY === 1 and an
-      //       individual call is unusually expensive).
+      // Mid-run spend-cap re-check. The cap is checked once before we start, but
+      // with 11k+ candidates scoreable in a library a single run could blow past
+      // it — so we re-check before every BATCH_GROUP_SIZE-wide group dispatches,
+      // aborting BEFORE that group's API calls fire (at most one group lands over
+      // the cap).
       let cappedHit = false;
-      const SPEND_CHECK_EVERY = 25;
-      let sinceLastCapCheck = 0;
 
       const evaluateSpendCap = async (): Promise<boolean> => {
         const midSpend = await checkSpendCap(auth.orgId);
@@ -214,182 +211,155 @@ export async function POST(
         return false;
       };
 
-      for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+      // ─── PASS 1: partition — cache-hits (skip) vs needs-scoring ───────────
+      // No API calls here; mirrors the per-candidate cache check so only
+      // materially-changed candidates (or ?force=1) go to the scorer.
+      type ToScore = { id: string; scoreText: string; cacheKey: string; location: string | null };
+      const toScore: ToScore[] = [];
+      for (const candidate of candidates) {
+        // Synthesise a thin profile from name/headline/location when there's no
+        // full profileText — so LinkedIn/SEEK snippet finds get scored (as a
+        // low-confidence ESTIMATE) instead of silently skipped. Reject only when
+        // there's truly nothing (no profileText AND no headline AND no location).
+        const scoreText = (candidate.profileText && candidate.profileText.trim().length > 0)
+          ? candidate.profileText
+          : [candidate.name, candidate.headline, candidate.location].filter(Boolean).join("\n");
+        if (!scoreText || scoreText.trim().length < 10) continue;
+
+        const scoreCacheKey = buildScoreCacheKey({
+          profileText: scoreText,
+          parsedRole,
+          salary,
+          jobLocation: job.location,
+          jobLocation2: job.location2,
+          isRemote: job.isRemote,
+          weights,
+          correctionsVersion,
+        });
+
+        // Cache hit: profile + role + salary + location + weights unchanged AND a
+        // real score is already stored → skip the API call entirely.
+        if (
+          !force &&
+          candidate.profileTextHash === scoreCacheKey &&
+          candidate.matchScore !== null &&
+          candidate.scoreBreakdown
+        ) {
+          cached++;
+          send({ scored, cached, total });
+          continue;
+        }
+        toScore.push({ id: candidate.id, scoreText, cacheKey: scoreCacheKey, location: candidate.location });
+      }
+
+      // Per-candidate acceptance prediction (no batch form exists), bounded so a
+      // group doesn't fan out BATCH_GROUP_SIZE concurrent calls. A failure degrades
+      // to null — the score is still written, same tolerance the old
+      // Promise.allSettled path had.
+      const predictAcceptanceBounded = async (
+        group: ToScore[],
+      ): Promise<Map<string, Awaited<ReturnType<typeof predictAcceptance>> | null>> => {
+        const out = new Map<string, Awaited<ReturnType<typeof predictAcceptance>> | null>();
+        for (let j = 0; j < group.length; j += ACCEPTANCE_CONCURRENCY) {
+          const sub = group.slice(j, j + ACCEPTANCE_CONCURRENCY);
+          const settled = await Promise.all(sub.map((g) =>
+            predictAcceptance(g.scoreText, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId })
+              .then((a) => [g.id, a] as const)
+              .catch(() => [g.id, null] as const),
+          ));
+          for (const [cid, a] of settled) out.set(cid, a);
+        }
+        return out;
+      };
+
+      // ─── PASS 2: score in outer groups (M1 — batched) ─────────────────────
+      for (let i = 0; i < toScore.length; i += BATCH_GROUP_SIZE) {
         if (cappedHit) break;
-        // Per-chunk pre-flight cap check. The previous code only checked
-        // every 25 candidates AFTER the chunk completed, so a chunk of
-        // CONCURRENCY API calls straddling the cap could be billed in full
-        // before cappedHit flipped. The 25-wide post-chunk check below
-        // stays in as a coarser backstop / logging cadence.
-        if (i > 0 && await evaluateSpendCap()) break;
-        const chunk = candidates.slice(i, i + CONCURRENCY);
-        await Promise.all(
-          chunk.map(async (candidate) => {
-            // Synthesise a thin profile from name/headline/location when there's
-            // no full profileText — so LinkedIn/SEEK snippet finds get scored
-            // (as a low-confidence ESTIMATE) instead of silently skipped. Mirror
-            // the per-candidate score route. Reject only when there's truly
-            // nothing (no profileText AND no headline AND no location).
-            const scoreText = (candidate.profileText && candidate.profileText.trim().length > 0)
-              ? candidate.profileText
-              : [candidate.name, candidate.headline, candidate.location].filter(Boolean).join("\n");
-            if (!scoreText || scoreText.trim().length < 10) return;
-            const allowThin = scoreText.trim().length < 100;
+        if (await evaluateSpendCap()) break;
+        const group = toScore.slice(i, i + BATCH_GROUP_SIZE);
+        const inputs: BatchScoreInput[] = group.map((g) => ({ candidateId: g.id, profileText: g.scoreText }));
 
-            const scoreCacheKey = buildScoreCacheKey({
-              profileText: scoreText,
-              parsedRole,
-              salary,
-              jobLocation: job.location,
-              jobLocation2: job.location2,
-              isRemote: job.isRemote,
-              weights,
-              correctionsVersion,
+        // scoreCandidatesBatch chunks the group internally at SCORE_BATCH_SIZE (5),
+        // sharing the cached system block + per-role context across each batch (the
+        // ~5:1 scoring-call cut). It never THROWS on an AI failure — it returns
+        // deterministic stub breakdowns. Acceptance runs concurrently, bounded.
+        const [batchResults, acceptances] = await Promise.all([
+          scoreCandidatesBatch(inputs, parsedRole, salary, weights, auth.orgId, recruiterContext)
+            .catch((err) => {
+              reportError(err, { route: "score-all:batch", jobId: id, orgId: auth.orgId });
+              return null;
+            }),
+          predictAcceptanceBounded(group),
+        ]);
+
+        // OUTAGE GUARD. Because the batch returns stubs (not throws) on a provider
+        // outage, persisting them with the cache key would PERMANENTLY cache stub
+        // scores (skipped on every future non-force run). chat.ts records each
+        // Claude failure in provider-health, and a credit-out is FATAL
+        // (consecutiveFailures→"down"), so "claude down" right after the batch means
+        // these are outage stubs. Flag them re-scoreable (NO cache key) + surface
+        // "AI unavailable" — the same outcome as the old per-candidate outage path —
+        // and stop (no point continuing while Claude is down).
+        const claudeDown = deriveProviderState("claude", providerHealth.claude) === "down";
+        if (batchResults === null || claudeDown) {
+          for (const g of group) {
+            failed.push(g.id);
+            providerOutageFails++;
+            const current = await prisma.candidate.findUnique({
+              where: { id: g.id },
+              select: { screeningData: true },
+            }).catch(() => null);
+            await prisma.candidate.updateMany({
+              where: { id: g.id },
+              data: {
+                matchScore: null,
+                screeningData: mergeScoringError(current?.screeningData ?? null, "AI scoring unavailable (provider outage) — re-score when restored."),
+              },
+            }).catch((flagErr) => {
+              reportError(flagErr, { route: "score-all:flag-outage", jobId: id, orgId: auth.orgId, candidateId: g.id });
             });
+            send({ scored, cached, queued, total });
+          }
+          break;
+        }
 
-            // Cache hit: profile text + role + salary + location + weights
-            // all match what was previously scored. Skip the API call
-            // entirely. Saves Sonnet/Haiku tokens on every re-pull of a
-            // candidate that hasn't materially changed. Only writes the
-            // hash + matchScore are already present — if the candidate has
-            // a stored hash but no score (rare), fall through and rescore.
-            if (
-              !force &&
-              candidate.profileTextHash === scoreCacheKey &&
-              candidate.matchScore !== null &&
-              candidate.scoreBreakdown
-            ) {
-              cached++;
-              send({ scored, cached, total });
-              return;
-            }
-
-            try {
-              // No withRetry wrapper here — scoreCandidateStructured /
-              // predictAcceptance already route through chatWithFailover,
-              // which retries internally (primary → secondary). Stacking
-              // a 3-attempt withRetry on top means a single Claude
-              // outage triggers up to 6 API calls per candidate
-              // (3 × Claude + 3 × Ollama) instead of 2.
-              const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-                scoreCandidateStructured(scoreText, parsedRole, salary, weights, auth.orgId, recruiterContext, allowThin),
-                predictAcceptance(scoreText, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
-              ]);
-              if (rawBreakdown.status === "rejected") throw rawBreakdown.reason;
-              const breakdown = applyLocationFitOverride(
-                rawBreakdown.value,
-                candidate.location,
-                getJobTargetLocation(job, parsedRole),
-                parsedRole.location_rules,
-                job.isRemote,
-                weights,
-              );
-              const acceptance = acceptanceResult.status === "fulfilled" ? acceptanceResult.value : null;
-              await prisma.candidate.update({
-                where: { id: candidate.id },
-                data: {
-                  ...deriveUpdateData(breakdown),
-                  profileTextHash: scoreCacheKey,
-                  ...(acceptance && {
-                    acceptanceScore: acceptance.score,
-                    acceptanceReason: JSON.stringify(acceptance),
-                  }),
-                },
-              });
-              scored++;
-              send({ scored, cached, total });
-            } catch (err) {
-              // Offload path: Claude is out AND Ollama-on-Railway is
-              // unreachable (AllProvidersFailedError). With the flag on, hand
-              // this candidate's scoring prompt to the mini-PC box (its own
-              // local Ollama) instead of flagging it failed. Railway builds the
-              // prompt + finalizes the box's raw text later. Flag OFF → fall
-              // through to the existing failure-flag path (unchanged).
-              if (err instanceof AllProvidersFailedError && isLlamaScoreOffloadEnabled() && auth.orgId) {
-                const built = buildScorePrompt(
-                  scoreText,
-                  parsedRole,
-                  salary,
-                  weights,
-                  recruiterContext ?? "",
-                  auth.orgId,
-                );
-                if (built.kind === "stub") {
-                  // Deterministic stub — no model needed; score locally so the
-                  // candidate still gets a number (no offload).
-                  const breakdown = applyLocationFitOverride(
-                    built.breakdown,
-                    candidate.location,
-                    getJobTargetLocation(job, parsedRole),
-                    parsedRole.location_rules,
-                    job.isRemote,
-                    weights,
-                  );
-                  await prisma.candidate.update({
-                    where: { id: candidate.id },
-                    data: { ...deriveUpdateData(breakdown), profileTextHash: scoreCacheKey },
-                  }).catch(() => {});
-                  scored++;
-                } else {
-                  await enqueueScoreJob({
-                    orgId: auth.orgId,
-                    candidateId: candidate.id,
-                    scorePayload: {
-                      system: built.system,
-                      prompt: built.userPrompt,
-                      temperature: built.temperature,
-                      maxTokens: built.maxTokens,
-                      finalizeCtx: built.finalizeCtx,
-                      // Race guards: the candidate's hash NOW + the cache key
-                      // this score should stamp (same as the synchronous path).
-                      expectedProfileTextHash: candidate.profileTextHash ?? null,
-                      scoreCacheKey,
-                    },
-                  });
-                  queued++;
-                }
-                send({ scored, cached, queued, total });
-                return;
-              }
-              reportError(err, { route: "score-all", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
-              failed.push(candidate.id);
-              // Track provider-outage failures separately so the final summary
-              // can distinguish "Claude is down" from "this candidate's data is
-              // bad". Reaching here with AllProvidersFailedError means the
-              // offload flag was off (the flag-on branch returns above).
-              if (err instanceof AllProvidersFailedError) providerOutageFails++;
-              // Surface the failure on the candidate row so the recruiter
-              // sees "scoring blew up" on each failed card rather than
-              // "Scored 0" with no per-candidate trail. updateMany scoped
-              // to this candidate id keeps the write non-destructive even
-              // if the row was deleted mid-run; read existing screeningData
-              // first so we merge instead of clobbering recruiter notes.
-              const reason = err instanceof Error ? err.message : String(err);
-              const current = await prisma.candidate.findUnique({
-                where: { id: candidate.id },
-                select: { screeningData: true },
-              }).catch(() => null);
-              await prisma.candidate.updateMany({
-                where: { id: candidate.id },
-                data: {
-                  matchScore: null,
-                  screeningData: mergeScoringError(current?.screeningData ?? null, reason),
-                },
-              }).catch((flagErr) => {
-                reportError(flagErr, { route: "score-all:flag-failure", jobId: id, orgId: auth.orgId, candidateId: candidate.id });
-              });
-            }
-          })
-        );
-
-        // Periodically re-verify the spend cap. The pre-chunk check above
-        // catches most cases; this 25-wide post-chunk check is the coarser
-        // backstop kept for log cadence and as a safety net.
-        sinceLastCapCheck += chunk.length;
-        if (sinceLastCapCheck >= SPEND_CHECK_EVERY) {
-          sinceLastCapCheck = 0;
-          await evaluateSpendCap();
-          // break out of the outer for-loop via the cappedHit guard
+        const breakdownById = new Map(batchResults.map((r) => [r.candidateId, r.breakdown]));
+        for (const g of group) {
+          const raw = breakdownById.get(g.id);
+          if (!raw) {
+            // Defensive: scoreCandidatesBatch returns one entry per input, but if a
+            // candidate is ever missing, flag it (re-scoreable) rather than drop it.
+            failed.push(g.id);
+            send({ scored, cached, queued, total });
+            continue;
+          }
+          const breakdown = applyLocationFitOverride(
+            raw,
+            g.location,
+            getJobTargetLocation(job, parsedRole),
+            parsedRole.location_rules,
+            job.isRemote,
+            weights,
+          );
+          const acceptance = acceptances.get(g.id) ?? null;
+          try {
+            await prisma.candidate.update({
+              where: { id: g.id },
+              data: {
+                ...deriveUpdateData(breakdown),
+                profileTextHash: g.cacheKey,
+                ...(acceptance && {
+                  acceptanceScore: acceptance.score,
+                  acceptanceReason: JSON.stringify(acceptance),
+                }),
+              },
+            });
+            scored++;
+          } catch (err) {
+            reportError(err, { route: "score-all:write", jobId: id, orgId: auth.orgId, candidateId: g.id });
+            failed.push(g.id);
+          }
+          send({ scored, cached, queued, total });
         }
       }
 
