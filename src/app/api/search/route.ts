@@ -14,6 +14,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { parseIntParam } from "@/lib/utils";
 import { z } from "zod";
 import { getAuth, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
@@ -207,7 +208,7 @@ export async function GET(req: Request) {
   if (!auth) return unauthorized();
 
   const url = new URL(req.url);
-  const limit = Math.min(Number(url.searchParams.get("limit") ?? 20), 50);
+  const limit = parseIntParam(url.searchParams.get("limit"), { min: 1, max: 50, default: 20 });
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
 
   const where = accessibleOrgIds === null ? {} : { orgId: { in: accessibleOrgIds } };

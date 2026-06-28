@@ -405,6 +405,14 @@ export interface LibraryStats {
  * under-reported and grew as you clicked "Load more" — i.e. the counts lied.
  * Keep the dedup logic in sync with getLibraryCandidates above.
  */
+// Short-TTL in-memory cache for the stat triple, keyed by the org SCOPE (never
+// cross-org — owner "all" and a specific org are distinct keys; counts carry no
+// PII). The stats change slowly, but this is an unbounded full-library scan run
+// on every dashboard + Candidates load, so caching for a minute avoids re-scanning
+// on each refresh. Per-process (resets on deploy) — fine for operational counts.
+const LIBRARY_STATS_TTL_MS = 60_000;
+const libraryStatsCache = new Map<string, { value: LibraryStats; expires: number }>();
+
 export async function getLibraryStats(auth: AuthResult): Promise<LibraryStats> {
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
   if (accessibleOrgIds !== null && accessibleOrgIds.length === 0) {
@@ -412,6 +420,10 @@ export async function getLibraryStats(auth: AuthResult): Promise<LibraryStats> {
   }
   const orgIdsParam = accessibleOrgIds ?? [];
   const useOrgFilter = accessibleOrgIds !== null;
+
+  const cacheKey = useOrgFilter ? [...orgIdsParam].sort().join(",") : "__all__";
+  const hit = libraryStatsCache.get(cacheKey);
+  if (hit && hit.expires > Date.now()) return hit.value;
 
   // Same eligibility conditions as getLibraryCandidates (length-gate + orphan
   // guard + org scope) — NO cursor, NO limit (we count the whole library).
@@ -468,5 +480,7 @@ export async function getLibraryStats(auth: AuthResult): Promise<LibraryStats> {
     if (p.matchScore !== null && scoreTier(p.matchScore, "match") === "strong") strongMatches++;
     if (p.hasCv) withCV++;
   }
-  return { total, strongMatches, withCV };
+  const result: LibraryStats = { total, strongMatches, withCV };
+  libraryStatsCache.set(cacheKey, { value: result, expires: Date.now() + LIBRARY_STATS_TTL_MS });
+  return result;
 }

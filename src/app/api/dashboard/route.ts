@@ -10,7 +10,7 @@ export async function GET() {
 
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // last 7 days
 
-  const [jobs, recentCaptures, recentSearches] = await Promise.all([
+  const [jobs, recentCaptures, recentSearches, libraryStats] = await Promise.all([
     // All active jobs with candidate stats
     prisma.job.findMany({
       where: { status: "active", ...jobsWhere(auth) },
@@ -86,6 +86,10 @@ export async function GET() {
         job: { select: { id: true, title: true } },
       },
     }),
+
+    // Library stat triple (deduped people / strong / with-CV) — runs in parallel
+    // with the queries above since it only needs `auth` (was serial-awaited below).
+    getLibraryStats(auth),
   ]);
 
   // The nested `candidates` select above is CAPPED at 50 (top by matchScore) so
@@ -97,8 +101,6 @@ export async function GET() {
   // headline summed per-job pipeline rows, which double-counted anyone in
   // multiple jobs and skipped library-only people, so it read ~1250 while the
   // library showed ~713 — looked like the count was lying.)
-  const libraryStats = await getLibraryStats(auth);
-
   const jobIds = jobs.map((j) => j.id);
   const [byJob, shortlistedByJob, needsFetchByJob] = jobIds.length
     ? await Promise.all([

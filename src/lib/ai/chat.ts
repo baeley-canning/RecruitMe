@@ -149,8 +149,12 @@ export async function chat(
     }
     recordProviderSuccess("claude");
 
+    // Guard the empty-content edge: a degenerate stop / content-filter response
+    // can return content: [], so `content[0].type` would throw a TypeError that
+    // escapes direct chat() callers (some bypass the failover wrapper). Optional
+    // chain → return "" (an empty completion) instead of crashing.
     const block = response.content[0];
-    return block.type === "text" ? block.text : "";
+    return block?.type === "text" ? block.text : "";
   }
 
   // ── Ollama (local LLM on the mini-PC, OpenAI-compatible endpoint) ──

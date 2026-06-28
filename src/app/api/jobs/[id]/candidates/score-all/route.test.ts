@@ -35,7 +35,9 @@ const aiMocks = vi.hoisted(() => ({
 
 // provider-health drives the outage guard. Default "healthy"; a test flips it to
 // "down" to simulate a credit-out mid-run.
-const healthMocks = vi.hoisted(() => ({ deriveProviderState: vi.fn(() => "healthy" as const) }));
+const healthMocks = vi.hoisted(() => ({
+  deriveProviderState: vi.fn((): "healthy" | "degraded" | "down" | "unconfigured" | "untested" => "healthy"),
+}));
 
 const sessionMocks = vi.hoisted(() => ({
   getAuth: vi.fn(),

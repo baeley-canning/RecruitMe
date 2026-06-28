@@ -21,6 +21,7 @@ import { getAuth, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { parseBooleanQuery } from "@/lib/boolean-query";
 import { searchLibrary } from "@/lib/talent-search/library";
+import { parseIntParam } from "@/lib/utils";
 
 export async function GET(req: Request) {
   const auth = await getAuth();
@@ -29,7 +30,7 @@ export async function GET(req: Request) {
   const url      = new URL(req.url);
   const q        = url.searchParams.get("q") ?? "";
   const location = url.searchParams.get("location");
-  const limit    = Math.min(Number(url.searchParams.get("limit") ?? 100), 500);
+  const limit    = parseIntParam(url.searchParams.get("limit"), { min: 1, max: 500, default: 100 });
 
   const accessibleOrgIds = await getAccessibleOrgIds(auth);
   const parsed = parseBooleanQuery(q);

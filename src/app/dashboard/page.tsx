@@ -35,13 +35,28 @@ function evalColour(ev: string | null) {
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setError(false);
     fetch("/api/dashboard", { cache: "no-store" })
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(setData)
-      .catch(() => {});
-  }, []);
+      .catch(() => setError(true));
+  };
+  useEffect(() => { load(); }, []);
+
+  // Error state — a fetch failure (auth expiry / 500 / network) must not leave a
+  // permanent spinner; show a clear message + retry instead.
+  if (error && !data) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+        <AlertCircle className="w-6 h-6 text-danger" />
+        <p className="text-sm text-text-secondary">Couldn&apos;t load the dashboard.</p>
+        <button onClick={load} className="text-sm text-accent hover:underline">Retry</button>
+      </div>
+    );
+  }
 
   if (!data) {
     return (

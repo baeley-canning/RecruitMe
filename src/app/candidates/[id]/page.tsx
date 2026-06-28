@@ -707,35 +707,46 @@ export default function CandidateDetailPage({
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [notes, setNotes] = useState("");
   const [notesStatus, setNotesStatus] = useState<"idle" | "saving" | "saved">("idle");
 
-  useEffect(() => {
+  const loadCandidate = useCallback(() => {
+    setLoading(true); setLoadError(false); setNotFound(false);
     fetch(`/api/candidates/${id}`)
       .then((r) => {
         if (r.status === 404 || r.status === 403) { setNotFound(true); return null; }
+        // A transient error (500 / dropped connection) is NOT "not found" — surface
+        // it distinctly with a retry instead of the misleading "Candidate not found".
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then((data) => {
-        if (data) {
-          setCandidate(data);
-          setNotes(data.notes ?? "");
-        }
+        if (data) { setCandidate(data); setNotes(data.notes ?? ""); }
       })
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
   }, [id]);
+  useEffect(() => { loadCandidate(); }, [loadCandidate]);
 
   const saveNotes = useCallback(async () => {
     if (!candidate) return;
     setNotesStatus("saving");
-    await fetch(`/api/candidates/${candidate.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes }),
-    });
-    setNotesStatus("saved");
-    setTimeout(() => setNotesStatus("idle"), 2000);
+    try {
+      const res = await fetch(`/api/candidates/${candidate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setNotesStatus("saved");
+      setTimeout(() => setNotesStatus("idle"), 2000);
+    } catch {
+      // Never show "saved" on a failed PATCH — tell the user it didn't stick.
+      setNotesStatus("idle");
+      showToast("Couldn't save notes — try again.", "error");
+    }
   }, [candidate, notes]);
 
   const handleFileUploaded = useCallback((file: CandidateFile) => {
@@ -752,19 +763,36 @@ export default function CandidateDetailPage({
 
   const handleSuitabilityChange = useCallback(async (next: "preferred" | "excluded" | null) => {
     if (!candidate) return;
+    const prevSuitability = candidate.suitability;
     // Optimistic update — flips the segmented control immediately.
     setCandidate((prev) => prev ? { ...prev, suitability: next } : prev);
-    await fetch(`/api/candidates/${candidate.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ suitability: next }),
-    });
+    try {
+      const res = await fetch(`/api/candidates/${candidate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suitability: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      // Roll back the optimistic flip so the UI doesn't lie about a failed save.
+      setCandidate((prev) => prev ? { ...prev, suitability: prevSuitability } : prev);
+      showToast("Couldn't update suitability — try again.", "error");
+    }
   }, [candidate]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-5 h-5 animate-spin text-text-tertiary" />
+      </div>
+    );
+  }
+
+  if (loadError && !candidate) {
+    return (
+      <div className="p-8 text-center text-text-secondary text-base">
+        Couldn&apos;t load this candidate.{" "}
+        <button onClick={loadCandidate} className="text-accent hover:text-accent-hover">Retry</button>
       </div>
     );
   }

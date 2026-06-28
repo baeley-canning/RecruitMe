@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseIntParam } from "@/lib/utils";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -27,7 +28,7 @@ export async function GET(req: Request) {
   }
 
   const url = new URL(req.url);
-  const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days") ?? 30)));
+  const days = parseIntParam(url.searchParams.get("days"), { min: 1, max: 90, default: 30 });
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   const [events, byUserEvents, orgs, users, recentRaw] = await Promise.all([

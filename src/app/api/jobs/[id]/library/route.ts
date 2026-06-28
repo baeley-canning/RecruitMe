@@ -17,7 +17,7 @@ import type { ParsedRole } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
-import { safeParseJson, buildScoreCacheKey } from "@/lib/utils";
+import { safeParseJson, buildScoreCacheKey, parseIntParam } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getAccessibleOrgIds, candidateOrgFilter } from "@/lib/org-access";
 import { shouldRejectAsOverseas } from "@/lib/location";
@@ -50,7 +50,7 @@ export async function GET(
 
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
-  const limit = Math.min(200, Math.max(10, Number(url.searchParams.get("limit") ?? 50)));
+  const limit = parseIntParam(url.searchParams.get("limit"), { min: 10, max: 200, default: 50 });
   // SQL `take` previously hard-coded 500 regardless of ?limit=. For small
   // limit= requests this dragged the whole 500-row dedupe loop through Node
   // memory just to slice down to (say) 25 rows. Honour the caller's cap

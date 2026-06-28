@@ -132,6 +132,22 @@ export function safeParseJson<T>(str: string | null | undefined, fallback: T): T
   }
 }
 
+/**
+ * Parse an integer query-param NaN-safely and clamp to [min, max]. `?? default`
+ * alone only guards a MISSING param — a present-but-non-numeric value (e.g.
+ * ?limit=abc) yields Number("abc") = NaN, which Math.min/Math.max do NOT clamp,
+ * so it flows into raw-SQL `LIMIT NaN` / `new Date(now - NaN)` as a 500. This
+ * coerces any non-finite value to `default` and clamps the rest.
+ */
+export function parseIntParam(
+  raw: string | null | undefined,
+  opts: { min: number; max: number; default: number },
+): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return opts.default;
+  return Math.min(opts.max, Math.max(opts.min, Math.trunc(n)));
+}
+
 export function timeAgo(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   const diff = Date.now() - d.getTime();
