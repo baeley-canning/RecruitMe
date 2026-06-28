@@ -38,10 +38,23 @@ function isTailscale(ip: string): boolean {
 }
 
 function clientIp(req: NextRequest): string {
-  // Caddy puts the real client IP first in X-Forwarded-For.
+  // SECURITY: the FIRST X-Forwarded-For entry is CLIENT-controllable. Caddy
+  // APPENDS the real peer to the END of XFF (and sets X-Real-IP), so the trusted
+  // value is X-Real-IP / the LAST hop — never the first. Reading the first entry
+  // (as this did) let a LAN client forge a 100.64.x.x Tailscale IP and pass the
+  // gate guarding the root-privileged box-control executor (restart/reboot/wifi/
+  // logs). Prefer X-Real-IP (the immediate peer Caddy observed), else the last
+  // XFF hop. NOTE: this is a SECONDARY control — Next must not be directly
+  // LAN-reachable, and Caddy should pin `trusted_proxies`; a shared-secret on the
+  // box-control POSTs would make the gate self-sufficient.
+  const real = req.headers.get("x-real-ip");
+  if (real && real.trim()) return real.trim();
   const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  return req.headers.get("x-real-ip") ?? "";
+  if (xff) {
+    const hops = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
+  }
+  return "";
 }
 
 /**

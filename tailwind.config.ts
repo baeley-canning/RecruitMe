@@ -44,7 +44,7 @@ const config: Config = {
         text: {
           primary:   "#f5f5f7",  // headlines, key data
           secondary: "#a1a1a6",  // body labels, meta
-          tertiary:  "#6e6e73",  // captions, placeholders, disabled
+          tertiary:  "#86868b",  // captions, placeholders, disabled — WCAG AA (~4.5:1 on base/raised; was #6e6e73 at ~3.4:1)
           inverse:   "#1d1d1f",  // text-on-accent for high-contrast surfaces
         },
         accent: {
