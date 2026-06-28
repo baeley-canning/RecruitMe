@@ -134,15 +134,23 @@ export async function loadSession(platform: string, context: BrowserContext): Pr
 // Live-verified on the box 2026-06-22.
 export async function warmSeekAccount(page: Page): Promise<boolean> {
   const host = process.env.SEEK_EMPLOYER_HOST ?? "https://nz.employer.seek.com";
-  await page.goto(`${host}/account/select`, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  await page.goto(`${host}/account/select`, { waitUntil: "domcontentloaded", timeout: 30_000 });
   // Resolves through /oauth/callback to /dashboard once the account is set; a
   // genuinely expired session instead bounces to authenticate.seek.com/login.
-  await page
-    .waitForURL(/employer\.seek\.com\/(dashboard|talentsearch)/, { timeout: 20_000 })
-    .catch(() => {});
+  // Generous timeout: the /account/select → /oauth/callback → /dashboard chain
+  // can be slow on a cold session load, and a premature false-negative here
+  // cascades into a doomed re-auth (see authenticate()), so wait it out.
+  const settled = /employer\.seek\.com\/(dashboard|talentsearch)/;
+  await page.waitForURL(settled, { timeout: 30_000 }).catch(() => {});
+  if (settled.test(page.url())) return true;
+  // One retry — a single cold redirect chain occasionally stalls; re-kick it.
+  if (!/authenticate\.seek\.com/i.test(page.url())) {
+    await page.goto(`${host}/account/select`, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+    await page.waitForURL(settled, { timeout: 30_000 }).catch(() => {});
+  }
   // Success = settled on an authed app page (dashboard/talentsearch), not still
   // stuck in the account-select/oauth shuffle and not bounced to login.
-  return /employer\.seek\.com\/(dashboard|talentsearch)/.test(page.url());
+  return settled.test(page.url());
 }
 
 export async function isSessionValid(platform: string, page: Page): Promise<boolean> {
@@ -248,8 +256,25 @@ export async function authenticate(platform: string, page: Page): Promise<void> 
     // with the NZ redirect_uri. Override host via SEEK_EMPLOYER_HOST.
     const host = process.env.SEEK_EMPLOYER_HOST ?? "https://nz.employer.seek.com";
     await page.goto(`${host}/talentsearch/search`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    // RESILIENCE: a still-valid saved session does NOT render the login form here
+    // — it redirects within the employer portal (/account/select, /dashboard,
+    // /oauth/*). Probe for the email field with a SHORT timeout: if it never
+    // appears, we're already logged in, so just warm the scope and return.
+    // (The old code waited 30s for an email field that never comes on a valid
+    // session — that threw, and after 3 such throws the auth circuit latched OPEN
+    // on a perfectly good session. That false-negative cascade is what kept Pulse
+    // down after the box came back online: isSessionValid can flake on a cold load,
+    // and the doomed re-auth then bricked SEEK for the 2h cooldown.)
     const emailInput = page.locator('#emailAddress, input[name="emailAddress_hirer"], input[type="email"]').first();
-    await emailInput.waitFor({ state: "visible", timeout: 30_000 });
+    const needsLogin = await emailInput
+      .waitFor({ state: "visible", timeout: 12_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!needsLogin) {
+      log.info(`seek: session still valid (no login form at ${page.url()}) — warming scope, skipping credential login`);
+      await warmSeekAccount(page).catch(() => {});
+      return;
+    }
     await randomDelay(800, 1500);
     await humanType(emailInput, email);
     await randomDelay(400, 900);
