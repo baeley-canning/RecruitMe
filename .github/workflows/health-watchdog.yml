@@ -1,0 +1,63 @@
+name: health-watchdog
+
+# OFF-BOX health watchdog. Runs on GitHub's infra (NOT the box, NOT Railway), so
+# it can still alert when the box or the app is down — the whole point. It probes
+# the public /api/health and FAILS the job when something material is down; GitHub
+# then emails the repo owner about the failed run.
+#
+# Covers both latent landmines we hit:
+#   • box/scraper offline  -> checks.scraper.ok = false  (Pulse + live search stall)
+#   • AI credit-out cliff  -> checks.ai.ok = false       (scoring silently failing)
+#   • app/DB down          -> unreachable or checks.db.ok = false
+#
+# To RECEIVE the alerts: GitHub → Settings → Notifications → Actions → enable
+# "Send notifications for failed workflows only" (on by default for your own repos).
+# Cron is best-effort (~5–15 min granularity; GitHub can delay scheduled runs under
+# load) — fine for a "within minutes, not days" heads-up.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+# Don't pile up overlapping runs if one is slow.
+concurrency:
+  group: health-watchdog
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe /api/health
+        env:
+          HEALTH_URL: https://recruitme-production-8cc6.up.railway.app/api/health
+        run: |
+          set -uo pipefail
+          echo "Probing $HEALTH_URL"
+          ok=0
+          for i in 1 2 3; do
+            if body=$(curl -fsS --max-time 25 "$HEALTH_URL"); then ok=1; break; fi
+            echo "fetch attempt $i failed; retrying in 10s"; sleep 10
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error title=RecruitMe DOWN::/api/health unreachable after 3 attempts — app or Railway is down"
+            exit 1
+          fi
+          printf '%s' "$body" > health.json
+          echo "Response:"; cat health.json; echo
+          node -e '
+            const h = JSON.parse(require("fs").readFileSync("health.json", "utf8"));
+            const c = h.checks || {};
+            const problems = [];
+            if (c.db && !c.db.ok)           problems.push("DB down");
+            if (c.scraper && !c.scraper.ok) problems.push("box/scraper down — Pulse + live search stalled");
+            if (c.ai && !c.ai.ok)           problems.push("AI down — out of credit or bad key, scoring is failing");
+            if (problems.length) {
+              console.log("::error title=RecruitMe UNHEALTHY::" + problems.join("  |  "));
+              process.exit(1);
+            }
+            const note = h.degraded ? " (degraded, non-critical: " + JSON.stringify(c) + ")" : "";
+            console.log("RecruitMe healthy" + note);
+          '

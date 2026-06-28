@@ -60,6 +60,7 @@ interface HealthResponse {
     scraper: CheckResult;
     blob: CheckResult;
     cv: CheckResult;
+    ai: CheckResult;
   };
   version: string;
   uptimeSec: number;
@@ -71,6 +72,42 @@ interface HealthResponse {
 
 const PROCESS_STARTED_AT = Date.now();
 const SCRAPER_STALE_MS = 10 * 60 * 1000;
+const AI_ERROR_WINDOW_MS = 15 * 60 * 1000;
+
+// AI availability (the "credit-out cliff" guard). Prod AI is 100% Claude with NO
+// fallback, so when the Anthropic balance hits $0 every scoring/insight call fails
+// (insufficient_credit) and — invisibly — nothing gets scored. There's no live
+// balance API, so the signal is the SYMPTOM: a recent `ai_error` of reason
+// insufficient_credit (out of money) or auth (bad/rotated key) in the last 15 min.
+// DEGRADED, never fatal: AI is a feature, not something the website needs to serve
+// a page, so it must NOT 503 the app (same reasoning as the scraper decoupling).
+// The off-box watchdog reads checks.ai.ok and alerts the owner — turning "noticed
+// days later" into "emailed within ~15 min of the first failed call".
+async function checkAi(): Promise<CheckResult> {
+  try {
+    const since = new Date(Date.now() - AI_ERROR_WINDOW_MS);
+    const recent = await prisma.usageEvent.findMany({
+      where: { type: "ai_error", createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: { meta: true },
+    });
+    let credit = 0;
+    let auth = 0;
+    for (const e of recent) {
+      let reason = "other";
+      try { reason = (JSON.parse(e.meta ?? "{}") as { reason?: string }).reason ?? "other"; } catch { /* keep other */ }
+      if (reason === "insufficient_credit") credit++;
+      else if (reason === "auth") auth++;
+    }
+    if (credit > 0) return { ok: false, degraded: true, detail: `${credit} insufficient_credit error(s) in 15m — prod AI is OUT OF CREDIT (top up Anthropic)` };
+    if (auth > 0) return { ok: false, degraded: true, detail: `${auth} auth error(s) in 15m — check ANTHROPIC_API_KEY` };
+    return { ok: true };
+  } catch (err) {
+    // A query failure here must never alarm or 503 — report ok with a note.
+    return { ok: true, detail: `ai check skipped: ${err instanceof Error ? err.message : "error"}` };
+  }
+}
 
 async function checkDb(): Promise<CheckResult> {
   try {
@@ -189,12 +226,13 @@ async function checkCvEncryption(): Promise<CheckResult> {
 }
 
 export async function GET() {
-  const [db, ollama, scraper, blob, cv] = await Promise.all([
+  const [db, ollama, scraper, blob, cv, ai] = await Promise.all([
     checkDb(),
     checkOllama(),
     checkScraper(),
     probeBlobStore(),
     checkCvEncryption(),
+    checkAi(),
   ]);
 
   // Only DB + scraper are FATAL. Ollama (Claude failover) and the blob store
@@ -212,7 +250,7 @@ export async function GET() {
   // DEGRADED (amber), never a 503 — its real state stays visible in
   // checks.scraper.ok and the ops dashboard, but it can't take the site down.
   const overallOk = db.ok;
-  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !scraper.ok || !!scraper.degraded);
+  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !scraper.ok || !!scraper.degraded || !ai.ok);
 
   // Unauthenticated callers get LIVENESS ONLY — boolean per-check pills plus the
   // 200/503 status the systemd / Railway / updater healthchecks read (they don't
@@ -231,6 +269,7 @@ export async function GET() {
           scraper: { ok: scraper.ok, ...(scraper.degraded ? { degraded: true } : {}) },
           blob: { ok: blob.ok },
           cv: { ok: cv.ok },
+          ai: { ok: ai.ok, ...(ai.degraded ? { degraded: true } : {}) },
         },
         timestamp: new Date().toISOString(),
       },
@@ -247,7 +286,7 @@ export async function GET() {
   const body: HealthResponse = {
     ok: overallOk,
     degraded,
-    checks: { db, ollama, scraper, blob, cv },
+    checks: { db, ollama, scraper, blob, cv, ai },
     version,
     uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
     timestamp: new Date().toISOString(),
