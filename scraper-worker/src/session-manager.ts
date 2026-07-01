@@ -256,25 +256,28 @@ export async function authenticate(platform: string, page: Page): Promise<void> 
     // with the NZ redirect_uri. Override host via SEEK_EMPLOYER_HOST.
     const host = process.env.SEEK_EMPLOYER_HOST ?? "https://nz.employer.seek.com";
     await page.goto(`${host}/talentsearch/search`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    // RESILIENCE: a still-valid saved session does NOT render the login form here
-    // — it redirects within the employer portal (/account/select, /dashboard,
-    // /oauth/*). Probe for the email field with a SHORT timeout: if it never
-    // appears, we're already logged in, so just warm the scope and return.
-    // (The old code waited 30s for an email field that never comes on a valid
-    // session — that threw, and after 3 such throws the auth circuit latched OPEN
-    // on a perfectly good session. That false-negative cascade is what kept Pulse
-    // down after the box came back online: isSessionValid can flake on a cold load,
-    // and the doomed re-auth then bricked SEEK for the 2h cooldown.)
-    const emailInput = page.locator('#emailAddress, input[name="emailAddress_hirer"], input[type="email"]').first();
-    const needsLogin = await emailInput
-      .waitFor({ state: "visible", timeout: 12_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!needsLogin) {
-      log.info(`seek: session still valid (no login form at ${page.url()}) — warming scope, skipping credential login`);
+    await randomDelay(1500, 2500); // let the Auth0 redirect settle before deciding
+    // RESILIENCE: decide "logged in?" by the URL, NOT by racing the form render.
+    // A still-valid session stays on the employer portal (redirects among
+    // /account/select, /dashboard, /oauth/*). An EXPIRED session bounces to
+    // authenticate.seek.com — where the Turnstile-guarded Auth0 form takes 15-25s
+    // to appear. The old code probed the email field with a 12s timeout and read
+    // "no form yet" as "session valid", so on a genuinely-expired session (slow
+    // Turnstile form) it SKIPPED the re-login and every SEEK search then died on
+    // the login page ("keyword box not found on authenticate.seek.com"). URL-based
+    // avoids BOTH that false-positive and the earlier false-negative (a valid
+    // session never renders this form, so waiting 30s for it used to throw → 2h
+    // circuit trip). Live-verified 2026-07-02: form visible by ~25s, login OK.
+    if (!/authenticate\.seek\.com/i.test(page.url())) {
+      log.info(`seek: session still valid (${page.url()}) — warming scope, skipping credential login`);
       await warmSeekAccount(page).catch(() => {});
       return;
     }
+    // Expired → drive the Auth0 credential login. Wait generously for the form
+    // (Turnstile delays its render); if it never appears the login is genuinely
+    // blocked (interactive challenge) → the waitFor throws → the caller fails.
+    const emailInput = page.locator('#emailAddress, input[name="emailAddress_hirer"], input[type="email"]').first();
+    await emailInput.waitFor({ state: "visible", timeout: 30_000 });
     await randomDelay(800, 1500);
     await humanType(emailInput, email);
     await randomDelay(400, 900);
