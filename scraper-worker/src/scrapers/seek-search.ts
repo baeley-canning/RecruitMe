@@ -32,6 +32,11 @@ import type { SearchCard } from "./linkedin-search.js";
 export interface SeekSearchHarvest {
   urls: string[];
   cards: SearchCard[];
+  /** True when SEEK itself scoped the search to the requested location
+   *  (locationList= in the results URL) — or no location was requested. The
+   *  app uses this to skip its own card-location re-filter, which silently
+   *  dropped legit harvests whenever a card's location line didn't parse. */
+  locationApplied: boolean;
 }
 
 const AUTH_WALL = /login\.seek\.com|authenticate\.seek\.com|\/oauth\/|\/sign-in/i;
@@ -232,8 +237,11 @@ export async function scrapeSeekSearch(
   // the results URL when it accepted the pick. If a location was requested but
   // it's absent, the search is running NATION-WIDE — log loudly so capped
   // nation-wide results aren't silently presented as region-scoped (the bug
-  // behind "100 harvested vs 33 real Wellington matches").
-  if (location && !/[?&]locationList=/.test(page.url())) {
+  // behind "100 harvested vs 33 real Wellington matches"). The flag is also
+  // reported to the app: when SEEK filtered at source, the app must NOT
+  // re-filter on parsed card locations (see SeekSearchHarvest.locationApplied).
+  const locationApplied = !location || /[?&]locationList=/.test(page.url());
+  if (!locationApplied) {
     log.warn(
       `seek-search: location "${location}" was NOT applied (no locationList in results URL) — ` +
         `search ran nation-wide; harvest will be over-broad and capped. URL: ${page.url()}`,
@@ -317,12 +325,15 @@ export async function scrapeSeekSearch(
   };
   absorb(await extractSeekCards(page, SEEK_HOST));
 
-  // Total matches → page budget (20/page), capped.
+  // Total matches → page budget (20/page), capped. null = the "N matching
+  // candidates" marker wasn't on the page at all (vs a genuine 0) — that
+  // distinction is what lets the zero-card check below tell "SEEK found
+  // nothing" apart from "the page/selectors are broken".
   const total = await page.evaluate(() => {
     const m = (document.body.innerText || "").match(/([\d,]+)\s+matching candidates/i);
-    return m ? Number(m[1].replace(/,/g, "")) : 0;
+    return m ? Number(m[1].replace(/,/g, "")) : null;
   });
-  const pagesNeeded = total > 0 ? Math.ceil(total / 20) : 1;
+  const pagesNeeded = total && total > 0 ? Math.ceil(total / 20) : 1;
   const maxPages = Math.min(SEEK_MAX_PAGES, Math.max(1, pagesNeeded));
 
   // CLICK the "Next" pagination control — the SPA ignores a changed pageNumber
@@ -344,9 +355,25 @@ export async function scrapeSeekSearch(
   }
 
   const cards = Array.from(byUrl.values());
+
+  // SANITY FLOOR — empty is NOT automatically success. A 0-card harvest is
+  // only legitimate when SEEK itself says "0 matching candidates"; harvesting
+  // 0 while SEEK reports matches (selector drift) or while the marker is
+  // missing entirely (page never rendered / wrong page) must FAIL the job so
+  // it retries and surfaces, instead of posting a "completed" result that
+  // looks identical to a real empty search (the #1 recurring "SEEK no
+  // results" failure mode).
+  if (cards.length === 0 && total !== 0) {
+    throw new Error(
+      total === null
+        ? `seek-search: harvested 0 cards and the "matching candidates" marker is missing — page state/selectors broken, not an empty result. URL: ${page.url()}`
+        : `seek-search: harvested 0 cards but SEEK reports ${total} matching candidates — card selectors broken. URL: ${page.url()}`,
+    );
+  }
+
   log.info(
     `seek-search: harvested ${cards.length} cards across ${maxPages} page(s) ` +
-      `(${cards.filter((c) => c.name).length} with names, ${total} total matches)`,
+      `(${cards.filter((c) => c.name).length} with names, ${total ?? "?"} total matches)`,
   );
-  return { urls: cards.map((c) => c.url), cards };
+  return { urls: cards.map((c) => c.url), cards, locationApplied };
 }

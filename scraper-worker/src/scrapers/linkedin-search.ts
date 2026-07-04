@@ -211,6 +211,23 @@ export async function scrapeLinkedInSearch(
   }
 
   const cards = [...bySlug.values()];
+
+  // SANITY FLOOR — empty is NOT automatically success. 0 cards is only
+  // legitimate when LinkedIn actually rendered its no-results state; 0 cards
+  // WITHOUT that marker means the card selectors drifted or the page never
+  // rendered, and posting "completed" would be indistinguishable from a real
+  // empty search. Fail instead so the job retries and the breakage surfaces.
+  if (cards.length === 0) {
+    const noResults = await page.evaluate(() =>
+      /no results found|try (?:different|removing some) keywords|didn.t match any/i.test(document.body.innerText || ""),
+    ).catch(() => false);
+    if (!noResults) {
+      throw new Error(
+        `linkedin-search: harvested 0 cards and no "No results found" marker — page state/selectors broken, not an empty result. URL: ${page.url()}`,
+      );
+    }
+  }
+
   log.info(`linkedin-search: harvested ${cards.length} cards (${cards.filter((c) => c.name).length} with names)`);
   return { urls: cards.map((c) => c.url), cards };
 }

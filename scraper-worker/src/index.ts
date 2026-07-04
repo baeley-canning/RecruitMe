@@ -14,8 +14,8 @@
  */
 
 import { chromium } from "patchright";
-import { randomDelay, randomViewport, DESKTOP_USER_AGENT } from "./humanizer.js";
-import { ensureSession, openContextWithSavedSession } from "./session-manager.js";
+import { randomDelay } from "./humanizer.js";
+import { ensureSession, openContextWithSavedSession, discardPlatformSession } from "./session-manager.js";
 import { scrapeLinkedInProfile, RateLimitError } from "./scrapers/linkedin.js";
 import { scrapeSeekProfile } from "./scrapers/seek.js";
 import { scrapeLinkedInSearch } from "./scrapers/linkedin-search.js";
@@ -153,19 +153,36 @@ async function postResult(
     | { status: "failed"; error: string },
 ): Promise<void> {
   if (payload.status === "completed") hbJobsOk += 1; else hbJobsFailed += 1;
-  const res = await fetch(`${RAILWAY_URL}/api/scraper/jobs/${jobId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      "x-scraper-secret": SCRAPER_SECRET,
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "(no body)");
-    log.warn(`postResult failed for job ${jobId}: ${res.status} ${text}`);
+  // Result delivery is THE contract with Railway: if this PATCH never lands,
+  // the job sits 'processing' until the 10-min sweep reclaims it and the
+  // recruiter stares at a stuck "processing" pill the whole time (observed
+  // live 2026-07-02: the scraper logged a SEEK failure that never reached the
+  // DB). Retry transient failures — network errors and 5xx — with backoff; a
+  // 4xx is a semantic rejection that retrying can't fix, so log and stop.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`${RAILWAY_URL}/api/scraper/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-scraper-secret": SCRAPER_SECRET,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (res.ok) return;
+      const text = await res.text().catch(() => "(no body)");
+      if (res.status < 500) {
+        log.warn(`postResult rejected for job ${jobId}: ${res.status} ${text}`);
+        return;
+      }
+      log.warn(`postResult attempt ${attempt}/3 for job ${jobId}: ${res.status} ${text}`);
+    } catch (err) {
+      log.warn(`postResult attempt ${attempt}/3 for job ${jobId} errored: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (attempt < 3) await randomDelay(2_000 * attempt, 4_000 * attempt);
   }
+  log.error(`postResult FAILED after 3 attempts for job ${jobId} — the sweep will reclaim it in ~10min`);
 }
 
 /** Fire-and-forget worker heartbeat (Phase I2) — never disrupts the poll loop. */
@@ -325,8 +342,6 @@ async function processScoreJob(job: ScrapeJob): Promise<void> {
 
 async function processJob(
   job: ScrapeJob,
-  page: import("patchright").Page,
-  context: import("patchright").BrowserContext,
   browser: import("patchright").Browser,
 ): Promise<void> {
   log.info(`processing job ${job.id} — ${job.platform} — ${job.kind} — ${job.profileUrl ?? job.searchQuery ?? "(no target)"}`);
@@ -361,7 +376,7 @@ async function processJob(
           await postResult(job.id, { status: "failed", error: "LinkedIn search job missing searchQuery" });
           return;
         }
-        await ensureSession("linkedin", context, page);
+        const page = await ensureSession("linkedin", browser);
         const harvest = await withTimeout(
           scrapeLinkedInSearch(job.searchQuery, page, SCRAPER_SEARCH_MAX_PAGES),
           // Scale the wedge guard with page depth (60s headroom per extra page);
@@ -414,7 +429,7 @@ async function processJob(
           await postResult(job.id, { status: "failed", error: "SEEK search job missing searchQuery" });
           return;
         }
-        await ensureSession("seek", context, page);
+        const page = await ensureSession("seek", browser);
         const harvest = await withTimeout(
           scrapeSeekSearch(job.searchQuery, page, job.searchLocation ?? null),
           HARVEST_TIMEOUT_MS,
@@ -422,8 +437,10 @@ async function processJob(
         );
         searchCountToday += 1;
         // Report all harvested cards as results; do NOT dispatch profile
-        // children (credit safety — see branch comment above).
-        await postResult(job.id, { status: "completed", result: { urls: harvest.urls, cards: harvest.cards } });
+        // children (credit safety — see branch comment above). locationApplied
+        // tells the app SEEK already scoped the search to the requested region,
+        // so it must not re-filter cards on their (often unparseable) location.
+        await postResult(job.id, { status: "completed", result: { urls: harvest.urls, cards: harvest.cards, locationApplied: harvest.locationApplied } });
         log.info(`job ${job.id} seek-search completed — ${harvest.cards.length} cards harvested, 0 dispatched (credit-safe) (today ${searchCountToday}/${DAILY_SEARCH_CAP})`);
         return;
       }
@@ -483,7 +500,7 @@ async function processJob(
     }
 
     if (job.platform === "linkedin") {
-      await ensureSession("linkedin", context, page);
+      const page = await ensureSession("linkedin", browser);
       const profile = await withTimeout(
         scrapeLinkedInProfile(job.profileUrl, page),
         PROFILE_TIMEOUT_MS,
@@ -492,7 +509,7 @@ async function processJob(
       await postResult(job.id, { status: "completed", result: profile });
       log.info(`job ${job.id} completed — ${profile.profileText.length} chars — name="${profile.name ?? "(none)"}"`);
     } else if (job.platform === "seek") {
-      await ensureSession("seek", context, page);
+      const page = await ensureSession("seek", browser);
       const profile = await withTimeout(
         scrapeSeekProfile(job.profileUrl, page),
         PROFILE_TIMEOUT_MS,
@@ -584,23 +601,14 @@ async function processJob(
 async function main() {
   log.info(`scraper worker starting — polling ${RAILWAY_URL} every ${POLL_INTERVAL_MS}ms`);
 
-  const viewport = randomViewport();
-  const proxyOpts = process.env.HTTP_PROXY
-    ? { server: process.env.HTTP_PROXY }
-    : undefined;
-
-  // ONE browser for the whole process lifetime; the single page is reused for
-  // every scrape. Session persistence is via encrypted .enc files
-  // (session-manager.ts), loaded by ensureSession on each job.
+  // ONE browser for the whole process lifetime; contexts are PER PLATFORM
+  // (session-manager's getPlatformPage), each built fresh from its saved .enc
+  // storageState. The old single shared context accumulated init scripts and
+  // both platforms' cookies forever — that compounding staleness rotted the
+  // SEEK login ~20min after every re-auth (295KB session vs ~46KB healthy).
   const browser = await chromium.launch({ headless: process.env.HEADLESS !== "false" });
-  const context = await browser.newContext({
-    viewport,
-    userAgent: DESKTOP_USER_AGENT,
-    ...(proxyOpts ? { proxy: proxyOpts } : {}),
-  });
-  let page = await context.newPage();
 
-  log.info(`browser ready — viewport ${viewport.width}×${viewport.height}`);
+  log.info("browser ready — per-platform contexts created on first use");
 
   // Graceful shutdown.
   const shutdown = async () => {
@@ -629,15 +637,15 @@ async function main() {
         log.info(`claimed ${jobs.length} job(s)`);
         for (const job of jobs) {
           try {
-            await processJob(job, page, context, browser);
+            await processJob(job, browser);
           } catch (err) {
             // Only WedgeTimeoutError propagates out of processJob (it already
-            // recorded the job failure). The shared page is likely poisoned by
-            // the still-running wedged op, so recreate it before the next job.
+            // recorded the job failure). The platform's context is likely
+            // poisoned by the still-running wedged op — discard it so the next
+            // job for that platform rebuilds cleanly from the saved session.
             if (err instanceof WedgeTimeoutError) {
-              log.warn(`page wedged (${err.message}) — recreating page`);
-              await page.close().catch(() => {});
-              page = await context.newPage();
+              log.warn(`page wedged (${err.message}) — discarding ${job.platform} context`);
+              await discardPlatformSession(job.platform);
             } else {
               throw err;
             }

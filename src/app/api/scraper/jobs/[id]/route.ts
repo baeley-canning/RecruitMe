@@ -70,6 +70,11 @@ const PatchSchema = z.object({
         )
         .max(200)
         .optional(),
+      // SEEK search jobs: true when SEEK itself scoped the search to the
+      // requested region (locationList= in the results URL). Tells
+      // attachScraperHits to skip its own card-location re-filter, which
+      // silently dropped legit harvests whose location line didn't parse.
+      locationApplied: z.boolean().optional(),
     })
     .optional(),
   error: z.string().max(2000).optional().nullable(),
@@ -223,7 +228,13 @@ export async function PATCH(
     if (job.searchRunId) {
       const source = platformToSource(job.platform);
       if (source) {
-        await attachScraperHits({ searchRunId: job.searchRunId, source, urls, cards });
+        await attachScraperHits({
+          searchRunId: job.searchRunId,
+          source,
+          urls,
+          cards,
+          sourceLocationApplied: result?.locationApplied === true,
+        });
         // Mark the source COMPLETE the moment the harvest lands — the page of
         // results IS the search result (like the native sites). The pill flips
         // to "done · N" instantly instead of staying "live" while LinkedIn

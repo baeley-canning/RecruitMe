@@ -95,28 +95,75 @@ export function loadStorageStateFromDisk(
   }
 }
 
-export async function loadSession(platform: string, context: BrowserContext): Promise<boolean> {
-  const key = process.env.SESSION_ENCRYPTION_KEY;
-  const path = sessionPath(platform);
-  if (!key || !existsSync(path)) return false;
-  try {
-    const raw = readFileSync(path, "utf8");
-    const { cookies, storage } = JSON.parse(decrypt(raw, key));
-    if (cookies?.length) await context.addCookies(cookies);
-    if (storage?.origins?.length) {
-      for (const origin of storage.origins) {
-        for (const item of origin.localStorage ?? []) {
-          await context.addInitScript(
-            `localStorage.setItem(${JSON.stringify(item.name)}, ${JSON.stringify(item.value)})`,
-          );
-        }
-      }
-    }
-    return true;
-  } catch (err) {
-    log.warn(`failed to load session for ${platform}:`, err);
-    return false;
+/** True when a saved session file exists for the platform (says nothing about
+ *  whether it's still valid — isSessionValid decides that). */
+export function hasSavedSession(platform: string): boolean {
+  return !!process.env.SESSION_ENCRYPTION_KEY && existsSync(sessionPath(platform));
+}
+
+// ── per-platform browser contexts ────────────────────────────────────────────
+//
+// The old design shared ONE context across LinkedIn + SEEK and re-applied the
+// saved session on EVERY job via addCookies + addInitScript. Init scripts can
+// never be removed from a context, so each ensureSession stacked another layer
+// of localStorage-setters that re-forced STALE tokens onto every subsequent
+// page load — and saveSession then persisted BOTH platforms' accumulated state
+// (observed: a 295KB seek.enc vs ~46KB healthy). That compounding staleness is
+// what rotted the SEEK login ~20 minutes after every clean re-auth. A fresh
+// context per platform built from the saved storageState (the canonical
+// Playwright pattern, already proven by the JobAdder path) keeps platforms
+// isolated, never stacks init scripts, and keeps the saved session small.
+
+interface PlatformSession {
+  context: BrowserContext;
+  page: Page;
+}
+
+const platformSessions = new Map<string, PlatformSession>();
+
+function contextOptions(): Record<string, unknown> {
+  return {
+    viewport: randomViewport(),
+    userAgent: DESKTOP_USER_AGENT,
+    ...(process.env.HTTP_PROXY ? { proxy: { server: process.env.HTTP_PROXY } } : {}),
+  };
+}
+
+/**
+ * The long-lived context+page for a platform, created on first use from the
+ * saved storageState. `fresh: true` builds a VIRGIN context (no saved state) —
+ * used for credential re-login so the session we then save contains only the
+ * clean post-login state, never inherited rot.
+ */
+export async function getPlatformPage(
+  browser: Browser,
+  platform: string,
+  opts?: { fresh?: boolean },
+): Promise<PlatformSession> {
+  const existing = platformSessions.get(platform);
+  if (existing && !opts?.fresh && !existing.page.isClosed()) return existing;
+  if (existing) {
+    platformSessions.delete(platform);
+    await existing.context.close().catch(() => {});
   }
+  const state = opts?.fresh ? null : loadStorageStateFromDisk(platform);
+  const context = await browser.newContext({
+    ...contextOptions(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...(state ? { storageState: state as any } : {}),
+  });
+  const page = await context.newPage();
+  const session = { context, page };
+  platformSessions.set(platform, session);
+  return session;
+}
+
+/** Close and forget a platform's context (wedged page, poisoned state). The
+ *  next getPlatformPage rebuilds it from the saved session file. */
+export async function discardPlatformSession(platform: string): Promise<void> {
+  const s = platformSessions.get(platform);
+  platformSessions.delete(platform);
+  if (s) await s.context.close().catch(() => {});
 }
 
 // SEEK multi-advertiser accounts (placeMe has more than one) need the
@@ -336,11 +383,7 @@ async function rollSessionForward(platform: string, context: BrowserContext): Pr
   }
 }
 
-export async function ensureSession(
-  platform: string,
-  context: BrowserContext,
-  page: Page,
-): Promise<void> {
+export async function ensureSession(platform: string, browser: Browser): Promise<Page> {
   if (isCircuitOpen(authBreaker, platform, Date.now())) {
     // SELF-HEAL: a transient blip can trip the breaker while the session is
     // still VALID — without this, the 2h cooldown needlessly locks out a working
@@ -350,11 +393,14 @@ export async function ensureSession(
     // blocking: isSessionValid only navigates — it does NOT call authenticate() —
     // so it can't re-spam the login that opened the circuit. If the session is
     // actually fine, close the circuit and resume.
-    if ((await loadSession(platform, context)) && (await isSessionValid(platform, page))) {
-      authBreaker = recordAuthSuccess(authBreaker, platform);
-      await rollSessionForward(platform, context);
-      log.info(`${platform}: circuit was open but the session is valid — closing circuit, resuming`);
-      return;
+    if (hasSavedSession(platform)) {
+      const { context, page } = await getPlatformPage(browser, platform);
+      if (await isSessionValid(platform, page)) {
+        authBreaker = recordAuthSuccess(authBreaker, platform);
+        await rollSessionForward(platform, context);
+        log.info(`${platform}: circuit was open but the session is valid — closing circuit, resuming`);
+        return page;
+      }
     }
     // Genuinely still invalid → needs a manual re-login. Prefix with
     // "<platform>_challenge:" so this is classified as an AUTH failure, not a
@@ -366,22 +412,26 @@ export async function ensureSession(
     );
   }
 
-  const loaded = await loadSession(platform, context);
-  if (loaded) {
-    const valid = await isSessionValid(platform, page);
-    if (valid) {
+  if (hasSavedSession(platform)) {
+    const { context, page } = await getPlatformPage(browser, platform);
+    if (await isSessionValid(platform, page)) {
       authBreaker = recordAuthSuccess(authBreaker, platform);
       await rollSessionForward(platform, context);
       log.debug(`${platform}: session valid`);
-      return;
+      return page;
     }
     log.info(`${platform}: session expired, re-authenticating`);
   }
 
   try {
+    // Re-login in a VIRGIN context (fresh: true): the expired context's stale
+    // cookies/localStorage never leak into the login, so the session we save is
+    // exactly the clean post-login state — same hygiene as a manual login.ts.
+    const { context, page } = await getPlatformPage(browser, platform, { fresh: true });
     await authenticate(platform, page);
     await saveSession(platform, context);
     authBreaker = recordAuthSuccess(authBreaker, platform);
+    return page;
   } catch (err) {
     const kind = classifyAuthFailure(err);
     authBreaker = recordAuthFailure(authBreaker, platform, kind, Date.now());
@@ -390,6 +440,9 @@ export async function ensureSession(
       `${platform}: re-auth ${kind} failure (${err instanceof Error ? err.message : String(err)})` +
         (opened ? " — circuit OPEN, pausing re-auth attempts for this platform" : " — will retry on next job"),
     );
+    // The half-logged-in context is poisoned state — drop it so the next
+    // attempt starts clean instead of deciding on top of a broken page.
+    await discardPlatformSession(platform);
     throw err;
   }
 }

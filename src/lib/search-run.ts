@@ -184,6 +184,10 @@ export async function attachScraperHits(args: {
   /** Per-URL card metadata harvested from the search results page, so rows
    *  show a real name/headline/location immediately instead of "fetching…". */
   cards?: ScraperCard[];
+  /** True when the SOURCE already scoped the search to the run's location
+   *  (SEEK picks the region in its own form; locationList= verified in the
+   *  results URL). Skips the app-side card-location re-filter below. */
+  sourceLocationApplied?: boolean;
 }): Promise<void> {
   const cardByUrl = new Map((args.cards ?? []).map((c) => [c.url, c]));
   // Location gate: the scrape legs (LinkedIn/SEEK) return NZ-wide cards. Drop any
@@ -205,7 +209,13 @@ export async function attachScraperHits(args: {
       fallbackUrl: url,
     });
     const card = cardByUrl.get(url);
-    if (!locationMatches(card?.location, runLocation)) continue;
+    // Skip the gate when the source already filtered server-side: re-filtering
+    // SEEK's region-scoped results on the PARSED card location silently dropped
+    // legit harvests whenever the card's location line didn't parse (null) or
+    // used a suburb spelling locationMatches doesn't map — "SEEK harvested 100,
+    // app showed a handful". The gate stays for LinkedIn (keyword-only search)
+    // and for older workers that don't report the flag.
+    if (!args.sourceLocationApplied && !locationMatches(card?.location, runLocation)) continue;
     // Guard the harvested card fields before they go RAW into SearchRunResult.
     // Search cards regularly leak nav/CTA text ("Message", "Connect"), a bare
     // company name, or a URL into these slots; storing that as the candidate's
@@ -394,13 +404,38 @@ export async function settleRunIfDone(searchRunId: string): Promise<boolean> {
             ? "partial"
             : "complete";
 
+      // Settle any source pill still non-terminal. The normal path flips pills
+      // in the worker's PATCH, but a job whose result PATCH never landed gets
+      // reclaimed by the sweep straight to 'failed' — nothing flipped its pill,
+      // so the UI showed a "processing" SEEK pill forever on a settled run
+      // (observed live 2026-07-02). Derive from this run's child search jobs:
+      // any completed harvest for the source → complete, else failed. One
+      // statement for both pills — this runs inside the FOR UPDATE transaction,
+      // so extra round-trips would eat into Prisma's interactive-tx window.
+      await tx.$executeRaw`
+        UPDATE "SearchRun" SET
+          "linkedinStatus" = CASE WHEN "linkedinStatus" IN ('pending','running') THEN
+              CASE WHEN EXISTS (SELECT 1 FROM "ScrapeJob" WHERE "searchRunId"=${searchRunId} AND "platform"='linkedin' AND "kind"='search' AND "status"='completed')
+                   THEN 'complete' ELSE 'failed' END
+            ELSE "linkedinStatus" END,
+          "seekStatus" = CASE WHEN "seekStatus" IN ('pending','running') THEN
+              CASE WHEN EXISTS (SELECT 1 FROM "ScrapeJob" WHERE "searchRunId"=${searchRunId} AND "platform"='seek' AND "kind"='search' AND "status"='completed')
+                   THEN 'complete' ELSE 'failed' END
+            ELSE "seekStatus" END
+        WHERE "id"=${searchRunId}
+      `;
+
       await tx.searchRun.update({
         where: { id: searchRunId },
         data: { status: terminal, completedAt: new Date() },
       });
       return true;
     },
-    { isolationLevel: "ReadCommitted" },
+    // ~6 serialized statements run inside this tx; Prisma's default 5s
+    // interactive-tx window is too tight on a high-latency link (settle runs
+    // sub-second on Railway's internal network, but the smoke suite runs it
+    // over the public proxy). Generous timeout, same behaviour.
+    { isolationLevel: "ReadCommitted", maxWait: 10_000, timeout: 30_000 },
   );
 }
 
