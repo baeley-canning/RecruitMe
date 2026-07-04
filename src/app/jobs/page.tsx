@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { getAuth, jobsWhere } from "@/lib/session";
-import { Plus, Briefcase, Users, Star } from "lucide-react";
+import { Plus, Briefcase, Users, Star, FileText, Search, Sparkles, CheckCircle2 } from "lucide-react";
 import { JobsListClient } from "@/components/jobs-list-client";
 
 export const dynamic = "force-dynamic";
@@ -130,19 +130,50 @@ export default async function JobsPage() {
 
         {/* Job list */}
         {jobs.length === 0 ? (
-          <div className="bg-surface-raised border border-separator rounded-md p-10 text-center">
-            <Briefcase className="w-6 h-6 text-text-tertiary mx-auto mb-3" />
-            <h3 className="text-md font-semibold text-text-primary mb-1">No jobs yet</h3>
-            <p className="text-sm text-text-secondary mb-4">
-              Create your first job by uploading or pasting a job description.
-            </p>
-            <Link
-              href="/jobs/new"
-              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Create first job
-            </Link>
+          <div className="bg-surface-raised border border-separator rounded-md p-8">
+            <div className="text-center max-w-md mx-auto">
+              <div className="w-10 h-10 rounded-lg bg-accent-subtle flex items-center justify-center mx-auto mb-3">
+                <Briefcase className="w-5 h-5 text-accent" />
+              </div>
+              <h3 className="text-md font-semibold text-text-primary mb-1">Welcome — let&apos;s fill your first role</h3>
+              <p className="text-sm text-text-secondary mb-5">
+                A job is the unit of work here. Paste a job description and the app parses it into
+                must-haves, then finds and ranks candidates against them.
+              </p>
+            </div>
+
+            {/* The loop, taught in four steps. */}
+            <ol className="max-w-md mx-auto space-y-2.5 mb-6">
+              {[
+                { Icon: FileText, title: "Add the job", body: "Paste or upload the JD — it's parsed into must-haves & nice-to-haves." },
+                { Icon: Search, title: "Find candidates", body: "Search LinkedIn/SEEK or your existing library, all scoped to your role." },
+                { Icon: Sparkles, title: "See the Fit score", body: "Every candidate is scored for free against the must-haves, with receipts. Run an AI re-score on the ones worth a closer look." },
+                { Icon: CheckCircle2, title: "Shortlist & place", body: "Move the best into your pipeline and track them through to placement." },
+              ].map((s, i) => (
+                <li key={i} className="flex items-start gap-3 px-3 py-2.5 rounded-md bg-surface-sunken border border-separator-subtle">
+                  <div className="w-6 h-6 rounded bg-surface-hover flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <s.Icon className="w-3.5 h-3.5 text-text-secondary" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-2xs text-text-tertiary data-mono">{i + 1}</span>
+                      <span className="text-base font-medium text-text-primary">{s.title}</span>
+                    </div>
+                    <p className="text-xs text-text-tertiary mt-0.5">{s.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+
+            <div className="text-center">
+              <Link
+                href="/jobs/new"
+                className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Create your first job
+              </Link>
+            </div>
           </div>
         ) : (
           <JobsListClient jobs={jobs} />
