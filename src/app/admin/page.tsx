@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Users, Building2, Plus, Trash2, Loader2, Shield, User, X, Eye, EyeOff,
   BarChart3, Search, Sparkles, FileText, Camera, ArrowLeft, AlertTriangle, CheckCircle2, Activity, Pencil,
+  Link2, KeyRound, Copy, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
@@ -129,6 +130,12 @@ export default function AdminPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Auth-link generation (invite / password-reset). The modal shows the
+  // single-use URL for the owner to copy and hand over out-of-band.
+  const [linkModal, setLinkModal] = useState<{ title: string; url: string; expiresAt: string; error?: string } | null>(null);
+  const [linkBusyId, setLinkBusyId] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // Inline edit state
   const [editingId, setEditingId]   = useState<string | null>(null);
@@ -279,6 +286,31 @@ export default function AdminPage() {
       await fetchAll();
     }
     setEditSaving(false);
+  };
+
+  // Generate a single-use invite or password-reset LINK and show it in a
+  // copy modal. Email-free by design: the owner hands the URL over in
+  // whatever channel they already share with the person.
+  const generateLink = async (busyKey: string, title: string, body: Record<string, unknown>) => {
+    setLinkBusyId(busyKey);
+    try {
+      const res = await fetch("/api/admin/users/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLinkModal({ title, url: "", expiresAt: "", error: typeof data.error === "string" ? data.error : "Could not generate the link." });
+      } else {
+        setLinkCopied(false);
+        setLinkModal({ title, url: data.url, expiresAt: data.expiresAt });
+      }
+    } catch {
+      setLinkModal({ title, url: "", expiresAt: "", error: "Network error — try again." });
+    } finally {
+      setLinkBusyId(null);
+    }
   };
 
   const handleDelete = async (id: string, username: string) => {
@@ -446,6 +478,17 @@ export default function AdminPage() {
                           <td className="px-4 py-2.5 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <button
+                                onClick={() => generateLink(`reset-${user.id}`, `Password reset link for ${user.username}`, { kind: "reset", userId: user.id })}
+                                disabled={linkBusyId === `reset-${user.id}`}
+                                className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+                                title="Generate password-reset link"
+                              >
+                                {linkBusyId === `reset-${user.id}`
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <KeyRound className="w-3.5 h-3.5" />
+                                }
+                              </button>
+                              <button
                                 onClick={() => editingId === user.id ? setEditingId(null) : startEdit(user)}
                                 className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                                 title="Edit user"
@@ -582,17 +625,30 @@ export default function AdminPage() {
                           {new Date(org.createdAt).toLocaleDateString()}
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          <button
-                            onClick={() => handleDeleteOrg(org.id, org.name)}
-                            disabled={deletingOrgId === org.id}
-                            className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-danger-subtle transition-colors disabled:opacity-50"
-                            title="Delete organisation"
-                          >
-                            {deletingOrgId === org.id
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <Trash2 className="w-3.5 h-3.5" />
-                            }
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => generateLink(`invite-${org.id}`, `Invite link for ${org.name}`, { kind: "invite", orgId: org.id, role: "user" })}
+                              disabled={linkBusyId === `invite-${org.id}`}
+                              className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+                              title="Generate invite link (new user joins this organisation)"
+                            >
+                              {linkBusyId === `invite-${org.id}`
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Link2 className="w-3.5 h-3.5" />
+                              }
+                            </button>
+                            <button
+                              onClick={() => handleDeleteOrg(org.id, org.name)}
+                              disabled={deletingOrgId === org.id}
+                              className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-danger-subtle transition-colors disabled:opacity-50"
+                              title="Delete organisation"
+                            >
+                              {deletingOrgId === org.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Trash2 className="w-3.5 h-3.5" />
+                              }
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -602,6 +658,52 @@ export default function AdminPage() {
             )}
           </Card>
         </section>
+
+        {/* ── Auth-link modal (invite / password reset) ── */}
+        <Modal open={!!linkModal} onClose={() => setLinkModal(null)} labelledBy="auth-link-title" className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-md flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-separator">
+            <h2 id="auth-link-title" className="font-semibold text-text-primary text-md">{linkModal?.title}</h2>
+            <button onClick={() => setLinkModal(null)} className="text-text-tertiary hover:text-text-primary">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="p-4 space-y-3">
+            {linkModal?.error ? (
+              <p className="text-xs text-danger bg-danger-subtle border border-separator rounded px-2.5 py-1.5">{linkModal.error}</p>
+            ) : (
+              <>
+                <p className="text-xs text-text-secondary">
+                  Single-use link — send it to the person over any channel you already share.
+                  {linkModal?.expiresAt && (
+                    <> Expires <span className="data-mono">{new Date(linkModal.expiresAt).toLocaleString()}</span>.</>
+                  )}
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={linkModal?.url ?? ""}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className={`${INPUT} data-mono text-xs`}
+                  />
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(linkModal?.url ?? "");
+                        setLinkCopied(true);
+                      } catch { /* clipboard denied — the input is selectable */ }
+                    }}
+                  >
+                    {linkCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {linkCopied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
 
         {/* ── Create User Modal ── */}
         <Modal open={showCreate} onClose={() => setShowCreate(false)} labelledBy="create-user-title" className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-sm flex flex-col">

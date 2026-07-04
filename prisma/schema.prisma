@@ -391,6 +391,25 @@ model User {
   updatedAt DateTime @updatedAt
 }
 
+// Single-use, hashed tokens behind invite + password-reset LINKS. The raw
+// token exists only inside the generated URL (handed over out-of-band by the
+// owner — no email dependency); we store its sha256. Consumption is guarded
+// (usedAt null → set, atomically) so a link can never be redeemed twice.
+model AuthToken {
+  id        String    @id @default(cuid())
+  kind      String // "invite" | "reset"
+  tokenHash String    @unique
+  orgId     String? // invite: the org the new user joins (null = global/ownerless user)
+  role      String    @default("user") // invite: role granted on acceptance
+  userId    String? // reset: the user whose password is being reset
+  createdBy String? // admin user id that generated the link
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([kind, expiresAt])
+}
+
 model Candidate {
   id                 String  @id @default(cuid())
   jobId              String?
