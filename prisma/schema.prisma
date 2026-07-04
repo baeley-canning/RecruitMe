@@ -871,6 +871,16 @@ model WatchedSearch {
   lastRunAt       DateTime?
   nextRunAfter    DateTime?
   lastRunId       String?
+  // ── health (reconciled from the last settled check) ──
+  // A watch that keeps failing (SEEK re-auth, zero-result selector drift) used
+  // to fail SILENTLY: the scheduler kept enqueuing checks and nothing recorded
+  // whether they SUCCEEDED, so a dead watch looked identical to a quiet one.
+  // These are reconciled when detectHitsForOrg processes a settled run.
+  lastCheckAt     DateTime? // when a check last SETTLED (complete/partial/failed)
+  lastCheckStatus String? // "complete" | "partial" | "failed" — the settled run status
+  lastError       String? // error from the last failed check (null on success)
+  consecutiveFailures Int  @default(0) // reset to 0 on any successful check
+  lastHitAt       DateTime? // when this watch last produced a NEW hit
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   hits            ProfileUpdateHit[]

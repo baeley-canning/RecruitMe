@@ -1096,6 +1096,13 @@ await step("WatchedSearch table + unique + indexes", async () => {
   await prisma.$executeRaw`CREATE INDEX IF NOT EXISTS "WatchedSearch_active_nextRunAfter_idx" ON "WatchedSearch"("active", "nextRunAfter")`;
   // Name matches Prisma's @@unique([orgId, name]) convention so db push no-ops it.
   await prisma.$executeRaw`CREATE UNIQUE INDEX IF NOT EXISTS "WatchedSearch_orgId_name_key" ON "WatchedSearch"("orgId", "name")`;
+  // Health columns (Pulse strengthening) — ADD COLUMN IF NOT EXISTS so an
+  // existing table picks them up without a destructive rebuild.
+  await prisma.$executeRaw`ALTER TABLE "WatchedSearch" ADD COLUMN IF NOT EXISTS "lastCheckAt" TIMESTAMP(3)`;
+  await prisma.$executeRaw`ALTER TABLE "WatchedSearch" ADD COLUMN IF NOT EXISTS "lastCheckStatus" TEXT`;
+  await prisma.$executeRaw`ALTER TABLE "WatchedSearch" ADD COLUMN IF NOT EXISTS "lastError" TEXT`;
+  await prisma.$executeRaw`ALTER TABLE "WatchedSearch" ADD COLUMN IF NOT EXISTS "consecutiveFailures" INTEGER NOT NULL DEFAULT 0`;
+  await prisma.$executeRaw`ALTER TABLE "WatchedSearch" ADD COLUMN IF NOT EXISTS "lastHitAt" TIMESTAMP(3)`;
 });
 
 await step("ProfileUpdateHit table + unique + indexes + FK", async () => {

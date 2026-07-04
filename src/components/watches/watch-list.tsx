@@ -106,11 +106,22 @@ export function WatchList({
           const selected = activeFilter === w.id;
           return (
             <div key={w.id} className={`py-2 flex items-center gap-3 ${selected ? "bg-surface-hover -mx-1 px-1 rounded" : ""}`}>
-              {/* Listening indicator: breathing accent dot when active, dim when paused. */}
-              <span className="relative flex h-2 w-2 shrink-0" title={w.active ? "listening" : "paused"}>
-                {w.active && <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-60 animate-ping" />}
-                <span className={`relative inline-flex h-2 w-2 rounded-full ${w.active ? "bg-success" : "bg-text-tertiary"}`} />
-              </span>
+              {/* Health indicator: breathing green when listening & healthy;
+                  red when failing (≥3 failed checks); amber when stale (the
+                  scheduler isn't reaching it); dim when paused/pending. */}
+              {(() => {
+                const failing = w.active && w.health === "failing";
+                const stale = w.active && w.health === "stale";
+                const dot = !w.active ? "bg-text-tertiary" : failing ? "bg-danger" : stale ? "bg-warning" : "bg-success";
+                const title = !w.active ? "paused" : failing ? "failing — recent checks errored" : stale ? "stale — not checked recently" : "listening";
+                const breathe = w.active && !failing && !stale;
+                return (
+                  <span className="relative flex h-2 w-2 shrink-0" title={title}>
+                    {breathe && <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-60 animate-ping" />}
+                    <span className={`relative inline-flex h-2 w-2 rounded-full ${dot}`} />
+                  </span>
+                );
+              })()}
 
               <div className="flex-1 min-w-0">
                 <button
@@ -128,6 +139,18 @@ export function WatchList({
                   {w.createdByName && <span> · by {w.createdByName}</span>}
                   {!w.active && <span className="text-warning"> · paused</span>}
                 </div>
+                {/* Surface a failing/stale watch instead of letting it die
+                    silently — the recurring "Pulse stopped and nobody knew". */}
+                {w.active && w.health === "failing" && (
+                  <div className="text-2xs text-danger truncate" title={w.lastError ?? undefined}>
+                    ⚠ {w.consecutiveFailures} checks failed{w.lastError ? ` — ${w.lastError}` : ""}
+                  </div>
+                )}
+                {w.active && w.health === "stale" && (
+                  <div className="text-2xs text-warning truncate">
+                    ⚠ no check completed since {fmtWhen(w.lastCheckAt)}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-1 shrink-0 text-text-tertiary">

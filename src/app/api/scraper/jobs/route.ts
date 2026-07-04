@@ -61,6 +61,15 @@ export async function GET(req: Request) {
   if ("error" in resolved) {
     return NextResponse.json({ error: resolved.error }, { status: 403 });
   }
+  // TENANT-ISOLATION INVARIANT (audited 2026-07-04): orgId === null here means
+  // claimScrapeJobs claims across ALL orgs. That is reachable ONLY by the
+  // platform OPERATOR — the shared SCRAPER_SECRET or a null-org owner token —
+  // which is by design: one operator box serves every tenant's queue. A
+  // TENANT-BOUND token can never reach it: resolveScraperOrgId pins a non-null
+  // boundOrgId to its own org (and rejects a mismatching ?orgId). So GET's
+  // acceptance of a null org is NOT the POST-style "orgId required" case — the
+  // BYO-box customer model authenticates with an org-bound token, which is
+  // always scoped. (Locked by scraper-auth.test.ts.)
   const orgId = resolved.orgId;
 
   // Claim pending jobs ATOMICALLY via Postgres FOR UPDATE SKIP LOCKED (see

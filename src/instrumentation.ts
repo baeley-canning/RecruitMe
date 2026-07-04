@@ -13,10 +13,47 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("../sentry.server.config");
     startSearchSweepTimer();
+    startWatchSchedulerTimer();
   }
   if (process.env.NEXT_RUNTIME === "edge") {
     await import("../sentry.edge.config");
   }
+}
+
+/**
+ * In-process Pulse scheduler. Historically the ONLY trigger for the
+ * profile-update watch sweep was a box systemd timer hitting
+ * /api/watches/run-due — so when the box was down, Pulse silently stopped
+ * (the recurring "Pulse isn't working"). Driving it from the Railway app too
+ * makes it box-outage-proof; run-due is idempotent (it stamps nextRunAfter,
+ * so a watch a box tick already ran is not-yet-due here) and self-gates on
+ * its feature flags (404 → no-op) so this is safe to always arm.
+ * Kill switch: DISABLE_INPROC_WATCH_SCHED=1.
+ */
+const WATCH_SCHED_INTERVAL_MS = 15 * 60 * 1000;
+function startWatchSchedulerTimer() {
+  if (process.env.DISABLE_INPROC_WATCH_SCHED === "1") return;
+  if (!process.env.CONTACT_SYNC_CRON_SECRET) return; // run-due auth — nothing to drive with
+  const port = process.env.PORT ?? "3000";
+  const tick = async () => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/watches/run-due`, {
+        method: "POST",
+        headers: { "x-cron-secret": process.env.CONTACT_SYNC_CRON_SECRET as string },
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (res.status === 404) return; // feature flags off — expected no-op
+      const body = res.ok ? await res.json().catch(() => null) : null;
+      if (body && body.enqueued > 0) {
+        console.log(`[inproc-watch-sched] enqueued=${body.enqueued} due=${body.due} skippedForCap=${body.skippedForCap ?? 0}`);
+      }
+      if (!res.ok && res.status !== 404) console.warn(`[inproc-watch-sched] run-due returned ${res.status}`);
+    } catch (err) {
+      console.warn(`[inproc-watch-sched] failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  setTimeout(tick, 90_000).unref?.(); // stagger after the sweep's first tick
+  setInterval(tick, WATCH_SCHED_INTERVAL_MS).unref?.();
 }
 
 /**

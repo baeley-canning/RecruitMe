@@ -60,16 +60,51 @@ export interface WatchedSearchDTO {
   lastRunAt: string | null;
   nextRunAfter: string | null;
   lastRunId: string | null;
+  // Health (reconciled from the last settled check).
+  lastCheckAt: string | null;
+  lastCheckStatus: string | null;
+  lastError: string | null;
+  consecutiveFailures: number;
+  lastHitAt: string | null;
+  /** Derived rollup for the UI badge — see deriveWatchHealth(). */
+  health: WatchHealth;
   createdAt: string;
   updatedAt: string;
 }
 
-function toDTO(w: {
+export type WatchHealth = "ok" | "pending" | "stale" | "failing";
+
+// A watch is "failing" after 3 consecutive failed checks (persistent SEEK
+// re-auth / selector drift); "stale" if it's active but its last check settled
+// well over an interval ago (the scheduler isn't reaching it); "pending" if it
+// has never completed a check yet; else "ok". Two missed intervals (or 6h,
+// whichever's larger) is the staleness threshold — generous enough not to
+// false-alarm on a single skipped sweep.
+export function deriveWatchHealth(w: {
+  active: boolean;
+  consecutiveFailures: number;
+  lastCheckAt: Date | null;
+  intervalMinutes: number;
+}, now: Date = new Date()): WatchHealth {
+  if (w.consecutiveFailures >= 3) return "failing";
+  if (!w.lastCheckAt) return "pending";
+  if (!w.active) return "ok";
+  const staleMs = Math.max(2 * w.intervalMinutes * 60_000, 6 * 60 * 60_000);
+  if (now.getTime() - w.lastCheckAt.getTime() > staleMs) return "stale";
+  return "ok";
+}
+
+interface WatchRow {
   id: string; orgId: string; jobId: string | null; createdBy: string | null;
   name: string; query: string; location: string | null; notifyFrom: Date;
   intervalMinutes: number; active: boolean; lastRunAt: Date | null;
-  nextRunAfter: Date | null; lastRunId: string | null; createdAt: Date; updatedAt: Date;
-}, createdByName: string | null = null): WatchedSearchDTO {
+  nextRunAfter: Date | null; lastRunId: string | null;
+  lastCheckAt: Date | null; lastCheckStatus: string | null; lastError: string | null;
+  consecutiveFailures: number; lastHitAt: Date | null;
+  createdAt: Date; updatedAt: Date;
+}
+
+function toDTO(w: WatchRow, createdByName: string | null = null): WatchedSearchDTO {
   return {
     id: w.id,
     orgId: w.orgId,
@@ -85,6 +120,12 @@ function toDTO(w: {
     lastRunAt: w.lastRunAt?.toISOString() ?? null,
     nextRunAfter: w.nextRunAfter?.toISOString() ?? null,
     lastRunId: w.lastRunId,
+    lastCheckAt: w.lastCheckAt?.toISOString() ?? null,
+    lastCheckStatus: w.lastCheckStatus ?? null,
+    lastError: w.lastError ?? null,
+    consecutiveFailures: w.consecutiveFailures ?? 0,
+    lastHitAt: w.lastHitAt?.toISOString() ?? null,
+    health: deriveWatchHealth(w),
     createdAt: w.createdAt.toISOString(),
     updatedAt: w.updatedAt.toISOString(),
   };
@@ -444,7 +485,7 @@ export async function detectHitsForOrg(orgId: string, watchId?: string): Promise
       ...(watchId ? { id: watchId } : {}),
       lastRunId: { not: null },
     },
-    select: { id: true, lastRunId: true },
+    select: { id: true, lastRunId: true, lastCheckStatus: true, lastRunAt: true, lastCheckAt: true },
   });
   if (watches.length === 0) return 0;
 
@@ -453,18 +494,71 @@ export async function detectHitsForOrg(orgId: string, watchId?: string): Promise
   );
   const runs = await prisma.searchRun.findMany({
     where: { id: { in: runIds } },
-    select: { id: true, status: true },
+    select: { id: true, status: true, error: true },
   });
-  const settled = new Set(
-    runs.filter((r) => SETTLED_RUN_STATUSES.has(r.status)).map((r) => r.id),
-  );
+  const runById = new Map(runs.map((r) => [r.id, r]));
 
   let total = 0;
   for (const w of watches) {
-    if (!w.lastRunId || !settled.has(w.lastRunId)) continue;
-    total += await detectHits(w.id, w.lastRunId);
+    if (!w.lastRunId) continue;
+    const run = runById.get(w.lastRunId);
+    if (!run || !SETTLED_RUN_STATUSES.has(run.status)) continue; // still running — no outcome yet
+    const newHits = await detectHits(w.id, w.lastRunId);
+    total += newHits;
+    // Reconcile this watch's health from the settled run. Skip when we've
+    // already recorded THIS run's outcome (lastCheckAt >= lastRunAt) so a
+    // busy feed (SSE ticks) doesn't rewrite the same result every second.
+    const alreadyRecorded = w.lastCheckAt && w.lastRunAt && w.lastCheckAt.getTime() >= w.lastRunAt.getTime();
+    if (!alreadyRecorded) {
+      await reconcileWatchHealth(w.id, run.status, run.error, newHits);
+    } else if (newHits > 0) {
+      await prisma.watchedSearch.update({ where: { id: w.id }, data: { lastHitAt: new Date() } });
+    }
   }
   return total;
+}
+
+/**
+ * Record a settled check's outcome on the watch so a failing watch becomes
+ * VISIBLE (the derived health badge) instead of silently dying. A "failed" run
+ * increments consecutiveFailures and stores the error; a "complete"/"partial"
+ * run resets the failure counter. lastHitAt advances only when the check
+ * produced a new hit. Best-effort — a health-write hiccup must never break the
+ * feed, so callers don't await-throw on it.
+ */
+export async function reconcileWatchHealth(
+  watchId: string,
+  runStatus: string,
+  runError: string | null,
+  newHits: number,
+): Promise<void> {
+  const failed = runStatus === "failed";
+  try {
+    if (failed) {
+      await prisma.watchedSearch.update({
+        where: { id: watchId },
+        data: {
+          lastCheckAt: new Date(),
+          lastCheckStatus: runStatus,
+          lastError: (runError ?? "SEEK check failed").slice(0, 500),
+          consecutiveFailures: { increment: 1 },
+        },
+      });
+    } else {
+      await prisma.watchedSearch.update({
+        where: { id: watchId },
+        data: {
+          lastCheckAt: new Date(),
+          lastCheckStatus: runStatus,
+          lastError: null,
+          consecutiveFailures: 0,
+          ...(newHits > 0 ? { lastHitAt: new Date() } : {}),
+        },
+      });
+    }
+  } catch {
+    // non-fatal — health is advisory; the next settled check reconciles again.
+  }
 }
 
 export interface ProfileUpdateHitDTO {
