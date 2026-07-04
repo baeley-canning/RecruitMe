@@ -50,9 +50,9 @@ describe("provenancePillProps", () => {
     expect(provenancePillProps(""       as never, "match")).toBeNull();
   });
 
-  it("returns a Base pill for scoredBy='heuristic' on match (deterministic, no AI)", () => {
+  it("returns a Fit pill for scoredBy='heuristic' on match (deterministic, no AI)", () => {
     const props = provenancePillProps("heuristic", "match");
-    expect(props?.label).toBe("Base");
+    expect(props?.label).toBe("Fit");
     expect(props?.tone).toBe("base");
     expect(props?.title).toMatch(/No AI ran/i);
   });

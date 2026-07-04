@@ -117,7 +117,7 @@ describe("manual candidate ingestion route", () => {
     });
   });
 
-  it("scores manual CV/profile adds with the structured scorer", async () => {
+  it("scores manual CV/profile adds with the deterministic heuristic — no AI scoring call, no cache hash", async () => {
     const req = new Request("http://localhost/api/jobs/job-1/candidates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -133,26 +133,28 @@ describe("manual candidate ingestion route", () => {
     expect(res.status).toBe(201);
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
     expect(scoringConfigMocks.getJobScoringWeights).toHaveBeenCalled();
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Object),
-      null,
-      scoringConfigMocks.customWeights,
-      "org-1"
-    );
-    expect(dbMocks.prisma.candidate.update.mock.calls[0][0].data.scoreBreakdown).toContain("\"version\":2");
-    expect(dbMocks.prisma.candidate.update.mock.calls[0][0].data.acceptanceScore).toBe(66);
-    expect(body.scoreBreakdown).toContain("\"version\":2");
+    // Judgment is on demand now: adding a candidate runs the free heuristic,
+    // never the paid structured scorer or acceptance prediction.
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+    expect(aiMocks.predictAcceptance).not.toHaveBeenCalled();
+    const updateData = dbMocks.prisma.candidate.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(updateData.matchScore).toBeGreaterThan(0);
+    const breakdown = JSON.parse(updateData.scoreBreakdown as string);
+    expect(breakdown.scoredBy).toBe("heuristic");
+    // Both must-haves appear verbatim in the pasted profile → receipts show it.
+    expect(breakdown.must_have_coverage.every((m: { status: string }) => m.status === "likely")).toBe(true);
+    // Heuristic writes never stamp profileTextHash — a later AI Re-score
+    // must never be cache-skipped.
+    expect(updateData.profileTextHash).toBeUndefined();
+    expect(body.scoreBreakdown).toContain("\"scoredBy\":\"heuristic\"");
   });
 
   it("flags scoringError on screeningData when auto-score fails (does not silently drop the score)", async () => {
-    // The fix: when scoreCandidateStructured rejects we used to swallow the
-    // error with a bare console.error, leaving the row with NO score and
-    // NO failure trail. After the fix the row must:
-    //   (a) still be created (don't lose the candidate)
-    //   (b) have matchScore: null (don't surface a stale 0)
-    //   (c) have screeningData.scoringError populated so the recruiter sees why.
-    aiMocks.scoreCandidateStructured.mockRejectedValueOnce(new Error("Claude blew up: 503"));
+    // Same contract as the AI era, now for the heuristic path: if scoring
+    // blows up the row must (a) still be created, (b) keep matchScore null,
+    // (c) carry screeningData.scoringError so the recruiter sees why. Force
+    // the failure via the weights lookup, the only awaited dep in the path.
+    scoringConfigMocks.getJobScoringWeights.mockRejectedValueOnce(new Error("weights lookup blew up: 503"));
     dbMocks.prisma.candidate.create.mockResolvedValueOnce({ id: "cand-fail", name: "Alex Chen" });
 
     const req = new Request("http://localhost/api/jobs/job-1/candidates", {
@@ -170,13 +172,13 @@ describe("manual candidate ingestion route", () => {
     // The row was created (a)…
     expect(dbMocks.prisma.candidate.create).toHaveBeenCalled();
     // …and patched with the scoringError flag (b + c). matchScore: null
-    // because deriveUpdateData never ran.
+    // because the score write never ran.
     expect(dbMocks.prisma.candidate.update).toHaveBeenCalledTimes(1);
     const updateData = dbMocks.prisma.candidate.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(updateData.matchScore).toBeNull();
     expect(typeof updateData.screeningData).toBe("string");
     const screening = JSON.parse(updateData.screeningData as string);
-    expect(screening.scoringError).toContain("Claude blew up");
+    expect(screening.scoringError).toContain("weights lookup blew up");
     expect(screening.scoringErrorAt).toBeTruthy();
   });
 

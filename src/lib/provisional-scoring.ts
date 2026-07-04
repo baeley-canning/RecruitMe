@@ -99,8 +99,19 @@ export function buildProvisionalSearchScore(
   weights: ScoringWeights | undefined,
   // Signal helpers injected so this module stays side-effect-free.
   deps: { requirementSignals: SignalFn; hasSignal: MatchFn; normaliseText: NormFn },
+  opts?: {
+    /** What `result.snippet` actually holds. "snippet" (default) = a search-
+     *  result blurb; "profile" = the candidate's FULL stored profile/CV text.
+     *  Same deterministic matching either way — this only changes the honest
+     *  wording of evidence lines, the caps (a full text that matches earns
+     *  more trust than a snippet), and the nice-to-have score (real coverage
+     *  instead of a flat unknown). */
+    evidenceKind?: "snippet" | "profile";
+  },
 ): ScoreBreakdown {
   const { requirementSignals, hasSignal, normaliseText } = deps;
+  const fullEvidence = opts?.evidenceKind === "profile";
+  const evidenceName = fullEvidence ? "stored profile/CV" : "search snippet";
 
   const baseMustHaves = parsedRole.must_haves?.length ? parsedRole.must_haves : parsedRole.skills_required;
   const knockouts = parsedRole.knockout_criteria ?? [];
@@ -139,8 +150,8 @@ export function buildProvisionalSearchScore(
       requirement,
       status: matched.length > 0 ? "likely" : "missing",
       evidence: matched.length > 0
-        ? `Snippet/headline mentions ${matched.slice(0, 3).join(", ")}.`
-        : "Not found in search snippet.",
+        ? `${fullEvidence ? "Profile/CV text" : "Snippet/headline"} mentions ${matched.slice(0, 3).join(", ")}.`
+        : `Not found in ${evidenceName}.`,
     };
   });
 
@@ -151,8 +162,8 @@ export function buildProvisionalSearchScore(
       requirement,
       status: matched.length > 0 ? "likely" : "absent",
       evidence: matched.length > 0
-        ? `Snippet/headline mentions ${matched.slice(0, 3).join(", ")}.`
-        : "Not mentioned in search snippet.",
+        ? `${fullEvidence ? "Profile/CV text" : "Snippet/headline"} mentions ${matched.slice(0, 3).join(", ")}.`
+        : `Not mentioned in ${evidenceName}.`,
     };
   });
 
@@ -173,24 +184,50 @@ export function buildProvisionalSearchScore(
     wantedSeniority.includes("senior") && /\b(junior|graduate|intern)\b/.test(seniorityText) ? 45 :
     70;
 
+  // Nice-to-have score: with full evidence we can report REAL coverage; a
+  // snippet keeps the historical flat 45 ("unknown until the profile lands").
+  const ntSupported = niceToHaveCoverage.filter((c) => c.status !== "absent").length;
+  const ntRatio = niceToHaveCoverage.length ? ntSupported / niceToHaveCoverage.length : 0.5;
+  const niceToHaveScore = fullEvidence ? Math.round(30 + ntRatio * 55) : 45;
+
+  // Skill-fit cap: a snippet match is weak evidence (cap 75); a match found in
+  // the full stored profile/CV is the real thing the AI scorer would read too,
+  // so it earns a higher ceiling (85) while still never claiming AI certainty.
+  const skillFitScore = fullEvidence
+    ? Math.min(85, Math.round(35 + mustHaveRatio * 50))
+    : Math.min(75, Math.round(35 + mustHaveRatio * 45));
+
+  const supportedCount = mustHaveCoverage.filter((c) => c.status !== "missing" && c.status !== "unknown").length;
+
   const breakdown = buildScoreBreakdown({
     categories: {
-      skill_fit:        { score: Math.min(75, Math.round(35 + mustHaveRatio * 45)),    weight: weights?.skill_fit        ?? CATEGORY_WEIGHTS_V2.skill_fit,        evidence: "Provisional score from LinkedIn search snippet." },
-      location_fit:     { score: candidateLocation ? 75 : (isRemote ? 50 : 25),       weight: weights?.location_fit     ?? CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `Search result location: ${candidateLocation}.` : "Location not available in search snippet." },
+      skill_fit:        { score: skillFitScore,                                        weight: weights?.skill_fit        ?? CATEGORY_WEIGHTS_V2.skill_fit,        evidence: fullEvidence ? `Deterministic keyword match against the ${evidenceName}: ${supportedCount}/${mustHaveCoverage.length} must-haves found.` : "Provisional score from LinkedIn search snippet." },
+      location_fit:     { score: candidateLocation ? 75 : (isRemote ? 50 : 25),       weight: weights?.location_fit     ?? CATEGORY_WEIGHTS_V2.location_fit,     evidence: candidateLocation ? `${fullEvidence ? "Recorded" : "Search result"} location: ${candidateLocation}.` : `Location not available in ${evidenceName}.` },
       seniority_fit:    { score: seniorityScore,                                       weight: weights?.seniority_fit    ?? CATEGORY_WEIGHTS_V2.seniority_fit,    evidence: "Seniority inferred from headline only." },
-      title_fit:        { score: Math.min(85, Math.max(35, 45 + titleMatches * 15)),  weight: weights?.title_fit        ?? CATEGORY_WEIGHTS_V2.title_fit,        evidence: "Title fit inferred from LinkedIn headline." },
-      domain_fit:       { score: Math.round((50 + Math.min(80, Math.round(35 + mustHaveRatio * 50))) / 2), weight: weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: "Domain fit estimated provisionally from snippet keywords." },
-      nice_to_have_fit: { score: 45,                                                   weight: weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: "Nice-to-haves are provisional until the full profile is captured." },
+      title_fit:        { score: Math.min(85, Math.max(35, 45 + titleMatches * 15)),  weight: weights?.title_fit        ?? CATEGORY_WEIGHTS_V2.title_fit,        evidence: `Title fit inferred from the ${fullEvidence ? "recorded headline" : "LinkedIn headline"}.` },
+      domain_fit:       { score: Math.round((50 + Math.min(80, Math.round(35 + mustHaveRatio * 50))) / 2), weight: weights?.domain_fit ?? CATEGORY_WEIGHTS_V2.domain_fit, evidence: `Domain fit estimated from ${evidenceName} keywords.` },
+      nice_to_have_fit: { score: niceToHaveScore,                                      weight: weights?.nice_to_have_fit ?? CATEGORY_WEIGHTS_V2.nice_to_have_fit, evidence: fullEvidence ? `${ntSupported}/${niceToHaveCoverage.length} nice-to-haves found in the ${evidenceName}.` : "Nice-to-haves are provisional until the full profile is captured." },
     },
     must_have_coverage: mustHaveCoverage,
     nice_to_have_coverage: niceToHaveCoverage,
-    reasons_for: [
-      `${result.name} appears in LinkedIn search for this role.`,
-      result.headline ? `Headline: ${result.headline}.` : "Search result includes a candidate profile.",
-    ],
-    reasons_against: ["Only a LinkedIn search snippet is available; fetch the full profile for reliable scoring."],
-    missing_evidence: ["Full LinkedIn profile text", "Detailed experience history", "Confirmed work rights"],
-    recruiter_summary: "Provisional search match from a LinkedIn snippet. Fetch the full profile before treating the score as reliable.",
+    reasons_for: fullEvidence
+      ? [
+          `Matched ${supportedCount} of ${mustHaveCoverage.length} must-haves by keyword against the stored profile/CV.`,
+          result.headline ? `Headline: ${result.headline}.` : `Scored from the candidate's stored ${evidenceName} text.`,
+        ]
+      : [
+          `${result.name} appears in LinkedIn search for this role.`,
+          result.headline ? `Headline: ${result.headline}.` : "Search result includes a candidate profile.",
+        ],
+    reasons_against: fullEvidence
+      ? ["Deterministic keyword score — it verifies terms are present, not how well they were used. Run an AI re-score for judgment on seniority arc and transferable skills."]
+      : ["Only a LinkedIn search snippet is available; fetch the full profile for reliable scoring."],
+    missing_evidence: fullEvidence
+      ? ["AI assessment (optional — Re-score)", "Confirmed work rights"]
+      : ["Full LinkedIn profile text", "Detailed experience history", "Confirmed work rights"],
+    recruiter_summary: fullEvidence
+      ? `Deterministic fit score from the stored profile/CV: ${supportedCount}/${mustHaveCoverage.length} must-haves matched by keyword. No AI was used — run a re-score for an AI read on nuance.`
+      : "Provisional search match from a LinkedIn snippet. Fetch the full profile before treating the score as reliable.",
     profileCharCount: profileText.length,
     weights,
   });

@@ -1,11 +1,9 @@
 import { prisma } from "./db";
 import { Prisma } from "@prisma/client";
-import { applyLocationFitOverride, deriveUpdateData } from "./score-utils";
+import { baseScoreUpdateData } from "./base-score";
 import { getJobTargetLocation } from "./job-target-location";
 import {
   extractCandidateInfo,
-  predictAcceptance,
-  scoreCandidateStructured,
   type ParsedRole,
 } from "./ai";
 import { buildScoreCacheKey, safeParseJson } from "./utils";
@@ -370,22 +368,6 @@ export async function removeSessionFromQueue(sessionId: string): Promise<void> {
   });
 }
 
-// ---------------------------------------------------------------------------
-// AI scoring helpers
-// ---------------------------------------------------------------------------
-
-function buildAcceptanceData(acceptance: Awaited<ReturnType<typeof predictAcceptance>>) {
-  return {
-    acceptanceScore: acceptance.score,
-    acceptanceReason: JSON.stringify({
-      likelihood: acceptance.likelihood,
-      headline: acceptance.headline,
-      signals: acceptance.signals,
-      summary: acceptance.summary,
-    }),
-  };
-}
-
 /**
  * Merge `{scoringError, scoringErrorAt}` into the candidate's `screeningData`
  * JSON without clobbering existing fields. Returns a JSON string ready to
@@ -581,7 +563,7 @@ async function runAiEnrichment(identity: IdentityData): Promise<{
   update: Record<string, unknown> | null;
   scoringError: string | null;
 }> {
-  const { cleanedProfileText, currentStatus, parsedRole, salary, weights, job, profileUnchanged } = identity;
+  const { cleanedProfileText, currentStatus, parsedRole, weights, job, profileUnchanged } = identity;
 
   if (profileUnchanged) {
     // Existing score is still valid — nothing to do in stage 2.
@@ -590,25 +572,15 @@ async function runAiEnrichment(identity: IdentityData): Promise<{
 
   const enrichContext = { fn: "runAiEnrichment", jobId: job.id, orgId: job.orgId ?? null, linkedinUrl: identity.linkedinUrl };
   let scoringError: string | null = null;
-  const [info, rawBreakdown, acceptance] = await Promise.all([
-    extractCandidateInfo(cleanedProfileText, { orgId: job.orgId ?? null }).catch((err) => {
-      reportError(err, { ...enrichContext, phase: "extractCandidateInfo" });
-      return null;
-    }),
-    parsedRole
-      ? scoreCandidateStructured(cleanedProfileText, parsedRole, salary, weights, job.orgId ?? null).catch((err) => {
-          scoringError = err instanceof Error ? err.message : String(err);
-          reportError(err, { ...enrichContext, phase: "scoreCandidateStructured" });
-          return null;
-        })
-      : Promise.resolve(null),
-    cleanedProfileText.length >= 250 && parsedRole
-      ? predictAcceptance(cleanedProfileText, parsedRole, salary, { orgId: job.orgId ?? null }).catch((err) => {
-          reportError(err, { ...enrichContext, phase: "predictAcceptance" });
-          return null;
-        })
-      : Promise.resolve(null),
-  ]);
+  // Identity refinement stays an AI call (parsing, not judgment — regex can't
+  // reliably pull name/headline/location from arbitrary profile text). The
+  // SCORE is now the deterministic full-evidence heuristic, computed below —
+  // capture costs one Claude call instead of three, and scoring judgment is
+  // on demand via the job page's Score / Re-score buttons.
+  const info = await extractCandidateInfo(cleanedProfileText, { orgId: job.orgId ?? null }).catch((err) => {
+    reportError(err, { ...enrichContext, phase: "extractCandidateInfo" });
+    return null;
+  });
 
   // Refine identity ONLY where stage 1's regex extraction left a field null.
   // If the recruiter manually edited a field between stage 1 and stage 2,
@@ -628,16 +600,25 @@ async function runAiEnrichment(identity: IdentityData): Promise<{
   if (headline !== identity.headline) update.headline = headline;
   if (location !== identity.location) update.location = location;
 
-  if (rawBreakdown && parsedRole) {
-    const breakdown = applyLocationFitOverride(
-      rawBreakdown,
-      location,
-      getJobTargetLocation(job, parsedRole),
-      parsedRole.location_rules,
-      job.isRemote,
-      weights,
-    );
-    Object.assign(update, deriveUpdateData(breakdown));
+  if (parsedRole) {
+    try {
+      // Deterministic full-evidence fit score from the captured profile text.
+      // CRITICAL: also null profileTextHash — stage 1 stamped the real cache
+      // key, and leaving it beside a heuristic score would make score-all's
+      // cache check treat this row as "already AI-scored" and skip it forever.
+      // The concurrency-gated updateMany below matches on the OLD hash, so
+      // the guard still works; the write then clears it.
+      Object.assign(update, baseScoreUpdateData(
+        { name, headline, location, evidenceText: cleanedProfileText },
+        job,
+        parsedRole,
+        weights,
+      ));
+      update.profileTextHash = null;
+    } catch (err) {
+      scoringError = err instanceof Error ? err.message : String(err);
+      reportError(err, { ...enrichContext, phase: "heuristic-base-score" });
+    }
 
     if (["new", "reviewing"].includes(currentStatus)) {
       // Country gate uses the full inference (Present-role location + "based
@@ -661,10 +642,6 @@ async function runAiEnrichment(identity: IdentityData): Promise<{
       }
     }
   }
-  if (acceptance) {
-    Object.assign(update, buildAcceptanceData(acceptance));
-  }
-
   return {
     update: Object.keys(update).length > 0 ? update : null,
     scoringError,

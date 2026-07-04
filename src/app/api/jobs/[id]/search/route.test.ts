@@ -271,24 +271,21 @@ describe("search import route", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(res.status).toBe(200);
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
-      fullProfile,
-      expect.any(Object),
-      null,
-      scoringConfigMocks.customWeights,
-      "org-1"
-    );
+    // Search scoring is deterministic now — the full pool profile is scored
+    // by the heuristic (evidenceKind "profile"), never by paid Claude.
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
     expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
-    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "cand-existing" },
-      data: expect.objectContaining({
-        profileText: fullProfile,
-        source: "talent_pool",
-        fetchPriorityScore: expect.any(Number),
-        scoreBreakdown: expect.stringContaining("\"version\":2"),
-        profileTextHash: expect.any(String),
-      }),
-    }));
+    const upgradeCall = dbMocks.prisma.candidate.update.mock.calls.find(
+      (c) => (c[0].where as { id?: string })?.id === "cand-existing",
+    );
+    expect(upgradeCall, "expected an update on cand-existing").toBeTruthy();
+    const updateData = upgradeCall![0].data as Record<string, unknown>;
+    expect(updateData.profileText).toBe(fullProfile);
+    expect(updateData.source).toBe("talent_pool");
+    expect(updateData.fetchPriorityScore).toEqual(expect.any(Number));
+    expect(updateData.scoreBreakdown).toContain("\"scoredBy\":\"heuristic\"");
+    // No cache hash on heuristic scores — AI Re-score must never cache-skip.
+    expect(updateData.profileTextHash).toBeNull();
   });
 
   it("filters broad junior/no-signal results for specialist roles before importing", async () => {
@@ -917,11 +914,18 @@ describe("search route — pool-first integration scenarios", () => {
     await POST(req, { params: Promise.resolve({ id: "job-power" }) });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Claude was called with the FULL pool profile text — proving URL
+    // The FULL pool profile text landed on the candidate row — proving URL
     // enrichment from the existing buildTalentPoolMap path still operates.
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalled();
-    const profileTextArg = aiMocks.scoreCandidateStructured.mock.calls[0][0] as string;
-    expect(profileTextArg).toContain("Senior SCADA engineer with strong RTU");
+    // (Scoring itself is the deterministic heuristic now, no Claude call.)
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+    const enrichedWrite = [
+      ...dbMocks.prisma.candidate.upsert.mock.calls.map((c) => (c[0].create ?? {}) as Record<string, unknown>),
+      ...dbMocks.prisma.candidate.update.mock.calls.map((c) => c[0].data as Record<string, unknown>),
+    ].find((d) => typeof d.profileText === "string" && (d.profileText as string).includes("Senior SCADA engineer with strong RTU"));
+    expect(enrichedWrite, "expected a candidate write carrying the full pool profile text").toBeTruthy();
+    // Scored heuristically from that full text, with no cache hash stamped.
+    expect(enrichedWrite!.scoreBreakdown as string).toContain("\"scoredBy\":\"heuristic\"");
+    expect(enrichedWrite!.profileTextHash ?? null).toBeNull();
   });
 });
 

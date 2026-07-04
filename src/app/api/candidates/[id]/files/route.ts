@@ -4,17 +4,15 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getAuth, unauthorized } from "@/lib/session";
 import { extractTextFromPdf } from "@/lib/pdf";
-import { scoreCandidateStructured, predictAcceptance, cleanCvText, extractCandidateInfo } from "@/lib/ai";
+import { cleanCvText, extractCandidateInfo } from "@/lib/ai";
 import { extractIdentityFromLinkedInProfileText } from "@/lib/linkedin-capture";
 import type { ParsedRole } from "@/lib/ai";
-import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
-import { getJobTargetLocation } from "@/lib/job-target-location";
-import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { baseScoreUpdateData } from "@/lib/base-score";
+import { safeParseJson } from "@/lib/utils";
 import { shouldRejectAsOverseas } from "@/lib/location";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { reportError } from "@/lib/error-reporting";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
-import { getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { encryptCv } from "@/lib/cv-encryption";
 import { persistFileEnvelope, deleteBlob } from "@/lib/blob-store";
 
@@ -117,11 +115,11 @@ export async function POST(
   const candidate = await requireAccess(id, auth);
   if (!candidate) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // CV uploads trigger extractCandidateInfo + scoreCandidateStructured +
-  // predictAcceptance synchronously — three paid Claude calls per upload.
-  // Without the same per-org rate-limit + daily USD cap that gates score-all
-  // and talent-pool, a scripted upload loop could quietly blow past the
-  // $5/day cap. Mirrors score-all/route.ts:34-48.
+  // CV uploads still trigger cleanCvText + extractCandidateInfo (paid Claude
+  // parsing calls — data entry, not judgment; scoring itself is now the free
+  // deterministic heuristic). Keep the per-org rate-limit + daily USD cap so
+  // a scripted upload loop can't blow past the $5/day cap via the parse calls.
+  // Mirrors score-all/route.ts:34-48.
   const rateCheck = await checkRateLimit(auth.orgId, "score");
   if (!rateCheck.allowed) {
     const waitMin = Math.ceil((rateCheck.retryAfterMs ?? 60000) / 60000);
@@ -382,51 +380,30 @@ export async function POST(
       let scored = false;
       if (parsedRole && candidate.job) {
         try {
-          const salary = (candidate.job.salaryMin || candidate.job.salaryMax)
-            ? { min: candidate.job.salaryMin ?? 0, max: candidate.job.salaryMax ?? 0 }
-            : null;
           // Use job-specific weights so a recruiter who tuned a particular role
           // (e.g. higher must-have weight for security clearance) sees the CV
           // re-scored with that role's tuning, not a generic org default.
           const weights = await getJobScoringWeights(candidate.job.scoringWeights, auth.orgId);
-          // Must include correctionsVersion so the cache key matches the one
-          // score-all / single-score compute. Omitting it (defaulting to 0)
-          // means any org with a recorded correction sees this hash miss on
-          // the next re-score, triggering a redundant paid Claude pass that
-          // produces an identical result.
-          const correctionsVersion = await getCorrectionsVersion(auth.orgId);
-          const [rawBreakdown, acceptanceResult] = await Promise.allSettled([
-            scoreCandidateStructured(text, parsedRole, salary, weights, auth.orgId),
-            predictAcceptance(text, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId }),
-          ]);
-          if (rawBreakdown.status === "fulfilled") {
-            const breakdown = applyLocationFitOverride(
-              rawBreakdown.value,
-              candidate.location,
-              getJobTargetLocation(candidate.job, parsedRole),
-              parsedRole.location_rules,
-              candidate.job.isRemote,
-              weights,
-            );
-            Object.assign(updates, deriveUpdateData(breakdown));
-            updates.profileTextHash = buildScoreCacheKey({
-              profileText: text,
+          // Deterministic full-evidence fit score against the fresh CV text (no
+          // AI): the upload stays fast and free, and the score honestly says
+          // what it is (scoredBy="heuristic" → "Base" pill). AI judgment +
+          // acceptance run on demand via the Score buttons; profileTextHash
+          // stays null (set above) so that AI pass is never cache-skipped.
+          Object.assign(
+            updates,
+            baseScoreUpdateData(
+              {
+                name: (updates.name as string | undefined) ?? candidate.name,
+                headline: ((updates.headline as string | undefined) ?? candidate.headline) || null,
+                location: ((updates.location as string | undefined) ?? candidate.location) || null,
+                evidenceText: text,
+              },
+              candidate.job,
               parsedRole,
-              salary,
-              jobLocation: candidate.job.location,
-              jobLocation2: candidate.job.location2,
-              isRemote: candidate.job.isRemote,
               weights,
-              correctionsVersion,
-            });
-            if (acceptanceResult.status === "fulfilled") {
-              updates.acceptanceScore = acceptanceResult.value.score;
-              updates.acceptanceReason = JSON.stringify(acceptanceResult.value);
-            }
-            scored = true;
-          } else {
-            reportError(rawBreakdown.reason, { route: "cv-upload:score", candidateId: id, orgId: auth.orgId });
-          }
+            ),
+          );
+          scored = true;
         } catch (err) {
           reportError(err, { route: "cv-upload:score", candidateId: id, orgId: auth.orgId });
         }

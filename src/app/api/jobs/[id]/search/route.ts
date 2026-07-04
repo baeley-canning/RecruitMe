@@ -6,9 +6,9 @@ import {
   inferEmploymentType,
   type SearchResult,
 } from "@/lib/search";
-import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
-import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
+import { HEURISTIC_SCORED_BY } from "@/lib/base-score";
+import { deriveUpdateData } from "@/lib/score-utils";
 import {
   classifyDataQuality,
   type ScoreBreakdown,
@@ -22,7 +22,7 @@ import {
   normalizeLocationText,
 } from "@/lib/location";
 import { getCityCoords } from "@/lib/nz-cities";
-import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { safeParseJson } from "@/lib/utils";
 import { textHasTerm } from "@/lib/format";
 import {
   buildTalentPoolMap,
@@ -186,17 +186,19 @@ function hasSpecialistSourceSignal(result: SearchResult, parsedRole: ParsedRole,
 // Thin wrapper that binds the local signal helpers to the extracted library
 // function. Keeps all callers in this file unchanged.
 function buildProvisionalSearchScore(
-  result: SearchResult,
+  result: { name: string; headline: string | null | undefined; snippet: string | null | undefined },
   parsedRole: ParsedRole,
   candidateLocation: string | null | undefined,
   targetLocation: string,
   locationRules: string | null | undefined,
   isRemote: boolean,
   weights?: ScoringWeights,
+  opts?: { evidenceKind?: "snippet" | "profile" },
 ): ScoreBreakdown {
   return buildProvisionalSearchScoreLib(
     result, parsedRole, candidateLocation, targetLocation, locationRules, isRemote, weights,
     { requirementSignals, hasSignal, normaliseText },
+    opts,
   );
 }
 
@@ -1376,51 +1378,30 @@ async function runSearchBackground(args: {
           const scoreData: Record<string, unknown> = {};
           let matchScore: number | null = null;
           const hasFullProfile = classifyDataQuality(profileText?.length ?? 0) === "full_profile";
+          // Deterministic scoring for EVERYTHING (no AI in the search path).
+          // Full profiles feed their whole stored text into the same keyword
+          // scorer (evidenceKind "profile" — honest wording, higher ceiling);
+          // snippets keep the historical provisional path. AI judgment is on
+          // demand afterwards via Score / Re-score all — no profileTextHash is
+          // stamped here, so that AI pass never cache-skips these rows.
           try {
-            const breakdown = hasFullProfile
-              ? applyLocationFitOverride(
-                  await scoreCandidateStructured(textToScore, parsedRoleForScoring, salary, weights, orgId),
-                  candidateLocation,
-                  targetLocation,
-                  parsedRoleForScoring.location_rules,
-                  job.isRemote,
-                  weights,
-                )
-              : buildProvisionalSearchScore(
-                  r,
-                  parsedRoleForScoring,
-                  candidateLocation,
-                  targetLocation,
-                  parsedRoleForScoring.location_rules,
-                  job.isRemote,
-                  weights,
-            );
-            matchScore = breakdown.overall;
-            Object.assign(scoreData, deriveUpdateData(breakdown));
-            if (hasFullProfile) {
-              scoreData.profileTextHash = buildScoreCacheKey({
-                profileText,
-                parsedRole,
-                salary,
-                jobLocation: job.location,
-                jobLocation2: job.location2,
-                isRemote: job.isRemote,
-                weights,
-              });
-            }
-          } catch (err) {
-            reportError(err, { route: "search:score", jobId, orgId, candidateUrl: r.linkedinUrl ?? "unknown" });
-            const fallback = buildProvisionalSearchScore(
-              r,
+            const breakdown = buildProvisionalSearchScore(
+              hasFullProfile ? { name: r.name, headline: r.headline, snippet: textToScore } : r,
               parsedRoleForScoring,
               candidateLocation,
               targetLocation,
               parsedRoleForScoring.location_rules,
               job.isRemote,
               weights,
+              { evidenceKind: hasFullProfile ? "profile" : "snippet" },
             );
-            matchScore = fallback.overall;
-            Object.assign(scoreData, deriveUpdateData(fallback));
+            // Tag provenance so the UI renders the "Fit" pill (deterministic,
+            // no AI) instead of implying a model produced this score.
+            breakdown.scoredBy = HEURISTIC_SCORED_BY;
+            matchScore = breakdown.overall;
+            Object.assign(scoreData, deriveUpdateData(breakdown));
+          } catch (err) {
+            reportError(err, { route: "search:score", jobId, orgId, candidateUrl: r.linkedinUrl ?? "unknown" });
           }
           return { r, normUrl, poolEntry, existingCandidate, candidateLocation, profileText, isFromPool, scoreData, matchScore, fetchPriorityScore, fetchPriorityReason, hasFullProfile };
         })

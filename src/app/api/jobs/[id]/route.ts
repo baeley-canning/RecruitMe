@@ -63,8 +63,20 @@ export async function GET(
     ? safeParseJson<ParsedRole | null>(full.parsedRole, null)
     : null;
   if (parsedRoleForBase) {
-    const needsBaseScore = full.candidates.filter(
-      (c) => c.matchScore == null && (c.headline || c.location),
+    // The list select strips profileText for payload size, but the base score
+    // is far stronger fed the FULL stored evidence (profileText/CV) than a
+    // headline — so fetch it for just the unscored rows (usually a handful).
+    const unscored = full.candidates.filter((c) => c.matchScore == null);
+    const evidenceById = new Map<string, string | null>();
+    if (unscored.length > 0) {
+      const rows = await prisma.candidate.findMany({
+        where: { id: { in: unscored.map((c) => c.id) } },
+        select: { id: true, profileText: true },
+      });
+      for (const r of rows) evidenceById.set(r.id, r.profileText);
+    }
+    const needsBaseScore = unscored.filter(
+      (c) => c.headline || c.location || evidenceById.get(c.id),
     );
     if (needsBaseScore.length > 0) {
       const weights = await getJobScoringWeights(full.scoringWeights, auth.orgId);
@@ -74,7 +86,7 @@ export async function GET(
           // Scoring is pure CPU (no AI, no I/O) and fast — compute synchronously
           // so the score is in `baseScores` for the response merge below.
           const data = baseScoreUpdateData(
-            { name: c.name, headline: c.headline, location: c.location },
+            { name: c.name, headline: c.headline, location: c.location, evidenceText: evidenceById.get(c.id) ?? null },
             full,
             parsedRoleForBase,
             weights,

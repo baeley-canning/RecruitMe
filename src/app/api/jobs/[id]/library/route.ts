@@ -12,12 +12,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { scoreCandidateStructured } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
-import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
-import { getJobTargetLocation } from "@/lib/job-target-location";
+import { baseScoreUpdateData } from "@/lib/base-score";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
-import { safeParseJson, buildScoreCacheKey, parseIntParam } from "@/lib/utils";
+import { safeParseJson, parseIntParam } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getAccessibleOrgIds, candidateOrgFilter } from "@/lib/org-access";
 import { shouldRejectAsOverseas } from "@/lib/location";
@@ -204,7 +202,6 @@ export async function POST(
   let rateRetryAfterMs: number | undefined;
   let spent = 0;
   let cap = 0;
-  let spendAllowed = true;
   {
     const rateCheck = await checkRateLimit(auth.orgId, "score");
     rateAllowed = rateCheck.allowed;
@@ -212,19 +209,12 @@ export async function POST(
     const spend = await checkSpendCap(auth.orgId);
     spent = spend.spentUsd;
     cap = spend.capUsd;
-    spendAllowed = spend.allowed;
   }
-  if (!isDryRun) {
-    if (!rateAllowed) {
-      const waitMin = Math.ceil((rateRetryAfterMs ?? 60000) / 60000);
-      return NextResponse.json({ error: `Scoring rate limit reached. Try again in ~${waitMin} minute${waitMin !== 1 ? "s" : ""}.` }, { status: 429 });
-    }
-    if (!spendAllowed) {
-      return NextResponse.json({
-        error: `Daily AI spend cap reached ($${spent.toFixed(2)} / $${cap.toFixed(2)}). Try again tomorrow or raise AI_DAILY_SPEND_CAP_USD.`,
-      }, { status: 429 });
-    }
-  }
+  // NOTE: import scoring is now the deterministic heuristic (no AI), so the
+  // rate/spend gates no longer BLOCK the POST — an AI credit-out or busy day
+  // must not stop a recruiter adding candidates to a job. The cap state is
+  // still computed above and surfaced in the response so the UI can warn that
+  // a follow-up AI "Re-score all" would be limited.
 
   const parsed = PostSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -236,9 +226,6 @@ export async function POST(
     return NextResponse.json({ error: "Analyse the job description first." }, { status: 400 });
   }
 
-  const salary = (job.salaryMin || job.salaryMax)
-    ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
-    : null;
   const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 
   // Pull source candidates with full profile text — same library scope as
@@ -338,17 +325,22 @@ export async function POST(
       return;
     }
 
-    // Try scoring twice — transient API failures (timeouts, 503s) are common
-    // and a single retry catches most of them without significant latency.
-    let breakdown = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const raw = await scoreCandidateStructured(source.profileText, parsedRole, salary, weights, auth.orgId);
-        breakdown = applyLocationFitOverride(raw, source.location, getJobTargetLocation(job, parsedRole), parsedRole.location_rules, job.isRemote, weights);
-        break;
-      } catch {
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
-      }
+    // Deterministic full-evidence fit score (no AI): keyword coverage of the
+    // job's must-haves/nice-to-haves against the stored profileText, tagged
+    // scoredBy="heuristic" ("Base" pill). Importing from the library is now
+    // instant and free; the recruiter runs "Re-score all" on the job when they
+    // want AI judgment on the ones worth it — heuristic rows never stamp
+    // profileTextHash, so the AI pass never cache-skips them.
+    let scoreData: { matchScore: number; scoreBreakdown: string; matchReason: string } | null = null;
+    try {
+      scoreData = baseScoreUpdateData(
+        { name: source.name, headline: source.headline, location: source.location, evidenceText: source.profileText },
+        job,
+        parsedRole,
+        weights,
+      );
+    } catch (err) {
+      reportError(err, { route: "library-import:base-score", jobId: id, sourceId: source.id });
     }
 
     try {
@@ -371,20 +363,17 @@ export async function POST(
           source: "talent_pool",
           status: "new",
           profileCapturedAt: source.profileCapturedAt,
-          // If scoring succeeded, spread score data + hash; otherwise import
-          // without a score so the candidate is visible and can be re-scored.
-          ...(breakdown ? deriveUpdateData(breakdown) : {}),
-          ...(breakdown ? {
-            profileTextHash: buildScoreCacheKey({ profileText: source.profileText, parsedRole, salary, jobLocation: job.location, jobLocation2: job.location2, isRemote: job.isRemote, weights }),
-          } : {}),
+          // Heuristic fit score on create. Deliberately NO profileTextHash —
+          // it must stay null so a later AI "Re-score all" never cache-skips.
+          ...(scoreData ?? {}),
         },
-        update: {
-          ...(breakdown ? deriveUpdateData(breakdown) : {}),
-        },
+        // Re-import of an existing row: keep whatever score it has. A prior
+        // AI score must never be overwritten by a heuristic one.
+        update: {},
       });
       added++;
       upsertedIds.push(upserted.id);
-      if (!breakdown) unscoredIds.push(source.id);
+      if (!scoreData) unscoredIds.push(source.id);
     } catch {
       failed.push(source.id);
     }

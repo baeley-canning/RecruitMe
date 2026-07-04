@@ -90,7 +90,7 @@ describe("linkedin-capture scoring failure handling", () => {
     dbMocks.prisma.candidate.findUnique.mockResolvedValue({ screeningData: null });
   });
 
-  it("writes matchScore: null + screeningData.scoringError when stage-2 scoring rejects", async () => {
+  it("stage 2 writes the deterministic heuristic score — no AI scorer/acceptance, hash cleared", async () => {
     // Stage 1: import path — creates the candidate row, returns identity.
     dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([]);
     dbMocks.prisma.candidate.create.mockResolvedValueOnce({
@@ -105,15 +105,58 @@ describe("linkedin-capture scoring failure handling", () => {
     });
     expect(candidate.id).toBe("cand-1");
 
-    // Stage 2: simulate Claude blowing up on the structured scorer.
-    aiMocks.scoreCandidateStructured.mockRejectedValueOnce(new Error("Claude failover exhausted: 502"));
+    await applyAiEnrichmentInBackground("cand-1", identity);
+
+    // Scoring judgment is on demand now: capture never calls the paid
+    // structured scorer or acceptance prediction (extractCandidateInfo, a
+    // parsing call, still runs).
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+    expect(aiMocks.predictAcceptance).not.toHaveBeenCalled();
+
+    // The heuristic score landed via the hash-gated updateMany…
+    const scoreWrite = dbMocks.prisma.candidate.updateMany.mock.calls.find(
+      (call) => typeof (call[0].data as Record<string, unknown>)?.matchScore === "number",
+    );
+    expect(scoreWrite, "expected updateMany carrying the heuristic matchScore").toBeTruthy();
+    const data = scoreWrite![0].data as Record<string, unknown>;
+    expect(data.scoreBreakdown).toContain("\"scoredBy\":\"heuristic\"");
+    // …with the React must-have found in the full captured text (receipts).
+    expect(data.scoreBreakdown).toContain("\"status\":\"likely\"");
+    // CRITICAL: stage 1 stamped the real cache key; the heuristic write must
+    // null it, or score-all would treat this row as already-AI-scored and
+    // cache-skip it forever.
+    expect(data.profileTextHash).toBeNull();
+  });
+
+  it("writes matchScore: null + screeningData.scoringError when stage-2 scoring throws", async () => {
+    // A parsedRole with neither must_haves nor skills_required makes the
+    // heuristic throw (nothing to score against) — the realistic breakage
+    // shape now that scoring is deterministic.
+    dbMocks.prisma.job.findUnique.mockResolvedValue({
+      id: "job-1",
+      orgId: "org-1",
+      parsedRole: JSON.stringify({ title: "Software Engineer", location: "Wellington" }),
+      salaryMin: null,
+      salaryMax: null,
+      location: "Wellington",
+      location2: null,
+      isRemote: false,
+      scoringWeights: null,
+    });
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([]);
+    dbMocks.prisma.candidate.create.mockResolvedValueOnce({
+      id: "cand-1",
+      profileTextHash: "hash-stage-1",
+    });
+
+    const { identity } = await importCapturedLinkedInProfileFast({
+      jobId: "job-1",
+      linkedinUrl: "https://www.linkedin.com/in/alex-chen",
+      profileText: PROFILE_TEXT,
+    });
 
     await applyAiEnrichmentInBackground("cand-1", identity);
 
-    // The non-score identity refinements (name/headline/location from
-    // extractCandidateInfo, acceptance score from predictAcceptance) still
-    // land via the standard write — but crucially there's a SEPARATE
-    // updateMany that flags the scoring failure. Find that one.
     // Find the updateMany call that wrote {matchScore: null, screeningData: <json>}.
     const flagWrite = dbMocks.prisma.candidate.updateMany.mock.calls.find(
       (call) => (call[0].data as Record<string, unknown>)?.matchScore === null,
@@ -122,7 +165,7 @@ describe("linkedin-capture scoring failure handling", () => {
     const flagData = flagWrite![0].data as Record<string, unknown>;
     expect(flagData.matchScore).toBeNull();
     const screening = JSON.parse(flagData.screeningData as string);
-    expect(screening.scoringError).toContain("Claude failover exhausted");
+    expect(screening.scoringError).toBeTruthy();
     expect(screening.scoringErrorAt).toBeTruthy();
 
     // reportError was called so Sentry / structured logs get the trail.

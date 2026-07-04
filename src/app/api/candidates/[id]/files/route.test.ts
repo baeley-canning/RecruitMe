@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 import { buildScoreBreakdown, CATEGORY_WEIGHTS_V2 } from "@/lib/scoring";
-import { buildScoreCacheKey } from "@/lib/utils";
 
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -172,7 +171,10 @@ describe("candidate file CV upload", () => {
   });
 
   it("clears stale score fields when CV scoring fails", async () => {
-    aiMocks.scoreCandidateStructured.mockRejectedValue(new Error("model unavailable"));
+    // Heuristic scoring's only awaited dependency is the weights lookup —
+    // force it to fail. The stale-score clears must still land so the row
+    // shows "captured but not scored", never a score from the OLD text.
+    scoringConfigMocks.getJobScoringWeights.mockRejectedValue(new Error("weights unavailable"));
 
     const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
 
@@ -191,36 +193,23 @@ describe("candidate file CV upload", () => {
     }));
   });
 
-  it("stores a score-context cache key only after successful CV scoring", async () => {
-    const candidate = makeCandidate();
-    const parsedRole = JSON.parse(candidate.job.parsedRole);
-    aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown());
-
+  it("scores the CV with the deterministic heuristic — no AI scoring call, no cache key stamped", async () => {
     const res = await POST(makeRequest(), { params: Promise.resolve({ id: "cand-1" }) });
     const body = await res.json();
 
     expect(res.status).toBe(201);
     expect(body.scored).toBe(true);
-    expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledWith(
-      cvText.trim(),
-      parsedRole,
-      { min: 90000, max: 120000 },
-      scoringConfigMocks.customWeights,
-      "org-1"
-    );
-    expect(dbMocks.prisma.candidate.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        profileTextHash: buildScoreCacheKey({
-          profileText: cvText.trim(),
-          parsedRole,
-          salary: { min: 90000, max: 120000 },
-          jobLocation: "Wellington",
-          isRemote: false,
-          weights: scoringConfigMocks.customWeights,
-        }),
-        scoreBreakdown: expect.stringContaining("\"version\":2"),
-      }),
-    }));
+    // Scoring judgment is on demand now — upload never calls the paid scorer
+    // or acceptance prediction (extract/clean parsing calls are separate).
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+    expect(aiMocks.predictAcceptance).not.toHaveBeenCalled();
+    const updateData = dbMocks.prisma.candidate.update.mock.calls[0][0].data as Record<string, unknown>;
+    // Heuristic fit score written from the CV text, tagged honestly…
+    expect(updateData.matchScore).toEqual(expect.any(Number));
+    expect(updateData.scoreBreakdown).toContain("\"scoredBy\":\"heuristic\"");
+    // …and CRITICALLY no cache key: profileTextHash must stay null so a later
+    // AI "Re-score" is never cache-skipped into keeping the heuristic score.
+    expect(updateData.profileTextHash).toBeNull();
   });
 
   it("short-circuits with 429 when the daily AI spend cap is exhausted", async () => {

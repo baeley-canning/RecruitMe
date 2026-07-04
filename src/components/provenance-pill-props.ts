@@ -6,7 +6,7 @@
  */
 
 export interface ProvenancePillProps {
-  label: "Claude" | "Llama" | "Base";
+  label: "Claude" | "Llama" | "Fit";
   tone:  "claude" | "ollama" | "base";
   title: string;
 }
@@ -24,14 +24,14 @@ export function provenancePillProps(
   source: "claude" | "ollama" | "heuristic" | undefined | null,
   context: "match" | "acceptance",
 ): ProvenancePillProps | null {
-  // Deterministic, no-AI base score (snippet heuristic). Only meaningful for
-  // match scoring — the acceptance likelihood is always model-produced.
+  // Deterministic, no-AI fit score. Only meaningful for match scoring — the
+  // acceptance likelihood is always model-produced.
   if (source === "heuristic") {
     if (context !== "match") return null;
     return {
-      label: "Base",
+      label: "Fit",
       tone:  "base",
-      title: "Base score — a deterministic match from the SEEK/LinkedIn snippet (name, headline, location) against the role. No AI ran; re-score with AI for a full, evidence-grounded assessment.",
+      title: "Deterministic fit score — keyword coverage of the role's must-haves against the candidate's stored profile/CV (or search snippet when that's all we hold). No AI ran and no tokens were spent; open \"Why?\" for the matched/missing receipts, or Re-score for an AI judgment on nuance.",
     };
   }
   if (source !== "claude" && source !== "ollama") return null;

@@ -210,10 +210,15 @@ describe("library browse / add route", () => {
     expect(res.status).toBe(422);
   });
 
-  it("POST short-circuits with 429 when the score rate limit is exhausted", async () => {
-    // Mirrors the score-all guard — without this, a single click on Browse
-    // Library could fire 50 paid Claude calls past the per-org cap.
-    usageMocks.checkRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterMs: 60_000 });
+  it("POST is NOT blocked by the score rate limit (import scoring is heuristic — no AI)", async () => {
+    // Import scoring is the deterministic heuristic now. An exhausted AI
+    // rate limit (or a credit-out) must never stop a recruiter adding
+    // candidates to a job; the cap state is surfaced for UI warnings only.
+    usageMocks.checkRateLimit.mockResolvedValue({ allowed: false, retryAfterMs: 60_000 });
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
+      { id: "src-1", name: "Source A", headline: "Eng", location: "Wellington", linkedinUrl: "https://www.linkedin.com/in/src-a/", profileText: "x".repeat(2500), profileCapturedAt: null },
+    ]);
+    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({ id: "new-1", ...create }));
 
     const res = await POST(new Request("http://localhost/", {
       method: "POST",
@@ -221,13 +226,17 @@ describe("library browse / add route", () => {
       body: JSON.stringify({ candidateIds: ["src-1"] }),
     }), { params: Promise.resolve({ id: "job-1" }) });
 
-    expect(res.status).toBe(429);
-    // Pool/source fetch must NOT have run — the guard fires before we hit Prisma.
-    expect(dbMocks.prisma.candidate.findMany).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect((await res.json()).added).toBe(1);
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
   });
 
-  it("POST short-circuits with 429 when the daily AI spend cap is tripped", async () => {
-    usageMocks.checkSpendCap.mockResolvedValueOnce({ allowed: false, spentUsd: 5.12, capUsd: 5.0 });
+  it("POST is NOT blocked by the daily AI spend cap (import scoring is heuristic — no AI)", async () => {
+    usageMocks.checkSpendCap.mockResolvedValue({ allowed: false, spentUsd: 5.12, capUsd: 5.0 });
+    dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
+      { id: "src-1", name: "Source A", headline: "Eng", location: "Wellington", linkedinUrl: "https://www.linkedin.com/in/src-a/", profileText: "x".repeat(2500), profileCapturedAt: null },
+    ]);
+    dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({ id: "new-1", ...create }));
 
     const res = await POST(new Request("http://localhost/", {
       method: "POST",
@@ -235,9 +244,9 @@ describe("library browse / add route", () => {
       body: JSON.stringify({ candidateIds: ["src-1"] }),
     }), { params: Promise.resolve({ id: "job-1" }) });
 
-    expect(res.status).toBe(429);
-    const body = await res.json();
-    expect(body.error).toContain("AI spend cap");
+    expect(res.status).toBe(200);
+    expect((await res.json()).added).toBe(1);
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
   });
 
   it("GET honours the ?limit= query param via the SQL LIMIT param", async () => {
@@ -314,30 +323,36 @@ describe("library browse / add route", () => {
     expect(body.candidates[0].id).toBe("lib-600");
   });
 
-  it("POST still imports when scoring fails (retry both attempts), surfaces unscoredIds", async () => {
+  it("POST scores imports with the deterministic heuristic — no AI call, no cache hash, receipts present", async () => {
     dbMocks.prisma.candidate.findMany.mockResolvedValueOnce([
-      { id: "src-good", name: "Good", linkedinUrl: "https://www.linkedin.com/in/good/", profileText: "x".repeat(2500), location: "Wellington" },
-      { id: "src-bad",  name: "Bad",  linkedinUrl: "https://www.linkedin.com/in/bad/",  profileText: "x".repeat(2500), location: "Wellington" },
+      { id: "src-good", name: "Good", headline: "React developer", linkedinUrl: "https://www.linkedin.com/in/good/", profileText: `${"filler ".repeat(300)}Extensive React experience building SPAs in Wellington.`, location: "Wellington" },
     ]);
-    aiMocks.scoreCandidateStructured
-      .mockResolvedValueOnce(makeBreakdown())
-      // Both the first attempt AND the retry fail for src-bad.
-      .mockRejectedValueOnce(new Error("AI failed"))
-      .mockRejectedValueOnce(new Error("AI failed"));
     dbMocks.prisma.candidate.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({ id: "new", ...create }));
 
     const res = await POST(new Request("http://localhost/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ candidateIds: ["src-good", "src-bad"] }),
+      body: JSON.stringify({ candidateIds: ["src-good"] }),
     }), { params: Promise.resolve({ id: "job-1" }) });
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    // Both candidates are added — scoring failure no longer blocks import.
-    expect(body.added).toBe(2);
+    expect(body.added).toBe(1);
     expect(body.failed).toEqual([]);
-    // The one that couldn't be scored is flagged separately so the UI can warn.
-    expect(body.unscoredIds).toEqual(["src-bad"]);
+    expect(body.unscoredIds ?? []).toEqual([]);
+    // No AI ran.
+    expect(aiMocks.scoreCandidateStructured).not.toHaveBeenCalled();
+    const { create, update } = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
+    // Heuristic score landed, tagged scoredBy=heuristic, with the React
+    // must-have found in the full profile text (the receipts).
+    expect(create.matchScore).toBeGreaterThan(0);
+    const breakdown = JSON.parse(create.scoreBreakdown as string);
+    expect(breakdown.scoredBy).toBe("heuristic");
+    expect(breakdown.must_have_coverage[0].status).toBe("likely");
+    // CRITICAL invariant: heuristic writes never stamp profileTextHash, so a
+    // later AI "Re-score all" is never cache-skipped.
+    expect(create.profileTextHash).toBeUndefined();
+    // Re-import of an existing row must keep its existing (possibly AI) score.
+    expect(update).toEqual({});
   });
 });

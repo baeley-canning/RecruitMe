@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { extractCandidateInfo, predictAcceptance, scoreCandidateStructured } from "@/lib/ai";
+import { extractCandidateInfo } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
-import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
-import { getJobTargetLocation } from "@/lib/job-target-location";
+import { baseScoreUpdateData } from "@/lib/base-score";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
-import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { safeParseJson } from "@/lib/utils";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { isSeekProfileUrl, normaliseSeekUrl } from "@/lib/seek";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -105,43 +104,23 @@ export async function POST(
   if (body.autoScore !== false && body.profileText && job.parsedRole) {
     const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
     if (!parsedRole) return NextResponse.json({ ...candidate, rejectedAsOverseas: overseas.reject ? overseas.evidence : undefined }, { status: 201 });
-    const salary = (job.salaryMin || job.salaryMax)
-      ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
-      : null;
-    const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
-
     try {
-      const rawBreakdown = await scoreCandidateStructured(body.profileText, parsedRole, salary, weights, auth.orgId);
-      const breakdown = applyLocationFitOverride(
-        rawBreakdown,
-        location || null,
-        getJobTargetLocation(job, parsedRole),
-        parsedRole.location_rules,
-        job.isRemote,
-        weights,
-      );
+      // Inside the try: the candidate row already exists, so ANY failure from
+      // here (weights lookup included) must flag scoringError on the row
+      // rather than bubbling into a 500 that hides the created candidate.
+      const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
+      // Deterministic full-evidence fit score (no AI) — adding a candidate is
+      // instant and free. AI judgment (score + acceptance) is on demand via
+      // the job page's Score / Re-score buttons; heuristic rows never stamp
+      // profileTextHash, so that AI pass is never cache-skipped.
       const updateData: Record<string, unknown> = {
-        ...deriveUpdateData(breakdown),
-        profileTextHash: buildScoreCacheKey({
-          profileText: body.profileText,
+        ...baseScoreUpdateData(
+          { name: name || "Unknown", headline: headline || null, location: location || null, evidenceText: body.profileText },
+          job,
           parsedRole,
-          salary,
-          jobLocation: job.location,
-          jobLocation2: job.location2,
-          isRemote: job.isRemote,
           weights,
-        }),
+        ),
       };
-      if (body.profileText.length >= 250) {
-        const acceptance = await predictAcceptance(body.profileText, parsedRole, salary, { orgId: auth.orgId, userId: auth.userId });
-        updateData.acceptanceScore  = acceptance.score;
-        updateData.acceptanceReason = JSON.stringify({
-          likelihood: acceptance.likelihood,
-          headline:   acceptance.headline,
-          signals:    acceptance.signals,
-          summary:    acceptance.summary,
-        });
-      }
       const updated = await prisma.candidate.update({
         where: { id: candidate.id },
         data: updateData,

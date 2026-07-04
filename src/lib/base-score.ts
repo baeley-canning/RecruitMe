@@ -40,7 +40,18 @@ export interface BaseScoreCandidate {
   name: string;
   headline: string | null;
   location: string | null;
+  /** Full stored evidence when we hold it — profileText and/or CV text.
+   *  Feeding this in is the difference between "scored on a headline" and a
+   *  real deterministic fit check: must-have/nice-to-have keyword coverage
+   *  runs over the whole text, and the breakdown says so honestly
+   *  (evidenceKind "profile"). Omit/null for true snippet-only rows. */
+  evidenceText?: string | null;
 }
+
+/** Cap the evidence fed to signal matching. Regex matching over normalised
+ *  text is fast, but profileText+cvText can reach 100KB+ on JobAdder rows;
+ *  40k chars comfortably covers any real CV/profile's signal content. */
+const EVIDENCE_TEXT_CAP = 40_000;
 
 export interface BaseScoreJob {
   location: string | null;
@@ -59,10 +70,11 @@ export function baseScoreUpdateData(
   parsedRole: ParsedRole,
   weights: ScoringWeights | undefined,
 ): { matchScore: number; scoreBreakdown: string; matchReason: string } {
+  const evidence = candidate.evidenceText?.trim() ? candidate.evidenceText.slice(0, EVIDENCE_TEXT_CAP) : null;
   const snippet: SearchSnippet = {
     name: candidate.name,
     headline: candidate.headline,
-    snippet: null, // library / SEEK snippet rows carry no full profile text
+    snippet: evidence, // full profile/CV when held; null for snippet-only rows
   };
   const breakdown = buildProvisionalSearchScore(
     snippet,
@@ -73,6 +85,7 @@ export function baseScoreUpdateData(
     job.isRemote,
     weights,
     SIGNAL_DEPS,
+    { evidenceKind: evidence ? "profile" : "snippet" },
   );
   breakdown.scoredBy = HEURISTIC_SCORED_BY;
   return deriveUpdateData(breakdown) as {
