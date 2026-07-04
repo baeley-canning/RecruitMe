@@ -28,26 +28,37 @@ export async function register() {
  * box-outage-proof: it lives exactly as long as the app serving the UI.
  * Idempotent by design (reclaims only genuinely-stale work), so
  * double-driving alongside the box worker is safe.
+ *
+ * Deliberately calls our OWN /api/admin/search-runs/sweep over localhost
+ * instead of importing src/lib/search-run: instrumentation.ts is compiled
+ * for the edge runtime too, and pulling app code in drags node:crypto into
+ * that bundle — a hard `next build` webpack error (hit live 2026-07-04).
+ * A plain fetch has zero bundling footprint in any runtime.
  * Kill switch: DISABLE_INPROC_SWEEP=1.
  */
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 function startSearchSweepTimer() {
   if (process.env.DISABLE_INPROC_SWEEP === "1") return;
+  if (!process.env.SCRAPER_SECRET) return; // endpoint auth — nothing to drive with
+  const port = process.env.PORT ?? "3000";
   const tick = async () => {
     try {
-      // Dynamic import keeps Prisma out of the instrumentation module graph
-      // until first tick (register() also runs in `next build` workers).
-      const { sweepStuckRuns } = await import("./lib/search-run");
-      const r = await sweepStuckRuns();
-      if (r.reclaimed || r.swept || r.scoreTimedOut) {
-        console.log(`[inproc-sweep] reclaimed=${r.reclaimed} swept=${r.swept} scoreTimedOut=${r.scoreTimedOut}`);
+      const res = await fetch(`http://127.0.0.1:${port}/api/admin/search-runs/sweep`, {
+        method: "POST",
+        headers: { "x-scraper-secret": process.env.SCRAPER_SECRET as string },
+        signal: AbortSignal.timeout(60_000),
+      });
+      const body = res.ok ? await res.json().catch(() => null) : null;
+      if (body && (body.reclaimed || body.swept || body.scoreTimedOut)) {
+        console.log(`[inproc-sweep] reclaimed=${body.reclaimed} swept=${body.swept} scoreTimedOut=${body.scoreTimedOut ?? 0}`);
       }
+      if (!res.ok) console.warn(`[inproc-sweep] sweep endpoint returned ${res.status}`);
     } catch (err) {
       // Never let the sweep take the server down; the next tick retries.
       console.warn(`[inproc-sweep] failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
-  // First run shortly after boot (let the DB pool settle), then steady-state.
+  // First run shortly after boot (let the server start listening), then steady-state.
   setTimeout(tick, 60_000).unref?.();
   setInterval(tick, SWEEP_INTERVAL_MS).unref?.();
 }
