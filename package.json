@@ -17,6 +17,7 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "db:seed": "node prisma/seed.js",
+    "seed:demo": "SEED_DEMO_ORG=1 node scripts/seed-demo-org.mjs",
     "electron:dev": "concurrently \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "node scripts/build-electron.js && electron-builder",
     "electron:pack": "electron-builder --dir"
