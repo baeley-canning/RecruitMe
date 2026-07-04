@@ -86,8 +86,8 @@ function startSearchSweepTimer() {
         signal: AbortSignal.timeout(60_000),
       });
       const body = res.ok ? await res.json().catch(() => null) : null;
-      if (body && (body.reclaimed || body.swept || body.scoreTimedOut)) {
-        console.log(`[inproc-sweep] reclaimed=${body.reclaimed} swept=${body.swept} scoreTimedOut=${body.scoreTimedOut ?? 0}`);
+      if (body && (body.reclaimed || body.swept)) {
+        console.log(`[inproc-sweep] reclaimed=${body.reclaimed} swept=${body.swept}`);
       }
       if (!res.ok) console.warn(`[inproc-sweep] sweep endpoint returned ${res.status}`);
     } catch (err) {

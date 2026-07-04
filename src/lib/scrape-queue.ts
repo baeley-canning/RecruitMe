@@ -142,88 +142,12 @@ export async function enqueueSearchJob(args: {
   }
 }
 
-/**
- * Llama scoring offload: enqueue a kind="score" job. Fired by the score routes
- * ONLY when Claude is out AND the local Ollama-on-Railway is unreachable
- * (AllProvidersFailedError) AND isLlamaScoreOffloadEnabled(). Railway has
- * already built the prompt (buildScorePrompt) — the box just runs it against
- * its own local Ollama and POSTs back the raw text, which the PATCH handler
- * finalizes (finalizeScoreFromText) into the candidate's score. Railway keeps
- * ALL prompt-building + finalize; the box only runs the model.
- *
- * scorePayload carries everything the box needs to make the call AND
- * everything Railway needs to finalize the result without clobbering a fresher
- * score — see ScoreJobPayload.
- *
- * priority 0 (the default) so live scrapes/searches (priority 100) always win
- * the box's claim ordering — score offload is best-effort background work.
- *
- * Deduped against any in-flight score job for the same (orgId, candidateId) so
- * a recruiter mashing re-score, or a score-all re-running the same candidate,
- * enqueues once. Fire-and-forget; never throws.
- */
-/**
- * Serialized prompt + finalize context the box needs to run a kind="score"
- * job, plus the two race-guard fields that stop a slow offload score from
- * clobbering a fresher one:
- *  - expectedProfileTextHash: Candidate.profileTextHash captured AT ENQUEUE
- *    TIME. The PATCH ingest guards the candidate write on this EXACT value, so
- *    if a fresher Claude/Ollama score landed while the box was working (which
- *    advances the hash to its own scoreCacheKey), our write matches 0 rows and
- *    is skipped — no stale overwrite.
- *  - scoreCacheKey: the cache key the finished score stamps as the new
- *    profileTextHash — identical to what the synchronous score path writes, so
- *    a future re-score with the same context still cache-hits.
- */
-export interface ScoreJobPayload {
-  system: string;
-  prompt: string;
-  temperature: number;
-  maxTokens: number;
-  model?: string;
-  finalizeCtx: unknown;
-  expectedProfileTextHash: string | null;
-  scoreCacheKey: string;
-}
-
-export async function enqueueScoreJob(args: {
-  orgId: string;
-  candidateId: string;
-  platform?: ScrapePlatform;
-  scorePayload: ScoreJobPayload;
-  requestedBy?: string | null;
-}): Promise<{ id: string } | null> {
-  try {
-    const existing = await prisma.scrapeJob.findFirst({
-      where: {
-        orgId: args.orgId,
-        candidateId: args.candidateId,
-        kind: "score",
-        status: { in: ["pending", "processing"] },
-      },
-      select: { id: true },
-    });
-    if (existing) return null; // already queued or being scored
-
-    return await prisma.scrapeJob.create({
-      data: {
-        orgId: args.orgId,
-        platform: args.platform ?? "linkedin",
-        kind: "score",
-        candidateId: args.candidateId,
-        profileUrl: null,
-        scorePayload: JSON.stringify(args.scorePayload),
-        requestedBy: args.requestedBy ?? null,
-        status: "pending",
-        priority: 0,
-      },
-      select: { id: true },
-    });
-  } catch (err) {
-    reportError(err, { route: "scrape-queue:enqueueScore", orgId: args.orgId });
-    return null;
-  }
-}
+// NOTE: the Llama score-offload path (enqueueScoreJob + ScoreJobPayload +
+// kind="score" jobs) was removed 2026-07-04. The GPU-less box couldn't run real
+// scoring, and deterministic Fit scoring is the default now, so there is no
+// local-model fallback to enqueue. The ScrapeJob.scorePayload column + "score"
+// kind value are left in the schema (inert, nothing writes them) to avoid a
+// migration; failStaleScoreJobs was dropped from the sweep alongside this.
 
 /** The job fields the worker poll needs (mirrors the GET claim's select). */
 export interface ClaimedScrapeJob {

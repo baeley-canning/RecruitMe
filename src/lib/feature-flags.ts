@@ -98,17 +98,3 @@ export function isProfileWatchSchedulerEnabled(): boolean {
 export function isWhiteLabelEnabled(): boolean {
   return readBool("FEATURES_WHITE_LABEL_ENABLED", false);
 }
-
-/** Poll-based Llama scoring offload. When Claude is out AND the local
- *  Ollama-on-Railway is unreachable (AllProvidersFailedError), the score
- *  routes enqueue a kind="score" ScrapeJob so the mini-PC box runs the prompt
- *  against its local Ollama and POSTs back the raw text.
- *
- *  Default OFF (was ON): the box (Intel i3-5010U, no usable GPU) takes ~4-5 min
- *  for a real scoring breakdown and the models were removed — so default-on
- *  turned a credit-out into a multi-minute hang instead of a clean failure.
- *  Scoring is Claude-only on this hardware. Only set LLAMA_SCORE_OFFLOAD=true if
- *  the box gets real compute (a GPU). Code stays dormant, not deleted. */
-export function isLlamaScoreOffloadEnabled(): boolean {
-  return readBool("LLAMA_SCORE_OFFLOAD", false);
-}

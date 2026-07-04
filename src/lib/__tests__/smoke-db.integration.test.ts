@@ -38,7 +38,6 @@ import {
   settleRunIfDone,
   loadRunSnapshot,
   sweepStuckRuns,
-  failStaleScoreJobs,
 } from "@/lib/search-run";
 import type { LibrarySearchResult } from "@/lib/talent-search/library";
 
@@ -51,8 +50,6 @@ const createdRunIds: string[] = [];
 const CLAIM_TEST_MARKER = "__smoke_claim_test__";
 // Sentinel for the Phase K fairness (priority + reserved slot) claim test.
 const FAIRNESS_TEST_MARKER = "__smoke_fairness_test__";
-// Sentinel for the Llama-offload score-job TTL sweep test.
-const SCORE_TTL_MARKER = "__smoke_score_ttl_test__";
 // Fixed ids for the currentInsightId FK behavioural test (deleted in afterAll
 // too, in case the test is interrupted between create and the inline cleanup).
 const FK_SMOKE_IDENTITY = "__smoke_fk_idty__";
@@ -77,7 +74,7 @@ afterAll(async () => {
   for (const id of createdRunIds) {
     await prisma.searchRun.delete({ where: { id } }).catch(() => {});
   }
-  await prisma.scrapeJob.deleteMany({ where: { requestedBy: { in: [CLAIM_TEST_MARKER, FAIRNESS_TEST_MARKER, SCORE_TTL_MARKER] } } }).catch(() => {});
+  await prisma.scrapeJob.deleteMany({ where: { requestedBy: { in: [CLAIM_TEST_MARKER, FAIRNESS_TEST_MARKER] } } }).catch(() => {});
   // Deleting the identity cascades its insights (identityId FK is CASCADE).
   await prisma.profileInsight.deleteMany({ where: { id: FK_SMOKE_INSIGHT } }).catch(() => {});
   await prisma.candidateIdentity.deleteMany({ where: { id: FK_SMOKE_IDENTITY } }).catch(() => {});
@@ -500,47 +497,6 @@ d("smoke: sweepStuckRuns (reclaim + settle raw SQL)", () => {
     const out = await sweepStuckRuns();
     expect(typeof out.reclaimed).toBe("number");
     expect(typeof out.swept).toBe("number");
-    // Llama-offload TTL is folded into the sweep the box already drives.
-    expect(typeof out.scoreTimedOut).toBe("number");
-  });
-});
-
-d("smoke: failStaleScoreJobs (Llama-offload TTL — real createdAt filtering)", () => {
-  it("fails a 21-min-old pending score job but leaves a fresh one untouched", async () => {
-    const orgId = `${SCORE_TTL_MARKER}_org`;
-    // Clean any leftovers from a prior interrupted run.
-    await prisma.scrapeJob.deleteMany({ where: { requestedBy: SCORE_TTL_MARKER } });
-
-    // Stale: created 21 minutes ago, still pending → should be failed.
-    const stale = await prisma.scrapeJob.create({
-      data: {
-        orgId, platform: "linkedin", kind: "score", candidateId: "ttl-stale-cand",
-        scorePayload: "{}", status: "pending", priority: 0, requestedBy: SCORE_TTL_MARKER,
-      },
-      select: { id: true },
-    });
-    // createdAt has a DB default, so back-date it explicitly past the 20-min TTL.
-    await prisma.$executeRaw`UPDATE "ScrapeJob" SET "createdAt" = now() - interval '21 minutes' WHERE "id" = ${stale.id}`;
-
-    // Fresh: created now, pending → must NOT be touched.
-    const fresh = await prisma.scrapeJob.create({
-      data: {
-        orgId, platform: "linkedin", kind: "score", candidateId: "ttl-fresh-cand",
-        scorePayload: "{}", status: "pending", priority: 0, requestedBy: SCORE_TTL_MARKER,
-      },
-      select: { id: true },
-    });
-
-    const failedCount = await failStaleScoreJobs();
-    expect(failedCount).toBeGreaterThanOrEqual(1);
-
-    const staleAfter = await prisma.scrapeJob.findUnique({ where: { id: stale.id }, select: { status: true, error: true } });
-    const freshAfter = await prisma.scrapeJob.findUnique({ where: { id: fresh.id }, select: { status: true } });
-    expect(staleAfter?.status).toBe("failed");
-    expect(staleAfter?.error).toMatch(/timed out/i);
-    expect(freshAfter?.status).toBe("pending");
-
-    await prisma.scrapeJob.deleteMany({ where: { requestedBy: SCORE_TTL_MARKER } });
   });
 });
 

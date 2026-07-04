@@ -57,16 +57,6 @@ const JOBADDER_DELAY_MAX_MS = parseInt(process.env.SCRAPER_JOBADDER_DELAY_MAX_MS
 let jobadderCountToday = 0;
 let jobadderCountDay = isoDay(new Date());
 
-// Llama scoring offload (paired with Railway's LLAMA_SCORE_OFFLOAD flag). When
-// Claude is out, Railway enqueues kind="score" jobs carrying the prompt it
-// built; we run them against the box's LOCAL Ollama (OpenAI-compatible API) and
-// POST back the raw text. No browser needed — pure local inference. The 1.5B
-// default is weak but free and always-on; bump OLLAMA_SCORE_MODEL to a 3B if
-// the box has RAM headroom for materially better JSON adherence.
-const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434/v1").replace(/\/$/, "");
-const OLLAMA_SCORE_MODEL = process.env.OLLAMA_SCORE_MODEL ?? "qwen2.5:1.5b";
-const OLLAMA_SCORE_TIMEOUT_MS = parseInt(process.env.OLLAMA_SCORE_TIMEOUT_MS ?? "120000", 10);
-
 function isoDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -100,15 +90,13 @@ interface ScrapeJob {
   id: string;
   orgId: string;
   platform: "linkedin" | "seek" | "jobadder";
+  // "score" retained in the union only so a stray legacy job deserialises;
+  // nothing enqueues or processes it (offload removed 2026-07-04).
   kind: "profile" | "search" | "score";
   /** For kind="profile": the URL to scrape. Null for search jobs. */
   profileUrl: string | null;
   /** For kind="search": the boolean query to run. Null for profile jobs. */
   searchQuery: string | null;
-  /** For kind="score" (Llama offload): JSON {system,prompt,temperature,maxTokens,
-   *  model?} that Railway built. We run it against LOCAL Ollama and POST back
-   *  { text }; Railway finalises the text into a ScoreBreakdown. Null otherwise. */
-  scorePayload?: string | null;
   /** Phase K — durable SearchRun this job belongs to (null for background). */
   searchRunId: string | null;
   /** Run's location filter (e.g. "Wellington"), enriched from the SearchRun on
@@ -282,64 +270,6 @@ async function postNewProfileJob(args: {
   }
 }
 
-// Run a Llama-offload score job against the box's local Ollama and POST back
-// the raw text. Railway built the prompt (scorePayload) and will finalise the
-// returned text into a ScoreBreakdown — the box is a "dumb LLM proxy", so no
-// scoring math lives here. Catches its own errors and always postResults, so it
-// never throws out into the poll loop.
-async function processScoreJob(job: ScrapeJob): Promise<void> {
-  if (!job.scorePayload) {
-    await postResult(job.id, { status: "failed", error: "score job missing scorePayload" });
-    return;
-  }
-  let payload: { system?: string; prompt?: string; temperature?: number; maxTokens?: number; model?: string };
-  try {
-    payload = JSON.parse(job.scorePayload);
-  } catch {
-    await postResult(job.id, { status: "failed", error: "score job scorePayload is not valid JSON" });
-    return;
-  }
-  if (!payload.prompt) {
-    await postResult(job.id, { status: "failed", error: "score job scorePayload missing prompt" });
-    return;
-  }
-  const messages = payload.system
-    ? [{ role: "system", content: payload.system }, { role: "user", content: payload.prompt }]
-    : [{ role: "user", content: payload.prompt }];
-  try {
-    const res = await fetch(`${OLLAMA_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: payload.model ?? OLLAMA_SCORE_MODEL,
-        messages,
-        temperature: payload.temperature ?? 0.1,
-        max_tokens: payload.maxTokens ?? 4096,
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(OLLAMA_SCORE_TIMEOUT_MS),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "(no body)");
-      await postResult(job.id, { status: "failed", error: `local Ollama ${res.status}: ${body.slice(0, 300)}` });
-      return;
-    }
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const text = data.choices?.[0]?.message?.content ?? "";
-    if (!text.trim()) {
-      await postResult(job.id, { status: "failed", error: "local Ollama returned empty text" });
-      return;
-    }
-    await postResult(job.id, { status: "completed", result: { text } });
-    log.info(`score job ${job.id} → local model returned ${text.length} chars`);
-  } catch (err) {
-    await postResult(job.id, {
-      status: "failed",
-      error: `local Ollama call failed: ${err instanceof Error ? err.message : String(err)}`,
-    });
-  }
-}
-
 async function processJob(
   job: ScrapeJob,
   browser: import("patchright").Browser,
@@ -347,9 +277,11 @@ async function processJob(
   log.info(`processing job ${job.id} — ${job.platform} — ${job.kind} — ${job.profileUrl ?? job.searchQuery ?? "(no target)"}`);
 
   try {
-    // --- Score jobs (Llama offload) — pure local LLM call, no browser --------
+    // The Llama score-offload (kind="score") path was removed 2026-07-04. A
+    // stray legacy score job (there should be none) is failed cleanly instead
+    // of processed — it has no URL to scrape and no local model to run.
     if (job.kind === "score") {
-      await processScoreJob(job);
+      await postResult(job.id, { status: "failed", error: "score offload removed" });
       return;
     }
 
@@ -685,8 +617,8 @@ async function runSearchRunSweep(): Promise<void> {
     });
     if (res.ok) {
       const body = await res.json().catch(() => null);
-      if (body && (body.reclaimed || body.swept || body.scoreTimedOut)) {
-        log.info(`search-run sweep: reclaimed=${body.reclaimed} swept=${body.swept} scoreTimedOut=${body.scoreTimedOut ?? 0}`);
+      if (body && (body.reclaimed || body.swept)) {
+        log.info(`search-run sweep: reclaimed=${body.reclaimed} swept=${body.swept}`);
       }
     }
   } catch (err) {

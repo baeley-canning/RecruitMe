@@ -24,7 +24,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/db", () => dbMocks);
 
-import { libraryMergeKey, scraperMergeKey, attachScraperHits, failStaleScoreJobs, reclaimStaleJobs } from "../search-run";
+import { libraryMergeKey, scraperMergeKey, attachScraperHits, reclaimStaleJobs } from "../search-run";
 
 // Flatten a tagged-template's static-string array into one SQL string so a test
 // can assert on the clauses it contains.
@@ -131,48 +131,18 @@ describe("attachScraperHits — D1 card-field guards", () => {
   });
 });
 
-describe("failStaleScoreJobs (Llama-offload TTL)", () => {
+describe("reclaimStaleJobs excludes score jobs from retry", () => {
   const executeRaw = dbMocks.prisma.$executeRaw as ReturnType<typeof vi.fn>;
   beforeEach(() => {
     executeRaw.mockReset();
     executeRaw.mockResolvedValue(0);
   });
 
-  it("issues one UPDATE failing pending|processing kind=score jobs past the TTL", async () => {
-    executeRaw.mockResolvedValueOnce(3); // 3 stale score jobs failed
-    const n = await failStaleScoreJobs();
-    expect(n).toBe(3);
-    expect(executeRaw).toHaveBeenCalledTimes(1);
-    const sql = sqlText(executeRaw.mock.calls[0]);
-    // Targets ONLY score jobs, in either in-flight state, with the timeout
-    // error text. createdAt cutoff is bound as a value (the `< ` before it).
-    expect(sql).toContain(`"kind"='score'`);
-    expect(sql).toContain(`"status" IN ('pending','processing')`);
-    expect(sql).toMatch(/SET "status"='failed'/);
-    expect(sql).toMatch(/timed out — local model unavailable/);
-    expect(sql).toMatch(/"createdAt" </);
-    // The bound cutoff is ~20 min in the past.
-    const cutoff = executeRaw.mock.calls[0][1] as Date;
-    const ageMs = Date.now() - cutoff.getTime();
-    expect(ageMs).toBeGreaterThan(19 * 60 * 1000);
-    expect(ageMs).toBeLessThan(21 * 60 * 1000);
-  });
-});
-
-describe("reclaimStaleJobs excludes score jobs", () => {
-  const executeRaw = dbMocks.prisma.$executeRaw as ReturnType<typeof vi.fn>;
-  beforeEach(() => {
-    executeRaw.mockReset();
-    executeRaw.mockResolvedValue(0);
-  });
-
-  it("both reclaim UPDATEs scope to kind <> 'score' (TTL governs score jobs, not retry)", async () => {
+  it("the retry/exhaust UPDATEs scope to kind <> 'score' (retry budget must not govern score jobs)", async () => {
     await reclaimStaleJobs();
-    // Two UPDATEs: retryable requeue + exhausted fail. Both must skip score jobs
-    // so the offload TTL — not the retry budget — owns their lifecycle.
-    expect(executeRaw).toHaveBeenCalledTimes(2);
-    for (const call of executeRaw.mock.calls) {
-      expect(sqlText(call)).toContain(`"kind" <> 'score'`);
-    }
+    // The first two UPDATEs (retryable requeue + exhausted fail) must skip score
+    // jobs. A trailing one-time drain UPDATE fails any legacy stray score job.
+    const retryUpdates = executeRaw.mock.calls.filter((c) => sqlText(c).includes(`"kind" <> 'score'`));
+    expect(retryUpdates.length).toBe(2);
   });
 });

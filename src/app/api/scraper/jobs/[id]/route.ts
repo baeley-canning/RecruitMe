@@ -22,9 +22,6 @@ import { isScraperEnabled } from "@/lib/feature-flags";
 import { authenticateScraper, resolveScraperOrgId } from "@/lib/scraper-auth";
 import { ingestScraperResult } from "@/lib/scraper-ingestion";
 import { reportError } from "@/lib/error-reporting";
-import { finalizeScoreFromText } from "@/lib/ai";
-import { deriveUpdateData } from "@/lib/score-utils";
-import type { ScoringWeights } from "@/lib/scoring-config";
 import {
   attachScraperHits,
   attachIngestedProfile,
@@ -45,8 +42,8 @@ const PatchSchema = z.object({
     .object({
       // profile job fields
       profileText: z.string().max(300_000).optional(),
-      // score job field: the raw text the box's local model returned for the
-      // scoring prompt. finalizeScoreFromText parses it into a ScoreBreakdown.
+      // Legacy score-offload field (removed 2026-07-04). Kept optional so an
+      // in-flight worker POST can't 422; ignored by the handler now.
       text: z.string().max(100_000).optional(),
       name: z.string().max(500).optional().nullable(),
       headline: z.string().max(500).optional().nullable(),
@@ -106,8 +103,8 @@ export async function PATCH(
       searchRunId: true,
       retryCount: true,
       status: true,
-      // kind="score": the candidate this prompt scores + the serialized prompt
-      // payload (carries finalizeCtx for finalizeScoreFromText).
+      // Legacy score-offload columns (inert since 2026-07-04); still selected
+      // so a stray kind="score" job can be recognised + failed cleanly.
       candidateId: true,
       scorePayload: true,
     },
@@ -248,115 +245,16 @@ export async function PATCH(
     return NextResponse.json({ kind: "search", urlCount: urls.length });
   }
 
-  // Score jobs (Llama offload): the box ran the prompt Railway built against
-  // its local Ollama and POSTed back the raw text. Railway finalizes that text
-  // into a ScoreBreakdown (identical math to the single-score route — the
-  // finalize seam is shared) and writes it to the candidate. No searchRunId
-  // logic: score jobs never attach to a SearchRun.
+  // NOTE: the kind="score" (Llama offload) result path was removed 2026-07-04
+  // along with the rest of the offload feature — nothing enqueues score jobs
+  // anymore. A stray legacy kind="score" job (there should be none) is failed
+  // cleanly rather than processed.
   if (job.kind === "score") {
-    if (!job.candidateId || !job.scorePayload || !result?.text) {
-      await prisma.scrapeJob.update({
-        where: { id },
-        data: {
-          status: "failed",
-          error: "Score job missing candidateId, scorePayload, or result.text",
-          updatedAt: new Date(),
-        },
-      });
-      return NextResponse.json(
-        { error: "Score job missing candidateId, scorePayload, or result.text." },
-        { status: 422 },
-      );
-    }
-
-    // scorePayload was serialized by enqueueScoreJob from buildScorePrompt's
-    // output: { system, prompt, temperature, maxTokens, model?, finalizeCtx }.
-    // finalizeCtx is the only part finalize needs (the prompt itself is the
-    // box's job).
-    let finalizeCtx: {
-      mustHaves: string[];
-      niceToHaves: string[];
-      weights?: ScoringWeights;
-      parsedRoleLocation: string | null;
-      parsedRoleTitle?: string | null;
-    };
-    // Race guards captured at ENQUEUE time (see ScoreJobPayload). The candidate
-    // write is gated on expectedProfileTextHash — NOT the hash re-read now — so
-    // a fresher score that landed while the box was working is never clobbered.
-    let expectedProfileTextHash: string | null = null;
-    let scoreCacheKey: string | null = null;
-    try {
-      const payload = JSON.parse(job.scorePayload) as {
-        finalizeCtx?: typeof finalizeCtx;
-        expectedProfileTextHash?: string | null;
-        scoreCacheKey?: string | null;
-      };
-      if (!payload.finalizeCtx) throw new Error("scorePayload has no finalizeCtx");
-      finalizeCtx = payload.finalizeCtx;
-      expectedProfileTextHash = payload.expectedProfileTextHash ?? null;
-      scoreCacheKey = payload.scoreCacheKey ?? null;
-    } catch (err) {
-      await prisma.scrapeJob.update({
-        where: { id },
-        data: {
-          status: "failed",
-          error: `Score job has unparseable scorePayload: ${err instanceof Error ? err.message : String(err)}`,
-          updatedAt: new Date(),
-        },
-      });
-      return NextResponse.json({ error: "Score job has unparseable scorePayload." }, { status: 422 });
-    }
-
-    const candidate = await prisma.candidate.findUnique({
-      where: { id: job.candidateId },
-      select: { id: true, profileText: true, orgId: true, profileTextHash: true },
-    });
-    if (!candidate) {
-      await prisma.scrapeJob.update({
-        where: { id },
-        data: { status: "failed", error: "Score job candidate not found", updatedAt: new Date() },
-      });
-      return NextResponse.json({ error: "Score job candidate not found." }, { status: 404 });
-    }
-
-    // Finalize the raw model text into a ScoreBreakdown — same seam the
-    // single-score route uses, tagged scoredBy="ollama" since the box ran the
-    // local model.
-    const breakdown = finalizeScoreFromText(result.text, "ollama", {
-      profileText: candidate.profileText ?? "",
-      ...finalizeCtx,
-    });
-
-    // Concurrency-guarded write: gate on the profileTextHash captured at
-    // ENQUEUE time (expectedProfileTextHash from the payload) — NOT the hash
-    // re-read just now. A fresher Claude/Ollama score that landed while the box
-    // was working advanced the hash to its own scoreCacheKey, so this guard
-    // matches 0 rows and we skip — the stale-overwrite bug. On success we stamp
-    // scoreCacheKey as the new profileTextHash, identical to what the
-    // synchronous score path writes, so a later same-context re-score still
-    // cache-hits. count===0 → a fresher score won (or an old-format job without
-    // guard fields): mark the job completed (the offload did its part) but do
-    // NOT overwrite the candidate.
-    const guarded = await prisma.candidate.updateMany({
-      where: { id: candidate.id, profileTextHash: expectedProfileTextHash ?? null },
-      data: scoreCacheKey
-        ? { ...deriveUpdateData(breakdown), profileTextHash: scoreCacheKey }
-        : deriveUpdateData(breakdown),
-    });
-    if (guarded.count === 0) {
-      console.log(`[score-offload] candidate=${candidate.id} profileTextHash moved since enqueue (fresher score won) — completing job without overwrite`);
-    }
-
     await prisma.scrapeJob.update({
       where: { id },
-      data: {
-        status: "completed",
-        result: JSON.stringify({ matchScore: breakdown.overall, scoredBy: "ollama", finalizedAt: new Date().toISOString() }),
-        updatedAt: new Date(),
-      },
+      data: { status: "failed", error: "Score offload removed — kind=score no longer processed", updatedAt: new Date() },
     });
-
-    return NextResponse.json({ kind: "score", candidateId: candidate.id, matchScore: breakdown.overall });
+    return NextResponse.json({ error: "Score offload removed." }, { status: 410 });
   }
 
   // Profile jobs: existing ingestion flow.
