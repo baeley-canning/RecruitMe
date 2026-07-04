@@ -29,7 +29,22 @@ import { hostname } from "node:os";
 
 const RAILWAY_URL = (process.env.RAILWAY_API_URL ?? "").replace(/\/$/, "");
 const SCRAPER_SECRET = process.env.SCRAPER_SECRET ?? "";
+// Per-box org-bound token (the BYO-box customer model). When set, the box
+// authenticates with `Authorization: Bearer <token>` and the server LOCKS it to
+// the token's org (resolveScraperOrgId) — a customer box can only ever touch
+// their own org's data. When unset, the box falls back to the shared
+// SCRAPER_SECRET (the platform OPERATOR box, which serves all orgs). Minting:
+// `node scripts/create-scraper-token.mjs <label> <orgId>` on the app side.
+const SCRAPER_API_TOKEN = (process.env.SCRAPER_API_TOKEN ?? "").trim();
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS ?? "15000", 10);
+
+/** Auth header for every call to the app: prefer the per-org bearer token
+ *  (tenant box), else the shared secret (operator box). */
+function scraperAuthHeaders(): Record<string, string> {
+  return SCRAPER_API_TOKEN
+    ? { Authorization: `Bearer ${SCRAPER_API_TOKEN}` }
+    : { "x-scraper-secret": SCRAPER_SECRET };
+}
 
 // Phase I2 — worker heartbeat. Stable per-box id so the upsert keeps ONE row.
 const WORKER_ID = (process.env.BOX_ID || hostname() || "scraper").trim();
@@ -81,8 +96,8 @@ if (!RAILWAY_URL) {
   console.error("RAILWAY_API_URL is required. Copy .env.example to .env and fill it in.");
   process.exit(1);
 }
-if (!SCRAPER_SECRET) {
-  console.error("SCRAPER_SECRET is required.");
+if (!SCRAPER_SECRET && !SCRAPER_API_TOKEN) {
+  console.error("Set SCRAPER_API_TOKEN (per-org box) or SCRAPER_SECRET (operator box).");
   process.exit(1);
 }
 
@@ -123,7 +138,7 @@ const SCRAPER_SEARCH_MAX_PAGES = Math.max(1, Math.min(parseInt(process.env.SCRAP
 
 async function pollJobs(): Promise<ScrapeJob[]> {
   const res = await fetch(`${RAILWAY_URL}/api/scraper/jobs`, {
-    headers: { "x-scraper-secret": SCRAPER_SECRET },
+    headers: scraperAuthHeaders(),
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
@@ -153,7 +168,7 @@ async function postResult(
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          "x-scraper-secret": SCRAPER_SECRET,
+          ...scraperAuthHeaders(),
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
@@ -178,7 +193,7 @@ async function postHeartbeat(detail: string): Promise<void> {
   try {
     await fetch(`${RAILWAY_URL}/api/scraper/heartbeat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-scraper-secret": SCRAPER_SECRET },
+      headers: { "Content-Type": "application/json", ...scraperAuthHeaders() },
       body: JSON.stringify({
         workerId: WORKER_ID,
         lastPollAt: hbLastPollAt,
@@ -249,7 +264,7 @@ async function postNewProfileJob(args: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-scraper-secret": SCRAPER_SECRET,
+        ...scraperAuthHeaders(),
       },
       body: JSON.stringify({
         orgId: args.orgId,
@@ -552,10 +567,13 @@ async function main() {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Phase K: drive the SearchRun safety-net sweep from the poll loop. There's
-  // no cron on the box, so the worker is the only always-on process that can
-  // reclaim zombie jobs + settle stuck runs. Every SWEEP_EVERY_N polls.
+  // Phase K: the OPERATOR box drives the SearchRun safety-net sweep from the
+  // poll loop (reclaim zombie jobs + settle stuck runs), backing up the Railway
+  // in-process sweep timer. A per-org TOKEN box skips it: the sweep endpoint is
+  // operator-auth only (shared secret / cron), so a token box would just 401,
+  // and platform-wide maintenance isn't a tenant box's job anyway.
   const SWEEP_EVERY_N = 8;
+  const DRIVES_SWEEP = !SCRAPER_API_TOKEN;
   let pollCount = 0;
 
   while (true) {
@@ -588,7 +606,7 @@ async function main() {
       }
 
       pollCount += 1;
-      if (pollCount % SWEEP_EVERY_N === 0) {
+      if (DRIVES_SWEEP && pollCount % SWEEP_EVERY_N === 0) {
         await runSearchRunSweep();
       }
     } catch (err) {
@@ -612,7 +630,7 @@ async function runSearchRunSweep(): Promise<void> {
   try {
     const res = await fetch(`${RAILWAY_URL}/api/admin/search-runs/sweep`, {
       method: "POST",
-      headers: { "x-scraper-secret": SCRAPER_SECRET },
+      headers: scraperAuthHeaders(),
       signal: AbortSignal.timeout(15_000),
     });
     if (res.ok) {
