@@ -166,9 +166,9 @@ export async function POST(
   const total = candidates.length;
   let scored = 0;
   let cached = 0;
-  // Box-Llama scoring offload was per-candidate and is dropped from the batched
-  // path (LLAMA_SCORE_OFFLOAD is off / no GPU; the single-score route retains it).
-  // Kept as a constant 0 so the streamed message shape stays unchanged for the UI.
+  // `queued` is a constant 0 kept only so the streamed message shape stays
+  // unchanged for the UI. There is no box-Llama score offload anymore (removed
+  // 2026-07-04) — nothing is ever queued to the mini-PC for scoring.
   const queued = 0;
   const failed: string[] = [];
   // Subset of `failed` that failed specifically because every AI provider was

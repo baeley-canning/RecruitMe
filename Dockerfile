@@ -62,7 +62,14 @@ COPY . .
 # 3) Build. Dummy DATABASE_URL is enough for `prisma generate` —
 # Prisma validates the schema URL format but does not connect. The real
 # Railway DATABASE_URL kicks in at runtime via process.env.
-RUN DATABASE_URL=postgresql://build:build@localhost:5432/build \
+#
+# NODE_OPTIONS raises V8's old-space ceiling for the Next production build.
+# The default (~2 GB) OOMs the webpack/type build on some hosts (SIGABRT
+# "Ineffective mark-compacts" / heap OOM). 4 GB is the standard Next headroom
+# and is safely under the builder's memory, so it only prevents OOM — it never
+# forces allocation.
+RUN NODE_OPTIONS=--max-old-space-size=4096 \
+    DATABASE_URL=postgresql://build:build@localhost:5432/build \
     npm run build
 
 EXPOSE 3000

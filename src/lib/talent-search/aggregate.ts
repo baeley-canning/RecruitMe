@@ -72,6 +72,9 @@ export interface UnifiedResult {
    *  (they carry no candidateId or linkedinUrl). Optional: the legacy aggregator
    *  doesn't set it; the durable-run adapter does. */
   seekUrl?: string | null;
+  /** SEEK "Updated X ago" recency label (verbatim). Optional: only durable-run
+   *  SEEK results carry it. */
+  updatedAgo?: string | null;
   photoUrl: string | null;
   /** Library matchScore, if present. LinkedIn results have null until
    *  AI scoring runs (which is post-import, not at search time). */

@@ -1133,11 +1133,14 @@ function ResultRow({
           scoreFormat="tier"
         />
 
-        {/* Source pills */}
+        {/* Source pills + SEEK profile recency (a "worth contacting now" signal) */}
         <div className="flex items-center gap-1.5 mt-1.5">
           {result.sources.map((s) => (
             <SourcePill key={s} source={s} />
           ))}
+          {result.updatedAgo && (
+            <span className="text-2xs text-text-tertiary">· updated {result.updatedAgo}</span>
+          )}
         </div>
 
         {/* Lazy CV preview — library rows only */}

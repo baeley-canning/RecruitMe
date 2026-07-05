@@ -31,6 +31,7 @@ import { prisma } from "@/lib/db";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { normaliseLinkedInUrl, isLinkedInProfileUrl } from "@/lib/linkedin";
+import { normaliseSeekUrl, isSeekProfileUrl } from "@/lib/seek";
 import { reportError } from "@/lib/error-reporting";
 
 // Mirrors UnifiedResult from src/lib/talent-search/aggregate.ts but only
@@ -267,12 +268,21 @@ async function importOne(
 
   // ── SEEK-only path ───────────────────────────────────────────────────
   if (isSeekOnly) {
-    const seekUrl = row.seekUrl!.trim();
+    const rawSeek = row.seekUrl!.trim();
+    // Reject anything that isn't a real SEEK profile URL before persisting it.
+    if (!isSeekProfileUrl(rawSeek)) {
+      return { resultId: row.id, status: "skipped", reason: "invalid_seek_url" };
+    }
+    // Canonicalise via the SHARED helper (normaliseSeekUrl) — the same
+    // normalisation the scraper ingest + dedup use — so the synthetic key
+    // can't drift and re-create duplicate SEEK rows. (The old ad-hoc
+    // lowercase-everything differed from normaliseSeekUrl, which preserves
+    // path case since SEEK profile IDs can be case-sensitive.)
+    const seekUrl = normaliseSeekUrl(rawSeek);
     // SEEK rows have no LinkedIn URL, so synthesise the (jobId, linkedinUrl)
-    // unique key from the SEEK URL — same shape as the library:<id> synthetic
-    // key. It starts with "seek:" (not http) so displayableLinkedinUrl never
-    // renders it as a link. The real seekUrl is stored so the SK badge shows.
-    const key = `seek:${seekUrl.toLowerCase().replace(/[?#].*$/, "").replace(/\/+$/, "")}`;
+    // unique key from the normalised SEEK URL. It starts with "seek:" (not
+    // http) so displayableLinkedinUrl never renders it as a link.
+    const key = `seek:${seekUrl}`;
     const upserted = await prisma.candidate.upsert({
       where: { jobId_linkedinUrl: { jobId, linkedinUrl: key } },
       create: {

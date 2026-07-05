@@ -255,11 +255,24 @@ describe("POST /search/multi/import — SEEK path", () => {
     };
     expect(body.counts).toMatchObject({ attached: 1, skipped: 0, total: 1 });
     const call = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
-    expect(call.create.seekUrl).toBe("https://nz.employer.seek.com/talentsearch/profile/12345/");
+    // seekUrl is stored CANONICALISED via the shared normaliseSeekUrl (trailing
+    // slash stripped, query/fragment removed) so dedup can't drift.
+    expect(call.create.seekUrl).toBe("https://nz.employer.seek.com/talentsearch/profile/12345");
     expect(call.create.source).toBe("seek_scraper");
-    // Synthetic (jobId, linkedinUrl) key — must NOT be a real http URL.
-    expect(String(call.create.linkedinUrl)).toMatch(/^seek:/);
+    // Synthetic (jobId, linkedinUrl) key — the normalised SEEK URL, NOT a real
+    // http URL (so it never renders as a link) and consistent across re-imports.
+    expect(String(call.create.linkedinUrl)).toBe("seek:https://nz.employer.seek.com/talentsearch/profile/12345");
     expect(call.where.jobId_linkedinUrl.linkedinUrl).toBe(call.create.linkedinUrl);
+  });
+
+  it("skips a SEEK row whose seekUrl is not a valid SEEK profile URL", async () => {
+    const res = await POST(
+      makeReq({ results: [row({ id: "bad", sources: ["seek"], candidateId: null, linkedinUrl: null, seekUrl: "https://example.com/not-seek" })] }),
+      PARAMS,
+    );
+    const body = (await res.json()) as { counts: { attached: number; skipped: number }; outcomes: Array<{ reason?: string }> };
+    expect(body.counts).toMatchObject({ attached: 0, skipped: 1 });
+    expect(dbMocks.prisma.candidate.upsert).not.toHaveBeenCalled();
   });
 
   it("still skips a row with neither candidateId, linkedinUrl, nor seekUrl", async () => {

@@ -35,6 +35,7 @@ export function runResultToUnified(r: SearchRunResultDTO): UnifiedResult {
     linkedinUrl: isLinkedinUrl ? r.profileUrl : null,
     seekUrl: isSeek ? r.profileUrl : null,
     jobAdderUrl: null,
+    updatedAgo: r.updatedAgo ?? null,
     photoUrl: r.photoUrl,
     matchScore: r.matchScore,
     sources,

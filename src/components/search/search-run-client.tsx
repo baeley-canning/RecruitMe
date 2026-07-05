@@ -36,6 +36,10 @@ function ResultRow({ r, enriching }: { r: SearchRunResultDTO; enriching: boolean
         {r.snippet && (
           <p className="text-xs text-text-tertiary mt-1.5 line-clamp-2">{r.snippet}</p>
         )}
+        {/* SEEK profile recency — a strong "worth contacting now" signal. */}
+        {r.updatedAgo && (
+          <p className="text-2xs text-text-tertiary mt-1">Profile updated {r.updatedAgo}</p>
+        )}
       </div>
       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
         <div className="flex gap-1">

@@ -510,6 +510,11 @@ export interface SearchRunResultDTO {
   relevance: number | null;
   rank: number | null;
   photoUrl: string | null;
+  /** SEEK "Updated X ago" recency label, harvested verbatim (null for LinkedIn
+   *  and library rows). Lets result cards show how fresh a SEEK profile is — a
+   *  strong buy signal for recruiters. Optional to match ScraperCard + keep
+   *  existing DTO fixtures valid. */
+  updatedAgo?: string | null;
 }
 
 export interface RunDTO {
@@ -615,6 +620,7 @@ export async function loadRunSnapshot(
     matchScore: r.matchScore,
     relevance: r.relevance,
     rank: r.rank,
+    updatedAgo: r.updatedAgo,
     photoUrl: getCandidatePhotoUrl({
       candidateId: r.candidateId,
       photoFileId: r.candidateId ? photoByCandidate.get(r.candidateId) ?? null : null,

@@ -76,8 +76,7 @@ Copy `.env.example` to `.env.local`. All variables below are required unless mar
 | `ANTHROPIC_MODEL` | No | Model ID. Default: `claude-haiku-4-5-20251001`. Use `claude-sonnet-4-6` for higher-quality scoring. |
 | `OLLAMA_BASE_URL` | No | OpenAI-compatible endpoint for the local Ollama fallback. Default `http://127.0.0.1:11434/v1`. On any Claude error the failover wrapper retries on Ollama. (The old OpenAI/GPT failover was removed — the fallback is now local Ollama only.) |
 | `OLLAMA_MODEL` | No | Local model used for offloaded tasks. |
-| `OLLAMA_OFFLOAD_TASKS` | No | Comma-list of light tasks (e.g. `info_extract`) to run on local Ollama instead of Claude to save tokens. |
-| `LLAMA_SCORE_OFFLOAD` | No | `false` (default) → scoring is Claude-only. The mini-PC (i3, no GPU) is too slow for real scoring (~4-5 min/score), so the offload is off; when Claude is exhausted, scoring fails cleanly rather than hanging on the box. Only set `true` if the box gets a GPU. See `scraper-worker/LLAMA_SCORE_OFFLOAD.md`. |
+| `OLLAMA_OFFLOAD_TASKS` | No | Comma-list of light tasks (e.g. `info_extract`, `cv_clean`) to run on local Ollama instead of Claude to save tokens. Candidate SCORING is not offloadable — it's Claude, with a free deterministic Fit score as the default (see "AI scoring" in PLAN.md). |
 
 ### Discovery & enrichment
 
@@ -244,4 +243,4 @@ Tests are unit/route tests with mocked DB and AI calls. There are no integration
 
 ### Scraper worker + local AI (mini-PC)
 
-The scraper worker (`scraper-worker/`) and a local Ollama run on a self-hosted mini-PC, **not** on Railway. The worker polls the Railway app's `/api/scraper/jobs` (outbound only — no inbound path needed), runs LinkedIn/SEEK discovery + profile scrapes that feed the library, and — when `LLAMA_SCORE_OFFLOAD=1` — runs queued candidate scoring on local Ollama and POSTs results back. See `scraper-worker/HANDOFF.md` and `scraper-worker/LLAMA_SCORE_OFFLOAD.md`.
+The scraper worker (`scraper-worker/`) and a local Ollama run on a self-hosted mini-PC, **not** on Railway. The worker polls the Railway app's `/api/scraper/jobs` (outbound only — no inbound path needed), scrapes LinkedIn/SEEK/JobAdder, and POSTs results back for the app to ingest into the library. A local Ollama optionally handles LIGHT tasks (`OLLAMA_OFFLOAD_TASKS`, e.g. CV cleaning / info extraction) and chat failover — **not** candidate scoring (scoring is Claude, defaulting to the free deterministic Fit score; the old box score-offload was removed 2026-07-04). The box authenticates with the shared `SCRAPER_SECRET` (operator, all orgs) or a per-org `SCRAPER_API_TOKEN` (a customer's BYO-box, locked to their org). See `scraper-worker/HANDOFF.md`.
