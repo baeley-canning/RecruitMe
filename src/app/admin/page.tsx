@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import {
   Users, Building2, Plus, Trash2, Loader2, Shield, User, X, Eye, EyeOff,
   BarChart3, Search, Sparkles, FileText, Camera, ArrowLeft, AlertTriangle, CheckCircle2, Activity, Pencil,
-  Link2, KeyRound, Copy, Check,
+  Link2, KeyRound, Copy, Check, Cpu, Ban, Rocket,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
@@ -28,6 +29,18 @@ interface OrgRow {
   name: string;
   createdAt: string;
   _count: { users: number; jobs: number };
+}
+
+interface TokenRow {
+  id: string;
+  label: string;
+  orgId: string | null;
+  orgName: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  status: "active" | "revoked" | "expired";
 }
 
 interface OrgUsage {
@@ -117,6 +130,14 @@ export default function AdminPage() {
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
+  const [tokens, setTokens] = useState<TokenRow[]>([]);
+
+  // Scraper token minting
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [tokenForm, setTokenForm] = useState({ label: "", orgId: "", expiresInDays: "" });
+  const [mintingToken, setMintingToken] = useState(false);
+  const [tokenError, setTokenError] = useState("");
+  const [revokingTokenId, setRevokingTokenId] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [analyticsDays, setAnalyticsDays] = useState(30);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -208,12 +229,14 @@ export default function AdminPage() {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [usersRes, orgsRes] = await Promise.all([
+    const [usersRes, orgsRes, tokensRes] = await Promise.all([
       fetch("/api/admin/users"),
       fetch("/api/admin/orgs"),
+      fetch("/api/admin/scraper-tokens"),
     ]);
     if (usersRes.ok) setUsers(await usersRes.json() as UserRow[]);
     if (orgsRes.ok) setOrgs(await orgsRes.json() as OrgRow[]);
+    if (tokensRes.ok) setTokens(await tokensRes.json() as TokenRow[]);
     setLoading(false);
     fetchAnalytics(analyticsDays);
   };
@@ -313,6 +336,54 @@ export default function AdminPage() {
     }
   };
 
+  // Mint a scraper token → reuse the one-time copy modal (linkModal) to reveal
+  // the plaintext, since it's the same "shown once, never again" contract.
+  const handleMintToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenForm.label.trim()) return;
+    setMintingToken(true);
+    setTokenError("");
+    try {
+      const res = await fetch("/api/admin/scraper-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: tokenForm.label.trim(),
+          orgId: tokenForm.orgId || null,
+          expiresInDays: tokenForm.expiresInDays ? Number(tokenForm.expiresInDays) : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTokenError(typeof data.error === "string" ? data.error : "Could not mint the token.");
+        setMintingToken(false);
+        return;
+      }
+      setShowTokenModal(false);
+      setLinkCopied(false);
+      // Show the token in the shared copy modal, with the exact env line to paste.
+      setLinkModal({
+        title: `Scraper token — ${tokenForm.label.trim()}`,
+        url: data.token,
+        expiresAt: data.expiresAt ?? "",
+      });
+      setTokenForm({ label: "", orgId: "", expiresInDays: "" });
+      await fetchAll();
+    } catch {
+      setTokenError("Network error — try again.");
+    } finally {
+      setMintingToken(false);
+    }
+  };
+
+  const handleRevokeToken = async (id: string, label: string) => {
+    if (!await confirm({ title: "Revoke token?", message: `Revoke scraper token "${label}"? Any box using it stops working immediately. This can't be undone.`, danger: true, confirmLabel: "Revoke" })) return;
+    setRevokingTokenId(id);
+    await fetch(`/api/admin/scraper-tokens/${id}`, { method: "DELETE" }).catch(() => {});
+    setRevokingTokenId(null);
+    await fetchAll();
+  };
+
   const handleDelete = async (id: string, username: string) => {
     if (!await confirm({ title: "Delete user?", message: `Delete user "${username}"? This cannot be undone.`, danger: true, confirmLabel: "Delete" })) return;
     setDeletingId(id);
@@ -376,7 +447,14 @@ export default function AdminPage() {
         <Shield className="w-3.5 h-3.5 text-text-secondary" />
         <h1 className="text-md font-semibold text-text-primary">Admin</h1>
         <span className="text-xs text-text-tertiary">System management and monitoring</span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
+          <Link
+            href="/admin/onboard"
+            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors"
+          >
+            <Rocket className="w-3.5 h-3.5" />
+            Onboard agency
+          </Link>
           <button
             onClick={() => router.back()}
             className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors"
@@ -659,6 +737,142 @@ export default function AdminPage() {
           </Card>
         </section>
 
+        {/* ── Scraper access (per-box bearer tokens) ── */}
+        <section>
+          <div className="mb-3 flex items-start justify-between">
+            <div>
+              <h2 className="text-md font-semibold text-text-primary flex items-center gap-2">
+                <Cpu className="w-3.5 h-3.5 text-text-secondary" />
+                Scraper access
+              </h2>
+              <p className="text-xs text-text-tertiary mt-0.5">
+                Bearer tokens for a customer&apos;s scraper box. A token is locked to its org — that box can only ever touch that org&apos;s data.
+              </p>
+            </div>
+            <Button
+              onClick={() => { setShowTokenModal(true); setTokenError(""); setTokenForm({ label: "", orgId: "", expiresInDays: "" }); }}
+              variant="primary"
+              size="md"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New token
+            </Button>
+          </div>
+
+          <Card className="overflow-hidden">
+            {tokens.length === 0 ? (
+              <p className="text-text-tertiary text-xs text-center py-8">No scraper tokens yet. The operator box uses the shared secret; mint a token for a customer box.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px]">
+                  <thead>
+                    <tr className="border-b border-separator">
+                      <th className={TH}>Label</th>
+                      <th className={TH}>Organisation</th>
+                      <th className={TH}>Status</th>
+                      <th className={TH}>Last used</th>
+                      <th className="px-4 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tokens.map((t) => (
+                      <tr key={t.id} className="border-b border-separator-subtle last:border-0 hover:bg-surface-hover transition-colors">
+                        <td className="px-4 py-2.5 text-base font-medium text-text-primary">{t.label}</td>
+                        <td className="px-4 py-2.5 text-base text-text-secondary">
+                          {t.orgName ?? <span className="text-text-tertiary text-xs italic">owner-scope (any org)</span>}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={`text-2xs px-1.5 py-0.5 rounded-sm font-medium ${
+                            t.status === "active" ? "bg-success-subtle text-success"
+                              : t.status === "expired" ? "bg-warning-subtle text-warning"
+                              : "bg-surface-hover text-text-tertiary"
+                          }`}>
+                            {t.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-text-tertiary data-mono" suppressHydrationWarning>
+                          {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : "never"}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          {t.status === "active" && (
+                            <button
+                              onClick={() => handleRevokeToken(t.id, t.label)}
+                              disabled={revokingTokenId === t.id}
+                              className="h-7 w-7 rounded flex items-center justify-center text-text-secondary hover:text-danger hover:bg-danger-subtle transition-colors disabled:opacity-50"
+                              title="Revoke token"
+                            >
+                              {revokingTokenId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </section>
+
+        {/* ── Mint scraper token modal ── */}
+        <Modal open={showTokenModal} onClose={() => setShowTokenModal(false)} labelledBy="mint-token-title" className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-sm flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-separator">
+            <h2 id="mint-token-title" className="font-semibold text-text-primary text-md">New scraper token</h2>
+            <button onClick={() => setShowTokenModal(false)} className="text-text-tertiary hover:text-text-primary">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <form onSubmit={handleMintToken} className="p-4 space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Label</label>
+              <input
+                type="text"
+                value={tokenForm.label}
+                onChange={(e) => setTokenForm((f) => ({ ...f, label: e.target.value }))}
+                placeholder="e.g. acme-nuc-scraper"
+                autoFocus
+                className={INPUT}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Organisation</label>
+              <select
+                value={tokenForm.orgId}
+                onChange={(e) => setTokenForm((f) => ({ ...f, orgId: e.target.value }))}
+                className={SELECT}
+              >
+                <option value="">Owner-scope (any org — operator use only)</option>
+                {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+              <p className="text-2xs text-text-tertiary mt-1">Pick the customer&apos;s org to lock the box to it.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Expires <span className="font-normal text-text-tertiary">(optional, days)</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={tokenForm.expiresInDays}
+                onChange={(e) => setTokenForm((f) => ({ ...f, expiresInDays: e.target.value }))}
+                placeholder="never"
+                className={INPUT}
+              />
+            </div>
+            {tokenError && (
+              <p role="alert" className="text-xs text-danger bg-danger-subtle border border-separator rounded px-2.5 py-1.5">{tokenError}</p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="secondary" size="md" onClick={() => setShowTokenModal(false)}>Cancel</Button>
+              <Button type="submit" variant="primary" size="md" disabled={mintingToken || !tokenForm.label.trim()}>
+                {mintingToken && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {mintingToken ? "Minting…" : "Mint token"}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+
         {/* ── Auth-link modal (invite / password reset) ── */}
         <Modal open={!!linkModal} onClose={() => setLinkModal(null)} labelledBy="auth-link-title" className="bg-surface-overlay text-text-primary rounded-xl shadow-overlay w-full max-w-md flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-separator">
@@ -673,7 +887,9 @@ export default function AdminPage() {
             ) : (
               <>
                 <p className="text-xs text-text-secondary">
-                  Single-use link — send it to the person over any channel you already share.
+                  {linkModal?.title?.startsWith("Scraper token")
+                    ? "Copy this now — it's shown once and can't be recovered. Set it on the box as SCRAPER_API_TOKEN=…"
+                    : "Single-use link — send it to the person over any channel you already share."}
                   {linkModal?.expiresAt && (
                     <> Expires <span className="data-mono">{new Date(linkModal.expiresAt).toLocaleString()}</span>.</>
                   )}

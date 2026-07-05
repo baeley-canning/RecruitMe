@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
@@ -6,6 +5,7 @@ import { authOptions, checkLoginLocked, recordLoginFailure, clearLoginFailures }
 import { prisma } from "./db";
 import { getWhiteLabelConfig } from "./white-label";
 import { isWhiteLabelEnabled } from "./feature-flags";
+import { hashScraperToken } from "./scraper-tokens";
 
 export interface AuthResult {
   userId: string;
@@ -198,7 +198,9 @@ export async function verifyScraperAuth(req: Request): Promise<ScraperAuthResult
   const token = authHeader.slice(7).trim();
   if (!token) return null;
 
-  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  // Same hash the mint path writes (src/lib/scraper-tokens.ts) — shared so
+  // mint and verify can never drift.
+  const tokenHash = hashScraperToken(token);
 
   const row = await prisma.scraperApiToken.findUnique({ where: { tokenHash } });
   if (!row) return null;
