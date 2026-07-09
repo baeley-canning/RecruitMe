@@ -577,6 +577,12 @@ export interface ProfileUpdateHitDTO {
   updatedAtBucket: string;
   flaggedAt: string;
   seen: boolean;
+  /** Source links for the row's badges. seekUrl is always the hit's profileUrl
+   *  (SEEK). linkedin/jobAdder are populated only when the profile is already in
+   *  the library (candidateId set) — so the feed can link straight to each
+   *  platform instead of forcing a click on a single far-right link. */
+  linkedinUrl: string | null;
+  jobAdderUrl: string | null;
 }
 
 /**
@@ -604,22 +610,47 @@ export async function listHits(
     ? await prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, username: true } })
     : [];
   const nameMap = new Map(creators.map((u) => [u.id, u.username]));
-  return rows.map((r) => ({
-    id: r.id,
-    watchId: r.watchId,
-    watchName: r.watch?.name ?? null,
-    watchCreatedByName: r.watch?.createdBy ? (nameMap.get(r.watch.createdBy) ?? null) : null,
-    seekId: r.seekId,
-    profileUrl: r.profileUrl,
-    candidateId: r.candidateId,
-    name: r.name,
-    headline: r.headline,
-    location: r.location,
-    updatedAgo: r.updatedAgo,
-    updatedAtBucket: r.updatedAtBucket.toISOString(),
-    flaggedAt: r.flaggedAt.toISOString(),
-    seen: r.seen,
-  }));
+
+  // Batch-fetch the linked candidates' other-platform URLs so each row can show
+  // LinkedIn / JobAdder badges (SEEK is always the hit's own profileUrl). One
+  // query, org-scoped for safety.
+  const candidateIds = [...new Set(rows.map((r) => r.candidateId).filter((x): x is string => !!x))];
+  const candById: Map<string, { linkedinUrl: string | null; jobAdderUrl: string | null }> = new Map();
+  if (candidateIds.length) {
+    const cands = await prisma.candidate.findMany({
+      where: { id: { in: candidateIds }, orgId },
+      select: { id: true, linkedinUrl: true, jobAdderUrl: true },
+    });
+    for (const c of cands) candById.set(c.id, { linkedinUrl: c.linkedinUrl, jobAdderUrl: c.jobAdderUrl });
+  }
+
+  return rows.map((r) => {
+    const cand = r.candidateId ? candById.get(r.candidateId) : undefined;
+    return {
+      id: r.id,
+      watchId: r.watchId,
+      watchName: r.watch?.name ?? null,
+      watchCreatedByName: r.watch?.createdBy ? (nameMap.get(r.watch.createdBy) ?? null) : null,
+      seekId: r.seekId,
+      profileUrl: r.profileUrl,
+      candidateId: r.candidateId,
+      name: r.name,
+      headline: r.headline,
+      location: r.location,
+      updatedAgo: r.updatedAgo,
+      updatedAtBucket: r.updatedAtBucket.toISOString(),
+      flaggedAt: r.flaggedAt.toISOString(),
+      seen: r.seen,
+      // A library candidate's linkedinUrl can be a synthetic "library:"/"seek:"
+      // key (not a real URL) — only surface genuine http(s) links.
+      linkedinUrl: httpOrNull(cand?.linkedinUrl),
+      jobAdderUrl: httpOrNull(cand?.jobAdderUrl),
+    };
+  });
+}
+
+function httpOrNull(url: string | null | undefined): string | null {
+  return url && /^https?:\/\//i.test(url) ? url : null;
 }
 
 /** Count the org's UNSEEN hits (the bell badge). Org-scoped. */

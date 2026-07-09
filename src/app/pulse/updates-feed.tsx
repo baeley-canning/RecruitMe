@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Plus } from "lucide-react";
 import { WatchForm } from "@/components/watches/watch-form";
 import { WatchList } from "@/components/watches/watch-list";
+import { SeekBadge, JobAdderBadge, LinkedInIcon } from "@/components/candidate/icons";
 import type { WatchedSearchDTO, ProfileUpdateHitDTO } from "@/lib/watched-search";
 
 function fmtAgo(iso: string, nowMs: number): string {
@@ -167,34 +169,45 @@ export function UpdatesFeed() {
         ) : (
           <div className="divide-y divide-separator">
             {hits.map((h) => {
-              const href = h.candidateId ? `/candidates/${h.candidateId}` : h.profileUrl;
-              const external = !h.candidateId;
+              const label = h.name ?? `SEEK profile ${h.seekId}`;
+              // The NAME is the primary click target: straight to the local
+              // profile when we hold it, else out to the SEEK page. No more
+              // hunting for a tiny link on the far right.
+              const nameClass = "text-text-primary text-xs font-medium hover:text-accent hover:underline truncate";
               return (
                 <div key={h.id} className="py-2 flex items-start gap-3 animate-feed-in">
                   <span className="text-text-tertiary w-12 text-right text-xs shrink-0" title={new Date(h.flaggedAt).toLocaleString()}>
                     {fmtAgo(h.flaggedAt, now)}
                   </span>
-                  <span className={`w-1.5 shrink-0 text-xs ${h.seen ? "text-transparent" : "text-accent animate-pulse"}`} title={h.seen ? "seen" : "new"}>●</span>
+                  <span className={`w-1.5 shrink-0 text-xs mt-0.5 ${h.seen ? "text-transparent" : "text-accent animate-pulse"}`} title={h.seen ? "seen" : "new"}>●</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-text-primary text-xs truncate">
-                      {h.name ?? `SEEK profile ${h.seekId}`}
-                      {h.updatedAgo && <span className="text-text-tertiary"> · updated {h.updatedAgo}</span>}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {h.candidateId ? (
+                        <Link href={`/candidates/${h.candidateId}`} className={nameClass}>{label}</Link>
+                      ) : (
+                        <a href={h.profileUrl} target="_blank" rel="noopener noreferrer" className={nameClass}>{label}</a>
+                      )}
+                      {/* Source links: SEEK (always — the hit's own profile) + any
+                          other platform we hold for this candidate. */}
+                      <span className="flex items-center gap-1 shrink-0">
+                        <SeekBadge url={h.profileUrl} className="w-4 h-4 text-[8px]" />
+                        {h.linkedinUrl && (
+                          <a href={h.linkedinUrl} target="_blank" rel="noopener noreferrer" title="Open in LinkedIn" aria-label="Open in LinkedIn"
+                            className="inline-flex items-center justify-center w-4 h-4 rounded text-[#0a66c2] hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                            <LinkedInIcon className="w-4 h-4" />
+                          </a>
+                        )}
+                        {h.jobAdderUrl && <JobAdderBadge url={h.jobAdderUrl} className="w-4 h-4 text-[8px]" />}
+                      </span>
+                      {h.updatedAgo && <span className="text-2xs text-text-tertiary shrink-0">· updated {h.updatedAgo}</span>}
                     </div>
-                    {h.headline && <div className="text-2xs text-text-secondary truncate">{h.headline}</div>}
+                    {h.headline && <div className="text-2xs text-text-secondary truncate mt-0.5">{h.headline}</div>}
                     <div className="text-2xs text-text-tertiary truncate">
                       {h.watchName && <span className="text-success font-medium">{h.watchName}</span>}
                       {h.watchCreatedByName && <span> · by {h.watchCreatedByName}</span>}
                       {h.location && <span> · {h.location}</span>}
                     </div>
                   </div>
-                  <a
-                    href={href}
-                    target={external ? "_blank" : undefined}
-                    rel={external ? "noopener noreferrer" : undefined}
-                    className="text-2xs text-accent hover:underline shrink-0 self-center"
-                  >
-                    [open{external ? " ↗" : ""}]
-                  </a>
                 </div>
               );
             })}
