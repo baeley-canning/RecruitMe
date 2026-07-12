@@ -5,6 +5,17 @@ import type { WatchedSearchDTO } from "@/lib/watched-search";
 
 const MIN_INTERVAL = 30;
 const MAX_INTERVAL = 1440;
+const DEFAULT_INTERVAL = 360; // 6h — responsive without hammering SEEK
+// One-click cadence presets so a recruiter can pick a FAST check interval
+// without doing minute math. Faster = sooner alerts (Pulse polls SEEK; there's
+// no push), at the cost of more SEEK checks per day.
+const INTERVAL_PRESETS: { label: string; minutes: number }[] = [
+  { label: "30 min", minutes: 30 },
+  { label: "hourly", minutes: 60 },
+  { label: "2 hourly", minutes: 120 },
+  { label: "6 hourly", minutes: 360 },
+  { label: "daily", minutes: 1440 },
+];
 
 /**
  * Watch setup form — CREATE or EDIT a profile-update watch.
@@ -30,7 +41,7 @@ export function WatchForm({
   const [name, setName] = useState(watch?.name ?? "");
   const [query, setQuery] = useState(watch?.query ?? "");
   const [location, setLocation] = useState(watch?.location ?? "");
-  const [intervalMinutes, setIntervalMinutes] = useState(watch?.intervalMinutes ?? 1440);
+  const [intervalMinutes, setIntervalMinutes] = useState(watch?.intervalMinutes ?? DEFAULT_INTERVAL);
   const [active, setActive] = useState(watch?.active ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +104,7 @@ export function WatchForm({
           }).catch(() => {});
         }
       }
-      setName(""); setQuery(""); setLocation(""); setIntervalMinutes(1440); setActive(true);
+      setName(""); setQuery(""); setLocation(""); setIntervalMinutes(DEFAULT_INTERVAL); setActive(true);
       onCreated?.();
     } finally {
       setBusy(false);
@@ -125,15 +136,31 @@ export function WatchForm({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
         <label className="block">
-          <span className="text-2xs text-text-tertiary">interval (min, {MIN_INTERVAL}–{MAX_INTERVAL})</span>
+          <span className="text-2xs text-text-tertiary">check every (min, {MIN_INTERVAL}–{MAX_INTERVAL}) — sooner alerts, more SEEK checks</span>
           <input
             type="number"
             min={MIN_INTERVAL}
             max={MAX_INTERVAL}
             value={intervalMinutes}
-            onChange={(e) => setIntervalMinutes(Number(e.target.value) || MAX_INTERVAL)}
+            onChange={(e) => setIntervalMinutes(Number(e.target.value) || DEFAULT_INTERVAL)}
             className={fieldCls}
           />
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {INTERVAL_PRESETS.map((p) => (
+              <button
+                key={p.minutes}
+                type="button"
+                onClick={() => setIntervalMinutes(p.minutes)}
+                className={`px-1.5 py-0.5 rounded text-2xs border transition-colors ${
+                  clampedInterval === p.minutes
+                    ? "bg-accent text-white border-accent"
+                    : "border-separator text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </label>
         <label className="flex items-center gap-2 pb-1.5 text-xs text-text-secondary">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-accent" />

@@ -16,6 +16,16 @@ function fmtAgo(iso: string, nowMs: number): string {
   return `${Math.round(sec / 86400)}d`;
 }
 
+// Recency of the PROFILE UPDATE itself, computed LIVE from the parsed update-day
+// bucket relative to now — so it always reads correctly, not the stale verbatim
+// "3 days ago" label captured at scrape time (which drifts once a day passes).
+function fmtUpdatedAgo(bucketIso: string, nowMs: number): string {
+  const days = Math.floor((nowMs - new Date(bucketIso).getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+}
+
 interface FeedPayload {
   hits: ProfileUpdateHitDTO[];
   unseen: number;
@@ -199,7 +209,7 @@ export function UpdatesFeed() {
                         )}
                         {h.jobAdderUrl && <JobAdderBadge url={h.jobAdderUrl} className="w-4 h-4 text-[8px]" />}
                       </span>
-                      {h.updatedAgo && <span className="text-2xs text-text-tertiary shrink-0">· updated {h.updatedAgo}</span>}
+                      <span className="text-2xs text-text-tertiary shrink-0">· updated {fmtUpdatedAgo(h.updatedAtBucket, now)}</span>
                     </div>
                     {h.headline && <div className="text-2xs text-text-secondary truncate mt-0.5">{h.headline}</div>}
                     <div className="text-2xs text-text-tertiary truncate">

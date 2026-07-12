@@ -7,6 +7,13 @@ import { confirm } from "@/components/ui/confirm-dialog";
 import { WatchForm } from "./watch-form";
 import type { WatchedSearchDTO } from "@/lib/watched-search";
 
+/** Human interval: "30m" / "6h" / "daily". */
+function fmtInterval(min: number): string {
+  if (min >= 1440) return "day";
+  if (min % 60 === 0) return `${min / 60}h`;
+  return `${min}m`;
+}
+
 function fmtWhen(iso: string | null): string {
   if (!iso) return "never";
   const ms = Date.now() - new Date(iso).getTime();
@@ -135,7 +142,7 @@ export function WatchList({
                 <div className="text-2xs text-text-tertiary truncate">
                   <span className="text-text-secondary">{w.query}</span>
                   {w.location && <span> · {w.location}</span>}
-                  <span> · every {w.intervalMinutes}m · checked {fmtWhen(w.lastRunAt)}</span>
+                  <span> · every {fmtInterval(w.intervalMinutes)} · checked {fmtWhen(w.lastRunAt)}</span>
                   {w.createdByName && <span> · by {w.createdByName}</span>}
                   {!w.active && <span className="text-warning"> · paused</span>}
                 </div>

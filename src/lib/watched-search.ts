@@ -37,6 +37,12 @@ import { enqueueSearchJob } from "./scrape-queue";
 // schedule a sub-floor (ban-cadence) check.
 export const MIN_INTERVAL_MINUTES = 30;
 export const MAX_INTERVAL_MINUTES = 1440;
+// Default check cadence for a NEW watch. Was 1440 (daily) — which meant a
+// profile update could sit undetected for up to a day+ before the next check
+// (Pulse polls SEEK; there's no push). 360 (6h → 4 checks/day) is far more
+// responsive while staying comfortably under WATCH_DAILY_CAP for a handful of
+// watches. Recruiters can tune it 30min–24h per watch.
+export const DEFAULT_INTERVAL_MINUTES = 360;
 
 function clampInterval(minutes: number): number {
   if (!Number.isFinite(minutes)) return MAX_INTERVAL_MINUTES;
@@ -146,7 +152,7 @@ export interface CreateWatchArgs {
 }
 
 export async function createWatch(args: CreateWatchArgs): Promise<WatchedSearchDTO> {
-  const interval = clampInterval(args.intervalMinutes ?? MAX_INTERVAL_MINUTES);
+  const interval = clampInterval(args.intervalMinutes ?? DEFAULT_INTERVAL_MINUTES);
   const w = await prisma.watchedSearch.create({
     data: {
       orgId: args.orgId,
