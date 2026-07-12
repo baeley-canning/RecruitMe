@@ -567,6 +567,30 @@ export async function reconcileWatchHealth(
   }
 }
 
+/**
+ * Detect hits for a run the MOMENT it settles (called from the scraper result
+ * route), instead of waiting for someone to open the Pulse feed. This is the
+ * fix for "flagged days late": detection used to run only on feed-load and only
+ * over a watch's LATEST run, so a profile harvested by an intermediate daily
+ * run was never turned into a hit until the page was next opened (and the
+ * "flaggedAt" reflected the page-open, not the harvest). Now every settled
+ * watch run is processed server-side straight away. No-op for non-watch runs.
+ * Idempotent (detectHits ON CONFLICT), so double-processing with the lazy
+ * feed-load path is harmless.
+ */
+export async function detectWatchHitsForRun(runId: string): Promise<number> {
+  const run = await prisma.searchRun.findUnique({
+    where: { id: runId },
+    select: { requestedBy: true, status: true, error: true },
+  });
+  if (!run?.requestedBy?.startsWith("watch:")) return 0;
+  if (!SETTLED_RUN_STATUSES.has(run.status)) return 0;
+  const watchId = run.requestedBy.slice("watch:".length);
+  const newHits = await detectHits(watchId, runId);
+  await reconcileWatchHealth(watchId, run.status, run.error, newHits);
+  return newHits;
+}
+
 export interface ProfileUpdateHitDTO {
   id: string;
   watchId: string;

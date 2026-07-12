@@ -22,6 +22,7 @@ import { isScraperEnabled } from "@/lib/feature-flags";
 import { authenticateScraper, resolveScraperOrgId } from "@/lib/scraper-auth";
 import { ingestScraperResult } from "@/lib/scraper-ingestion";
 import { reportError } from "@/lib/error-reporting";
+import { detectWatchHitsForRun } from "@/lib/watched-search";
 import {
   attachScraperHits,
   attachIngestedProfile,
@@ -162,6 +163,9 @@ export async function PATCH(
         await setSourceStatus(job.searchRunId, source, "failed");
       }
       await settleRunIfDone(job.searchRunId);
+      // Reconcile watch health immediately on a failed check too (so a failing
+      // Pulse watch flips red without waiting for a feed-load). No-op otherwise.
+      await detectWatchHitsForRun(job.searchRunId).catch(() => {});
     }
     return NextResponse.json({ requeued: finalStatus === "pending", retryCount: newRetryCount });
   }
@@ -241,6 +245,12 @@ export async function PATCH(
         await setSourceStatus(job.searchRunId, source, "complete");
       }
       await settleRunIfDone(job.searchRunId);
+      // Pulse: detect profile-update hits the MOMENT this run settles, so a
+      // watch surfaces updates within its check interval instead of only when
+      // someone next opens the feed. No-op + idempotent for non-watch runs.
+      await detectWatchHitsForRun(job.searchRunId).catch((err) =>
+        reportError(err, { route: "scraper/jobs:detectWatchHits", runId: job.searchRunId }),
+      );
     }
     return NextResponse.json({ kind: "search", urlCount: urls.length });
   }

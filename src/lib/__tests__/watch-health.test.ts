@@ -2,15 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMocks = vi.hoisted(() => ({
   prisma: {
-    watchedSearch: { findMany: vi.fn(), update: vi.fn() },
-    searchRun: { findMany: vi.fn() },
+    watchedSearch: { findMany: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+    searchRun: { findMany: vi.fn(), findUnique: vi.fn() },
     searchRunResult: { findMany: vi.fn() },
     candidate: { findMany: vi.fn() },
+    $executeRaw: vi.fn(),
   },
 }));
 vi.mock("@/lib/db", () => dbMocks);
 
-import { deriveWatchHealth, reconcileWatchHealth } from "@/lib/watched-search";
+import { deriveWatchHealth, reconcileWatchHealth, detectWatchHitsForRun } from "@/lib/watched-search";
 
 const NOW = new Date("2026-07-04T12:00:00.000Z");
 
@@ -81,5 +82,33 @@ describe("reconcileWatchHealth", () => {
   it("never throws when the DB write fails (health is advisory)", async () => {
     dbMocks.prisma.watchedSearch.update.mockRejectedValueOnce(new Error("db down"));
     await expect(reconcileWatchHealth("w-1", "failed", "boom", 0)).resolves.toBeUndefined();
+  });
+});
+
+describe("detectWatchHitsForRun (on-settle detection)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.prisma.watchedSearch.update.mockResolvedValue({});
+  });
+
+  // Critical safety: this runs on EVERY search run that settles (most are live
+  // recruiter searches, not watches) — it must be a true no-op for those.
+  it("is a no-op for a NON-watch run (no detection, no health write)", async () => {
+    dbMocks.prisma.searchRun.findUnique.mockResolvedValue({ requestedBy: "user:123", status: "complete", error: null });
+    const n = await detectWatchHitsForRun("run-1");
+    expect(n).toBe(0);
+    expect(dbMocks.prisma.searchRunResult.findMany).not.toHaveBeenCalled(); // detectHits never ran
+    expect(dbMocks.prisma.watchedSearch.update).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op for a run that hasn't settled yet", async () => {
+    dbMocks.prisma.searchRun.findUnique.mockResolvedValue({ requestedBy: "watch:w-9", status: "running", error: null });
+    expect(await detectWatchHitsForRun("run-2")).toBe(0);
+    expect(dbMocks.prisma.searchRunResult.findMany).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op for an unknown run", async () => {
+    dbMocks.prisma.searchRun.findUnique.mockResolvedValue(null);
+    expect(await detectWatchHitsForRun("ghost")).toBe(0);
   });
 });
