@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { RunSnapshot } from "@/lib/search-run";
+import { useRunSnapshotStream } from "./use-run-snapshot-stream";
 
 /**
  * Subscribe to a SearchRun's live SSE feed. Seeded with the server-rendered
@@ -11,28 +12,18 @@ import type { RunSnapshot } from "@/lib/search-run";
  * EventSource server-side (req.signal) but the run keeps progressing in the
  * worker + DB. A terminal initial status means the snapshot is already final
  * — we never open a connection for a finished run.
+ *
+ * The EventSource lifecycle itself lives in [[useRunSnapshotStream]] so this
+ * view and the job search modal share one canonical stream implementation.
  */
 export function useSearchRunStream(runId: string, initial: RunSnapshot): RunSnapshot {
   const [state, setState] = useState<RunSnapshot>(initial);
 
-  useEffect(() => {
-    if (initial.run.status !== "queued" && initial.run.status !== "running") return;
-    const es = new EventSource(`/api/search/${runId}/stream`);
-    es.addEventListener("run", (e) => {
-      try {
-        const snap = JSON.parse((e as MessageEvent).data) as RunSnapshot;
-        // The tick omits `results` when the run is unchanged — keep the prior set.
-        setState((prev) => (snap.results === undefined ? { ...prev, run: snap.run } : snap));
-        if (snap.run.status !== "queued" && snap.run.status !== "running") es.close();
-      } catch {
-        /* malformed frame — ignore, next tick recovers */
-      }
-    });
-    es.onerror = () => {
-      /* EventSource auto-reconnects on transient drops; nothing to do */
-    };
-    return () => es.close();
-  }, [runId, initial.run.status]);
+  const live = initial.run.status === "queued" || initial.run.status === "running";
+  useRunSnapshotStream(runId, live, (snap) => {
+    // The tick omits `results` when the run is unchanged — keep the prior set.
+    setState((prev) => (snap.results === undefined ? { ...prev, run: snap.run } : snap));
+  });
 
   return state;
 }

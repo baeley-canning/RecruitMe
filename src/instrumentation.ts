@@ -14,6 +14,7 @@ export async function register() {
     await import("../sentry.server.config");
     startSearchSweepTimer();
     startWatchSchedulerTimer();
+    startProfileRefreshTimer();
   }
   if (process.env.NEXT_RUNTIME === "edge") {
     await import("../sentry.edge.config");
@@ -98,6 +99,42 @@ function startSearchSweepTimer() {
   // First run shortly after boot (let the server start listening), then steady-state.
   setTimeout(tick, 60_000).unref?.();
   setInterval(tick, SWEEP_INTERVAL_MS).unref?.();
+}
+
+/**
+ * In-process refresh_known_profile scheduler. Trickles background re-fetch jobs
+ * for the stalest LinkedIn profiles already in the library so the owned library
+ * stays fresh (the flywheel's return stroke). Driven from the Railway app so it
+ * survives a box outage; /api/refresh/run-due is idempotent (once a profile is
+ * re-fetched its profileCapturedAt updates and it drops out of the stale set)
+ * and self-gates on its feature flags (404 → no-op), so this is safe to always
+ * arm. Hourly — refresh is low-urgency background maintenance.
+ * Kill switch: DISABLE_INPROC_REFRESH_SCHED=1.
+ */
+const REFRESH_SCHED_INTERVAL_MS = 60 * 60 * 1000;
+function startProfileRefreshTimer() {
+  if (process.env.DISABLE_INPROC_REFRESH_SCHED === "1") return;
+  if (!process.env.CONTACT_SYNC_CRON_SECRET) return; // run-due auth — nothing to drive with
+  const port = process.env.PORT ?? "3000";
+  const tick = async () => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/refresh/run-due`, {
+        method: "POST",
+        headers: { "x-cron-secret": process.env.CONTACT_SYNC_CRON_SECRET as string },
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (res.status === 404) return; // feature flags off — expected no-op
+      const body = res.ok ? await res.json().catch(() => null) : null;
+      if (body && body.enqueued > 0) {
+        console.log(`[inproc-refresh-sched] enqueued=${body.enqueued} candidates=${body.candidates}`);
+      }
+      if (!res.ok && res.status !== 404) console.warn(`[inproc-refresh-sched] run-due returned ${res.status}`);
+    } catch (err) {
+      console.warn(`[inproc-refresh-sched] failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  setTimeout(tick, 120_000).unref?.(); // stagger after the sweep + watch first ticks
+  setInterval(tick, REFRESH_SCHED_INTERVAL_MS).unref?.();
 }
 
 export const onRequestError = Sentry.captureRequestError;

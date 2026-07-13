@@ -72,4 +72,17 @@ describe("runResultToUnified", () => {
     expect(runResultToUnified(dto({ sources: [], candidateId: "c1" })).sources).toEqual(["library"]);
     expect(runResultToUnified(dto({ sources: [], candidateId: null })).sources).toEqual(["linkedin"]);
   });
+
+  it("carries the SEEK updatedAgo recency label through to the modal shape", () => {
+    const r = runResultToUnified(dto({
+      profileUrl: "https://nz.employer.seek.com/talentsearch/profile/571239686/",
+      sources: ["seek"],
+      updatedAgo: "3 days ago",
+    }));
+    expect(r.updatedAgo).toBe("3 days ago");
+  });
+
+  it("defaults updatedAgo to null when the row has none (LinkedIn / library rows)", () => {
+    expect(runResultToUnified(dto({ sources: ["linkedin"] })).updatedAgo).toBeNull();
+  });
 });

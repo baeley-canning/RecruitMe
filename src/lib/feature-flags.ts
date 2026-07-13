@@ -66,6 +66,16 @@ export function isScraperDiscoveryEnabled(): boolean {
   return readBool("SCRAPER_DISCOVERY_ENABLED", true);
 }
 
+/** refresh_known_profile sweep — re-fetches stale library LinkedIn profiles the
+ *  box already knows about, keeping the owned library fresh (the flywheel's
+ *  return stroke). Ships DARK: gated here AND requires isScraperEnabled (there
+ *  must be a box to do the work). Set RECRUITME_PROFILE_REFRESH_ENABLED=true to
+ *  arm. Never mutates candidates directly — it only enqueues background
+ *  fill-only re-fetch jobs. */
+export function isProfileRefreshEnabled(): boolean {
+  return readBool("RECRUITME_PROFILE_REFRESH_ENABLED", false);
+}
+
 /** CRM: clients / submissions / placements (triage Stage 1). Off by default.
  *  Set FEATURES_CRM_ENABLED=true to expose the clients + placements features. */
 export function isCrmEnabled(): boolean {

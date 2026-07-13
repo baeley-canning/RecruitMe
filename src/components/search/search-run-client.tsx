@@ -112,6 +112,15 @@ export function SearchRunClient({ initial }: { initial: RunSnapshot }) {
         </div>
         <h1 className="text-lg font-semibold text-text-primary mt-2 break-words">{run.rawQuery}</h1>
         {run.location && <p className="text-sm text-text-secondary mt-0.5">📍 {run.location}</p>}
+        {/* This standalone view is READ-ONLY: it feeds the shared library and lets
+            you open profiles, but attaching candidates to a specific job happens in
+            that job's "Search talent" panel (which carries the job context the
+            import needs). Say so plainly so the missing "add" control isn't read as
+            a bug. */}
+        <p className="text-xs text-text-tertiary mt-1">
+          View-only · results are saved to your library. To add candidates to a job, use{" "}
+          <span className="text-text-secondary">Search talent</span> inside that job.
+        </p>
         <div className="flex items-center gap-2 mt-3">
           <SourceStatusPills sources={run.sources} sourceStatus={run.sourceStatus} counts={run.counts} />
           {isLive && <span className="inline-flex items-center gap-1 text-xs text-text-tertiary"><Loader2 className="w-3 h-3 animate-spin" /> live</span>}

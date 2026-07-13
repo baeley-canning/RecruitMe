@@ -14,6 +14,7 @@ import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import { confirm } from "@/components/ui/confirm-dialog";
 import { isOwner as sessionIsOwner } from "@/lib/access";
+import { ApplianceStatus } from "@/components/admin/appliance-status";
 
 interface UserRow {
   id: string;
@@ -482,6 +483,9 @@ export default function AdminPage() {
             ))}
           </div>
         )}
+
+        {/* ── Appliance status (live scraper box / AI / storage health) ── */}
+        <ApplianceStatus />
 
         {/* ── Users ── */}
         <section>

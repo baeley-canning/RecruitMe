@@ -25,7 +25,8 @@ import { showToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import type { UnifiedResult } from "@/lib/talent-search/aggregate";
 import { runResultToUnified } from "@/lib/talent-search/run-to-unified";
-import type { RunSnapshot, RunDTO, SearchRunResultDTO } from "@/lib/search-run";
+import { useRunSnapshotStream } from "@/components/search/use-run-snapshot-stream";
+import type { RunDTO, SearchRunResultDTO } from "@/lib/search-run";
 import { parsedRoleToBooleanQuery } from "@/lib/talent-search/role-query";
 import type { ParsedRole } from "@/lib/ai";
 
@@ -480,39 +481,32 @@ export function UnifiedSearchModal({
   // ── Live results stream — driven by the durable run, not per-scraper-job ──
   // While the run is queued/running, subscribe to its SSE feed; each delta maps
   // the run's result rows into the modal's shape and updates counts + status.
-  // Closes itself on a terminal status. Survives across a tab reopen because the
-  // run id comes from the server (resume) or the just-returned search.
-  useEffect(() => {
-    if (!streamRunId) return;
-    const es = new EventSource(`/api/search/${streamRunId}/stream`);
-    es.addEventListener("run", (e) => {
-      try {
-        const snap = JSON.parse((e as MessageEvent).data) as RunSnapshot;
-        setRunStatus(snap.run.status);
-        setResponse((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            status: snap.run.status,
-            sourceStatus: snap.run.sourceStatus,
-            counts: {
-              libraryRaw: snap.run.counts.library,
-              linkedinRaw: snap.run.counts.linkedin + snap.run.counts.seek,
-              deduped: snap.run.counts.deduped,
-              total: snap.run.counts.total,
-            },
-            // The tick omits `results` when unchanged — keep the prior set then.
-            results: snap.results === undefined ? prev.results : snap.results.map(runResultToUnified),
-          };
-        });
-        if (snap.run.status !== "queued" && snap.run.status !== "running") es.close();
-      } catch {
-        /* malformed frame — ignore, next tick recovers */
-      }
+  // The EventSource lifecycle (open, parse `run` frames, close on terminal
+  // status) lives in the shared useRunSnapshotStream primitive — the same one
+  // the standalone /search view uses — so there's a single canonical stream
+  // implementation. streamRunId is only set while the run is live (queued/
+  // running) and nulled on terminal, which tears the socket down. Survives a tab
+  // reopen because the run id comes from the server (resume) or the just-returned
+  // search.
+  useRunSnapshotStream(streamRunId, !!streamRunId, (snap) => {
+    setRunStatus(snap.run.status);
+    setResponse((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        status: snap.run.status,
+        sourceStatus: snap.run.sourceStatus,
+        counts: {
+          libraryRaw: snap.run.counts.library,
+          linkedinRaw: snap.run.counts.linkedin + snap.run.counts.seek,
+          deduped: snap.run.counts.deduped,
+          total: snap.run.counts.total,
+        },
+        // The tick omits `results` when unchanged — keep the prior set then.
+        results: snap.results === undefined ? prev.results : snap.results.map(runResultToUnified),
+      };
     });
-    es.onerror = () => {/* EventSource auto-reconnects on transient drops */};
-    return () => es.close();
-  }, [streamRunId]);
+  });
 
   // Phase H — poll active scraper jobs until each settles.
   //
