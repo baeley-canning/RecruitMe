@@ -170,7 +170,7 @@ interface PDLEducation {
   end_date?: string;
 }
 
-interface PDLPerson {
+export interface PDLPerson {
   full_name?: string;
   job_title?: string;
   job_company_name?: string;
@@ -185,7 +185,7 @@ interface PDLPerson {
   summary?: string;
 }
 
-function pdlPersonToText(p: PDLPerson): string {
+export function pdlPersonToText(p: PDLPerson): string {
   const lines: string[] = [];
 
   if (p.full_name) lines.push(`Name: ${p.full_name}`);

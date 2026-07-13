@@ -19,7 +19,9 @@ import {
   Pencil,
   ExternalLink,
   Building2,
+  Sparkles,
 } from "lucide-react";
+import { showToast } from "./ui/toast";
 
 import { LinkedInIcon, JobAdderBadge, SeekBadge } from "./candidate/icons";
 import { CandidateIdentityBlock } from "./candidate/identity-block";
@@ -182,6 +184,8 @@ interface CandidateCardProps {
   jobId: string;
   onStatusChange: (id: string, status: string) => void;
   onScore: (id: string) => void;
+  /** Merge PDL-filled fields back into the candidate after an enrich. */
+  onEnriched?: (id: string, patch: Record<string, unknown>) => void;
   onFetchProfile: (id: string) => void;
   onNotesChange: (id: string, notes: string) => void;
   onLinkedInChange?: (id: string, url: string) => void;
@@ -932,6 +936,7 @@ export const CandidateCard = memo(function CandidateCard({
   jobId,
   onStatusChange,
   onScore,
+  onEnriched,
   onFetchProfile,
   onNotesChange,
   onLinkedInChange,
@@ -952,6 +957,37 @@ export const CandidateCard = memo(function CandidateCard({
 }: CandidateCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+
+  // PDL enrich — a deliberate, per-candidate paid gap-fill. Confirm first (the
+  // spend gate), then fill ONLY blank fields server-side and merge the result
+  // back in place. Library-safe: the route never overwrites existing data or CVs.
+  const handleEnrich = useCallback(async () => {
+    if (!(await confirm({
+      title: "Enrich from PDL?",
+      message: "Look this candidate up on People Data Labs and fill any blank fields (headline, location, contact, profile). Uses ~1 PDL credit. Existing data is never overwritten.",
+      confirmLabel: "Enrich",
+    }))) return;
+    setEnriching(true);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/candidates/${candidate.id}/enrich`, { method: "POST" });
+      const data = await res.json().catch(() => ({})) as { matched?: boolean; filled?: string[]; patch?: Record<string, unknown>; error?: string };
+      if (!res.ok) {
+        showToast(data.error ?? "Enrichment failed.", "error");
+      } else if (!data.matched) {
+        showToast("No PDL match for this candidate.", "info");
+      } else if (!data.filled?.length) {
+        showToast("PDL matched, but the record was already complete.", "info");
+      } else {
+        if (data.patch) onEnriched?.(candidate.id, data.patch);
+        showToast(`Enriched — filled ${data.filled.join(", ")}.`, "success");
+      }
+    } catch {
+      showToast("Network error during enrichment.", "error");
+    } finally {
+      setEnriching(false);
+    }
+  }, [jobId, candidate.id, onEnriched]);
   const [showReasoning, setShowReasoning] = useState(false);
   const [showRadar, setShowRadar] = useState(false);
   const [radarPos, setRadarPos] = useState({ top: 0, right: 0 });
@@ -1793,6 +1829,16 @@ export const CandidateCard = memo(function CandidateCard({
             <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-accent hover:text-accent hover:bg-accent-subtle" disabled={scoring} aria-label={candidate.matchScore != null ? "Re-score this candidate" : "Score this candidate"}>
               {!scoring && <Loader2 className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline ml-1">{candidate.matchScore != null ? "Re-score" : "Score"}</span>
+            </Button>
+          )}
+
+          {/* Enrich from PDL — fill blanks on a candidate we can match (LinkedIn
+              URL or email). Only surfaced when there's a match key; the route
+              409s cleanly if PDL isn't configured. */}
+          {(candidate.linkedinUrl || candidate.email) && (
+            <Button size="sm" variant="ghost" onClick={handleEnrich} loading={enriching} disabled={enriching} className="text-accent hover:text-accent hover:bg-accent-subtle" title="Fill blank fields from People Data Labs (~1 credit)">
+              {!enriching && <Sparkles className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline ml-1">Enrich</span>
             </Button>
           )}
 

@@ -992,6 +992,20 @@ export default function JobDetailPage({
     [patchCandidate]
   );
 
+  // PDL enrich filled some blank fields server-side — merge the returned patch
+  // into local candidate state so the card reflects it without a full refetch.
+  const handleEnriched = useCallback((candidateId: string, patch: Record<string, unknown>) => {
+    setJob((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        candidates: prev.candidates.map((c) =>
+          c.id === candidateId ? { ...c, ...patch } : c
+        ),
+      };
+    });
+  }, []);
+
   const handleScreeningDataChange = useCallback((_candidateId: string, data: string) => {
     setJob((prev) => {
       if (!prev) return prev;
@@ -2466,6 +2480,7 @@ ${toHtml(job.rawJd)}
                     jobId={id}
                     onStatusChange={handleStatusChange}
                     onScore={handleScore}
+                    onEnriched={handleEnriched}
                     onFetchProfile={handleFetchProfile}
                     onNotesChange={handleNotesChange}
                     onLinkedInChange={handleLinkedInChange}
