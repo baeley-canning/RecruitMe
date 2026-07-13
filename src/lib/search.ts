@@ -271,7 +271,10 @@ export async function searchPDLProfiles(
       ? `AND (location_locality='${location.toLowerCase().replace(/'/g, "''")}' OR location_country='new zealand')`
       : "AND location_country='new zealand'";
 
-    const sql = `SELECT * FROM person WHERE (${titleClause}) ${locationClause} AND linkedin_url IS NOT NULL LIMIT ${size}`;
+    // NB: PDL rejects `LIMIT` inside the SQL ("LIMIT is not supported … use the
+    // `size` input parameter instead") — a 400 that silently returned 0 results.
+    // Row cap is the `size` field on the request body below, not the SQL.
+    const sql = `SELECT * FROM person WHERE (${titleClause}) ${locationClause} AND linkedin_url IS NOT NULL`;
 
     const res = await fetch("https://api.peopledatalabs.com/v5/person/search", {
       method: "POST",
