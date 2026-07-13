@@ -23,6 +23,7 @@ import {
 
 import { LinkedInIcon, JobAdderBadge, SeekBadge } from "./candidate/icons";
 import { CandidateIdentityBlock } from "./candidate/identity-block";
+import { candidateConfidence } from "@/lib/confidence";
 import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import type { FetchState } from "./fetch-queue-panel";
 import {
@@ -1142,6 +1143,7 @@ export const CandidateCard = memo(function CandidateCard({
           headline={candidate.headline}
           email={candidate.email}
           phone={candidate.phone}
+          confidence={candidateConfidence(candidate)}
           locationNode={
             candidate.location
               ? <LocationFitPill location={candidate.location} score={locationFitScore} compact />

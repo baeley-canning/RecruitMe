@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CandidateIdentityBlock } from "@/components/candidate/identity-block";
+import { ConfidenceBadge } from "@/components/candidate/confidence-badge";
+import { deriveConfidence } from "@/lib/confidence";
 import { Badge } from "@/components/ui/badge";
 import { useSearchRunStream } from "./use-search-run-stream";
 import { SourceStatusPills } from "./source-status-pills";
@@ -19,6 +21,14 @@ const SOURCE_BADGE: Record<SourceKey, string> = {
 
 function ResultRow({ r, enriching }: { r: SearchRunResultDTO; enriching: boolean }) {
   const importable = !!r.candidateId;
+  // Record confidence for a live result: a resolved library candidate means we
+  // already hold a real profile; an unresolved scraper hit is snippet-only.
+  // Corroboration = how many sources carry this person. (Freshness/contact
+  // aren't in the search DTO, so they simply don't contribute here.)
+  const confidence = deriveConfidence({
+    hasFullProfile: !!r.candidateId,
+    sourceCount: r.sources.length,
+  });
   return (
     <div className="flex items-start gap-3 px-4 py-3 border-b border-separator last:border-0 hover:bg-surface-hover/40 transition-colors">
       <div className="flex-1 min-w-0">
@@ -40,6 +50,8 @@ function ResultRow({ r, enriching }: { r: SearchRunResultDTO; enriching: boolean
         {r.updatedAgo && (
           <p className="text-2xs text-text-tertiary mt-1">Profile updated {r.updatedAgo}</p>
         )}
+        {/* Record confidence — how solid this result is (data trust, not fit). */}
+        <div className="mt-1"><ConfidenceBadge confidence={confidence} /></div>
       </div>
       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
         <div className="flex gap-1">

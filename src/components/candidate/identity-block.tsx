@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 import { scoreTier, scoreTierColor, type ScoreTier } from "@/lib/score-utils";
 import { LinkedInIcon } from "./icons";
 import { displayableLinkedinUrl } from "./helpers";
+import { ConfidenceBadge } from "./confidence-badge";
+import type { Confidence } from "@/lib/confidence";
 
 // JobAdder-style tier-word labels for match scores. Mirrors the local
 // TIER_STYLE map in src/app/candidates/[id]/page.tsx so labels stay
@@ -151,6 +153,9 @@ export interface CandidateIdentityBlockProps {
   onNameClick?: () => void;
   /** Extra nodes rendered inline after the name — e.g. LinkedIn icon, JobAdder badge */
   nameExtra?: ReactNode;
+  /** Optional record-confidence signal — renders a subtle badge in the meta row.
+   *  Distinct from `score` (role fit): this is data-trust, never ranking. */
+  confidence?: Confidence | null;
   size?: "sm" | "md" | "lg";
   showScore?: boolean;
   /** When "tier", render score as JobAdder-style tier-word label
@@ -187,6 +192,7 @@ export function CandidateIdentityBlock({
   onAvatarClick,
   onNameClick,
   nameExtra,
+  confidence,
   size = "md",
   showScore = true,
   scoreFormat = "number",
@@ -282,10 +288,11 @@ export function CandidateIdentityBlock({
           <p className="text-xs text-text-secondary line-clamp-1 mt-0.5">{headline}</p>
         )}
 
-        {/* Location + phone + email */}
-        {(locationEl || (showPhone && phone) || (showEmail && email)) && (
+        {/* Location + phone + email + record confidence */}
+        {(locationEl || (showPhone && phone) || (showEmail && email) || confidence) && (
           <div className="flex items-center gap-3 mt-1 flex-wrap">
             {locationEl}
+            {confidence && <ConfidenceBadge confidence={confidence} />}
             {showPhone && phone && (
               <a
                 href={`tel:${phone}`}
