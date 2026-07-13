@@ -61,6 +61,9 @@ interface SearchResponse {
   /** When the precise query found 0, the AI alternative the server auto-broadened
    *  to. Lets the UI explain "no exact matches — showing results for «…»". */
   broadenedTo?: string | null;
+  /** Library-first: live sources were requested but held because the library was
+   *  already sufficient. The UI offers "Search live anyway". */
+  heldForLibrary?: boolean;
 }
 
 // Phase H — per-job status response from /api/scraper/jobs/[id]/status.
@@ -358,7 +361,7 @@ export function UnifiedSearchModal({
 
   const canSubmit = !searching && sourcesPicked.length > 0;
 
-  const runSearch = async (searchQuery: string) => {
+  const runSearch = async (searchQuery: string, opts?: { forceLive?: boolean }) => {
     const q = searchQuery.trim();
     if (!q || sourcesPicked.length === 0) return;
     setSearching(true);
@@ -376,6 +379,9 @@ export function UnifiedSearchModal({
           location: location.trim() || null,
           sources: sourcesPicked,
           excludeCompanies: excludeList,
+          // Library-first: normal searches serve the library and only reach out
+          // to the box for the gap; "Search live anyway" forces the box.
+          forceLive: opts?.forceLive ?? false,
         }),
       });
       if (!res.ok) {
@@ -819,6 +825,25 @@ export function UnifiedSearchModal({
             )}
             {response.errors?.linkedin && (
               <PartialFailureBanner source="LinkedIn" message={response.errors.linkedin} />
+            )}
+
+            {/* Library-first: the box was held back because the library already
+                had enough. Instant + free by default; offer live for more. */}
+            {response.heldForLibrary && !searching && (
+              <div className="p-2.5 rounded-md bg-surface-hover border border-separator text-xs text-text-secondary flex items-center justify-between gap-3">
+                <span className="flex items-center gap-2 min-w-0">
+                  <Sparkles className="w-3.5 h-3.5 flex-shrink-0 text-success" />
+                  <span>Showing <span className="font-medium text-text-primary">{response.counts.libraryRaw}</span> from your library instantly — no live scrape needed.</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void runSearch(query, { forceLive: true })}
+                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded text-2xs font-medium bg-accent hover:bg-accent-hover text-white transition-colors"
+                  title="Also run a live LinkedIn/SEEK scrape for fresh results"
+                >
+                  <Search className="w-3 h-3" /> Search live anyway
+                </button>
+              </div>
             )}
 
             {/* Auto-broaden notice — the precise query found nothing, so the

@@ -38,6 +38,7 @@ import { createRun, attachLibraryResults, setSourceStatus, loadRunSnapshot } fro
 import { reportError } from "@/lib/error-reporting";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { enqueueSearchJob } from "@/lib/scrape-queue";
+import { shouldFireLive, liveHeldForLibrary } from "@/lib/talent-search/live-gate";
 import { linkedinKeywordsFromParsed, linkedinTitleQuery, seekKeywordsFromParsed } from "@/lib/boolean-query/emit";
 
 const SourceSchema = z.enum(["library", "linkedin", "seek"]);
@@ -46,6 +47,10 @@ const BodySchema = z.object({
   query: z.string().max(2000),
   location: z.string().max(200).optional().nullable(),
   sources: z.array(SourceSchema).min(1).default(["library", "linkedin"]),
+  /** Library-first: when the library already returns enough, live (scraper)
+   *  sources are HELD BACK unless the user explicitly forces them. Set by the
+   *  "Search live anyway" control. */
+  forceLive: z.boolean().optional().default(false),
   /** Per-source hard caps. Library defaults to 100, LinkedIn to 30. */
   libraryLimit: z.number().int().min(1).max(500).optional(),
   linkedinLimit: z.number().int().min(1).max(50).optional(),
@@ -83,7 +88,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { query, location, sources, libraryLimit, excludeCompanies } = parsed.data;
+  const { query, location, sources, libraryLimit, excludeCompanies, forceLive } = parsed.data;
 
   // Effective company exclusion: a list sent with the request is authoritative
   // and persisted on the job (so the next search remembers it); otherwise fall
@@ -173,6 +178,7 @@ export async function POST(
   // until results appear, then tell the UI what it broadened to. This is the
   // "the AI tweaks the search instead of returning 0" behaviour.
   let broadenedTo: string | null = null;
+  let libraryCount = 0;
   if (wantLibrary) {
     try {
       const lib = (q: ReturnType<typeof parseBooleanQuery>) => searchLibrary({
@@ -196,6 +202,7 @@ export async function POST(
           if (r.length > 0) { libraryResults = r; broadenedTo = fb; break; }
         }
       }
+      libraryCount = libraryResults.length;
       await attachLibraryResults(run.id, libraryResults);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -207,8 +214,14 @@ export async function POST(
 
   // ── 3. Enqueue priority=100 scraper search jobs, LINKED to the run, so the
   // box drives them to completion and attaches hits even after the tab closes. ──
+  // LIBRARY-FIRST: hold live sources back when the library already returned
+  // enough (unless the user forced live). This keeps the common search instant +
+  // free + box-independent, and only reaches out for the gap.
+  const fireLive = shouldFireLive({ libraryCount, forceLive, wantLibrary });
+  const wantLiveSource = wantLinkedin || wantSeek;
+  const heldForLibrary = liveHeldForLibrary({ libraryCount, forceLive, wantLibrary, wantLiveSource });
   const liveJobs: Array<{ id: string; platform: "linkedin" | "seek" }> = [];
-  if (canScrape) {
+  if (canScrape && fireLive) {
     if (wantLinkedin) {
       const j = await enqueueSearchJob({
         orgId: runOrgId!,
@@ -291,5 +304,9 @@ export async function POST(
     // When the precise query found nothing, this is the AI alternative we
     // auto-broadened to (so the UI can say "no exact matches — showing …").
     broadenedTo,
+    // Library-first: true when live sources were requested but held because the
+    // library already had enough. The UI shows "Library had enough — search live
+    // anyway" (which re-runs with forceLive).
+    heldForLibrary,
   });
 }

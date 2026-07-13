@@ -18,6 +18,7 @@ import { parseIntParam } from "@/lib/utils";
 import { z } from "zod";
 import { getAuth, unauthorized } from "@/lib/session";
 import { requireCapability } from "@/lib/require-capability";
+import { shouldFireLive, liveHeldForLibrary } from "@/lib/talent-search/live-gate";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { parseBooleanQuery } from "@/lib/boolean-query";
@@ -45,6 +46,8 @@ const BodySchema = z.object({
   query: z.string().max(2000),
   location: z.string().max(200).optional().nullable(),
   sources: z.array(SourceSchema).min(1).default(["library", "linkedin"]), // SEEK opt-in (credits)
+  // Library-first: hold live sources back when the library is sufficient unless forced.
+  forceLive: z.boolean().optional().default(false),
   libraryLimit: z.number().int().min(1).max(500).optional(),
   orgId: z.string().optional(), // owners only
 });
@@ -68,7 +71,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 });
   }
-  const { query, location, sources, libraryLimit, orgId: bodyOrgId } = parsed.data;
+  const { query, location, sources, libraryLimit, orgId: bodyOrgId, forceLive } = parsed.data;
   const parsedQuery = parseBooleanQuery(query);
 
   // ── Org scoping ──
@@ -122,6 +125,7 @@ export async function POST(req: Request) {
   });
 
   // ── 2. Library FTS inline (instant results attach to the run) ──
+  let libraryCount = 0;
   if (wantLibrary) {
     try {
       const libraryResults = await searchLibrary({
@@ -131,6 +135,7 @@ export async function POST(req: Request) {
         location: location ?? null,
         limit: libraryLimit ?? 100,
       });
+      libraryCount = libraryResults.length;
       await attachLibraryResults(run.id, libraryResults);
     } catch (err) {
       reportError(err, { route: "search:library", runId: run.id, orgId: auth.orgId });
@@ -139,8 +144,12 @@ export async function POST(req: Request) {
   }
 
   // ── 3. Enqueue scraper search jobs (priority 100), linked to the run ──
+  // LIBRARY-FIRST: only reach out to the box when the library came up short (or
+  // the user forced live). Instant + free + box-independent otherwise.
+  const fireLive = shouldFireLive({ libraryCount, forceLive, wantLibrary });
+  const heldForLibrary = liveHeldForLibrary({ libraryCount, forceLive, wantLibrary, wantLiveSource: wantLinkedin || wantSeek });
   const liveJobs: Array<{ id: string; platform: "linkedin" | "seek" }> = [];
-  if (canScrape) {
+  if (canScrape && fireLive) {
     if (wantLinkedin) {
       const j = await enqueueSearchJob({
         orgId: runOrgId!,
@@ -203,6 +212,8 @@ export async function POST(req: Request) {
     counts: snapshot?.run.counts ?? { library: 0, linkedin: 0, seek: 0, deduped: 0, total: 0 },
     sourceStatus: snapshot?.run.sourceStatus ?? { library: "skipped", linkedin: "skipped", seek: "skipped" },
     liveJobs,
+    // Library-first: live sources were held because the library was sufficient.
+    heldForLibrary,
   });
 }
 
