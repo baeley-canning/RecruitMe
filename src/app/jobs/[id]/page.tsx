@@ -1775,14 +1775,16 @@ ${toHtml(job.rawJd)}
                       Edit JD
                     </button>
                   )}
-                  <button
-                    onClick={handleParse}
-                    disabled={parsing}
-                    className="text-xs text-text-tertiary hover:text-accent transition-colors flex items-center gap-1"
-                  >
-                    {parsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                    Re-analyse
-                  </button>
+                  <CapabilityGate cap="parse" label="Re-analyse">
+                    <button
+                      onClick={handleParse}
+                      disabled={parsing}
+                      className="text-xs text-text-tertiary hover:text-accent transition-colors flex items-center gap-1"
+                    >
+                      {parsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Re-analyse
+                    </button>
+                  </CapabilityGate>
                 </div>
               </div>
             </CardHeader>
@@ -2226,40 +2228,44 @@ ${toHtml(job.rawJd)}
                   </button>
                 )}
                 {parsedRole && job.candidates.length > 0 && (
-                  <Button
-                    size="md"
-                    variant="secondary"
-                    onClick={() => handleRescoreAll(false)}
-                    loading={rescoringAll}
-                    disabled={rescoringAll}
-                    title="Re-score all candidates with current job requirements (skips ones that haven't changed)"
-                  >
-                    {!rescoringAll && <Sparkles className="w-3.5 h-3.5" />}
-                    {rescoringAll
-                      ? rescoreProgress
-                        ? `Scoring ${rescoreProgress.scored} of ${rescoreProgress.total}…`
-                        : "Scoring…"
-                      : "Re-score all"}
-                  </Button>
+                  <CapabilityGate cap="score" label="Score all">
+                    <Button
+                      size="md"
+                      variant="secondary"
+                      onClick={() => handleRescoreAll(false)}
+                      loading={rescoringAll}
+                      disabled={rescoringAll}
+                      title="Re-score all candidates with current job requirements (skips ones that haven't changed)"
+                    >
+                      {!rescoringAll && <Sparkles className="w-3.5 h-3.5" />}
+                      {rescoringAll
+                        ? rescoreProgress
+                          ? `Scoring ${rescoreProgress.scored} of ${rescoreProgress.total}…`
+                          : "Scoring…"
+                        : "Re-score all"}
+                    </Button>
+                  </CapabilityGate>
                 )}
                 {parsedRole && job.candidates.length > 0 && (
-                  <Button
-                    size="md"
-                    variant="outline"
-                    onClick={async () => {
-                      if (!await confirm({
-                        title: "Force re-score everyone?",
-                        message: "Re-runs the AI on EVERY candidate, even ones that haven't changed — ignores the cache and uses AI credits. Use when you want a guaranteed fresh score.",
-                        confirmLabel: "Force re-score",
-                      })) return;
-                      void handleRescoreAll(true);
-                    }}
-                    disabled={rescoringAll}
-                    title="Force a fresh AI score on EVERY candidate, ignoring the unchanged-profile cache"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Force re-score
-                  </Button>
+                  <CapabilityGate cap="score" label="Force re-score">
+                    <Button
+                      size="md"
+                      variant="outline"
+                      onClick={async () => {
+                        if (!await confirm({
+                          title: "Force re-score everyone?",
+                          message: "Re-runs the AI on EVERY candidate, even ones that haven't changed — ignores the cache and uses AI credits. Use when you want a guaranteed fresh score.",
+                          confirmLabel: "Force re-score",
+                        })) return;
+                        void handleRescoreAll(true);
+                      }}
+                      disabled={rescoringAll}
+                      title="Force a fresh AI score on EVERY candidate, ignoring the unchanged-profile cache"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Force re-score
+                    </Button>
+                  </CapabilityGate>
                 )}
                 {filteredCandidates.length > 0 && (
                   <Button
@@ -2400,13 +2406,15 @@ ${toHtml(job.rawJd)}
                 <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>Requirements updated since last score — re-score all to apply new criteria.</span>
               </div>
-              <button
-                onClick={() => handleRescoreAll(false)}
-                disabled={rescoringAll}
-                className="h-6 text-xs font-medium px-3 rounded bg-warning text-text-inverse hover:bg-warning-hover disabled:opacity-50 transition-colors"
-              >
-                Re-score all now
-              </button>
+              <CapabilityGate cap="score" label="Score all">
+                <button
+                  onClick={() => handleRescoreAll(false)}
+                  disabled={rescoringAll}
+                  className="h-6 text-xs font-medium px-3 rounded bg-warning text-text-inverse hover:bg-warning-hover disabled:opacity-50 transition-colors"
+                >
+                  Re-score all now
+                </button>
+              </CapabilityGate>
             </div>
           ) : null;
         })()}

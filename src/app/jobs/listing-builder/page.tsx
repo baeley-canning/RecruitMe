@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { fmtSalary } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
+import { CapabilityGate } from "@/components/permissions/use-permissions";
 
 const SALARY_OPTIONS = [
   40000, 50000, 60000, 70000, 80000, 90000, 100000, 110000, 120000,
@@ -593,17 +594,19 @@ ${toHtml(listingBody)}
               requirements are surfaced as a hint + enforced in handleDraft (which
               shows a specific message) — a DISABLED button swallowed the click
               silently, so a rough one-liner under 40 chars looked broken. */}
-          <Button
-            type="button"
-            onClick={handleDraft}
-            disabled={drafting}
-            loading={drafting}
-            variant="primary"
-            size="lg"
-          >
-            {!drafting && <Sparkles className="w-4 h-4" />}
-            Draft Listing
-          </Button>
+          <CapabilityGate cap="outreach" label="Draft Listing">
+            <Button
+              type="button"
+              onClick={handleDraft}
+              disabled={drafting}
+              loading={drafting}
+              variant="primary"
+              size="lg"
+            >
+              {!drafting && <Sparkles className="w-4 h-4" />}
+              Draft Listing
+            </Button>
+          </CapabilityGate>
           {!drafting && (!title.trim() || brief.trim().length < 40) && (
             <p className="text-2xs text-text-tertiary">
               {!title.trim()
@@ -646,13 +649,15 @@ ${toHtml(listingBody)}
                     <Download className="w-3.5 h-3.5" />
                     Export PDF
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleDraft}
-                    className="text-xs text-accent hover:text-accent-hover font-medium"
-                  >
-                    Regenerate
-                  </button>
+                  <CapabilityGate cap="outreach" label="Regenerate">
+                    <button
+                      type="button"
+                      onClick={handleDraft}
+                      className="text-xs text-accent hover:text-accent-hover font-medium"
+                    >
+                      Regenerate
+                    </button>
+                  </CapabilityGate>
                 </div>
               </div>
 
