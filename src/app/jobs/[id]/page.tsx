@@ -40,6 +40,7 @@ import { JobWeightsCard } from "@/components/job/job-weights-card";
 import { TopCandidatesCard } from "@/components/job/top-candidates-card";
 import { BrowseLibraryModal } from "@/components/job/browse-library-modal";
 import { UnifiedSearchModal } from "@/components/job/unified-search-modal";
+import { CapabilityGate } from "@/components/permissions/use-permissions";
 import { PipelineStepper, type PipelineStage } from "@/components/job/pipeline-stepper";
 import { SkillNotesSection } from "@/components/job/skill-notes-section";
 import { ParseHistoryCard } from "@/components/job/parse-history-card";
@@ -1542,19 +1543,21 @@ ${toHtml(job.rawJd)}
             <Users className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Library</span>
           </Button>
-          <Button variant="secondary" size="md" onClick={() => openModal("multiSearch")}>
-            {runInFlight ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span className="hidden sm:inline">Search running…</span>
-              </>
-            ) : (
-              <>
-                <Search className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Search talent</span>
-              </>
-            )}
-          </Button>
+          <CapabilityGate cap="search" label="Search talent">
+            <Button variant="secondary" size="md" onClick={() => openModal("multiSearch")}>
+              {runInFlight ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span className="hidden sm:inline">Search running…</span>
+                </>
+              ) : (
+                <>
+                  <Search className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Search talent</span>
+                </>
+              )}
+            </Button>
+          </CapabilityGate>
           <Button onClick={() => openModal("addCandidate")}>
             <UserPlus className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Add Candidate</span>

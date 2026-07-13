@@ -385,6 +385,12 @@ model User {
   username  String   @unique
   password  String // bcrypt hash
   role      String   @default("user") // "owner" | "user"
+  // JSON array of granted capability slugs (see src/lib/permissions.ts). Only
+  // meaningful for role="user"; owners implicitly have every capability. Null /
+  // empty = no paid/API actions (default-deny) so a new user can't burn credits
+  // until an owner grants access. Column added idempotently in
+  // apply-schema-changes.mjs (not a formal migration).
+  permissions String?
   orgId     String?
   org       Org?     @relation(fields: [orgId], references: [id])
   createdAt DateTime @default(now())

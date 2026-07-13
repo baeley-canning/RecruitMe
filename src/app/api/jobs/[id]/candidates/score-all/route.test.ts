@@ -64,6 +64,10 @@ vi.mock("@/lib/provider-health", async (orig) => ({
   deriveProviderState: healthMocks.deriveProviderState,
 }));
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/require-capability", () => ({
+  requireCapability: vi.fn(async () => null),
+  getUserPermissions: vi.fn(async () => []),
+}));
 vi.mock("@/lib/recruiter-memory", () => ({
   getRecruitingContext: vi.fn().mockResolvedValue(""),
   getCorrectionsVersion: vi.fn().mockResolvedValue(0),

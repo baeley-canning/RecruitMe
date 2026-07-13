@@ -18,6 +18,10 @@ const sessionMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/require-capability", () => ({
+  requireCapability: vi.fn(async () => null),
+  getUserPermissions: vi.fn(async () => []),
+}));
 
 import { PATCH } from "./route";
 

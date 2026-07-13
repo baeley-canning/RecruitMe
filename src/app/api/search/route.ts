@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { parseIntParam } from "@/lib/utils";
 import { z } from "zod";
 import { getAuth, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { parseBooleanQuery } from "@/lib/boolean-query";
@@ -51,6 +52,8 @@ const BodySchema = z.object({
 export async function POST(req: Request) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "search");
+  if (denied) return denied;
 
   const rate = await checkRateLimit(auth.orgId, "search");
   if (!rate.allowed) {

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { summariseReferenceCheck } from "@/lib/ai";
 import { safeParseJson } from "@/lib/utils";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { checkSpendCap } from "@/lib/usage";
 
 export async function POST(
@@ -11,6 +12,8 @@ export async function POST(
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "outreach");
+  if (denied) return denied;
   const { id, candidateId, refId } = await params;
   const { job, candidate, error } = await requireCandidateAccess(id, candidateId, auth);
   if (error || !job || !candidate) return error;

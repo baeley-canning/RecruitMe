@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateJobAd, parseJobDescription } from "@/lib/ai";
 import { getAuth, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { checkSpendCap } from "@/lib/usage";
 import { formatSalaryRange } from "@/lib/format";
 
@@ -18,6 +19,8 @@ const DraftSchema = z.object({
 export async function POST(req: Request) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "outreach");
+  if (denied) return denied;
 
   const parsed = DraftSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {

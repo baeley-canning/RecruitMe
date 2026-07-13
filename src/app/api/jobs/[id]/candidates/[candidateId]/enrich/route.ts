@@ -13,6 +13,7 @@
 
 import { NextResponse } from "next/server";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { prisma } from "@/lib/db";
 import { getServerSetting } from "@/lib/settings";
 import { isLinkedInProfileUrl } from "@/lib/linkedin";
@@ -26,6 +27,8 @@ export async function POST(
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "enrich");
+  if (denied) return denied;
   const { id, candidateId } = await params;
 
   const { candidate, error } = await requireCandidateAccess(id, candidateId, auth);

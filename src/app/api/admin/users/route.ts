@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { isOwner } from "@/lib/access";
+import { parsePermissions, serializePermissions, ALL_CAPABILITIES } from "@/lib/permissions";
 
 type AnySession = { user?: { role?: string; id?: string; name?: string | null } } | null;
 
@@ -18,13 +19,20 @@ export async function GET() {
       id: true,
       username: true,
       role: true,
+      permissions: true,
       createdAt: true,
       orgId: true,
       org: { select: { name: true } },
     },
   });
   return NextResponse.json(
-    users.map(({ org, ...u }) => ({ ...u, orgName: org?.name ?? null }))
+    users.map(({ org, permissions, ...u }) => ({
+      ...u,
+      orgName: org?.name ?? null,
+      // Owners implicitly hold everything; surface that so the UI can show all
+      // toggles checked-and-locked for them.
+      permissions: u.role === "owner" ? ALL_CAPABILITIES : parsePermissions(permissions),
+    }))
   );
 }
 
@@ -72,6 +80,8 @@ const PatchUserSchema = z.object({
                  .optional(),
   role:        z.enum(["user", "owner"]).optional(),
   orgId:       z.string().nullable().optional(),
+  // Per-user capability grants (RBAC). Unknown slugs are dropped on serialize.
+  permissions: z.array(z.string()).optional(),
 });
 
 export async function PATCH(req: Request) {
@@ -81,7 +91,7 @@ export async function PATCH(req: Request) {
   const result = PatchUserSchema.safeParse(await req.json().catch(() => ({})));
   if (!result.success) return NextResponse.json({ error: result.error.flatten() }, { status: 422 });
 
-  const { id, username, password, role, orgId } = result.data;
+  const { id, username, password, role, orgId, permissions } = result.data;
 
   // Can't demote yourself — would lock you out
   if (id === session?.user?.id && role === "user") {
@@ -98,6 +108,8 @@ export async function PATCH(req: Request) {
   if (password)            data.password = await bcrypt.hash(password, 12);
   if (role !== undefined)  data.role     = role;
   if (orgId !== undefined) data.orgId    = role === "owner" ? null : orgId;
+  // Store the granted capability set (owners don't need it — they hold all).
+  if (permissions !== undefined) data.permissions = serializePermissions(permissions);
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });

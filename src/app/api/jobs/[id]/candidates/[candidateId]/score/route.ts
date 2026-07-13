@@ -6,6 +6,7 @@ import { AllProvidersFailedError } from "@/lib/ai/chat-with-failover";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getCorrectionsVersion } from "@/lib/recruiter-memory";
@@ -18,6 +19,8 @@ export async function POST(
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "score");
+  if (denied) return denied;
   const { id, candidateId } = await params;
   // ?force=1 — bypass the "profile unchanged" cache and re-run the AI scorer no
   // matter what. Rate-limit + spend cap still apply (cost guards); this only

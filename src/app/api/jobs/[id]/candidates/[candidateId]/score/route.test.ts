@@ -56,6 +56,10 @@ const scoringConfigMocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => dbMocks);
 vi.mock("@/lib/ai", () => aiMocks);
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/require-capability", () => ({
+  requireCapability: vi.fn(async () => null),
+  getUserPermissions: vi.fn(async () => []),
+}));
 vi.mock("@/lib/recruiter-memory", () => memoryMocks);
 vi.mock("@/lib/scoring-config", () => ({
   getOrgScoringWeights: scoringConfigMocks.getOrgScoringWeights,

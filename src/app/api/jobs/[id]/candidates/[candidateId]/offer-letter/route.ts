@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { generateOfferLetter } from "@/lib/ai";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { checkSpendCap } from "@/lib/usage";
 
 export async function POST(
@@ -10,6 +11,8 @@ export async function POST(
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "outreach");
+  if (denied) return denied;
   const { id, candidateId } = await params;
   const { error } = await requireCandidateAccess(id, candidateId, auth);
   if (error) return error;

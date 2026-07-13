@@ -87,6 +87,15 @@ await step("Job.lastScoredAt + lastParsedAt", async () => {
   `;
 });
 
+// 2b. User.permissions — per-user capability grants (RBAC). Nullable; NULL =
+// default-deny so a new non-owner can't spend AI/provider credits until an
+// owner grants access. See src/lib/permissions.ts.
+await step("User.permissions", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "permissions" TEXT
+  `;
+});
+
 // 3. UsageEvent table
 await step("UsageEvent table", async () => {
   await prisma.$executeRaw`

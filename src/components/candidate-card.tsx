@@ -26,6 +26,7 @@ import { showToast } from "./ui/toast";
 import { LinkedInIcon, JobAdderBadge, SeekBadge } from "./candidate/icons";
 import { CandidateIdentityBlock } from "./candidate/identity-block";
 import { candidateConfidence } from "@/lib/confidence";
+import { CapabilityGate } from "./permissions/use-permissions";
 import { getCandidatePhotoUrl } from "@/lib/candidate-photo";
 import type { FetchState } from "./fetch-queue-panel";
 import {
@@ -1824,29 +1825,37 @@ export const CandidateCard = memo(function CandidateCard({
           )}
 
           {/* Score — gate on profileCapturedAt (present in the job list payload),
-              NOT profileText which that endpoint strips (same trap as 16970b6). */}
+              NOT profileText which that endpoint strips (same trap as 16970b6).
+              Capability-locked: AI scoring spends Claude tokens. */}
           {candidate.profileCapturedAt && (
-            <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-accent hover:text-accent hover:bg-accent-subtle" disabled={scoring} aria-label={candidate.matchScore != null ? "Re-score this candidate" : "Score this candidate"}>
-              {!scoring && <Loader2 className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline ml-1">{candidate.matchScore != null ? "Re-score" : "Score"}</span>
-            </Button>
+            <CapabilityGate cap="score" label="Score">
+              <Button size="sm" variant="ghost" onClick={() => onScore(candidate.id)} loading={scoring} className="text-accent hover:text-accent hover:bg-accent-subtle" disabled={scoring} aria-label={candidate.matchScore != null ? "Re-score this candidate" : "Score this candidate"}>
+                {!scoring && <Loader2 className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline ml-1">{candidate.matchScore != null ? "Re-score" : "Score"}</span>
+              </Button>
+            </CapabilityGate>
           )}
 
           {/* Enrich from PDL — fill blanks on a candidate we can match (LinkedIn
               URL or email). Only surfaced when there's a match key; the route
-              409s cleanly if PDL isn't configured. */}
+              409s cleanly if PDL isn't configured. Capability-locked (PDL credits). */}
           {(candidate.linkedinUrl || candidate.email) && (
-            <Button size="sm" variant="ghost" onClick={handleEnrich} loading={enriching} disabled={enriching} className="text-accent hover:text-accent hover:bg-accent-subtle" title="Fill blank fields from People Data Labs (~1 credit)">
-              {!enriching && <Sparkles className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline ml-1">Enrich</span>
-            </Button>
+            <CapabilityGate cap="enrich" label="Enrich">
+              <Button size="sm" variant="ghost" onClick={handleEnrich} loading={enriching} disabled={enriching} className="text-accent hover:text-accent hover:bg-accent-subtle" title="Fill blank fields from People Data Labs (~1 credit)">
+                {!enriching && <Sparkles className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline ml-1">Enrich</span>
+              </Button>
+            </CapabilityGate>
           )}
 
-          {/* Send outreach — hidden on mobile, accessible via expand */}
+          {/* Send outreach — hidden on mobile, accessible via expand.
+              Capability-locked: AI writing spends Claude tokens. */}
           {candidate.profileCapturedAt && (
-            <Button size="sm" variant="ghost" onClick={() => setOutreachOpen(true)} className="hidden sm:flex" title="Generate outreach message">
-              <Send className="w-3.5 h-3.5" />
-            </Button>
+            <CapabilityGate cap="outreach" label="Outreach">
+              <Button size="sm" variant="ghost" onClick={() => setOutreachOpen(true)} className="hidden sm:flex" title="Generate outreach message">
+                <Send className="w-3.5 h-3.5" />
+              </Button>
+            </CapabilityGate>
           )}
 
           {/* Submit to client (CRM) — only when the handler is wired in.

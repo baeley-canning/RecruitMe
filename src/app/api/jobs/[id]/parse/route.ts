@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { parseJobDescription } from "@/lib/ai";
 import type { ParsedRole } from "@/lib/ai";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { safeParseJson } from "@/lib/utils";
 import { reportError } from "@/lib/error-reporting";
@@ -74,6 +75,8 @@ export async function POST(
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "parse");
+  if (denied) return denied;
   const { id } = await params;
   const { job, error } = await requireJobAccess(id, auth);
   if (error || !job) return error;

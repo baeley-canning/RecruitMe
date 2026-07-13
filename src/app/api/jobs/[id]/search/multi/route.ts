@@ -24,6 +24,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { prisma } from "@/lib/db";
 import { getAccessibleOrgIds } from "@/lib/org-access";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
@@ -59,6 +60,8 @@ export async function POST(
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "search");
+  if (denied) return denied;
   const { id } = await params;
 
   const { job, error: accessError } = await requireJobAccess(id, auth);

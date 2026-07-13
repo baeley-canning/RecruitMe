@@ -7,6 +7,7 @@ import { providerHealth, deriveProviderState } from "@/lib/provider-health";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
+import { requireCapability } from "@/lib/require-capability";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -35,6 +36,8 @@ export async function POST(
 ) {
   const auth = await getAuth();
   if (!auth) return unauthorized();
+  const denied = await requireCapability(auth, "score");
+  if (denied) return denied;
   const { id } = await params;
 
   // ?onlyUnscored=1 — scope the score-all run to candidates that haven't been

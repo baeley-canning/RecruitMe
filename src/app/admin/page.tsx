@@ -15,6 +15,7 @@ import { Modal } from "@/components/ui/modal";
 import { confirm } from "@/components/ui/confirm-dialog";
 import { isOwner as sessionIsOwner } from "@/lib/access";
 import { ApplianceStatus } from "@/components/admin/appliance-status";
+import { CAPABILITIES } from "@/lib/permissions";
 
 interface UserRow {
   id: string;
@@ -23,6 +24,8 @@ interface UserRow {
   orgId: string | null;
   orgName: string | null;
   createdAt: string;
+  /** Granted capability slugs (owners come back with all of them). */
+  permissions: string[];
 }
 
 interface OrgRow {
@@ -161,7 +164,7 @@ export default function AdminPage() {
 
   // Inline edit state
   const [editingId, setEditingId]   = useState<string | null>(null);
-  const [editForm, setEditForm]     = useState({ username: "", newPassword: "", role: "user" as "user" | "owner", orgId: "" });
+  const [editForm, setEditForm]     = useState({ username: "", newPassword: "", role: "user" as "user" | "owner", orgId: "", permissions: [] as string[] });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError]   = useState("");
 
@@ -282,8 +285,17 @@ export default function AdminPage() {
 
   const startEdit = (user: UserRow) => {
     setEditingId(user.id);
-    setEditForm({ username: user.username, newPassword: "", role: user.role, orgId: user.orgId ?? "" });
+    setEditForm({ username: user.username, newPassword: "", role: user.role, orgId: user.orgId ?? "", permissions: user.permissions ?? [] });
     setEditError("");
+  };
+
+  const toggleEditPermission = (slug: string) => {
+    setEditForm((f) => ({
+      ...f,
+      permissions: f.permissions.includes(slug)
+        ? f.permissions.filter((p) => p !== slug)
+        : [...f.permissions, slug],
+    }));
   };
 
   const handleSaveEdit = async () => {
@@ -296,6 +308,8 @@ export default function AdminPage() {
     if (editForm.newPassword.trim())          body.password = editForm.newPassword;
     if (editForm.role !== orig?.role)         body.role     = editForm.role;
     if (editForm.orgId !== (orig?.orgId ?? "")) body.orgId  = editForm.orgId || null;
+    // Only send permissions for non-owners (owners implicitly hold all).
+    if (editForm.role !== "owner") body.permissions = editForm.permissions;
     const res = await fetch("/api/admin/users", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -550,6 +564,17 @@ export default function AdminPage() {
                             >
                               {user.role}
                             </span>
+                            {/* Access summary — owners are full; a user shows how
+                                many paid capabilities they've been granted (0 = locked). */}
+                            {user.role === "owner" ? (
+                              <span className="block mt-1 text-2xs text-text-tertiary">full access</span>
+                            ) : (
+                              <span className={`block mt-1 text-2xs ${(user.permissions?.length ?? 0) === 0 ? "text-warning" : "text-text-tertiary"}`}>
+                                {(user.permissions?.length ?? 0) === 0
+                                  ? "🔒 no paid access"
+                                  : `${user.permissions.length}/${CAPABILITIES.length} granted`}
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-2.5 text-base text-text-secondary">
                             {user.orgName ?? <span className="text-text-tertiary text-xs italic">none</span>}
@@ -641,6 +666,42 @@ export default function AdminPage() {
                                   </select>
                                 </div>
                               </div>
+
+                              {/* Capability grants — the paid/API actions this
+                                  user may perform. Owners implicitly hold all, so
+                                  the grid only applies to role=user. */}
+                              <div className="mt-3">
+                                <label className="text-xs font-medium text-text-secondary mb-1 block">
+                                  Access {editForm.role === "owner"
+                                    ? <span className="font-normal text-text-tertiary">(owners have full access)</span>
+                                    : <span className="font-normal text-text-tertiary">— tick what this user may use (each spends credits/tokens)</span>}
+                                </label>
+                                {editForm.role === "owner" ? (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {CAPABILITIES.map((c) => (
+                                      <span key={c.slug} className="text-2xs px-1.5 py-0.5 rounded-sm bg-accent-subtle text-accent font-medium">{c.label}</span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                    {CAPABILITIES.map((c) => (
+                                      <label key={c.slug} className="flex items-start gap-2 p-1.5 rounded bg-surface-sunken border border-separator-subtle cursor-pointer hover:bg-surface-hover transition-colors">
+                                        <input
+                                          type="checkbox"
+                                          checked={editForm.permissions.includes(c.slug)}
+                                          onChange={() => toggleEditPermission(c.slug)}
+                                          className="mt-0.5 accent-accent"
+                                        />
+                                        <span className="min-w-0">
+                                          <span className="text-xs font-medium text-text-primary block">{c.label}</span>
+                                          <span className="text-2xs text-text-tertiary block leading-tight">{c.description}</span>
+                                        </span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
                               {editError && <p className="text-xs text-danger mt-2">{editError}</p>}
                               <div className="flex items-center gap-2 mt-3">
                                 <Button onClick={handleSaveEdit} disabled={editSaving} loading={editSaving} variant="primary" size="md">

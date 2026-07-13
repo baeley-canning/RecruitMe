@@ -57,6 +57,10 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/session", () => sessionMocks);
+vi.mock("@/lib/require-capability", () => ({
+  requireCapability: vi.fn(async () => null),
+  getUserPermissions: vi.fn(async () => []),
+}));
 vi.mock("@/lib/org-access", () => orgAccessMocks);
 vi.mock("@/lib/usage", () => usageMocks);
 vi.mock("@/lib/talent-search/library", () => libraryMocks);
