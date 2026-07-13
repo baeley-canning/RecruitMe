@@ -146,11 +146,18 @@ function RowCVPreview({ candidateId }: { candidateId: string }) {
 // Source pill — neutral for library, accent for LinkedIn, green for SEEK, so a
 // recruiter can tell fresh SEEK/LinkedIn finds from existing library candidates.
 // -----------------------------------------------------------------------------
-function SourcePill({ source }: { source: "library" | "linkedin" | "seek" }) {
+function SourcePill({ source }: { source: "library" | "linkedin" | "seek" | "pdl" }) {
   if (source === "library") {
     return (
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium bg-surface-hover text-text-secondary border border-separator">
         <Library className="w-2.5 h-2.5" /> Library
+      </span>
+    );
+  }
+  if (source === "pdl") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium bg-warning-subtle text-warning">
+        PDL
       </span>
     );
   }
@@ -296,6 +303,9 @@ export function UnifiedSearchModal({
   // SEEK Talent Search defaults OFF — it costs SEEK credits, so it only fires
   // when the recruiter explicitly ticks it ("both as toggles").
   const [useSeek, setUseSeek] = useState(false);
+  // PDL people-search defaults OFF — bills per record. Opt-in for instant breadth
+  // from the licensed data graph (resolves inline, no box needed).
+  const [usePdl, setUsePdl] = useState(false);
 
   // Results state
   const [response, setResponse] = useState<SearchResponse | null>(null);
@@ -352,12 +362,13 @@ export function UnifiedSearchModal({
 
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
   const sourcesPicked = useMemo(() => {
-    const out: Array<"library" | "linkedin" | "seek"> = [];
+    const out: Array<"library" | "linkedin" | "seek" | "pdl"> = [];
     if (useLibrary) out.push("library");
+    if (usePdl) out.push("pdl");
     if (useLinkedIn) out.push("linkedin");
     if (useSeek) out.push("seek");
     return out;
-  }, [useLibrary, useLinkedIn, useSeek]);
+  }, [useLibrary, useLinkedIn, useSeek, usePdl]);
 
   const canSubmit = !searching && sourcesPicked.length > 0;
 
@@ -715,6 +726,12 @@ export function UnifiedSearchModal({
               icon={<Briefcase className="w-3 h-3" />}
               checked={useSeek}
               onChange={setUseSeek}
+            />
+            <SourceToggle
+              label="PDL"
+              icon={<Sparkles className="w-3 h-3" />}
+              checked={usePdl}
+              onChange={setUsePdl}
             />
           </div>
 

@@ -80,7 +80,7 @@ export interface UnifiedResult {
    *  AI scoring runs (which is post-import, not at search time). */
   matchScore: number | null;
   /** Sources this result appears in, deduped. Always at least one entry. */
-  sources: Array<"library" | "linkedin" | "seek">;
+  sources: Array<"library" | "linkedin" | "seek" | "pdl">;
   /** When sources includes "library", the underlying Candidate row id.
    *  Multi-source import uses this to attach existing library rows to
    *  the new job without re-creating a Candidate row. */

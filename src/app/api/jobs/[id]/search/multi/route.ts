@@ -34,14 +34,15 @@ import type { ParsedRole } from "@/lib/ai";
 import { searchLibrary } from "@/lib/talent-search/library";
 import { parsedRoleToBooleanQuery } from "@/lib/talent-search/role-query";
 import { runResultToUnified } from "@/lib/talent-search/run-to-unified";
-import { createRun, attachLibraryResults, setSourceStatus, loadRunSnapshot } from "@/lib/search-run";
+import { createRun, attachLibraryResults, attachPdlResults, setSourceStatus, loadRunSnapshot } from "@/lib/search-run";
 import { reportError } from "@/lib/error-reporting";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { enqueueSearchJob } from "@/lib/scrape-queue";
 import { shouldFireLive, liveHeldForLibrary } from "@/lib/talent-search/live-gate";
+import { searchPDLProfiles } from "@/lib/search";
 import { linkedinKeywordsFromParsed, linkedinTitleQuery, seekKeywordsFromParsed } from "@/lib/boolean-query/emit";
 
-const SourceSchema = z.enum(["library", "linkedin", "seek"]);
+const SourceSchema = z.enum(["library", "linkedin", "seek", "pdl"]);
 
 const BodySchema = z.object({
   query: z.string().max(2000),
@@ -142,6 +143,7 @@ export async function POST(
   const wantLibrary = sources.includes("library");
   const wantLinkedin = sources.includes("linkedin");
   const wantSeek = sources.includes("seek");
+  const wantPdl = sources.includes("pdl");
   const scraperOn = isScraperDiscoveryEnabled();
   // A scraper job needs a concrete org + a non-empty query.
   const canScrape = scraperOn && queryRaw.length > 0 && runOrgId != null;
@@ -166,6 +168,8 @@ export async function POST(
     parsedQuery,
     location: location ?? null,
     sources,
+    // PDL is synchronous like library — "running" now, resolved inline below.
+    pdlStatus: initialStatus(wantPdl, false),
     libraryStatus: initialStatus(wantLibrary, false),
     linkedinStatus: initialStatus(wantLinkedin, true),
     seekStatus: initialStatus(wantSeek, true),
@@ -209,6 +213,32 @@ export async function POST(
       reportError(err, { route: "search/multi/library", jobId: id, runId: run.id, orgId: auth.orgId });
       await setSourceStatus(run.id, "library", "failed");
       errors.library = msg;
+    }
+  }
+
+  // ── 2b. PDL people-search INLINE — instant breadth from the licensed graph.
+  // A fast API (~1–2s), not the box, so it resolves right here and its results
+  // land in the initial response. Opt-in (costs credits per record), so it only
+  // runs when the recruiter picked the "pdl" source. Deduped against library +
+  // scraper rows by the shared linkedin-keyed mergeKey. ──
+  if (wantPdl) {
+    try {
+      const pdlTitle = roleForLi?.title || queryRaw;
+      const pdlHits = await searchPDLProfiles(pdlTitle, location ?? "", 25);
+      await attachPdlResults(run.id, pdlHits.map((h) => ({
+        name: h.name,
+        headline: h.headline || null,
+        location: h.location || null,
+        linkedinUrl: h.linkedinUrl,
+        snippet: h.snippet || null,
+      })));
+      // Cost attribution — PDL bills per returned record.
+      if (pdlHits.length > 0) {
+        void recordUsage(auth.orgId, auth.userId, "search", { route: "search/multi:pdl", jobId: id, runId: run.id, pdlResults: pdlHits.length });
+      }
+    } catch (err) {
+      reportError(err, { route: "search/multi/pdl", jobId: id, runId: run.id, orgId: auth.orgId });
+      await setSourceStatus(run.id, "pdl", "failed");
     }
   }
 

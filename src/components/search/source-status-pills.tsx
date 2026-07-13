@@ -35,8 +35,8 @@ export function SourceStatusPills({
 }: {
   /** Which sources the recruiter actually requested for this run. */
   sources: SourceKey[];
-  sourceStatus: { library: SourceStatus; linkedin: SourceStatus; seek: SourceStatus };
-  counts: { library: number; linkedin: number; seek: number };
+  sourceStatus: { library: SourceStatus; linkedin: SourceStatus; seek: SourceStatus; pdl: SourceStatus };
+  counts: { library: number; linkedin: number; seek: number; pdl: number };
 }) {
   // Render a pill for every REQUESTED source — including one stuck on
   // "skipped" (scraper off / unavailable), which must show as a muted "off"
@@ -46,6 +46,7 @@ export function SourceStatusPills({
   return (
     <div className="flex flex-wrap gap-2">
       {want.has("library") && <Pill source="library" status={sourceStatus.library} count={counts.library} />}
+      {want.has("pdl") && <Pill source="pdl" status={sourceStatus.pdl} count={counts.pdl} />}
       {want.has("linkedin") && <Pill source="linkedin" status={sourceStatus.linkedin} count={counts.linkedin} />}
       {want.has("seek") && <Pill source="seek" status={sourceStatus.seek} count={counts.seek} />}
     </div>

@@ -17,7 +17,7 @@ import { isLinkedInProfileUrl } from "../linkedin";
 export function runResultToUnified(r: SearchRunResultDTO): UnifiedResult {
   // Preserve the real source tags (library / linkedin / seek) so the UI labels
   // SEEK results as SEEK — not "LinkedIn" — and the import can route them.
-  const sources = Array.from(new Set(r.sources)) as Array<"library" | "linkedin" | "seek">;
+  const sources = Array.from(new Set(r.sources)) as Array<"library" | "linkedin" | "seek" | "pdl">;
   if (sources.length === 0) sources.push(r.candidateId ? "library" : "linkedin");
 
   const isLinkedinUrl = !!r.profileUrl && isLinkedInProfileUrl(r.profileUrl);

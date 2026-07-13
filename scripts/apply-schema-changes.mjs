@@ -96,6 +96,17 @@ await step("User.permissions", async () => {
   `;
 });
 
+// 2c. SearchRun.pdlStatus + pdlCount — PDL as a durable search source. Defaults
+// keep existing runs valid (skipped / 0). See src/lib/search-run.ts.
+await step("SearchRun.pdlStatus + pdlCount", async () => {
+  await prisma.$executeRaw`
+    ALTER TABLE "SearchRun" ADD COLUMN IF NOT EXISTS "pdlStatus" TEXT NOT NULL DEFAULT 'skipped'
+  `;
+  await prisma.$executeRaw`
+    ALTER TABLE "SearchRun" ADD COLUMN IF NOT EXISTS "pdlCount" INTEGER NOT NULL DEFAULT 0
+  `;
+});
+
 // 3. UsageEvent table
 await step("UsageEvent table", async () => {
   await prisma.$executeRaw`

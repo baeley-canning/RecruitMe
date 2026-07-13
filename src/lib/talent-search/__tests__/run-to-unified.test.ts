@@ -54,6 +54,15 @@ describe("runResultToUnified", () => {
     expect(runResultToUnified(dto({ sources: ["library", "seek"] })).sources).toEqual(["library", "seek"]);
   });
 
+  it("PRESERVES the pdl source tag and keeps a PDL result's LinkedIn URL importable", () => {
+    const r = runResultToUnified(dto({
+      sources: ["pdl"],
+      profileUrl: "https://www.linkedin.com/in/pdl-person",
+    }));
+    expect(r.sources).toEqual(["pdl"]);
+    expect(r.linkedinUrl).toBe("https://www.linkedin.com/in/pdl-person");
+  });
+
   it("preserves library identity fields and id = mergeKey", () => {
     const r = runResultToUnified(dto({
       mergeKey: "lib:cand-9", sources: ["library"], candidateId: "cand-9", candidateIdentityId: "id-9", profileUrl: null,

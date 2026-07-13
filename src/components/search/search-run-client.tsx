@@ -17,6 +17,7 @@ const SOURCE_BADGE: Record<SourceKey, string> = {
   library: "bg-accent-subtle text-accent",
   linkedin: "bg-info-subtle text-info",
   seek: "bg-success-subtle text-success",
+  pdl: "bg-warning-subtle text-warning",
 };
 
 function ResultRow({ r, enriching }: { r: SearchRunResultDTO; enriching: boolean }) {

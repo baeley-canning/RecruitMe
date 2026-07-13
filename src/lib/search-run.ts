@@ -30,7 +30,7 @@ import { locationMatches } from "./nz-locations";
 import { parseBooleanQuery, scoreTextRelevance, type ParsedQuery } from "./boolean-query";
 import type { LibrarySearchResult } from "./talent-search/library";
 
-export type SourceKey = "library" | "linkedin" | "seek";
+export type SourceKey = "library" | "linkedin" | "seek" | "pdl";
 export type SourceStatus = "skipped" | "pending" | "running" | "complete" | "failed";
 export type RunStatus = "queued" | "running" | "complete" | "partial" | "failed";
 
@@ -93,6 +93,9 @@ export interface CreateRunArgs {
   libraryStatus: SourceStatus;
   linkedinStatus: SourceStatus;
   seekStatus: SourceStatus;
+  /** Optional so existing callers (e.g. watched-search) are unchanged — defaults
+   *  to "skipped" when omitted. */
+  pdlStatus?: SourceStatus;
 }
 
 export async function createRun(args: CreateRunArgs): Promise<{ id: string }> {
@@ -109,6 +112,7 @@ export async function createRun(args: CreateRunArgs): Promise<{ id: string }> {
       libraryStatus: args.libraryStatus,
       linkedinStatus: args.linkedinStatus,
       seekStatus: args.seekStatus,
+      pdlStatus: args.pdlStatus ?? "skipped",
     },
     select: { id: true },
   });
@@ -253,6 +257,70 @@ export async function attachScraperHits(args: {
   await recomputeCounts(args.searchRunId);
 }
 
+// ── attach: PDL people-search hits (synchronous API, full data at hand) ──────
+
+export interface PdlResultInput {
+  name: string;
+  headline: string | null;
+  location: string | null;
+  /** Genuine linkedin.com/in URL from PDL — the dedup key + import handle. */
+  linkedinUrl: string | null;
+  snippet: string | null;
+}
+
+/**
+ * Attach PDL people-search results to a run. Unlike LinkedIn/SEEK (async box
+ * harvest of bare URLs), PDL returns full records synchronously, so these land
+ * inline in the POST — instant breadth from the licensed graph. Deduped by the
+ * same linkedin-keyed mergeKey as library + scraper rows, so a PDL hit for
+ * someone already in the library merges the "pdl" tag onto that row instead of
+ * duplicating. candidateId stays null (importable later by URL, like scraper hits).
+ */
+export async function attachPdlResults(
+  searchRunId: string,
+  results: PdlResultInput[],
+): Promise<void> {
+  const run = await prisma.searchRun.findUnique({ where: { id: searchRunId }, select: { rawQuery: true } });
+  const parsedQuery = run?.rawQuery ? parseBooleanQuery(run.rawQuery) : null;
+  let rank = 0;
+  for (const r of results) {
+    rank += 1;
+    const mergeKey = scraperMergeKey({
+      linkedinUrl: r.linkedinUrl,
+      seekUrl: null,
+      fallbackUrl: r.linkedinUrl ?? r.name,
+    });
+    const relevance = parsedQuery
+      ? scoreTextRelevance(parsedQuery, [r.name, r.headline, r.location].filter(Boolean).join(" "))
+      : null;
+    await prisma.$executeRaw`
+      INSERT INTO "SearchRunResult"
+        ("id","searchRunId","mergeKey","sources","profileUrl","name","headline","location","snippet","relevance","rank","createdAt","updatedAt")
+      VALUES (${randomUUID()}, ${searchRunId}, ${mergeKey},
+              ${JSON.stringify(["pdl"])}, ${r.linkedinUrl}, ${r.name}, ${r.headline}, ${r.location}, ${r.snippet}, ${relevance}, ${rank}, now(), now())
+      ON CONFLICT ("searchRunId","mergeKey") DO UPDATE SET
+        "sources"   = (
+          SELECT to_jsonb(array(SELECT DISTINCT unnest(
+            (SELECT array(SELECT jsonb_array_elements_text("SearchRunResult"."sources"::jsonb))) ||
+            ARRAY['pdl']::text[]
+          )))::text
+        ),
+        "profileUrl" = COALESCE("SearchRunResult"."profileUrl", EXCLUDED."profileUrl"),
+        "name"       = COALESCE("SearchRunResult"."name", EXCLUDED."name"),
+        "headline"   = COALESCE("SearchRunResult"."headline", EXCLUDED."headline"),
+        "location"   = COALESCE("SearchRunResult"."location", EXCLUDED."location"),
+        "snippet"    = COALESCE("SearchRunResult"."snippet", EXCLUDED."snippet"),
+        "relevance"  = COALESCE("SearchRunResult"."relevance", EXCLUDED."relevance"),
+        "updatedAt"  = now()
+    `;
+  }
+  await prisma.searchRun.update({
+    where: { id: searchRunId },
+    data: { pdlStatus: "complete" },
+  });
+  await recomputeCounts(searchRunId);
+}
+
 // ── attach: ingested profile (reconcile against the library row) ─────────────
 
 export async function attachIngestedProfile(args: {
@@ -334,11 +402,13 @@ export async function recomputeCounts(searchRunId: string): Promise<void> {
       "libraryCount"  = (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'library'),
       "linkedinCount" = (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'linkedin'),
       "seekCount"     = (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'seek'),
+      "pdlCount"      = (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'pdl'),
       "totalCount"    = (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId}),
       "dedupedCount"  = GREATEST(0,
         (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'library') +
         (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'linkedin') +
-        (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'seek') -
+        (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'seek') +
+        (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId} AND "sources"::jsonb ? 'pdl') -
         (SELECT count(*) FROM "SearchRunResult" WHERE "searchRunId"=${searchRunId})),
       "updatedAt"     = now()
     WHERE "id"=${searchRunId}
@@ -351,7 +421,7 @@ export async function setSourceStatus(
   source: SourceKey,
   status: SourceStatus,
 ): Promise<void> {
-  const col = source === "library" ? "libraryStatus" : source === "linkedin" ? "linkedinStatus" : "seekStatus";
+  const col = source === "library" ? "libraryStatus" : source === "linkedin" ? "linkedinStatus" : source === "pdl" ? "pdlStatus" : "seekStatus";
   // Column name is from a closed enum, never user input — safe to interpolate.
   await prisma.$executeRawUnsafe(
     `UPDATE "SearchRun" SET "${col}"=$1, "updatedAt"=now() WHERE "id"=$2`,
@@ -524,8 +594,8 @@ export interface RunDTO {
   location: string | null;
   sources: SourceKey[];
   status: RunStatus;
-  sourceStatus: { library: SourceStatus; linkedin: SourceStatus; seek: SourceStatus };
-  counts: { library: number; linkedin: number; seek: number; deduped: number; total: number };
+  sourceStatus: { library: SourceStatus; linkedin: SourceStatus; seek: SourceStatus; pdl: SourceStatus };
+  counts: { library: number; linkedin: number; seek: number; pdl: number; deduped: number; total: number };
   error: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -539,8 +609,8 @@ export interface RunSnapshot {
 
 function toRunDTO(run: {
   id: string; orgId: string | null; rawQuery: string; location: string | null;
-  sources: string; status: string; libraryStatus: string; linkedinStatus: string; seekStatus: string;
-  libraryCount: number; linkedinCount: number; seekCount: number; dedupedCount: number; totalCount: number;
+  sources: string; status: string; libraryStatus: string; linkedinStatus: string; seekStatus: string; pdlStatus: string;
+  libraryCount: number; linkedinCount: number; seekCount: number; pdlCount: number; dedupedCount: number; totalCount: number;
   error: string | null; createdAt: Date; completedAt: Date | null; updatedAt: Date;
 }): RunDTO {
   return {
@@ -554,11 +624,13 @@ function toRunDTO(run: {
       library: run.libraryStatus as SourceStatus,
       linkedin: run.linkedinStatus as SourceStatus,
       seek: run.seekStatus as SourceStatus,
+      pdl: run.pdlStatus as SourceStatus,
     },
     counts: {
       library: run.libraryCount,
       linkedin: run.linkedinCount,
       seek: run.seekCount,
+      pdl: run.pdlCount,
       deduped: run.dedupedCount,
       total: run.totalCount,
     },

@@ -23,6 +23,7 @@ import { getAccessibleOrgIds } from "@/lib/org-access";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { parseBooleanQuery } from "@/lib/boolean-query";
 import { searchLibrary } from "@/lib/talent-search/library";
+import { searchPDLProfiles } from "@/lib/search";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { enqueueSearchJob } from "@/lib/scrape-queue";
 import { linkedinKeywordsFromParsed, seekKeywordsFromParsed } from "@/lib/boolean-query/emit";
@@ -30,6 +31,7 @@ import { reportError } from "@/lib/error-reporting";
 import {
   createRun,
   attachLibraryResults,
+  attachPdlResults,
   setSourceStatus,
   loadRunSnapshot,
   type SourceKey,
@@ -40,7 +42,7 @@ import { prisma } from "@/lib/db";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SourceSchema = z.enum(["library", "linkedin", "seek"]);
+const SourceSchema = z.enum(["library", "linkedin", "seek", "pdl"]);
 
 const BodySchema = z.object({
   query: z.string().max(2000),
@@ -96,6 +98,7 @@ export async function POST(req: Request) {
   const wantLibrary = sources.includes("library");
   const wantLinkedin = sources.includes("linkedin");
   const wantSeek = sources.includes("seek");
+  const wantPdl = sources.includes("pdl");
   const scraperOn = isScraperDiscoveryEnabled();
   const queryRaw = parsedQuery.raw.trim();
   // A scraper job needs a concrete orgId — an untargeted owner run can't scrape.
@@ -122,6 +125,7 @@ export async function POST(req: Request) {
     libraryStatus: initial(wantLibrary, false),
     linkedinStatus: initial(wantLinkedin, true),
     seekStatus: initial(wantSeek, true),
+    pdlStatus: initial(wantPdl, false),
   });
 
   // ── 2. Library FTS inline (instant results attach to the run) ──
@@ -140,6 +144,27 @@ export async function POST(req: Request) {
     } catch (err) {
       reportError(err, { route: "search:library", runId: run.id, orgId: auth.orgId });
       await setSourceStatus(run.id, "library", "failed");
+    }
+  }
+
+  // ── 2b. PDL people-search INLINE — instant breadth from the licensed graph
+  // (a fast API, not the box). Opt-in (bills per record). ──
+  if (wantPdl) {
+    try {
+      const pdlHits = await searchPDLProfiles(query, location ?? "", 25);
+      await attachPdlResults(run.id, pdlHits.map((h) => ({
+        name: h.name,
+        headline: h.headline || null,
+        location: h.location || null,
+        linkedinUrl: h.linkedinUrl,
+        snippet: h.snippet || null,
+      })));
+      if (pdlHits.length > 0) {
+        void recordUsage(auth.orgId, auth.userId, "search", { route: "search:pdl", runId: run.id, pdlResults: pdlHits.length });
+      }
+    } catch (err) {
+      reportError(err, { route: "search:pdl", runId: run.id, orgId: auth.orgId });
+      await setSourceStatus(run.id, "pdl", "failed");
     }
   }
 
