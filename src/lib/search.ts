@@ -288,6 +288,12 @@ export async function searchPDLProfiles(
 
     if (!res.ok) {
       recordProviderFailure("pdl", `${res.status} ${res.statusText}`);
+      // Credit/auth failures are a standing account problem, not a transient
+      // blip — THROW a typed error so callers can show "PDL out of search
+      // credit" instead of a mystifying "0 results". (The legacy search route
+      // wraps this in try/catch and ignores, so its behaviour is unchanged.)
+      if (res.status === 402) throw new Error("PDL_CREDIT: PDL is out of search credit — top up your PDL account.");
+      if (res.status === 401 || res.status === 403) throw new Error("PDL_AUTH: PDL rejected the API key — check PDL_API_KEY.");
       return [];
     }
 

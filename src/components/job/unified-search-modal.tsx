@@ -29,6 +29,7 @@ import { useRunSnapshotStream } from "@/components/search/use-run-snapshot-strea
 import type { RunDTO, SearchRunResultDTO } from "@/lib/search-run";
 import { parsedRoleToBooleanQuery } from "@/lib/talent-search/role-query";
 import type { ParsedRole } from "@/lib/ai";
+import { usePermissions } from "@/components/permissions/use-permissions";
 
 // -----------------------------------------------------------------------------
 // API response shape (mirrors POST /api/jobs/[id]/search/multi)
@@ -51,13 +52,13 @@ interface SearchResponse {
   };
   /** Phase H — IDs of priority scraper jobs the client should poll. */
   liveJobs?: Array<{ id: string; platform: "linkedin" | "seek" }>;
-  errors?: { library?: string; linkedin?: string };
+  errors?: { library?: string; linkedin?: string; pdl?: string };
   /** Durable run id — the search persists server-side under this id; the modal
    *  streams it for live results and the job page resumes it on return. */
   runId?: string;
   /** Run lifecycle: queued | running | complete | partial | failed. */
   status?: string;
-  sourceStatus?: { library: string; linkedin: string; seek: string };
+  sourceStatus?: { library: string; linkedin: string; seek: string; pdl?: string };
   /** When the precise query found 0, the AI alternative the server auto-broadened
    *  to. Lets the UI explain "no exact matches — showing results for «…»". */
   broadenedTo?: string | null;
@@ -252,6 +253,7 @@ export function UnifiedSearchModal({
   onComplete,
   onClose,
 }: UnifiedSearchModalProps) {
+  const { isOwner, loading: permissionsLoading } = usePermissions();
   // Build the role boolean once. Role-driven mode is gated on a NON-EMPTY query:
   // a parsed role that yields nothing (e.g. a title that cleans away) falls back
   // to manual entry, NOT a permanent "Searching…" dead-end.
@@ -306,6 +308,9 @@ export function UnifiedSearchModal({
   // PDL people-search defaults OFF — bills per record. Opt-in for instant breadth
   // from the licensed data graph (resolves inline, no box needed).
   const [usePdl, setUsePdl] = useState(false);
+  useEffect(() => {
+    if (!permissionsLoading && !isOwner && usePdl) setUsePdl(false);
+  }, [permissionsLoading, isOwner, usePdl]);
 
   // Results state
   const [response, setResponse] = useState<SearchResponse | null>(null);
@@ -364,11 +369,11 @@ export function UnifiedSearchModal({
   const sourcesPicked = useMemo(() => {
     const out: Array<"library" | "linkedin" | "seek" | "pdl"> = [];
     if (useLibrary) out.push("library");
-    if (usePdl) out.push("pdl");
+    if (isOwner && usePdl) out.push("pdl");
     if (useLinkedIn) out.push("linkedin");
     if (useSeek) out.push("seek");
     return out;
-  }, [useLibrary, useLinkedIn, useSeek, usePdl]);
+  }, [isOwner, useLibrary, useLinkedIn, useSeek, usePdl]);
 
   const canSubmit = !searching && sourcesPicked.length > 0;
 
@@ -727,12 +732,14 @@ export function UnifiedSearchModal({
               checked={useSeek}
               onChange={setUseSeek}
             />
-            <SourceToggle
-              label="PDL"
-              icon={<Sparkles className="w-3 h-3" />}
-              checked={usePdl}
-              onChange={setUsePdl}
-            />
+            {isOwner && (
+              <SourceToggle
+                label="PDL"
+                icon={<Sparkles className="w-3 h-3" />}
+                checked={usePdl}
+                onChange={setUsePdl}
+              />
+            )}
           </div>
 
           <Button type="submit" size="sm" disabled={!canSubmit}>
@@ -842,6 +849,9 @@ export function UnifiedSearchModal({
             )}
             {response.errors?.linkedin && (
               <PartialFailureBanner source="LinkedIn" message={response.errors.linkedin} />
+            )}
+            {response.errors?.pdl && (
+              <PartialFailureBanner source="PDL" message={response.errors.pdl} />
             )}
 
             {/* Library-first: the box was held back because the library already

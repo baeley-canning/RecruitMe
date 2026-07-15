@@ -138,12 +138,18 @@ export async function POST(
   const runOrgId = job?.orgId ?? auth.orgId ?? null;
 
   // Track per-source errors without blowing up the whole request.
-  const errors: Partial<Record<"library" | "linkedin", string>> = {};
+  const errors: Partial<Record<"library" | "linkedin" | "pdl", string>> = {};
 
   const wantLibrary = sources.includes("library");
   const wantLinkedin = sources.includes("linkedin");
   const wantSeek = sources.includes("seek");
   const wantPdl = sources.includes("pdl");
+  if (wantPdl && !auth.isOwner) {
+    return NextResponse.json(
+      { error: "PDL search is owner-only.", code: "owner_only", source: "pdl" },
+      { status: 403 },
+    );
+  }
   const scraperOn = isScraperDiscoveryEnabled();
   // A scraper job needs a concrete org + a non-empty query.
   const canScrape = scraperOn && queryRaw.length > 0 && runOrgId != null;
@@ -224,7 +230,9 @@ export async function POST(
   if (wantPdl) {
     try {
       const pdlTitle = roleForLi?.title || queryRaw;
-      const pdlHits = await searchPDLProfiles(pdlTitle, location ?? "", 25);
+      // Row cap per search (env-tunable to conserve credit while evaluating).
+      const pdlSize = Number.parseInt(process.env.PDL_SEARCH_SIZE ?? "", 10) || 25;
+      const pdlHits = await searchPDLProfiles(pdlTitle, location ?? "", pdlSize);
       await attachPdlResults(run.id, pdlHits.map((h) => ({
         name: h.name,
         headline: h.headline || null,
@@ -239,6 +247,14 @@ export async function POST(
     } catch (err) {
       reportError(err, { route: "search/multi/pdl", jobId: id, runId: run.id, orgId: auth.orgId });
       await setSourceStatus(run.id, "pdl", "failed");
+      // Surface credit/auth problems in plain language (the "PDL_CREDIT" / "PDL_AUTH"
+      // typed throws from searchPDLProfiles); anything else is a generic failure.
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.pdl = msg.startsWith("PDL_CREDIT")
+        ? "PDL is out of search credit — top up your PDL account to use it."
+        : msg.startsWith("PDL_AUTH")
+          ? "PDL rejected the API key — check PDL_API_KEY."
+          : "PDL search failed — try again shortly.";
     }
   }
 
