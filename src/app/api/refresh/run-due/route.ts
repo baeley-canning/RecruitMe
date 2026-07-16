@@ -16,9 +16,18 @@
  */
 
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { timingSafeEqual } from "crypto";
 import { isProfileRefreshEnabled, isScraperEnabled } from "@/lib/feature-flags";
 import { enqueueStaleProfileRefresh } from "@/lib/profile-refresh";
+
+/** Optional bounded-run overrides — lets an operator fire a small, explicit test
+ *  sweep (e.g. 2 profiles at a 60-day window) without changing the prod
+ *  defaults. Omitted → the env/default behaviour the scheduler uses. */
+const BodySchema = z.object({
+  staleAfterDays: z.number().int().min(1).max(3650).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,6 +58,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const summary = await enqueueStaleProfileRefresh();
+  // Body is optional — the scheduler POSTs none and gets default behaviour.
+  const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
+  const opts = parsed.success ? parsed.data : {};
+
+  const summary = await enqueueStaleProfileRefresh(opts);
   return NextResponse.json({ ok: true, now: new Date().toISOString(), ...summary });
 }

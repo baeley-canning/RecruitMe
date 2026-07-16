@@ -11,6 +11,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { isScraperEnabled } from "@/lib/feature-flags";
@@ -18,7 +19,14 @@ import { enqueueStaleProfileRefresh } from "@/lib/profile-refresh";
 
 type AnySession = { user?: { role?: string } } | null;
 
-export async function POST() {
+/** Optional bounded-run overrides so an owner can fire a small explicit test
+ *  sweep (e.g. 2 profiles / 60-day window) without moving the prod defaults. */
+const BodySchema = z.object({
+  staleAfterDays: z.number().int().min(1).max(3650).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+export async function POST(req: Request) {
   const session = (await getServerSession(authOptions)) as AnySession;
   if (session?.user?.role !== "owner") {
     return NextResponse.json({ error: "Owner only" }, { status: 403 });
@@ -26,6 +34,7 @@ export async function POST() {
   if (!isScraperEnabled()) {
     return NextResponse.json({ error: "Scraper not enabled — no worker to run the sweep." }, { status: 409 });
   }
-  const summary = await enqueueStaleProfileRefresh();
+  const parsed = BodySchema.safeParse(await req.json().catch(() => ({})));
+  const summary = await enqueueStaleProfileRefresh(parsed.success ? parsed.data : {});
   return NextResponse.json({ ok: true, ...summary });
 }
