@@ -20,11 +20,11 @@ beforeEach(() => {
 });
 
 describe("enqueueStaleProfileRefresh", () => {
-  it("EXCLUDES extension-captured profiles — the box can only degrade them", async () => {
+  it("does NOT filter by source — prod data showed rich profiles are 'talent_pool', not 'extension', so a source filter guards the wrong set. The ingestion merge guard is the real protection.", async () => {
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
     await enqueueStaleProfileRefresh();
     const args = dbMocks.prisma.candidate.findMany.mock.calls[0][0];
-    expect(args.where.source).toEqual({ not: "extension" });
+    expect(args.where.source).toBeUndefined();
   });
 
   it("selects stale, LinkedIn-only, org-scoped profiles: stalest-first + DISTINCT per (orgId, linkedinUrl)", async () => {

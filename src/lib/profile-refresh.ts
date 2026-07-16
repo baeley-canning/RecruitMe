@@ -66,16 +66,19 @@ export async function enqueueStaleProfileRefresh(
   // person don't each burn a slot. profileCapturedAt not null (we captured it
   // once) AND older than the cutoff. orgId not null so the job is org-scoped.
   //
-  // EXCLUDE extension-captured profiles: the browser extension pulls the FULL
-  // profile (/details/experience, /details/skills, …) while the box's headless
-  // view sees a fraction. Re-scraping those can only produce thinner data — the
-  // ingestion guard (profile-text-merge) would reject it anyway, so enqueuing
-  // them is pure wasted box work + LinkedIn rate-limit exposure for no gain.
+  // NB: we deliberately do NOT filter by `source`. An earlier version excluded
+  // source="extension" on the theory that those are the rich ones the box can
+  // only degrade — but prod data disproved it: the rich profiles are labelled
+  // "talent_pool" (927 stale, 59k–84k chars) vs "extension" (319), so the filter
+  // excluded the wrong set and protected nothing. The real protection is the
+  // ingestion merge guard (profile-text-merge), which can't be fooled by a
+  // source label. What a re-fetch buys for a rich profile is the VOLATILE fields
+  // (headline/current role/location) — the job-change signal — while the deep
+  // text is preserved at its best-known version.
   const rows = await prisma.candidate.findMany({
     where: {
       orgId: { not: null },
       linkedinUrl: { not: null },
-      source: { not: "extension" },
       profileCapturedAt: { not: null, lt: cutoff },
     },
     orderBy: { profileCapturedAt: "asc" },

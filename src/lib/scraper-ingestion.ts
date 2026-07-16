@@ -351,16 +351,17 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
     const textDecision = shouldAcceptProfileText(args.profileText, existing.profileText);
 
     const updateData: Record<string, unknown> = {
+      // "Last time we successfully fetched this profile" — stamped on every
+      // successful scrape, including one whose TEXT we rejected as degraded.
+      // The volatile fields below (name/headline/location) DID refresh, which is
+      // the job-change signal recruiters actually want; the deep text is simply
+      // kept at its best-known version. Not stamping here would also strand the
+      // refresh sweep in a loop: the richest profiles are the stalest, so a
+      // rejected scrape would leave them permanently "due" and re-scraped hourly.
+      profileCapturedAt: new Date(),
       candidateIdentityId: identity.id,
       updatedAt: new Date(),
     };
-    // Only claim a fresh capture when we actually took new text. Stamping
-    // capturedAt while KEEPING the old text would advertise 68-day-old content
-    // as captured today. A non-text scrape (e.g. a SEEK card) keeps the previous
-    // behaviour of marking the fetch.
-    if (textDecision.reason !== "rejected-thinner") {
-      updateData.profileCapturedAt = new Date();
-    }
     if (textDecision.accept) updateData.profileText = args.profileText;
     if (textDecision.reason === "rejected-thinner") {
       // Visible in Railway logs: we protected the library from a degraded fetch.
