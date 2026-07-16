@@ -65,10 +65,17 @@ export async function enqueueStaleProfileRefresh(
   // Stalest-first, DISTINCT per (orgId, linkedinUrl) so N job-copies of the same
   // person don't each burn a slot. profileCapturedAt not null (we captured it
   // once) AND older than the cutoff. orgId not null so the job is org-scoped.
+  //
+  // EXCLUDE extension-captured profiles: the browser extension pulls the FULL
+  // profile (/details/experience, /details/skills, …) while the box's headless
+  // view sees a fraction. Re-scraping those can only produce thinner data — the
+  // ingestion guard (profile-text-merge) would reject it anyway, so enqueuing
+  // them is pure wasted box work + LinkedIn rate-limit exposure for no gain.
   const rows = await prisma.candidate.findMany({
     where: {
       orgId: { not: null },
       linkedinUrl: { not: null },
+      source: { not: "extension" },
       profileCapturedAt: { not: null, lt: cutoff },
     },
     orderBy: { profileCapturedAt: "asc" },

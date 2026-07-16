@@ -20,6 +20,13 @@ beforeEach(() => {
 });
 
 describe("enqueueStaleProfileRefresh", () => {
+  it("EXCLUDES extension-captured profiles — the box can only degrade them", async () => {
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
+    await enqueueStaleProfileRefresh();
+    const args = dbMocks.prisma.candidate.findMany.mock.calls[0][0];
+    expect(args.where.source).toEqual({ not: "extension" });
+  });
+
   it("selects stale, LinkedIn-only, org-scoped profiles: stalest-first + DISTINCT per (orgId, linkedinUrl)", async () => {
     dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
     await enqueueStaleProfileRefresh();

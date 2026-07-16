@@ -20,6 +20,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "./db";
 import { normaliseLinkedInUrl } from "./linkedin";
 import { normaliseSeekUrl } from "./seek";
+import { shouldAcceptProfileText } from "./profile-text-merge";
 // The scraper used to save the raw LinkedIn page innerText as profileText —
 // which includes the "People also viewed" sidebar, Connect/Message buttons,
 // "X is a mutual connection", and connection prompts (the SERP-looking junk).
@@ -343,12 +344,31 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
     candidateAction = "updated_existing";
     candidateId = existing.id;
 
+    // MERGE POLICY (see profile-text-merge.ts): a re-scrape must never degrade a
+    // richer stored profile. The box's headless view yields a fraction of what
+    // the browser extension captures, so last-write-wins silently destroyed
+    // profiles (100k → 1k, incident 2026-07-16). Decide before writing.
+    const textDecision = shouldAcceptProfileText(args.profileText, existing.profileText);
+
     const updateData: Record<string, unknown> = {
-      profileCapturedAt: new Date(),
       candidateIdentityId: identity.id,
       updatedAt: new Date(),
     };
-    if (args.profileText) updateData.profileText = args.profileText;
+    // Only claim a fresh capture when we actually took new text. Stamping
+    // capturedAt while KEEPING the old text would advertise 68-day-old content
+    // as captured today. A non-text scrape (e.g. a SEEK card) keeps the previous
+    // behaviour of marking the fetch.
+    if (textDecision.reason !== "rejected-thinner") {
+      updateData.profileCapturedAt = new Date();
+    }
+    if (textDecision.accept) updateData.profileText = args.profileText;
+    if (textDecision.reason === "rejected-thinner") {
+      // Visible in Railway logs: we protected the library from a degraded fetch.
+      console.warn(
+        `[ingest] kept richer stored profile for candidate ${existing.id} — rejected degraded scrape ` +
+        `(${textDecision.incomingChars} chars incoming vs ${textDecision.existingChars} stored)`,
+      );
+    }
     if (args.name) updateData.name = args.name;
     if (args.headline) updateData.headline = args.headline;
     if (args.location) updateData.location = args.location;
@@ -360,8 +380,10 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
       ? normalisedUrl
       : args.seekUrl ? normaliseSeekUrl(args.seekUrl) : null;
     if (seekForUpdate) updateData.seekUrl = seekForUpdate;
-    // Clear stale score hash so UI shows "re-score recommended".
-    if (args.profileText && args.profileText !== existing.profileText) {
+    // Clear stale score hash so UI shows "re-score recommended" — only when we
+    // ACCEPTED text that actually differs. A rejected (degraded) scrape leaves
+    // the stored profile untouched, so its existing score is still valid.
+    if (textDecision.accept && args.profileText !== existing.profileText) {
       updateData.profileTextHash = null;
     }
 
