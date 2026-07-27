@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, Play } from "lucide-react";
+import { Loader2, RefreshCw, Play, ExternalLink } from "lucide-react";
+import { boxDashboardUrl } from "@/lib/box-dashboard-url";
 import { Card, CardBody } from "@/components/ui/card";
 
 interface Check {
@@ -179,14 +180,29 @@ export function ApplianceStatus() {
             Live health of the scraper box, AI backend, and storage. Refreshes every 30s.
           </p>
         </div>
-        <button
-          onClick={load}
-          className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors"
-          title="Refresh now"
-        >
-          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {/* The door to the box: live browser view + LinkedIn/SEEK/JobAdder
+              login launchers. Tailnet-only, so it's a plain link the operator's
+              own machine resolves. */}
+          <a
+            href={boxDashboardUrl()}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors"
+            title="Open the box control panel (live browser view, SEEK/LinkedIn login, restart)"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Box control
+          </a>
+          <button
+            onClick={load}
+            className="inline-flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors"
+            title="Refresh now"
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Refresh
+          </button>
+        </div>
       </div>
 
       <Card>

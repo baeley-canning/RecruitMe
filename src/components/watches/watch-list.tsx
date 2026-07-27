@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Pencil, Trash2, Play, Pause, RefreshCw } from "lucide-react";
+import { Pencil, Trash2, Play, Pause, RefreshCw, ExternalLink } from "lucide-react";
 import { showToast } from "@/components/ui/toast";
 import { confirm } from "@/components/ui/confirm-dialog";
 import { WatchForm } from "./watch-form";
+import { boxDashboardUrl } from "@/lib/box-dashboard-url";
 import type { WatchedSearchDTO } from "@/lib/watched-search";
 
 /** Human interval: "30m" / "6h" / "daily". */
@@ -149,8 +150,22 @@ export function WatchList({
                 {/* Surface a failing/stale watch instead of letting it die
                     silently — the recurring "Pulse stopped and nobody knew". */}
                 {w.active && w.health === "failing" && (
-                  <div className="text-2xs text-danger truncate" title={w.lastError ?? undefined}>
-                    ⚠ {w.consecutiveFailures} checks failed{w.lastError ? ` — ${w.lastError}` : ""}
+                  <div className="text-2xs text-danger" title={w.lastError ?? undefined}>
+                    <span className="align-middle">⚠ {w.consecutiveFailures} checks failed{w.lastError ? ` — ${w.lastError}` : ""}</span>
+                    {/* An auth-flavoured failure needs a human on the box: give
+                        them the door instead of a URL to remember. */}
+                    {/(auth|login|challenge|seek_challenge)/i.test(w.lastError ?? "") && (
+                      <a
+                        href={boxDashboardUrl()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="ml-1.5 inline-flex items-center gap-0.5 align-middle underline font-medium hover:text-danger-hover"
+                        title="Open the box control panel to re-login (live browser view + SEEK login button)"
+                      >
+                        Fix: open box control <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
                   </div>
                 )}
                 {w.active && w.health === "stale" && (
