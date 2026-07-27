@@ -11,7 +11,43 @@ const dbMocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/db", () => dbMocks);
 
-import { deriveWatchHealth, reconcileWatchHealth, detectWatchHitsForRun } from "@/lib/watched-search";
+import { deriveWatchHealth, derivePulseHealth, reconcileWatchHealth, detectWatchHitsForRun } from "@/lib/watched-search";
+
+describe("derivePulseHealth — fleet-level Pulse check for /api/health", () => {
+  const w = (over: Partial<{ active: boolean; consecutiveFailures: number; lastError: string | null }> = {}) =>
+    ({ active: true, consecutiveFailures: 0, lastError: null, ...over });
+
+  it("ok when no watches exist / none active", () => {
+    expect(derivePulseHealth([]).ok).toBe(true);
+    expect(derivePulseHealth([w({ active: false, consecutiveFailures: 99 })]).ok).toBe(true);
+  });
+
+  it("ok while failures are below the threshold (transient blips don't alarm)", () => {
+    expect(derivePulseHealth([w({ consecutiveFailures: 2 })]).ok).toBe(true);
+  });
+
+  it("REGRESSION (9-days-silent incident): a fleet of auth-failing watches flips degraded with the re-login instruction", () => {
+    const rows = [
+      w({ consecutiveFailures: 406, lastError: "SEEK check failed" }),
+      w({ consecutiveFailures: 203, lastError: "seek_challenge: auth circuit open after repeated re-auth failures" }),
+      w({ consecutiveFailures: 2 }),
+    ];
+    const h = derivePulseHealth(rows);
+    expect(h.ok).toBe(false);
+    if (!h.ok) {
+      expect(h.degraded).toBe(true);
+      expect(h.detail).toContain("2/3");
+      expect(h.detail).toContain("406 consecutive");
+      expect(h.detail).toContain("re-login on the box");
+    }
+  });
+
+  it("non-auth failures degrade WITHOUT prescribing a re-login", () => {
+    const h = derivePulseHealth([w({ consecutiveFailures: 5, lastError: "selector drift: no result cards" })]);
+    expect(h.ok).toBe(false);
+    if (!h.ok) expect(h.detail).not.toContain("re-login");
+  });
+});
 
 const NOW = new Date("2026-07-04T12:00:00.000Z");
 

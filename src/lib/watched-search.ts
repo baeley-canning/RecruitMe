@@ -100,6 +100,45 @@ export function deriveWatchHealth(w: {
   return "ok";
 }
 
+/**
+ * System-level Pulse health for /api/health — "are the watches, as a fleet,
+ * actually working?" Distinct from per-watch badges: those live inside the
+ * Pulse page, which nobody stares at daily, so a dead SEEK session left every
+ * watch failing for NINE DAYS while /api/health said "all systems operational"
+ * (incident 2026-07-28). This turns 3+ consecutive failures on any active watch
+ * into an amber `degraded` at the top level, with an actionable message.
+ *
+ * Pure so it's unit-testable; the health route feeds it the watch rows.
+ */
+export interface PulseHealthRow {
+  active: boolean;
+  consecutiveFailures: number;
+  lastError: string | null;
+}
+
+export type PulseHealthCheck =
+  | { ok: true; detail?: string }
+  | { ok: false; degraded: true; detail: string };
+
+export function derivePulseHealth(rows: PulseHealthRow[], failThreshold = 3): PulseHealthCheck {
+  const active = rows.filter((r) => r.active);
+  if (active.length === 0) return { ok: true, detail: "no active watches" };
+  const failing = active.filter((r) => r.consecutiveFailures >= failThreshold);
+  if (failing.length === 0) return { ok: true };
+  const worst = Math.max(...failing.map((f) => f.consecutiveFailures));
+  // Auth-flavoured failures get the actionable instruction; anything else stays
+  // generic (selector drift, network, …) so we never mis-prescribe a re-login.
+  const authy = failing.some((f) => /seek_challenge|auth|login|challenge/i.test(f.lastError ?? ""));
+  return {
+    ok: false,
+    degraded: true,
+    detail:
+      `${failing.length}/${active.length} Pulse watch${failing.length === 1 ? "" : "es"} failing ` +
+      `(worst ${worst} consecutive)` +
+      (authy ? " — SEEK session needs re-login on the box (box dashboard → SEEK login)" : ""),
+  };
+}
+
 interface WatchRow {
   id: string; orgId: string; jobId: string | null; createdBy: string | null;
   name: string; query: string; location: string | null; notifyFrom: Date;

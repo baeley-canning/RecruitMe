@@ -33,6 +33,7 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { derivePulseHealth } from "@/lib/watched-search";
 import { isScraperDiscoveryEnabled } from "@/lib/feature-flags";
 import { probeBlobStore, getBlob } from "@/lib/blob-store";
 import { isEncrypted, decryptCv } from "@/lib/cv-encryption";
@@ -61,6 +62,7 @@ interface HealthResponse {
     blob: CheckResult;
     cv: CheckResult;
     ai: CheckResult;
+    pulse: CheckResult;
   };
   version: string;
   uptimeSec: number;
@@ -106,6 +108,24 @@ async function checkAi(): Promise<CheckResult> {
   } catch (err) {
     // A query failure here must never alarm or 503 — report ok with a note.
     return { ok: true, detail: `ai check skipped: ${err instanceof Error ? err.message : "error"}` };
+  }
+}
+
+// Pulse fleet health (the 9-days-silent lesson, 2026-07-28): every SEEK watch
+// failed on a dead session while this endpoint stayed green, because nothing
+// here looked at watch outcomes. Any active watch with 3+ consecutive failures
+// now flips `degraded` amber with an actionable message. DEGRADED, never fatal —
+// Pulse being down must not restart-loop the app. Fail-open on query errors.
+async function checkPulse(): Promise<CheckResult> {
+  try {
+    const rows = await prisma.watchedSearch.findMany({
+      select: { active: true, consecutiveFailures: true, lastError: true },
+    });
+    const h = derivePulseHealth(rows);
+    return h.ok ? { ok: true, ...(h.detail ? { detail: h.detail } : {}) } : { ok: false, degraded: true, detail: h.detail };
+  } catch (err) {
+    // A query failure here must never alarm or 503 — report ok with a note.
+    return { ok: true, detail: `pulse check skipped: ${err instanceof Error ? err.message : "error"}` };
   }
 }
 
@@ -226,13 +246,14 @@ async function checkCvEncryption(): Promise<CheckResult> {
 }
 
 export async function GET() {
-  const [db, ollama, scraper, blob, cv, ai] = await Promise.all([
+  const [db, ollama, scraper, blob, cv, ai, pulse] = await Promise.all([
     checkDb(),
     checkOllama(),
     checkScraper(),
     probeBlobStore(),
     checkCvEncryption(),
     checkAi(),
+    checkPulse(),
   ]);
 
   // Only DB + scraper are FATAL. Ollama (Claude failover) and the blob store
@@ -250,7 +271,7 @@ export async function GET() {
   // DEGRADED (amber), never a 503 — its real state stays visible in
   // checks.scraper.ok and the ops dashboard, but it can't take the site down.
   const overallOk = db.ok;
-  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !scraper.ok || !!scraper.degraded || !ai.ok);
+  const degraded = overallOk && (!ollama.ok || !blob.ok || !cv.ok || !scraper.ok || !!scraper.degraded || !ai.ok || !pulse.ok);
 
   // Unauthenticated callers get LIVENESS ONLY — boolean per-check pills plus the
   // 200/503 status the systemd / Railway / updater healthchecks read (they don't
@@ -270,6 +291,7 @@ export async function GET() {
           blob: { ok: blob.ok },
           cv: { ok: cv.ok },
           ai: { ok: ai.ok, ...(ai.degraded ? { degraded: true } : {}) },
+          pulse: { ok: pulse.ok, ...(pulse.degraded ? { degraded: true } : {}) },
         },
         timestamp: new Date().toISOString(),
       },
@@ -286,7 +308,7 @@ export async function GET() {
   const body: HealthResponse = {
     ok: overallOk,
     degraded,
-    checks: { db, ollama, scraper, blob, cv, ai },
+    checks: { db, ollama, scraper, blob, cv, ai, pulse },
     version,
     uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
     timestamp: new Date().toISOString(),

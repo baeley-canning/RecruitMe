@@ -29,7 +29,7 @@ interface Check {
 interface Health {
   ok: boolean;
   degraded: boolean;
-  checks: { db: Check; ollama: Check; scraper: Check; blob: Check; cv: Check; ai: Check };
+  checks: { db: Check; ollama: Check; scraper: Check; blob: Check; cv: Check; ai: Check; pulse?: Check };
   version: string;
   uptimeSec: number;
   timestamp: string;
@@ -209,6 +209,9 @@ export function ApplianceStatus() {
               </div>
               <div>
                 <Row label="Scraper box" check={health.checks.scraper} extra={scraperExtra} />
+                {/* Pulse fleet: watches failing = SEEK session/selector trouble.
+                    Optional so an older cached health payload can't crash the card. */}
+                {health.checks.pulse && <Row label="Pulse (SEEK watches)" check={health.checks.pulse} />}
                 <Row label="AI (Claude)" check={health.checks.ai} />
                 <Row label="Local AI (Ollama)" check={health.checks.ollama} />
                 <Row label="Database" check={health.checks.db} />
