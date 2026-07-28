@@ -56,9 +56,23 @@ function numberWord(word: string): number | null {
  * Parse a SEEK "Updated X ago" label into a single bucketed Date.
  * @param text  Raw card text (may include the "Updated" prefix and surrounding noise).
  * @param now   Reference instant; all relative buckets are computed against it.
- * @returns `{ bucket }` Date floor, or `null` when the text can't be parsed.
+ * @returns `{ bucket, granularity }`, or `null` when the text can't be parsed.
+ *
+ * `granularity` reports how COARSE the source label was. This matters for
+ * dedupe: a fine label self-increments ("3 days ago" → "4 days ago" tomorrow),
+ * so its derived bucket lands on the same absolute day every check. A COARSE
+ * label does not — SEEK says "1 month ago" unchanged for weeks while `now`
+ * advances, so the derived bucket slides one day per check and the dedupe key
+ * never matches. Callers must not treat a coarse-label bucket as a precise
+ * date (see detectHits' same-label guard). Incident 2026-07-28: one unchanged
+ * profile re-flagged 6 times off a frozen "1 month ago" label.
  */
-export function parseUpdatedAgo(text: string, now: Date): { bucket: Date } | null {
+export type UpdatedAgoGranularity = "day" | "week" | "month" | "year";
+
+export function parseUpdatedAgo(
+  text: string,
+  now: Date,
+): { bucket: Date; granularity: UpdatedAgoGranularity } | null {
   if (text == null) return null;
   // JobAdder-synced SEEK cards render a COMBINED label: "Updated JobAdder 6
   // months ago, SEEK today" / "Updated JobAdder today, SEEK 8 days ago". This is
@@ -85,7 +99,8 @@ export function parseUpdatedAgo(text: string, now: Date): { bucket: Date } | nul
   // makes every bucket a stable per-day value so the dedupe key doesn't drift
   // across re-detections (see the header comment).
   const t = now.getTime();
-  const day = (ms: number) => ({ bucket: startOfUtcDay(new Date(ms)) });
+  const day = (ms: number, granularity: UpdatedAgoGranularity = "day") =>
+    ({ bucket: startOfUtcDay(new Date(ms)), granularity });
 
   // "today" / sub-day ("N hours ago", "N minutes ago") → the UTC day of now.
   if (/\btoday\b/.test(s)) return day(t);
@@ -97,26 +112,26 @@ export function parseUpdatedAgo(text: string, now: Date): { bucket: Date } | nul
   let m = s.match(/(\d+|a|an)\s*years?\b/);
   if (m) {
     const n = numberWord(m[1]);
-    if (n != null) return day(t - Math.max(1, n) * YEAR_MS);
+    if (n != null) return day(t - Math.max(1, n) * YEAR_MS, "year");
   }
   // Bare "year" with no count (e.g. "over a year") → 1 year.
-  if (/\byear\b/.test(s)) return day(t - YEAR_MS);
+  if (/\byear\b/.test(s)) return day(t - YEAR_MS, "year");
 
   // "last week" → now − 7 days.
-  if (/\blast week\b/.test(s)) return day(t - 7 * DAY_MS);
+  if (/\blast week\b/.test(s)) return day(t - 7 * DAY_MS, "week");
 
   // "N months ago" / "a month ago" → now − N×30 days.
   m = s.match(/(\d+|a|an)\s*months?\b/);
   if (m) {
     const n = numberWord(m[1]);
-    if (n != null) return day(t - Math.max(1, n) * 30 * DAY_MS);
+    if (n != null) return day(t - Math.max(1, n) * 30 * DAY_MS, "month");
   }
 
   // "N weeks ago" / "a week ago" → now − N×7 days.
   m = s.match(/(\d+|a|an)\s*weeks?\b/);
   if (m) {
     const n = numberWord(m[1]);
-    if (n != null) return day(t - Math.max(1, n) * 7 * DAY_MS);
+    if (n != null) return day(t - Math.max(1, n) * 7 * DAY_MS, "week");
   }
 
   // "N days ago" / "a day ago" → now − N days.

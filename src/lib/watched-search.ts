@@ -28,7 +28,7 @@ import { prisma } from "./db";
 import { parseBooleanQuery } from "./boolean-query";
 import { seekKeywordsFromParsed } from "./boolean-query/emit";
 import { normaliseSeekUrl } from "./seek";
-import { parseUpdatedAgo, startOfUtcDay } from "./seek-updated-ago";
+import { parseUpdatedAgo, startOfUtcDay, type UpdatedAgoGranularity } from "./seek-updated-ago";
 import { createRun } from "./search-run";
 import { enqueueSearchJob } from "./scrape-queue";
 
@@ -43,6 +43,16 @@ export const MAX_INTERVAL_MINUTES = 1440;
 // responsive while staying comfortably under WATCH_DAILY_CAP for a handful of
 // watches. Recruiters can tune it 30min–24h per watch.
 export const DEFAULT_INTERVAL_MINUTES = 360;
+
+/** Pulse only flags updates newer than this many days (env: PULSE_RECENCY_DAYS).
+ *  Pulse answers "who moved RECENTLY" — a month-old update isn't news, and
+ *  after an outage the catch-up run would otherwise flag a month of history at
+ *  once. 0/invalid falls back to the default. */
+export const DEFAULT_PULSE_RECENCY_DAYS = 14;
+export function pulseRecencyDays(): number {
+  const n = Number.parseInt(process.env.PULSE_RECENCY_DAYS ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_PULSE_RECENCY_DAYS;
+}
 
 function clampInterval(minutes: number): number {
   if (!Number.isFinite(minutes)) return MAX_INTERVAL_MINUTES;
@@ -390,6 +400,12 @@ export async function detectHits(watchId: string, runId: string): Promise<number
   // "Updated today" (00:00Z bucket) would fall just below a 14:00Z notifyFrom
   // and be silently dropped on the watch's first day.
   const notifyFromDay = startOfUtcDay(watch.notifyFrom).getTime();
+  // RECENCY CAP: Pulse is a "who moved recently" alert, so an update that's
+  // already weeks old is not news — flagging it reads as a false alarm ("why is
+  // it telling me about a 30-day-old change?"). Without this, the ONLY gate was
+  // notifyFrom, so any update since the watch was created could surface as fresh
+  // — and after an outage the catch-up run flagged a month of history at once.
+  const recencyDays = pulseRecencyDays();
 
   // SEEK rows for this run. The run is org-scoped at creation; we still confirm
   // the run belongs to the watch's org so a mismatched runId can't leak rows.
@@ -424,6 +440,7 @@ export async function detectHits(watchId: string, runId: string): Promise<number
     seekId: string;
     profileUrl: string;
     bucket: Date;
+    granularity: UpdatedAgoGranularity;
     name: string | null;
     headline: string | null;
     location: string | null;
@@ -448,13 +465,17 @@ export async function detectHits(watchId: string, runId: string): Promise<number
     if (!r.updatedAgo) continue;
     const parsed = parseUpdatedAgo(r.updatedAgo, now);
     if (!parsed) continue;
-    // JS threshold: keep only updates at/after the watch's notifyFrom DAY.
-    if (parsed.bucket.getTime() < notifyFromDay) continue;
+    // JS threshold: keep only updates at/after the watch's notifyFrom DAY *and*
+    // inside the recency window (both floored to the UTC day, matching the
+    // bucket). The later of the two wins.
+    const recencyFloor = startOfUtcDay(new Date(now.getTime() - recencyDays * 86_400_000)).getTime();
+    if (parsed.bucket.getTime() < Math.max(notifyFromDay, recencyFloor)) continue;
 
     kept.push({
       seekId,
       profileUrl: r.profileUrl,
       bucket: parsed.bucket,
+      granularity: parsed.granularity,
       name: r.name,
       headline: r.headline,
       location: r.location,
@@ -489,14 +510,39 @@ export async function detectHits(watchId: string, runId: string): Promise<number
     // a tz-less "YYYY-MM-DD HH:MM:SS" string cast ::timestamp instead, so the
     // exact UTC bucket parseUpdatedAgo floored is stored verbatim.
     const bucketTs = bucketToTimestampString(k.bucket);
-    const inserted = await prisma.$executeRaw`
-      INSERT INTO "ProfileUpdateHit"
-        ("id","watchId","orgId","seekId","profileUrl","candidateId","name","headline","location","updatedAgo","updatedAtBucket","flaggedAt","seen")
-      VALUES (${randomUUID()}, ${watchId}, ${watch.orgId}, ${k.seekId}, ${k.profileUrl},
-              ${candidateId}, ${k.name}, ${k.headline}, ${k.location}, ${k.updatedAgo},
-              ${bucketTs}::timestamp, now(), false)
-      ON CONFLICT ("watchId","seekId","updatedAtBucket") DO NOTHING
-    `;
+    // COARSE-LABEL GUARD. A fine label self-increments daily, so its bucket is a
+    // stable absolute day and the ON CONFLICT ledger dedupes correctly. A coarse
+    // label ("last week", "1 month ago") stays FROZEN while `now` advances, so
+    // its derived bucket slides a day per check and the conflict target never
+    // matches — one unchanged profile got re-flagged 6 times (2026-07-28). For
+    // coarse labels the LABEL is the stable identity, so skip when this
+    // (watch, person) was already flagged with the SAME label inside the window.
+    // Fine labels keep the plain insert: two separate "today" updates on
+    // different days are genuinely different news and must both flag.
+    const inserted = k.granularity === "day"
+      ? await prisma.$executeRaw`
+          INSERT INTO "ProfileUpdateHit"
+            ("id","watchId","orgId","seekId","profileUrl","candidateId","name","headline","location","updatedAgo","updatedAtBucket","flaggedAt","seen")
+          VALUES (${randomUUID()}, ${watchId}, ${watch.orgId}, ${k.seekId}, ${k.profileUrl},
+                  ${candidateId}, ${k.name}, ${k.headline}, ${k.location}, ${k.updatedAgo},
+                  ${bucketTs}::timestamp, now(), false)
+          ON CONFLICT ("watchId","seekId","updatedAtBucket") DO NOTHING
+        `
+      : await prisma.$executeRaw`
+          INSERT INTO "ProfileUpdateHit"
+            ("id","watchId","orgId","seekId","profileUrl","candidateId","name","headline","location","updatedAgo","updatedAtBucket","flaggedAt","seen")
+          SELECT ${randomUUID()}, ${watchId}, ${watch.orgId}, ${k.seekId}, ${k.profileUrl},
+                 ${candidateId}, ${k.name}, ${k.headline}, ${k.location}, ${k.updatedAgo},
+                 ${bucketTs}::timestamp, now(), false
+          WHERE NOT EXISTS (
+            SELECT 1 FROM "ProfileUpdateHit"
+            WHERE "watchId" = ${watchId}
+              AND "seekId" = ${k.seekId}
+              AND "updatedAgo" = ${k.updatedAgo}
+              AND "flaggedAt" > now() - make_interval(days => ${recencyDays})
+          )
+          ON CONFLICT ("watchId","seekId","updatedAtBucket") DO NOTHING
+        `;
     newHits += Number(inserted);
   }
 

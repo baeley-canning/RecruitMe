@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMocks = vi.hoisted(() => ({
   prisma: {
@@ -11,7 +11,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/db", () => dbMocks);
 
-import { deriveWatchHealth, derivePulseHealth, reconcileWatchHealth, detectWatchHitsForRun } from "@/lib/watched-search";
+import { deriveWatchHealth, derivePulseHealth, pulseRecencyDays, DEFAULT_PULSE_RECENCY_DAYS, reconcileWatchHealth, detectWatchHitsForRun } from "@/lib/watched-search";
 
 describe("derivePulseHealth — fleet-level Pulse check for /api/health", () => {
   const w = (over: Partial<{ active: boolean; consecutiveFailures: number; lastError: string | null }> = {}) =>
@@ -146,5 +146,37 @@ describe("detectWatchHitsForRun (on-settle detection)", () => {
   it("is a no-op for an unknown run", async () => {
     dbMocks.prisma.searchRun.findUnique.mockResolvedValue(null);
     expect(await detectWatchHitsForRun("ghost")).toBe(0);
+  });
+});
+
+describe("pulseRecencyDays — the cap that stops month-old 'news'", () => {
+  const KEY = "PULSE_RECENCY_DAYS";
+  const orig = process.env[KEY];
+  afterEach(() => { if (orig === undefined) delete process.env[KEY]; else process.env[KEY] = orig; });
+
+  it("defaults to 14 days", () => {
+    delete process.env[KEY];
+    expect(pulseRecencyDays()).toBe(DEFAULT_PULSE_RECENCY_DAYS);
+    expect(DEFAULT_PULSE_RECENCY_DAYS).toBe(14);
+  });
+
+  it("honours a valid override", () => {
+    process.env[KEY] = "7";
+    expect(pulseRecencyDays()).toBe(7);
+  });
+
+  it("falls back on invalid / zero / negative (never disables the cap by typo)", () => {
+    for (const bad of ["0", "-5", "abc", ""]) {
+      process.env[KEY] = bad;
+      expect(pulseRecencyDays()).toBe(DEFAULT_PULSE_RECENCY_DAYS);
+    }
+  });
+
+  it("REGRESSION: a 30-day-old update sits outside the default window", () => {
+    // The reported symptom — "why is it flagging a 30-day-old change?"
+    const now = Date.now();
+    const thirtyDaysAgo = now - 30 * 86_400_000;
+    const floor = now - pulseRecencyDays() * 86_400_000;
+    expect(thirtyDaysAgo).toBeLessThan(floor); // → skipped by detectHits
   });
 });

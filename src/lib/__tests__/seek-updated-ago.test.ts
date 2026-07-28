@@ -185,3 +185,35 @@ describe("parseUpdatedAgo — NZ-midnight boundary (UTC floor)", () => {
     expect(r!.bucket.toISOString()).toBe("2026-06-12T00:00:00.000Z");
   });
 });
+
+describe("granularity — the frozen-label drift that caused duplicate Pulse hits", () => {
+  // INCIDENT 2026-07-28: one unchanged profile was flagged 6 times. SEEK kept
+  // saying "1 month ago" while `now` advanced, so the derived bucket slid a day
+  // per check and the (watch, person, bucket) dedupe key never matched.
+  it("reports coarse labels as coarse and fine labels as day-granular", () => {
+    const now = new Date("2026-07-28T00:00:00Z");
+    expect(parseUpdatedAgo("Updated today", now)?.granularity).toBe("day");
+    expect(parseUpdatedAgo("Updated yesterday", now)?.granularity).toBe("day");
+    expect(parseUpdatedAgo("Updated 3 days ago", now)?.granularity).toBe("day");
+    expect(parseUpdatedAgo("Updated 5 hours ago", now)?.granularity).toBe("day");
+    expect(parseUpdatedAgo("Updated last week", now)?.granularity).toBe("week");
+    expect(parseUpdatedAgo("Updated 2 weeks ago", now)?.granularity).toBe("week");
+    expect(parseUpdatedAgo("Updated 1 month ago", now)?.granularity).toBe("month");
+    expect(parseUpdatedAgo("Updated over a year ago", now)?.granularity).toBe("year");
+  });
+
+  it("DEMONSTRATES the drift: a frozen coarse label yields a DIFFERENT bucket each day", () => {
+    const d1 = parseUpdatedAgo("Updated 1 month ago", new Date("2026-07-28T00:00:00Z"))!;
+    const d2 = parseUpdatedAgo("Updated 1 month ago", new Date("2026-07-29T00:00:00Z"))!;
+    expect(d1.bucket.getTime()).not.toBe(d2.bucket.getTime()); // ← why dedupe failed
+    expect(d1.granularity).toBe("month"); // ← the flag detectHits guards on
+  });
+
+  it("a FINE label does NOT drift — it self-increments, so the bucket is stable", () => {
+    // A profile updated on 2026-07-25 reads "3 days ago" on the 28th and
+    // "4 days ago" on the 29th → both resolve to the same absolute day.
+    const d1 = parseUpdatedAgo("Updated 3 days ago", new Date("2026-07-28T00:00:00Z"))!;
+    const d2 = parseUpdatedAgo("Updated 4 days ago", new Date("2026-07-29T00:00:00Z"))!;
+    expect(d1.bucket.toISOString()).toBe(d2.bucket.toISOString());
+  });
+});
