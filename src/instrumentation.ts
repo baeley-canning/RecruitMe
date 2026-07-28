@@ -23,6 +23,7 @@ export async function register() {
     startWatchSchedulerTimer();
     startProfileRefreshTimer();
     startOpsAlertTimer();
+    startBackupTimer();
   }
   if (process.env.NEXT_RUNTIME === "edge") {
     await import("../sentry.edge.config");
@@ -163,7 +164,10 @@ function startProfileRefreshTimer() {
 const OPS_ALERT_INTERVAL_MS = 5 * 60 * 1000;
 function startOpsAlertTimer() {
   if (process.env.DISABLE_OPS_ALERTS === "1") return;
-  if (!process.env.ALERT_WEBHOOK_URL) return; // nothing to notify — stay silent
+  // Runs whenever we have SOMEWHERE to send: an explicit webhook, or Sentry
+  // (already configured). Previously this required ALERT_WEBHOOK_URL and so
+  // stayed dormant — an alerting system nobody turned on is the same as none.
+  if (!process.env.ALERT_WEBHOOK_URL && !process.env.NEXT_PUBLIC_SENTRY_DSN) return;
   const port = process.env.PORT ?? "3000";
   // Module-scoped state: a restart re-arms the grace period, which errs toward
   // re-alerting on a still-broken system rather than going quiet. That's the
@@ -180,7 +184,13 @@ function startOpsAlertTimer() {
       state = decision.state;
       if (decision.action !== "none" && decision.message) {
         const sent = await sendOpsAlert(decision.message);
-        console.log(`[ops-alert] ${decision.action} — webhook ${sent ? "delivered" : "FAILED"}`);
+        if (!sent) {
+          // No webhook configured (or delivery failed) — fall back to Sentry,
+          // which is already wired and has its own notification rules. An alert
+          // that only reaches a log file is not an alert.
+          Sentry.captureMessage(decision.message, decision.action === "fire" ? "error" : "info");
+        }
+        console.log(`[ops-alert] ${decision.action} — ${sent ? "webhook delivered" : "sent to Sentry"}`);
       }
     } catch (err) {
       console.warn(`[ops-alert] tick failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -188,6 +198,45 @@ function startOpsAlertTimer() {
   };
   setTimeout(tick, 150_000).unref?.(); // stagger behind the other boot timers
   setInterval(tick, OPS_ALERT_INTERVAL_MS).unref?.();
+}
+
+/**
+ * Daily database backup. Railway's own volume backups are gated for this
+ * account and the volume was found with ZERO snapshots (2026-07-28), so the app
+ * takes its own and writes it to the object store that already holds the CVs.
+ *
+ * Failure is ALERTED, not logged-and-forgotten — a silently failing backup is
+ * indistinguishable from no backup until the day you need it.
+ * Kill switch: DISABLE_AUTO_BACKUP=1.
+ */
+const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+function startBackupTimer() {
+  if (process.env.DISABLE_AUTO_BACKUP === "1") return;
+  if (!process.env.CONTACT_SYNC_CRON_SECRET) return; // route auth — nothing to drive with
+  const port = process.env.PORT ?? "3000";
+  const tick = async () => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/admin/backup/run`, {
+        method: "POST",
+        headers: { "x-cron-secret": process.env.CONTACT_SYNC_CRON_SECRET as string },
+        signal: AbortSignal.timeout(600_000),
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.ok) {
+        console.log(`[auto-backup] ok — ${body.rows} rows, ${Math.round((body.bytes ?? 0) / 1048576)}MB`);
+      } else {
+        const detail = body?.error ?? body?.skipped ?? `HTTP ${res.status}`;
+        console.error(`[auto-backup] FAILED — ${detail}`);
+        Sentry.captureMessage(`\u{1F534} RecruitMe database backup FAILED — ${detail}`, "error");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[auto-backup] FAILED — ${msg}`);
+      Sentry.captureMessage(`\u{1F534} RecruitMe database backup FAILED — ${msg}`, "error");
+    }
+  };
+  setTimeout(tick, 300_000).unref?.(); // 5 min after boot, behind the other timers
+  setInterval(tick, BACKUP_INTERVAL_MS).unref?.();
 }
 
 export const onRequestError = Sentry.captureRequestError;
