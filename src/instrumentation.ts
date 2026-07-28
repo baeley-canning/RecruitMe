@@ -8,6 +8,13 @@
  * the App Router render errors that were previously invisible.
  */
 import * as Sentry from "@sentry/nextjs";
+import {
+  decideAlert,
+  sendOpsAlert,
+  alertGraceMs,
+  EMPTY_ALERT_STATE,
+  type HealthLike,
+} from "./lib/ops-alert";
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
@@ -15,6 +22,7 @@ export async function register() {
     startSearchSweepTimer();
     startWatchSchedulerTimer();
     startProfileRefreshTimer();
+    startOpsAlertTimer();
   }
   if (process.env.NEXT_RUNTIME === "edge") {
     await import("../sentry.edge.config");
@@ -135,6 +143,51 @@ function startProfileRefreshTimer() {
   };
   setTimeout(tick, 120_000).unref?.(); // stagger after the sweep + watch first ticks
   setInterval(tick, REFRESH_SCHED_INTERVAL_MS).unref?.();
+}
+
+/**
+ * Ops watchdog. Polls our OWN /api/health and pushes a webhook when something
+ * stays unhealthy past the grace period — the missing link that let a dead SEEK
+ * session run for NINE DAYS while the app served traffic happily (2026-07-28).
+ *
+ * Scope, honestly: this catches "app up, subsystem broken", which is the failure
+ * class that actually bit us. It CANNOT report "app is down" — a dead process
+ * sends no alerts. That needs an external pinger (Railway's healthcheck already
+ * restarts on failure; an uptime monitor hitting /api/health covers the rest).
+ *
+ * Deliberately calls over localhost rather than importing app code: this module
+ * is compiled for the edge runtime too, and pulling in node:crypto via the app
+ * graph is a hard `next build` failure (hit live 2026-07-04).
+ * Kill switch: DISABLE_OPS_ALERTS=1. No-ops entirely without ALERT_WEBHOOK_URL.
+ */
+const OPS_ALERT_INTERVAL_MS = 5 * 60 * 1000;
+function startOpsAlertTimer() {
+  if (process.env.DISABLE_OPS_ALERTS === "1") return;
+  if (!process.env.ALERT_WEBHOOK_URL) return; // nothing to notify — stay silent
+  const port = process.env.PORT ?? "3000";
+  // Module-scoped state: a restart re-arms the grace period, which errs toward
+  // re-alerting on a still-broken system rather than going quiet. That's the
+  // safe direction.
+  let state = EMPTY_ALERT_STATE;
+  const tick = async () => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      const body = (await res.json().catch(() => null)) as HealthLike | null;
+      if (!body || !body.checks) return;
+      const decision = decideAlert(state, body, Date.now(), alertGraceMs());
+      state = decision.state;
+      if (decision.action !== "none" && decision.message) {
+        const sent = await sendOpsAlert(decision.message);
+        console.log(`[ops-alert] ${decision.action} — webhook ${sent ? "delivered" : "FAILED"}`);
+      }
+    } catch (err) {
+      console.warn(`[ops-alert] tick failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  setTimeout(tick, 150_000).unref?.(); // stagger behind the other boot timers
+  setInterval(tick, OPS_ALERT_INTERVAL_MS).unref?.();
 }
 
 export const onRequestError = Sentry.captureRequestError;
