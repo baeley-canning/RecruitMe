@@ -89,16 +89,31 @@ export async function chat(
 
   // ── Claude (Anthropic) ──
   if (provider === "claude") {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set in .env.local");
+    // Which endpoint are we talking to? ANTHROPIC_BASE_URL set = an
+    // Anthropic-COMPATIBLE endpoint (DeepSeek); unset = real Anthropic.
+    const baseURL = process.env.ANTHROPIC_BASE_URL?.trim() || undefined;
+
+    // Each provider reads its OWN key variable, so a Railway variable always
+    // says what it actually holds. Storing a DeepSeek key in ANTHROPIC_API_KEY
+    // works but is a trap for whoever next pastes a key in. With both set,
+    // flipping providers is a ONE-variable change (set/unset ANTHROPIC_BASE_URL)
+    // — no key juggling, nothing to re-paste.
+    const apiKey = baseURL
+      ? (process.env.DEEPSEEK_API_KEY?.trim() || process.env.ANTHROPIC_API_KEY)
+      : process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        baseURL
+          ? "No API key for the compatible endpoint — set DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY)."
+          : "ANTHROPIC_API_KEY is not set.",
+      );
+    }
 
     // 90s timeout — scoring prompts can be long but should never take longer.
-    // Prevents requests hanging indefinitely if Anthropic is slow.
-    // ANTHROPIC_BASE_URL lets this same path talk to any Anthropic-compatible
-    // endpoint — notably DeepSeek's (https://api.deepseek.com/anthropic), which
-    // maps claude-opus* → deepseek-v4-pro and claude-haiku*/sonnet* →
-    // deepseek-v4-flash. Unset = real Anthropic.
-    const baseURL = process.env.ANTHROPIC_BASE_URL?.trim() || undefined;
+    // Prevents a request hanging indefinitely if the provider is slow.
+    // baseURL (resolved above) points at DeepSeek's Anthropic-compatible
+    // endpoint when set, which maps claude-opus* → deepseek-v4-pro and
+    // claude-haiku*/sonnet* → deepseek-v4-flash.
     const client = new Anthropic({ apiKey, timeout: 90_000, ...(baseURL ? { baseURL } : {}) });
     const model  = options?.model ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
