@@ -170,15 +170,21 @@ export async function chat(
       throw err;
     }
 
-    // Log token usage for cost visibility — surfaced in admin analytics
+    // Log token usage for cost visibility — surfaced in admin analytics.
+    // Bill against the model that ACTUALLY served the request, not the one we
+    // asked for: a compatible endpoint maps our claude-* name onto its own
+    // model (claude-haiku-* → deepseek-v4-flash), and pricing the request name
+    // would charge Claude rates for a ~7-18x cheaper call — making both the
+    // analytics and the daily spend cap wrong.
+    const billedModel = response.model || model;
     if (response.usage) {
       const { input_tokens, output_tokens } = response.usage;
-      console.log(`[ai] model=${model} input=${input_tokens} output=${output_tokens}`);
+      console.log(`[ai] model=${billedModel} input=${input_tokens} output=${output_tokens}`);
       // Persist cost so checkSpendCap can enforce a daily ceiling.
       void recordAiCall({
         orgId:        options?.orgId,
         userId:       options?.userId,
-        model,
+        model:        billedModel,
         inputTokens:  input_tokens,
         outputTokens: output_tokens,
         meta:         options?.costTag ? { tag: options.costTag } : undefined,

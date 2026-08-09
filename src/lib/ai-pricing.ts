@@ -21,6 +21,16 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-sonnet-4-6":         { inputPerMTok: 3.00,  outputPerMTok: 15.00 },
   "claude-opus-4-7":           { inputPerMTok: 15.00, outputPerMTok: 75.00 },
   // Ollama (local, free — recorded at 0 to keep the cost dashboard honest)
+  // DeepSeek (via the Anthropic-compatible endpoint). Prices are per the
+  // published rate card as at 2026-08; DeepSeek has signalled an increase, so
+  // re-check these if spend looks off. Cache-hit input is ~50x cheaper
+  // ($0.0028/Mtok on flash) but the Anthropic-shaped response doesn't
+  // distinguish it, so we price every input token at the cache-MISS rate —
+  // deliberately the conservative direction: over-count, never under-count,
+  // because this figure gates the daily spend cap.
+  "deepseek-v4-flash": { inputPerMTok: 0.14,  outputPerMTok: 0.28 },
+  "deepseek-v4-pro":   { inputPerMTok: 0.435, outputPerMTok: 0.87 },
+
   "qwen2.5:1.5b": { inputPerMTok: 0, outputPerMTok: 0 },
   "llama3.2:3b":  { inputPerMTok: 0, outputPerMTok: 0 },
 };
