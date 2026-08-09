@@ -38,6 +38,10 @@ export interface ChatOptions {
    * prompt cache can de-duplicate it across calls. Only relevant for Claude.
    */
   cacheSystem?: boolean;
+  /** Extended reasoning. Off by default — its tokens are billed as output and
+   *  count against max_tokens, so a mechanical task can spend the whole budget
+   *  thinking and return nothing. Turn on per-call only where it earns its cost. */
+  thinking?: { type: "disabled" } | { type: "enabled"; budget_tokens: number };
   /** Org + user attribution for cost tracking. When set, a UsageEvent of
    *  type "ai_call" is written with token counts and computed USD cost
    *  so checkSpendCap() can enforce daily ceilings. Omit for unattributed
@@ -90,7 +94,12 @@ export async function chat(
 
     // 90s timeout — scoring prompts can be long but should never take longer.
     // Prevents requests hanging indefinitely if Anthropic is slow.
-    const client = new Anthropic({ apiKey, timeout: 90_000 });
+    // ANTHROPIC_BASE_URL lets this same path talk to any Anthropic-compatible
+    // endpoint — notably DeepSeek's (https://api.deepseek.com/anthropic), which
+    // maps claude-opus* → deepseek-v4-pro and claude-haiku*/sonnet* →
+    // deepseek-v4-flash. Unset = real Anthropic.
+    const baseURL = process.env.ANTHROPIC_BASE_URL?.trim() || undefined;
+    const client = new Anthropic({ apiKey, timeout: 90_000, ...(baseURL ? { baseURL } : {}) });
     const model  = options?.model ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
     // Build the system block. When caching is requested we wrap the text in
@@ -107,6 +116,14 @@ export async function chat(
         model,
         max_tokens: maxTokens,
         temperature,
+        // Reasoning OFF by default. On DeepSeek thinking is enabled by default
+        // and its tokens are billed as output AND counted against max_tokens —
+        // measured: a trivial prompt cost 28 output tokens with thinking vs 1
+        // without, and a small max_tokens budget gets spent entirely on
+        // reasoning, returning no answer at all. Harmless against real
+        // Anthropic, where "disabled" is already the default.
+        // Opt in per-call with options.thinking when a task genuinely warrants it.
+        thinking: options?.thinking ?? { type: "disabled" },
         ...(systemBlock !== undefined ? { system: systemBlock } : {}),
         messages: [{ role: "user", content: prompt }],
       });
@@ -153,7 +170,11 @@ export async function chat(
     // can return content: [], so `content[0].type` would throw a TypeError that
     // escapes direct chat() callers (some bypass the failover wrapper). Optional
     // chain → return "" (an empty completion) instead of crashing.
-    const block = response.content[0];
+    // FIND the text block rather than assuming it's first. A reasoning-capable
+    // endpoint returns [thinking, text], so indexing [0] silently yielded ""
+    // — every score/parse/outreach call returning an empty completion with no
+    // error raised. Scanning is correct for plain Anthropic too.
+    const block = response.content.find((b) => b.type === "text");
     return block?.type === "text" ? block.text : "";
   }
 
