@@ -108,8 +108,8 @@ You cannot maintain 71k lines solo while also selling. Cut hard:
 
 | Delete | Why | Est. |
 |---|---|---|
-| **Legacy `/api/jobs/[id]/search/route.ts`** (1,627 lines) | Superseded by `search/multi`; no UI references remain; carries dead SerpAPI branches | 1,600 lines |
-| **`SearchSession` model** | Two parallel result models (the plan's P0). Consolidate onto `SearchRun`; migrate dashboard + search-quality + maintenance readers | ~300 lines + schema |
+| **Legacy `/api/jobs/[id]/search/route.ts`** (1,627 lines) | ⚠️ **NOT yet deletable — corrected 2026-07-28.** An earlier claim here that it had "no UI references" was wrong (the grep missed the template-literal form). `saved-searches-card.tsx:117` still POSTs to it, and `org-isolation.test.ts` imports its GET. **Prerequisite:** migrate Saved Searches onto `/search/multi` first, then delete. | 1,600 lines, gated |
+| **`SearchSession` model** | Two parallel result models (the plan's P0). Bigger than first scoped: **10+ files** read it (dashboard, search-quality, maintenance, talent-pool, search-funnel, library, search-sessions). Consolidate onto `SearchRun` in that order, deleting the model last | ~300 lines + schema |
 | **Electron shell** | A web app doesn't need a desktop wrapper. Zero customer asked for it; it's a build target, a security surface, and a maintenance tax | whole `electron/` |
 | **Ollama offload remnants** | `LLAMA_SCORE_OFFLOAD` is gone; `OLLAMA_OFFLOAD_TASKS` is a half-path. Either commit or cut | ~200 lines |
 | **SerpAPI / Bing provider code** | Dead since the scraper replaced SERP | ~300 lines |
