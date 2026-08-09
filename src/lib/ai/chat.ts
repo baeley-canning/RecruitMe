@@ -116,14 +116,19 @@ export async function chat(
         model,
         max_tokens: maxTokens,
         temperature,
-        // Reasoning OFF by default. On DeepSeek thinking is enabled by default
-        // and its tokens are billed as output AND counted against max_tokens —
-        // measured: a trivial prompt cost 28 output tokens with thinking vs 1
-        // without, and a small max_tokens budget gets spent entirely on
-        // reasoning, returning no answer at all. Harmless against real
-        // Anthropic, where "disabled" is already the default.
-        // Opt in per-call with options.thinking when a task genuinely warrants it.
-        thinking: options?.thinking ?? { type: "disabled" },
+        // Reasoning control. Only sent when explicitly requested, or when
+        // pointed at a non-Anthropic compatible endpoint (DeepSeek enables
+        // thinking by DEFAULT and bills it as output while counting it against
+        // max_tokens — measured 28 output tokens vs 1 on a trivial prompt, and
+        // a small budget gets spent entirely on reasoning, returning nothing).
+        // Deliberately NOT sent on the plain Anthropic path: this cannot be
+        // tested against Anthropic while the account has no credit, so we don't
+        // add an unverifiable parameter to the default path.
+        ...(options?.thinking
+          ? { thinking: options.thinking }
+          : baseURL
+            ? { thinking: { type: "disabled" as const } }
+            : {}),
         ...(systemBlock !== undefined ? { system: systemBlock } : {}),
         messages: [{ role: "user", content: prompt }],
       });
