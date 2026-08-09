@@ -13,6 +13,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 import {
   boxControlEnabled,
   reassocWifi,
@@ -32,6 +33,10 @@ export async function GET() {
     // noVNC connects WS back through Caddy's /novnc/* -> websockify route.
     novncPath: "novnc/websockify",
     novncPassword: process.env.BOX_VNC_PASSWORD ?? "",
+    // The dashboard must echo this back on control POSTs. Safe to serve here:
+    // this GET is behind the same loopback/Tailscale gate, and it is the same
+    // trust level as the noVNC password already returned above.
+    controlSecret: process.env.BOX_CONTROL_SECRET ?? "",
   });
 }
 
@@ -51,6 +56,26 @@ export async function POST(req: Request) {
     } catch {
       return NextResponse.json({ error: "bad_origin" }, { status: 403 });
     }
+  }
+
+  // Shared-secret gate. These actions run as ROOT (restart / reboot / wifi /
+  // logs / launch a login browser), and until now the ONLY thing standing in
+  // front of them was the middleware IP check — a control whose correctness
+  // rests on assumptions outside this codebase (Next never directly
+  // LAN-reachable, Caddy pinning trusted_proxies). Requiring a secret makes the
+  // endpoint self-sufficient: network position alone is no longer authority.
+  //
+  // Opt-in by design: when BOX_CONTROL_SECRET is unset the behaviour is exactly
+  // as before, so an existing box keeps working until its env is updated. Set it
+  // in boxdash.env and the dashboard sends it — then the IP gate becomes
+  // defence-in-depth rather than the whole defence.
+  const required = process.env.BOX_CONTROL_SECRET?.trim();
+  if (required) {
+    const provided = req.headers.get("x-box-control-secret") ?? "";
+    const a = Buffer.from(provided);
+    const b = Buffer.from(required);
+    const ok = a.length === b.length && timingSafeEqual(a, b);
+    if (!ok) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   let body: Record<string, unknown>;

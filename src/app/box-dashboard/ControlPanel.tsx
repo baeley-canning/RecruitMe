@@ -20,6 +20,9 @@ interface ControlConfig {
   enabled: boolean;
   novncPath?: string;
   novncPassword?: string;
+  /** Shared secret for control POSTs. Box-local, delivered over the same
+   *  IP-gated GET that already carries the noVNC password. */
+  controlSecret?: string;
 }
 
 const LOG_SERVICES = [
@@ -86,7 +89,12 @@ export default function ControlPanel() {
       try {
         const res = await fetch("/api/box-dashboard/control", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            // Sent only when the box has a secret configured; the route treats
+            // an unset secret as "not required", so older boxes keep working.
+            ...(cfg?.controlSecret ? { "x-box-control-secret": cfg.controlSecret } : {}),
+          },
           body: JSON.stringify(body),
         });
         const data = await res.json();
@@ -102,7 +110,10 @@ export default function ControlPanel() {
         setBusy(null);
       }
     },
-    [],
+    // cfg is read for the control secret — without it here the callback closes
+    // over the initial null forever and the header is never sent, 401ing every
+    // action on a box that HAS a secret configured.
+    [cfg],
   );
 
   if (!cfg) return null; // still loading

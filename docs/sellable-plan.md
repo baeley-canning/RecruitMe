@@ -62,17 +62,28 @@ is a refund and a bad reference in a market of ~200 agencies.**
 3. **Post-deploy smoke that drives real flows** — not just `tsc` + unit tests:
    create a job, run a library search, score a candidate, assert results. Wire
    into `scripts/deploy-gate.sh`.
-4. **Fix the appliance security criticals** (from `docs/CODE-AUDIT-2026-06-15.md`)
-   — these are blockers for hardware leaving your house:
-   - **Unsigned root-level auto-updates.** `appliance/updater/update.sh` falls
-     through to "no verification" because cosign is never installed by the packer
-     build. Anyone who can serve or MITM the update origin gets **root on every
-     deployed box**. Install cosign in the image; sign releases; fail closed.
-   - **Firstboot wizard binds `0.0.0.0:80`** with UFW open — any LAN device can
-     race the installer to set admin credentials. Bind loopback + one-time
-     pairing code.
-   - **box-dashboard routes have no session auth**, only an IP gate parsed from a
-     spoofable `X-Forwarded-For`. Add a real session check as defence-in-depth.
+4. **Appliance security criticals — ✅ RE-VERIFIED FIXED 2026-08-10.** The three
+   blockers from `docs/CODE-AUDIT-2026-06-15.md` were all closed after that
+   audit was written; the doc is stale and should not be actioned as-is:
+   - ~~Unsigned root-level auto-updates~~ → cosign is installed by the packer
+     build, and `update.sh` now `exit 1`s when cosign or the pubkey is missing
+     rather than applying an unverified tarball. **Fails closed.**
+   - ~~Firstboot LAN race~~ → a one-time 6-hex **setup PIN** is generated at
+     boot, printed to the console and written root-only to
+     `/etc/recruitme/setup-pin.txt`. Every privileged wizard route is gated on
+     it; only viewing the page and submitting the PIN itself are reachable.
+   - ~~Spoofable `X-Forwarded-For`~~ → `clientIp()` now reads `X-Real-IP` / the
+     LAST XFF hop, so a LAN client can no longer forge a `100.64.x.x` Tailscale
+     address to pass the gate.
+
+   **What genuinely remains** (named in `src/middleware.ts` itself):
+   - The IP gate is a *secondary* control. Its assumptions — Next not directly
+     LAN-reachable, Caddy pinning `trusted_proxies` — are **unverified from the
+     repo** (no Caddyfile is committed and no ufw rule covers the app port).
+     Verify on a real box.
+   - Box-control POSTs (root-privileged: restart / reboot / wifi / logs) should
+     carry a **shared secret** so the gate is self-sufficient rather than relying
+     on network position alone.
 
 **Exit criteria:** an outage pages you within 15 minutes; a restore has actually
 been performed; no unsigned code can run as root on a customer box.
