@@ -139,7 +139,11 @@ function SourceBadge({ source }: { source?: ParsedRoleSource }) {
 interface HiringBriefChipSectionProps {
   title: string;
   items: string[] | undefined;
-  chipClassName: string;
+  /** Colour of the status mark. Semantic only — it encodes what the item IS
+   *  (stated / inferred / gap), never decoration. */
+  markClassName?: string;
+  /** The glyph itself: ✓ for stated fact, ~ for inference, · for neutral. */
+  mark?: string;
   labelClassName?: string;
   monospace?: boolean;
 }
@@ -147,7 +151,8 @@ interface HiringBriefChipSectionProps {
 function HiringBriefChipSection({
   title,
   items,
-  chipClassName,
+  markClassName,
+  mark,
   labelClassName,
   monospace = false,
 }: HiringBriefChipSectionProps) {
@@ -159,20 +164,29 @@ function HiringBriefChipSection({
       <p className={cn("text-2xs font-medium uppercase tracking-wide mb-2", labelClassName ?? "text-text-tertiary")}>
         {title}
       </p>
-      <div className="flex flex-wrap gap-1.5">
+      {/* Requirements read VERTICALLY — one per line with a status mark — not as a
+          wrap of identical pills. A pill wall gives every item the same weight, so
+          the eye has nowhere to land and a 12-item brief reads as noise. A marked
+          list is scannable, lets the text breathe at full length, and leaves colour
+          free to mean something (the mark) rather than decorate (the pill). */}
+      <ul className="space-y-0">
         {cleanItems.map((item) => (
-          <span
+          <li
             key={item}
-            className={cn(
-              "px-1.5 py-0.5 text-xs rounded-sm",
-              chipClassName,
-              monospace && "font-mono tabular-nums"
-            )}
+            className="flex items-baseline gap-2 py-1 border-b border-separator-subtle last:border-0"
           >
-            {item}
-          </span>
+            <span
+              aria-hidden
+              className={cn("shrink-0 w-3 text-center font-mono text-2xs leading-5", markClassName ?? "text-text-tertiary")}
+            >
+              {mark ?? "·"}
+            </span>
+            <span className={cn("text-xs text-text-secondary", monospace && "font-mono tabular-nums")}>
+              {item}
+            </span>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -1904,15 +1918,17 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Explicitly Stated"
                 items={parsedRole.explicitly_stated}
-                labelClassName="text-success"
-                chipClassName="bg-success-subtle text-success"
+                labelClassName="text-text-tertiary"
+                mark="✓"
+                markClassName="text-success"
               />
 
               <HiringBriefChipSection
                 title="Strongly Inferred"
                 items={parsedRole.strongly_inferred}
-                labelClassName="text-accent"
-                chipClassName="bg-accent-subtle text-accent"
+                labelClassName="text-text-tertiary"
+                mark="~"
+                markClassName="text-accent"
               />
 
               {/* Knockout criteria — each item can be dismissed to remove it from scoring */}
@@ -1969,14 +1985,16 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Must-haves"
                 items={mustHaves}
-                chipClassName="bg-accent-subtle text-accent font-medium"
+                mark="●"
+                markClassName="text-accent"
               />
 
               {/* Nice-to-haves — fall back to skills_preferred */}
               <HiringBriefChipSection
                 title="Nice-to-haves"
                 items={niceToHaves}
-                chipClassName="bg-surface-hover text-text-secondary"
+                mark="○"
+                markClassName="text-text-tertiary"
               />
 
               {/* AI search tips — legacy/rare tech with suggested modern alternatives.
@@ -1997,8 +2015,9 @@ ${toHtml(job.rawJd)}
               <HiringBriefChipSection
                 title="Application / Screening"
                 items={parsedRole.application_requirements}
-                labelClassName="text-warning"
-                chipClassName="bg-warning-subtle text-warning"
+                labelClassName="text-text-tertiary"
+                mark="!"
+                markClassName="text-warning"
               />
 
               {/* Work Rights / visa flags — items can be promoted into must_haves */}
@@ -2060,14 +2079,16 @@ ${toHtml(job.rawJd)}
                 title="Search Expansion"
                 items={parsedRole.search_expansion}
                 labelClassName="text-text-tertiary"
-                chipClassName="bg-surface-hover text-text-secondary"
+                mark="+"
+                markClassName="text-text-tertiary"
               />
 
               {/* Synonym titles searched */}
               <HiringBriefChipSection
                 title="Titles Searched"
                 items={parsedRole.synonym_titles}
-                chipClassName="bg-surface-hover text-text-tertiary"
+                mark="+"
+                markClassName="text-text-tertiary"
                 monospace
               />
 
