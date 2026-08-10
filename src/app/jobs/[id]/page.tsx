@@ -23,6 +23,7 @@ import {
   Plus,
   RotateCcw,
   MoreHorizontal,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
@@ -146,6 +147,15 @@ interface HiringBriefChipSectionProps {
   mark?: string;
   labelClassName?: string;
   monospace?: boolean;
+  /** Fold the group behind a disclosure showing its count. For reference
+   *  groups (what the JD said, which titles we searched) the COUNT is the
+   *  useful fact day-to-day; the items matter only when someone goes looking.
+   *  Leaving them all expanded pushed the candidate list below two screens
+   *  of scroll, which is the opposite of what this page is for. */
+  collapsible?: boolean;
+  /** Flow the list into two columns where items are short. A 12-item list of
+   *  four-word requirements wastes most of the panel's width as one column. */
+  twoCol?: boolean;
 }
 
 function HiringBriefChipSection({
@@ -155,39 +165,73 @@ function HiringBriefChipSection({
   mark,
   labelClassName,
   monospace = false,
+  collapsible = false,
+  twoCol = false,
 }: HiringBriefChipSectionProps) {
   const cleanItems = (items ?? []).filter(Boolean);
   if (!cleanItems.length) return null;
 
+  const label = (
+    <span className={cn("text-2xs font-medium uppercase tracking-wide", labelClassName ?? "text-text-tertiary")}>
+      {title}
+    </span>
+  );
+
+  if (collapsible) {
+    return (
+      <details className="group">
+        <summary className="flex items-center gap-1.5 cursor-pointer list-none mb-2 select-none">
+          <ChevronRight className="w-3 h-3 text-text-tertiary transition-transform group-open:rotate-90" />
+          {label}
+          <span className="font-mono tabular-nums text-2xs text-text-tertiary">{cleanItems.length}</span>
+        </summary>
+        <div className="pl-4">{renderList(cleanItems, { mark, markClassName, monospace, twoCol })}</div>
+      </details>
+    );
+  }
+
   return (
     <div>
-      <p className={cn("text-2xs font-medium uppercase tracking-wide mb-2", labelClassName ?? "text-text-tertiary")}>
-        {title}
-      </p>
-      {/* Requirements read VERTICALLY — one per line with a status mark — not as a
-          wrap of identical pills. A pill wall gives every item the same weight, so
-          the eye has nowhere to land and a 12-item brief reads as noise. A marked
-          list is scannable, lets the text breathe at full length, and leaves colour
-          free to mean something (the mark) rather than decorate (the pill). */}
-      <ul className="space-y-0">
-        {cleanItems.map((item) => (
-          <li
-            key={item}
-            className="flex items-baseline gap-2 py-1 border-b border-separator-subtle last:border-0"
-          >
-            <span
-              aria-hidden
-              className={cn("shrink-0 w-3 text-center font-mono text-2xs leading-5", markClassName ?? "text-text-tertiary")}
-            >
-              {mark ?? "·"}
-            </span>
-            <span className={cn("text-xs text-text-secondary", monospace && "font-mono tabular-nums")}>
-              {item}
-            </span>
-          </li>
-        ))}
-      </ul>
+      <p className="mb-2">{label}</p>
+      {renderList(cleanItems, { mark, markClassName, monospace, twoCol })}
     </div>
+  );
+}
+
+/** Requirements read VERTICALLY — one per line with a status mark — not as a
+ *  wrap of identical pills. A pill wall gives every item the same weight, so the
+ *  eye has nowhere to land and a 12-item brief reads as noise. A marked list is
+ *  scannable, lets the text breathe at full length, and leaves colour free to
+ *  mean something (the mark) rather than decorate (the pill). */
+function renderList(
+  items: string[],
+  opts: { mark?: string; markClassName?: string; monospace?: boolean; twoCol?: boolean },
+) {
+  return (
+    <ul className={cn("space-y-0", opts.twoCol && "sm:columns-2 sm:gap-x-8")}>
+      {items.map((item) => (
+        <li
+          key={item}
+          className={cn(
+            "flex items-baseline gap-2 py-1 border-b border-separator-subtle last:border-0",
+            opts.twoCol && "break-inside-avoid",
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "shrink-0 w-3 text-center font-mono text-2xs leading-5",
+              opts.markClassName ?? "text-text-tertiary",
+            )}
+          >
+            {opts.mark ?? "·"}
+          </span>
+          <span className={cn("text-xs text-text-secondary", opts.monospace && "font-mono tabular-nums")}>
+            {item}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1916,6 +1960,7 @@ ${toHtml(job.rawJd)}
               </div>
 
               <HiringBriefChipSection
+                collapsible
                 title="Explicitly Stated"
                 items={parsedRole.explicitly_stated}
                 labelClassName="text-text-tertiary"
@@ -1924,6 +1969,7 @@ ${toHtml(job.rawJd)}
               />
 
               <HiringBriefChipSection
+                collapsible
                 title="Strongly Inferred"
                 items={parsedRole.strongly_inferred}
                 labelClassName="text-text-tertiary"
@@ -1984,6 +2030,7 @@ ${toHtml(job.rawJd)}
               {/* Must-haves — fall back to skills_required for old jobs */}
               <HiringBriefChipSection
                 title="Must-haves"
+                twoCol
                 items={mustHaves}
                 mark="●"
                 markClassName="text-accent"
@@ -2077,6 +2124,7 @@ ${toHtml(job.rawJd)}
 
               <HiringBriefChipSection
                 title="Search Expansion"
+                collapsible
                 items={parsedRole.search_expansion}
                 labelClassName="text-text-tertiary"
                 mark="+"
@@ -2086,6 +2134,8 @@ ${toHtml(job.rawJd)}
               {/* Synonym titles searched */}
               <HiringBriefChipSection
                 title="Titles Searched"
+                collapsible
+                twoCol
                 items={parsedRole.synonym_titles}
                 mark="+"
                 markClassName="text-text-tertiary"
