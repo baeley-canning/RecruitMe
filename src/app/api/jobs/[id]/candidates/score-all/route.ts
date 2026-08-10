@@ -102,27 +102,32 @@ export async function POST(
     return NextResponse.json({ scored: 0, total: 0, message: onlyUnscored ? "Nothing to score." : "No scoreable candidates." });
   }
 
-  // Conditional cooldown stamp — only one score-all run can claim the job at
-  // a time. Two recruiters who hit the button simultaneously both pass the
-  // process-local rate limiter; without this guard they'd both stamp
-  // lastScoredAt and double-bill the AI. updateMany returns count=0 when the
-  // claim is already held; we bail with 429.
-  const SCORE_ALL_COOLDOWN_MS = 60_000;
-  const claim = await prisma.job.updateMany({
-    where: {
-      id,
-      OR: [
-        { lastScoredAt: null },
-        { lastScoredAt: { lt: new Date(Date.now() - SCORE_ALL_COOLDOWN_MS) } },
-      ],
-    },
-    data: { lastScoredAt: new Date() },
+  // In-flight claim. This used to be a 60s cooldown stamped onto lastScoredAt,
+  // which was wrong in BOTH directions: a run that finished quickly (everything
+  // a cache hit) still reported "already running" for the rest of the minute —
+  // the reported bug — while a run LONGER than a minute stopped being protected
+  // at all, which is the double-billing it existed to prevent.
+  //
+  // A Setting row keyed by job id is a real claim: `create` is atomic on the
+  // primary key, so two simultaneous clicks can't both win, and it is released
+  // in a finally when the run actually ends. A stale claim (crashed process,
+  // killed container) is reaped after STALE_CLAIM_MS so a job can't wedge
+  // forever.
+  const claimKey = `score-all:inflight:${id}`;
+  const STALE_CLAIM_MS = 30 * 60_000;
+  await prisma.setting.deleteMany({
+    where: { key: claimKey, updatedAt: { lt: new Date(Date.now() - STALE_CLAIM_MS) } },
   });
-  if (claim.count === 0) {
+  try {
+    await prisma.setting.create({ data: { key: claimKey, value: new Date().toISOString() } });
+  } catch {
     return NextResponse.json({
-      error: "Score-all is already running for this job. Wait a minute and try again.",
+      error: "Score-all is already running for this job. Wait for it to finish.",
     }, { status: 429 });
   }
+  const releaseClaim = async () => {
+    await prisma.setting.deleteMany({ where: { key: claimKey } }).catch(() => {});
+  };
 
   const candidates = await prisma.candidate.findMany({
     where: {
@@ -148,11 +153,13 @@ export async function POST(
   });
 
   if (candidates.length === 0) {
+    await releaseClaim();
     return NextResponse.json({ scored: 0, total: 0 });
   }
 
   const parsedRole = safeParseJson<ParsedRole | null>(job.parsedRole, null);
   if (!parsedRole) {
+    await releaseClaim();
     return NextResponse.json({ error: "Job parse data is invalid. Parse the job description again." }, { status: 400 });
   }
   // Fall back to the band the JD parser inferred. Most jobs here carry no
@@ -194,6 +201,9 @@ export async function POST(
   // Stream progress as newline-delimited JSON so the client can show a live counter.
   const stream = new ReadableStream({
     async start(controller) {
+      // Any throw below must still release the claim — otherwise a mid-run
+      // failure wedges scoring for this job until the stale-claim reaper runs.
+      try {
       const send = (data: object) =>
         controller.enqueue(encoder.encode(JSON.stringify(data) + "\n"));
 
@@ -395,7 +405,17 @@ export async function POST(
         finalMsg.message = "AI scoring unavailable (Claude out of credits)";
       }
       send(finalMsg);
+      // Scoring is done: stamp completion (lastScoredAt drives the
+      // "re-score recommended" staleness signal, so it must mean FINISHED, not
+      // "someone pressed the button") and release the claim.
+      await prisma.job.update({ where: { id }, data: { lastScoredAt: new Date() } }).catch(() => {});
+      await releaseClaim();
       controller.close();
+      } catch (err) {
+        await releaseClaim();
+        reportError(err, { route: "score-all:stream", jobId: id, orgId: auth.orgId });
+        try { controller.close(); } catch { /* already closed */ }
+      }
 
       console.log(`[score-all] scored=${scored} cached=${cached} queued=${queued} of ${total}`);
       void recordUsage(auth.orgId, auth.userId, "score_all", { jobId: id, scored, cached });

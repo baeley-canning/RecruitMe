@@ -12,8 +12,12 @@ const dbMocks = vi.hoisted(() => ({
     },
     job: {
       update: vi.fn().mockResolvedValue({}),
-      // Conditional cooldown claim — count:1 lets the run proceed.
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    // In-flight claim: `create` succeeding == the claim was won.
+    setting: {
+      create: vi.fn().mockResolvedValue({}),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     usageEvent: {
       count: vi.fn().mockResolvedValue(0),
@@ -270,5 +274,49 @@ describe("score-all route (batched / M1)", () => {
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/parse data is invalid/i);
     expect(aiMocks.scoreCandidatesBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("score-all in-flight claim", () => {
+  beforeEach(() => {
+    sessionMocks.requireJobAccess.mockResolvedValue({ job: makeJob("j"), error: null });
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([
+      { id: "c", profileText: PROFILE_TEXT, profileTextHash: null, matchScore: null, scoreBreakdown: null, location: "Wellington" },
+    ]);
+    dbMocks.prisma.setting.create.mockResolvedValue({});
+    dbMocks.prisma.setting.deleteMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("claims the job by id when a run starts", async () => {
+    // The reported bug: scoring finished instantly (all cache hits) and the next
+    // click still said "already running", because the old guard was a 60s
+    // cooldown stamp rather than a claim tied to an actual run.
+    const res = await post("j");
+    await res.text().catch(() => "");
+    expect(dbMocks.prisma.setting.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ key: "score-all:inflight:j" }),
+      }),
+    );
+  });
+
+  it("refuses a second run while one is genuinely in flight", async () => {
+    dbMocks.prisma.setting.create.mockRejectedValueOnce(new Error("unique constraint"));
+    const res = await post("j");
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual(
+      expect.objectContaining({ error: expect.stringMatching(/already running/i) }),
+    );
+  });
+
+  it("releases the claim instead of leaking it when the job has nothing to score", async () => {
+    dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
+    const res = await post("j");
+    expect(res.status).toBe(200);
+    const released = dbMocks.prisma.setting.deleteMany.mock.calls.some((c: unknown[]) => {
+      const w = (c[0] as { where?: Record<string, unknown> })?.where ?? {};
+      return w.key === "score-all:inflight:j" && !("updatedAt" in w);
+    });
+    expect(released).toBe(true);
   });
 });
