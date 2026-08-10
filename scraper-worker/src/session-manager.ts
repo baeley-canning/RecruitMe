@@ -197,7 +197,14 @@ export async function warmSeekAccount(page: Page): Promise<boolean> {
   }
   // Success = settled on an authed app page (dashboard/talentsearch), not still
   // stuck in the account-select/oauth shuffle and not bounced to login.
-  return settled.test(page.url());
+  const finalUrl = page.url();
+  const ok = settled.test(finalUrl);
+  // Log the FINAL url on failure. A false negative here is expensive: it is read
+  // as "session expired" and triggers a doomed re-auth, so when the owner says
+  // the box is plainly logged in and this still fails, the landing URL is the
+  // only thing that settles it.
+  if (!ok) log.warn(`seek: warm did not settle — final url: ${finalUrl}`);
+  return ok;
 }
 
 export async function isSessionValid(platform: string, page: Page): Promise<boolean> {
