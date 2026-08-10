@@ -28,6 +28,14 @@ export async function scrapeSeekProfile(url: string, page: Page): Promise<SeekPr
     throw new RateLimitError("seek_challenge: session expired — re-authentication required");
   }
 
+  // SEEK Talent is a SPA: domcontentloaded fires long before the profile body
+  // arrives over XHR, and the old code extracted immediately after a ~1-2s
+  // pause. That is why every scrape threw "profile text too short" while the
+  // session was perfectly valid. Wait for real content to render, then settle.
+  await page
+    .waitForFunction(() => (document.body?.innerText?.length ?? 0) > 400, undefined, { timeout: 20_000 })
+    .catch(() => {}); // fall through to the extraction guard below
+
   const pageHeight = await page.evaluate(() => document.body.scrollHeight);
   await humanScroll(page, pageHeight * 0.4);
   await randomDelay(500, 1000);
@@ -59,7 +67,12 @@ export async function scrapeSeekProfile(url: string, page: Page): Promise<SeekPr
       getAllText('[data-testid="skills"] li, .skill-item'),
     ].filter(Boolean).join("\n\n");
 
-    const mainText = (document.querySelector("main, [role='main']") as HTMLElement)?.innerText ?? "";
+    // Fallback chain, widest last. The testid selectors are approximations of a
+    // layout that drifts, and `main`/[role=main] is not guaranteed to exist —
+    // when it didn't, this returned "" and the caller threw, discarding a
+    // perfectly good page. Body text is noisier but always present.
+    const mainEl = document.querySelector("main, [role='main'], #app, #root") as HTMLElement | null;
+    const mainText = (mainEl?.innerText ?? "").trim() || (document.body?.innerText ?? "").trim();
 
     // Look for a LinkedIn URL in the profile.
     const allLinks = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];
@@ -77,7 +90,12 @@ export async function scrapeSeekProfile(url: string, page: Page): Promise<SeekPr
   });
 
   if (!extracted.profileText || extracted.profileText.length < 50) {
-    throw new Error(`SEEK profile text too short — may require different selectors`);
+    // Report the actual size and the landing URL — "may require different
+    // selectors" told us nothing about whether the page was empty, a login
+    // wall, or simply unrendered, and cost a day of chasing the wrong cause.
+    throw new Error(
+      `SEEK profile text too short (${extracted.profileText?.length ?? 0} chars) at ${page.url()} — page may not have rendered`,
+    );
   }
 
   return {
