@@ -166,10 +166,11 @@ export function ScoreBreakdownPanel({
 
   return (
     <div className="px-4 pb-2">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-xs text-text-secondary leading-relaxed italic flex-1">
-          &ldquo;{displaySummary}&rdquo;
-        </p>
+      {/* The summary itself is rendered on the candidate row now, next to the
+          score, so it is NOT repeated here — printing it in both places made
+          every card say the same sentence twice. This strip keeps the "Why?"
+          expander, which is the part that reveals something new. */}
+      <div className="flex items-start justify-end gap-2">
         {showToggle && (
           <button
             onClick={() => setShowReasoning((v) => !v)}
