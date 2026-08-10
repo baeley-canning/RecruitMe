@@ -376,11 +376,23 @@ let authBreaker = createBreakerState();
 // confirmed valid keeps a regularly-used session alive on its own. Throttled by
 // the file's age so we don't churn the encrypted file every job.
 const SESSION_REFRESH_MS = 3 * 60 * 60 * 1000; // re-save at most every 3h
+/**
+ * When this process started. Any session file older than this may be STALER
+ * than the live browser context — e.g. the owner logged in interactively via
+ * the box's live view, which updates the context but never touches disk
+ * (saveSession only runs after a re-AUTH, and the rolling refresh is throttled
+ * to 3h). That gap cost a working SEEK login: a restart to pick up a build
+ * loaded the older file and bounced straight to /login, and the owner had to
+ * log in again. Persisting once per process on the first confirmed-valid
+ * session closes it.
+ */
+const PROCESS_START_MS = Date.now();
 async function rollSessionForward(platform: string, context: BrowserContext): Promise<void> {
   try {
     const p = sessionPath(platform);
     const ageMs = existsSync(p) ? Date.now() - statSync(p).mtimeMs : Infinity;
-    if (ageMs > SESSION_REFRESH_MS) {
+    const predatesThisProcess = existsSync(p) ? statSync(p).mtimeMs < PROCESS_START_MS : true;
+    if (ageMs > SESSION_REFRESH_MS || predatesThisProcess) {
       await saveSession(platform, context);
       log.info(`${platform}: session re-saved (rolling refresh; was ~${Math.round(ageMs / 3.6e6)}h old)`);
     }
