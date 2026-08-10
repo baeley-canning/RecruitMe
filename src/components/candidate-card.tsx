@@ -1303,8 +1303,11 @@ export const CandidateCard = memo(function CandidateCard({
           )}
         </div>
 
-        {/* Right column — AI quality signals + score */}
-        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+        {/* Right column — AI quality signals. These WRAP rather than stack:
+            one pill per line built a 5-deep column that set the row height and
+            reproduced the same pill-wall problem the hiring brief had. Capped
+            width so they form a compact block instead of crowding the name. */}
+        <div className="flex flex-wrap justify-end items-start gap-1.5 flex-shrink-0 max-w-[15rem]">
               {/* Single data-quality badge replaces the previous trio (Minimal /
                   Snippet / Provisional) — shows the worst-case warning for this
                   candidate so the recruiter sees one clear signal, not clutter. */}
