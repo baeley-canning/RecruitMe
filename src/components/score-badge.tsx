@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { scoreTier, scoreTierColor, scoreTierLabel } from "@/lib/score-utils";
+import { scoreTier, scoreTierColor, scoreTierLabel, scoreTierTextColor } from "@/lib/score-utils";
 
 interface ScoreBadgeProps {
   score: number | null | undefined;
@@ -15,6 +15,9 @@ interface ScoreBadgeProps {
    *  default — only worth the vertical space where the score is the primary
    *  thing on the row. */
   band?: boolean;
+  /** Drop the pill fill and padding — the digits alone carry the tier. Use
+   *  where the score is the row's anchor rather than one badge among many. */
+  bare?: boolean;
 }
 
 // Score tier colours are now driven by the canonical scoreTier / scoreTierColor
@@ -22,20 +25,25 @@ interface ScoreBadgeProps {
 // truth (80/65/50) before consolidation — those breakpoints are the ones
 // score-utils.ts adopted, so this component's visuals are unchanged.
 
-export function ScoreBadge({ score, size = "md", className, estimate = false, band = false }: ScoreBadgeProps) {
+export function ScoreBadge({
+  score, size = "md", className, estimate = false, band = false, bare = false,
+}: ScoreBadgeProps) {
   // Sizing — kept dense per design system. Numbers always use mono +
   // tabular-nums so digits line up across rows.
-  const sizeClasses = {
-    sm: "text-xs px-1.5 py-0.5 rounded-sm",
-    md: "text-sm px-2 py-0.5 rounded",
-    lg: "text-md px-2.5 py-1 rounded",
-  };
+  const sizeClasses = bare
+    ? { sm: "text-sm", md: "text-md", lg: "text-xl" }
+    : {
+        sm: "text-xs px-1.5 py-0.5 rounded-sm",
+        md: "text-sm px-2 py-0.5 rounded",
+        lg: "text-md px-2.5 py-1 rounded",
+      };
 
   if (score == null) {
     return (
       <span
         className={cn(
-          "inline-flex items-center font-mono tabular-nums bg-surface-hover text-text-tertiary",
+          "inline-flex items-center font-mono tabular-nums text-text-tertiary",
+          !bare && "bg-surface-hover",
           sizeClasses[size],
           className
         )}
@@ -50,9 +58,11 @@ export function ScoreBadge({ score, size = "md", className, estimate = false, ba
   return (
     <span
       className={cn(
-        band ? "inline-flex flex-col items-center leading-none" : "inline-flex items-baseline gap-0.5",
+        band
+          ? cn("flex flex-col leading-none", bare ? "items-end" : "items-center")
+          : "inline-flex items-baseline gap-0.5",
         "font-medium",
-        scoreTierColor(tier),
+        bare ? scoreTierTextColor(tier) : scoreTierColor(tier),
         estimate && "opacity-80",
         sizeClasses[size],
         className

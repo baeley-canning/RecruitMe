@@ -1172,8 +1172,81 @@ export const CandidateCard = memo(function CandidateCard({
 
   return (
     <div className="bg-surface-raised border border-separator rounded-md hover:bg-surface-hover transition-colors">
-      {/* Header row */}
-      <div className="flex items-start gap-3 px-4 pt-4">
+      {/* Header row — score rail | identity | actions.
+          The score used to sit on the right as one badge among five, which
+          buried the single number the recruiter is actually scanning. It now
+          anchors the row: a large bare tabular figure with its tier word under
+          it, so a column of candidates can be read down the left edge. */}
+      <div className="grid grid-cols-[3.25rem_1fr_auto] items-start gap-3.5 px-4 pt-4">
+        <div className="flex justify-end pt-0.5">
+          <button
+            ref={scoreBadgeRef}
+            type="button"
+            className="relative inline-flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+            onMouseEnter={() => {
+              if (scoreBadgeRef.current) {
+                const rect = scoreBadgeRef.current.getBoundingClientRect();
+                setRadarPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+              }
+              setShowRadar(true);
+            }}
+            onMouseLeave={() => setShowRadar(false)}
+            onFocus={() => {
+              if (scoreBadgeRef.current) {
+                const rect = scoreBadgeRef.current.getBoundingClientRect();
+                setRadarPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+              }
+              setShowRadar(true);
+            }}
+            onBlur={() => setShowRadar(false)}
+            onClick={() => setShowRadar((s) => !s)}
+            aria-expanded={showRadar}
+            aria-haspopup="dialog"
+            aria-label={`Match score ${candidate.matchScore ?? "pending"}. Click to view score breakdown.`}
+          >
+            {/* band: this is the one place the score IS the decision, so
+                it states the verdict word rather than leaving the
+                recruiter to remember where 80/60/40 fall. */}
+            <ScoreBadge score={candidate.matchScore} size="lg" band bare />
+            {/* Captured-but-not-yet-scored — Stage 1 of the capture
+                pipeline lands profileText immediately; Stage 2 (scoring)
+                can take 5–30s. Show a pulse so the recruiter sees "we
+                have the profile, score is coming" instead of just an
+                empty score badge. */}
+            {candidate.matchScore == null && candidate.profileText && candidate.profileCapturedAt && (
+              Date.now() - new Date(candidate.profileCapturedAt).getTime() < 5 * 60_000
+            ) && (
+              <span
+                title="Profile captured — AI scoring in progress"
+                className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-accent rounded-full border border-surface-raised animate-pulse"
+              />
+            )}
+            {/* Status dot: profile updated since last score */}
+            {candidate.matchScore != null && !candidate.profileTextHash && candidate.profileText && (
+              <span
+                title="Profile updated since last score — re-score recommended"
+                className="absolute -top-1 -right-1 w-2 h-2 bg-warning rounded-full border border-surface-raised"
+              />
+            )}
+            {/* Status dot: provisional score — no full profile captured yet */}
+            {candidate.matchScore != null && !hasFetchedProfile && (
+              <span
+                title="Provisional score — based on a LinkedIn snippet, not a full profile. Fetch the full profile for a reliable score."
+                className="absolute -top-1 -left-1 w-2 h-2 bg-warning rounded-full border border-surface-raised"
+              />
+            )}
+          </button>
+          {showRadar && radarDimensions && (
+            <div
+              style={{ position: "fixed", top: radarPos.top, right: radarPos.right, zIndex: 9999 }}
+              onMouseEnter={() => setShowRadar(true)}
+              onMouseLeave={() => setShowRadar(false)}
+            >
+              <ScoreRadar dimensions={radarDimensions} />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0">
         {/* Identity — avatar, name, headline, location. Consistent with library / detail page. */}
         <CandidateIdentityBlock
           name={candidate.name}
@@ -1217,8 +1290,18 @@ export const CandidateCard = memo(function CandidateCard({
           size="sm"
           showScore={false}
           scoreFormat="tier"
-          className="flex-1 min-w-0"
+          className="min-w-0"
         />
+          {/* Verdict — the one-line judgement, stated ON the row instead of
+              hidden behind the "Why?" toggle. A recruiter scanning 200 rows
+              needs the reason next to the number, not one click away. Clamped
+              to two lines so a long summary can't set the row height. */}
+          {displaySummary && (
+            <p className="mt-1.5 text-xs text-text-secondary leading-relaxed line-clamp-2">
+              {displaySummary}
+            </p>
+          )}
+        </div>
 
         {/* Right column — AI quality signals + score */}
         <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
@@ -1283,72 +1366,6 @@ export const CandidateCard = memo(function CandidateCard({
                     which model produced the persisted scoreBreakdown. */}
                 <ProvenancePill source={breakdown?.scoredBy} context="match" />
                 {/* Score badge with radar tooltip on hover/focus */}
-                <button
-                  ref={scoreBadgeRef}
-                  type="button"
-                  className="relative inline-flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
-                  onMouseEnter={() => {
-                    if (scoreBadgeRef.current) {
-                      const rect = scoreBadgeRef.current.getBoundingClientRect();
-                      setRadarPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
-                    }
-                    setShowRadar(true);
-                  }}
-                  onMouseLeave={() => setShowRadar(false)}
-                  onFocus={() => {
-                    if (scoreBadgeRef.current) {
-                      const rect = scoreBadgeRef.current.getBoundingClientRect();
-                      setRadarPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
-                    }
-                    setShowRadar(true);
-                  }}
-                  onBlur={() => setShowRadar(false)}
-                  onClick={() => setShowRadar((s) => !s)}
-                  aria-expanded={showRadar}
-                  aria-haspopup="dialog"
-                  aria-label={`Match score ${candidate.matchScore ?? "pending"}. Click to view score breakdown.`}
-                >
-                  {/* band: this is the one place the score IS the decision, so
-                      it states the verdict word rather than leaving the
-                      recruiter to remember where 80/60/40 fall. */}
-                  <ScoreBadge score={candidate.matchScore} size="sm" band />
-                  {/* Captured-but-not-yet-scored — Stage 1 of the capture
-                      pipeline lands profileText immediately; Stage 2 (scoring)
-                      can take 5–30s. Show a pulse so the recruiter sees "we
-                      have the profile, score is coming" instead of just an
-                      empty score badge. */}
-                  {candidate.matchScore == null && candidate.profileText && candidate.profileCapturedAt && (
-                    Date.now() - new Date(candidate.profileCapturedAt).getTime() < 5 * 60_000
-                  ) && (
-                    <span
-                      title="Profile captured — AI scoring in progress"
-                      className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-accent rounded-full border border-surface-raised animate-pulse"
-                    />
-                  )}
-                  {/* Status dot: profile updated since last score */}
-                  {candidate.matchScore != null && !candidate.profileTextHash && candidate.profileText && (
-                    <span
-                      title="Profile updated since last score — re-score recommended"
-                      className="absolute -top-1 -right-1 w-2 h-2 bg-warning rounded-full border border-surface-raised"
-                    />
-                  )}
-                  {/* Status dot: provisional score — no full profile captured yet */}
-                  {candidate.matchScore != null && !hasFetchedProfile && (
-                    <span
-                      title="Provisional score — based on a LinkedIn snippet, not a full profile. Fetch the full profile for a reliable score."
-                      className="absolute -top-1 -left-1 w-2 h-2 bg-warning rounded-full border border-surface-raised"
-                    />
-                  )}
-                </button>
-                {showRadar && radarDimensions && (
-                  <div
-                    style={{ position: "fixed", top: radarPos.top, right: radarPos.right, zIndex: 9999 }}
-                    onMouseEnter={() => setShowRadar(true)}
-                    onMouseLeave={() => setShowRadar(false)}
-                  >
-                    <ScoreRadar dimensions={radarDimensions} />
-                  </div>
-                )}
                 {/* Status pill — bypass the legacy slate/blue util mapping and
                     use the token-based mapping defined at the top of this file. */}
                 <Badge className={statusPillTokens(candidate.status)}>

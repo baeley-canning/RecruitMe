@@ -165,6 +165,18 @@ export function scoreTierColor(tier: ScoreTier): string {
   }
 }
 
+/** Tier colour WITHOUT the pill fill — for a score rendered as a large bare
+ *  number rather than a badge. At 22px the tinted pill reads as a button and
+ *  competes with the real actions on the row; the digits alone carry the tier. */
+export function scoreTierTextColor(tier: ScoreTier): string {
+  switch (tier) {
+    case "strong": return "text-success";
+    case "fair":   return "text-accent";
+    case "weak":   return "text-warning";
+    case "poor":   return "text-text-secondary";
+  }
+}
+
 export function scoreTierLabel(tier: ScoreTier): string {
   switch (tier) {
     case "strong": return "Strong";
