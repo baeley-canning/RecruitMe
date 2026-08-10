@@ -77,6 +77,24 @@ export interface IngestResult {
   candidateAction: "found_existing" | "updated_existing" | "created_new";
 }
 
+/**
+ * Is this a plausible person's name, rather than site chrome?
+ *
+ * A scraper that misses its selector falls back to the page title or first
+ * heading, which is branding — "SEEK", "LinkedIn", "Sign in". Writing that over
+ * a real name is silent data loss of exactly the kind the profileText merge
+ * policy exists to prevent, so the same care applies to the name.
+ */
+export function isUsableCandidateName(name: string, platform: ScraperPlatform): boolean {
+  const n = name.trim();
+  if (n.length < 3) return false;
+  // The platform's own branding, alone, is never a candidate's name.
+  if (new RegExp(`^(seek|linkedin|jobadder)$`, "i").test(n)) return false;
+  if (new RegExp(`^${platform}$`, "i").test(n)) return false;
+  if (/^(sign in|log in|login|profile|view profile|candidate|home|dashboard|talent search)$/i.test(n)) return false;
+  return looksLikeCapturedName(n);
+}
+
 /** Resolve the Tier 1 merge key for a scrape result. */
 function resolveKey(args: IngestArgs): IdentityMergeKey | null {
   return identityMergeKey({
@@ -391,7 +409,20 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
         `(${textDecision.incomingChars} chars incoming vs ${textDecision.existingChars} stored)`,
       );
     }
-    if (args.name) updateData.name = args.name;
+    // NEVER overwrite a real stored name with page chrome. The SEEK profile
+    // scraper falls back to the document <title> / first h1, which on that app
+    // yields "SEEK" — so the first backfilled candidate came back literally
+    // named "SEEK", and left unchecked the whole run would have renamed every
+    // person it touched. The LinkedIn path already screens names through
+    // looksLikeCapturedName; this applies the same floor to every platform, and
+    // additionally refuses anything matching the platform's own branding.
+    if (args.name && isUsableCandidateName(args.name, args.platform)) {
+      updateData.name = args.name;
+    } else if (args.name) {
+      console.warn(
+        `[ingest] rejected junk name "${args.name}" for candidate ${existing.id} (${args.platform}) — keeping stored name`,
+      );
+    }
     if (args.headline) updateData.headline = args.headline;
     if (args.location) updateData.location = args.location;
     // Write the SEEK URL onto the existing Candidate row (not just the identity)
