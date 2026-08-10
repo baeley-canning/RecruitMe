@@ -1308,7 +1308,10 @@ export const CandidateCard = memo(function CandidateCard({
                   aria-haspopup="dialog"
                   aria-label={`Match score ${candidate.matchScore ?? "pending"}. Click to view score breakdown.`}
                 >
-                  <ScoreBadge score={candidate.matchScore} size="sm" />
+                  {/* band: this is the one place the score IS the decision, so
+                      it states the verdict word rather than leaving the
+                      recruiter to remember where 80/60/40 fall. */}
+                  <ScoreBadge score={candidate.matchScore} size="sm" band />
                   {/* Captured-but-not-yet-scored — Stage 1 of the capture
                       pipeline lands profileText immediately; Stage 2 (scoring)
                       can take 5–30s. Show a pulse so the recruiter sees "we
