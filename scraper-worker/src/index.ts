@@ -15,6 +15,7 @@
 
 import { chromium } from "patchright";
 import { randomDelay } from "./humanizer.js";
+import { msUntilNextJobAllowed } from "./job-pacing.js";
 import { ensureSession, openContextWithSavedSession, discardPlatformSession } from "./session-manager.js";
 import { scrapeLinkedInProfile, RateLimitError } from "./scrapers/linkedin.js";
 import { scrapeSeekProfile } from "./scrapers/seek.js";
@@ -37,6 +38,15 @@ const SCRAPER_SECRET = process.env.SCRAPER_SECRET ?? "";
 // `node scripts/create-scraper-token.mjs <label> <orgId>` on the app side.
 const SCRAPER_API_TOKEN = (process.env.SCRAPER_API_TOKEN ?? "").trim();
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS ?? "15000", 10);
+/**
+ * Minimum gap between JOB STARTS, whatever the outcome. Protects the account:
+ * a fast-failing job must not let the worker hammer a platform. Override with
+ * MIN_JOB_INTERVAL_MS; 0 disables (tests).
+ */
+const MIN_JOB_INTERVAL_MS = parseInt(process.env.MIN_JOB_INTERVAL_MS ?? "30000", 10);
+let lastJobStartedAt = 0;
+
+
 
 /** Auth header for every call to the app: prefer the per-org bearer token
  *  (tenant box), else the shared secret (operator box). */
@@ -586,6 +596,15 @@ async function main() {
       } else {
         log.info(`claimed ${jobs.length} job(s)`);
         for (const job of jobs) {
+          // Pace by job START, not by the pause after it. A job that fails
+          // instantly (bad URL, open circuit) returns in ~4s, so a trailing
+          // 2-6s pause let the loop cycle every ~7s — roughly six times the
+          // intended rate at the platform. That is how a routing bug turned a
+          // paced queue into a burst and got the account flagged. Pacing from
+          // the start makes the floor hold no matter how the job ends.
+          const waitMs = msUntilNextJobAllowed(lastJobStartedAt, Date.now(), MIN_JOB_INTERVAL_MS);
+          if (waitMs > 0) await randomDelay(waitMs, waitMs + 4000);
+          lastJobStartedAt = Date.now();
           try {
             await processJob(job, browser);
           } catch (err) {
@@ -600,7 +619,9 @@ async function main() {
               throw err;
             }
           }
-          // Human-like pause between jobs.
+          // Human-like pause between jobs. NOTE: this alone is not enough —
+          // see the start-paced floor above. A pause AFTER the work only paces
+          // the loop when the work itself is slow.
           await randomDelay(2000, 6000);
         }
       }
