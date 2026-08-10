@@ -22,6 +22,8 @@ import { isScraperEnabled } from "@/lib/feature-flags";
 import { authenticateScraper, resolveScraperOrgId } from "@/lib/scraper-auth";
 import { ingestScraperResult } from "@/lib/scraper-ingestion";
 import { reportError } from "@/lib/error-reporting";
+import { enqueueScrapeJob } from "@/lib/scrape-queue";
+import { planProfileFetches, type FetchCandidate } from "@/lib/fetch-planner";
 import { detectWatchHitsForRun } from "@/lib/watched-search";
 import {
   attachScraperHits,
@@ -33,6 +35,20 @@ import {
 } from "@/lib/search-run";
 
 const MAX_RETRIES = 3;
+
+/**
+ * How many SEEK profiles to deep-scrape per harvested search.
+ *
+ * ON by default — a SEEK candidate with no profile body is close to useless for
+ * scoring, so this shouldn't need switching on. The bound exists because the box
+ * fetches sequentially at ~30–40s a profile: 25 is roughly fifteen minutes of
+ * box time per search, which leaves the queue responsive for Pulse checks and
+ * on-demand fetches. Raise SEEK_DEEP_SCRAPE_PER_SEARCH if the box is idle.
+ */
+const SEEK_DEEP_SCRAPE_PER_SEARCH = Math.max(
+  0,
+  Number(process.env.SEEK_DEEP_SCRAPE_PER_SEARCH ?? 25) || 0,
+);
 
 const PatchSchema = z.object({
   status: z.enum(["completed", "failed"]),
@@ -189,39 +205,78 @@ export async function PATCH(
     });
 
     // SEEK Talent Search: turn the harvested result cards into persistent
-    // snippet candidates (name/headline/location/seekUrl — the FREE card data;
-    // no profile is opened, so NO SEEK credits are spent). LinkedIn doesn't need
-    // this (it deep-scrapes the dispatched profile children), but SEEK
-    // deliberately skips deep scrapes for credit safety — so without this its
-    // harvests never become candidates and never surface in search (verified:
-    // 7 completed SEEK searches, 0 candidates). Runs regardless of searchRunId
-    // so even legacy /search runs populate the pool. ingestScraperResult dedups
-    // by seekUrl + reuses identity resolution; the thin-profile reject is
-    // LinkedIn-only so it doesn't drop these. Per-card try/catch so one
-    // malformed card can't fail the whole job.
+    // candidates (name/headline/location/seekUrl from the card), then queue the
+    // profiles themselves for a deep scrape.
+    //
+    // This used to stop at the card "for credit safety". That was wrong: opening
+    // a SEEK profile does NOT cost a credit — scrapeSeekProfile only navigates,
+    // scrolls and reads the DOM; it never clicks a reveal/unlock/download. The
+    // cost in SEEK's model sits behind contact details, which we never touch.
+    // The consequence of that mistaken premise was severe and entirely
+    // self-inflicted: every SEEK candidate was stored with profileText "" and
+    // then scored from a ~150-char card, so classifyDataQuality called it
+    // "minimal", and a recruiter saw 40% WEAK / "not enough info" on someone
+    // whose profile actually lists three or four roles with skills.
+    //
+    // Runs regardless of searchRunId so even legacy /search runs populate the
+    // pool. ingestScraperResult dedups by seekUrl + reuses identity resolution.
+    // Per-card try/catch so one malformed card can't fail the whole job.
     if (job.platform === "seek" && cards.length > 0) {
-      let ingested = 0;
+      const ingestedCandidates: FetchCandidate[] = [];
+      // candidateId → the URL to deep-scrape. Needed because the planner returns
+      // ids, and a candidate can only be re-found by the card it came from.
+      const urlByCandidateId = new Map<string, string>();
       for (const card of cards) {
         if (!card.url) continue;
         try {
-          await ingestScraperResult({
+          const res = await ingestScraperResult({
             orgId: job.orgId,
             platform: "seek",
             profileUrl: card.url,
-            // No profile is opened, so there's no body text — the upsert turns
-            // "" into null profileText. The candidate stays findable via FTS on
-            // name/headline/location (headline = the SEEK card's role line).
+            // Card data only at this point — the deep scrape below fills in the
+            // body text. The candidate is findable via FTS on
+            // name/headline/location in the meantime.
             profileText: "",
             name: card.name ?? null,
             headline: card.headline ?? null,
             location: card.location ?? null,
           });
-          ingested++;
+          ingestedCandidates.push({
+            id: res.candidateId,
+            platform: "seek",
+            profileChars: 0,
+            matchScore: null,
+            fetchPriorityScore: null,
+            status: "new",
+            hasProfileUrl: true,
+          });
+          urlByCandidateId.set(res.candidateId, card.url);
         } catch (err) {
           reportError(err, { route: "scraper/jobs:seek-card-ingest", jobId: id, orgId: job.orgId });
         }
       }
-      console.log(`[scraper] seek-search ${id}: ingested ${ingested}/${cards.length} snippet candidate(s)`);
+
+      // Credits aren't the constraint — the box is. It fetches sequentially at
+      // ~30–40s a profile, so one broad search could otherwise monopolise the
+      // queue for a day. Bound each harvest and let the planner spend that
+      // allowance on the candidates most likely to change a decision.
+      const plan = planProfileFetches(ingestedCandidates, { budget: SEEK_DEEP_SCRAPE_PER_SEARCH });
+      let queued = 0;
+      for (const candidateId of plan.selected) {
+        const profileUrl = urlByCandidateId.get(candidateId);
+        if (!profileUrl) continue;
+        const created = await enqueueScrapeJob({
+          orgId: job.orgId,
+          platform: "seek",
+          profileUrl,
+          candidateId,
+        });
+        if (created) queued++;
+      }
+      console.log(
+        `[scraper] seek-search ${id}: ingested ${ingestedCandidates.length}/${cards.length} card(s), ` +
+        `queued ${queued} profile fetch(es), ${plan.skippedForBudget} deferred`
+      );
     }
 
     // Phase K: attach the harvested cards as result rows (with name/headline/

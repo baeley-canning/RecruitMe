@@ -13,6 +13,11 @@ const dbMocks = vi.hoisted(() => ({
     scrapeJob: {
       findUnique: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
+      // enqueueScrapeJob (real, not mocked) dedups via findFirst then creates.
+      // Without these the queue call swallowed its own TypeError and returned
+      // null, so a broken enqueue would have looked like a passing test.
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "queued" }),
     },
     candidate: {
       findUnique: vi.fn(),
@@ -72,6 +77,16 @@ describe("PATCH /api/scraper/jobs/[id] — kind=search SEEK card ingestion", () 
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SCRAPER_SECRET = SECRET;
+    dbMocks.prisma.scrapeJob.findFirst.mockResolvedValue(null);
+    dbMocks.prisma.scrapeJob.create.mockResolvedValue({ id: "queued" });
+    // The route reads .candidateId off the ingest result to queue the deep scrape.
+    let n = 0;
+    ingestionMocks.ingestScraperResult.mockImplementation(async () => ({
+      candidateId: `cand-${++n}`,
+      identityId: `ident-${n}`,
+      identityAction: "created_new",
+      candidateAction: "created_new",
+    }));
   });
 
   const cards = [
@@ -96,6 +111,60 @@ describe("PATCH /api/scraper/jobs/[id] — kind=search SEEK card ingestion", () 
         location: "Wellington, NZ",
       }),
     );
+  });
+
+  it("queues a deep profile scrape for each ingested SEEK card", async () => {
+    // The whole point: a SEEK card is ~150 chars, which scores as "minimal".
+    // Opening the profile is free, so the body text must actually be fetched.
+    dbMocks.prisma.scrapeJob.findUnique.mockResolvedValue(searchJob());
+    dbMocks.prisma.scrapeJob.findFirst.mockResolvedValue(null); // nothing in flight
+    dbMocks.prisma.scrapeJob.create.mockResolvedValue({ id: "queued-1" });
+
+    const res = await PATCH(
+      searchReq("job-search-1", { status: "completed", result: { urls: cards.map((c) => c.url), cards } }),
+      { params: Promise.resolve({ id: "job-search-1" }) },
+    );
+    expect(res.status).toBe(200);
+
+    const profileJobs = dbMocks.prisma.scrapeJob.create.mock.calls
+      .map((c: unknown[]) => (c[0] as { data: Record<string, unknown> }).data)
+      .filter((d: Record<string, unknown>) => d.kind === "profile");
+    expect(profileJobs).toHaveLength(2);
+    expect(profileJobs.map((d: Record<string, unknown>) => d.profileUrl).sort()).toEqual(
+      cards.map((c) => c.url).sort(),
+    );
+    // Each queued fetch must point at its OWN card, not the first one twice.
+    expect(new Set(profileJobs.map((d: Record<string, unknown>) => d.profileUrl)).size).toBe(2);
+    for (const d of profileJobs) {
+      expect(d.platform).toBe("seek");
+      expect(d.orgId).toBe("org-1");
+    }
+  });
+
+  it("respects SEEK_DEEP_SCRAPE_PER_SEARCH as a bound on box time", async () => {
+    process.env.SEEK_DEEP_SCRAPE_PER_SEARCH = "1";
+    vi.resetModules();
+    const { PATCH: BoundedPATCH } = await import("./route");
+
+    dbMocks.prisma.scrapeJob.findUnique.mockResolvedValue(searchJob());
+    dbMocks.prisma.scrapeJob.findFirst.mockResolvedValue(null);
+    dbMocks.prisma.scrapeJob.create.mockResolvedValue({ id: "queued-1" });
+
+    const res = await BoundedPATCH(
+      searchReq("job-search-1", { status: "completed", result: { urls: cards.map((c) => c.url), cards } }),
+      { params: Promise.resolve({ id: "job-search-1" }) },
+    );
+    expect(res.status).toBe(200);
+
+    const profileJobs = dbMocks.prisma.scrapeJob.create.mock.calls
+      .map((c: unknown[]) => (c[0] as { data: Record<string, unknown> }).data)
+      .filter((d: Record<string, unknown>) => d.kind === "profile");
+    // Both cards still become candidates; only ONE profile fetch is queued.
+    expect(ingestionMocks.ingestScraperResult).toHaveBeenCalledTimes(2);
+    expect(profileJobs).toHaveLength(1);
+
+    delete process.env.SEEK_DEEP_SCRAPE_PER_SEARCH;
+    vi.resetModules();
   });
 
   it("does NOT ingest cards for a LinkedIn search (LinkedIn deep-scrapes profile children instead)", async () => {
