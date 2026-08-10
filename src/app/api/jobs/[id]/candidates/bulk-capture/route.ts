@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { enqueueScrapeJob } from "@/lib/scrape-queue";
+import { resolveProfileTarget } from "@/lib/profile-url";
 
 // Bulk profile capture — action-plan #6, design-panel winner ("Bulk Capture v1,
 // LinkedIn + JobAdder, no SEEK"). The recruiter selects a shortlist of thin
@@ -18,6 +19,7 @@ import { enqueueScrapeJob } from "@/lib/scrape-queue";
 // ~150-char card. enqueueScrapeJob dedupes
 // on (orgId, profileUrl, status in pending/processing), so a double-click can't
 // double-queue.
+
 const BodySchema = z.object({
   ids: z.array(z.string().min(1).max(40)).min(1).max(100),
 });
@@ -58,13 +60,17 @@ export async function POST(
 
   for (const c of candidates) {
     if (c.profileText && c.profileText.trim().length >= FULL_PROFILE_CHARS) { alreadyFull += 1; continue; }
-    // LinkedIn first (richest body), then SEEK, then JobAdder.
-    const platform: "linkedin" | "seek" | "jobadder" | null =
-      c.linkedinUrl ? "linkedin" : c.seekUrl ? "seek" : c.jobAdderUrl ? "jobadder" : null;
-    // MUST mirror the platform precedence above — a mismatch would scrape a
-    // SEEK candidate using a JobAdder URL.
-    const url = c.linkedinUrl ?? c.seekUrl ?? c.jobAdderUrl ?? null;
-    if (!platform || !url) { noCapturableUrl += 1; continue; }
+    // Derive the platform FROM THE URL rather than from which column it sat in.
+    // Some rows carry an identity merge-key string ("seek:https://…", the
+    // `${kind}:${value}` form from mergeKeyToString) in their linkedinUrl
+    // column. Trusting the column meant a SEEK profile was dispatched as
+    // linkedin with an unusable prefixed URL, and the worker rejected all 100:
+    //   "Refusing to scrape non-https URL: seek:https://…"
+    // Strip that prefix, then let the host decide the platform, so a mislabelled
+    // column can't pick the wrong scraper.
+    const target = resolveProfileTarget(c);
+    if (!target) { noCapturableUrl += 1; continue; }
+    const { url, platform } = target;
     const created = await enqueueScrapeJob({ orgId, platform, profileUrl: url, candidateId: c.id, requestedBy: auth.userId });
     if (created) enqueued += 1; else alreadyQueued += 1; // null = dedup hit (already pending/processing)
   }
