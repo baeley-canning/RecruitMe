@@ -224,6 +224,29 @@ export function getMustHaveImportance(requirement: string): number {
 
 // ─── Pure computation functions ─────────────────────────────────────────────────
 
+/**
+ * Apply a data-quality ceiling WITHOUT destroying the ranking.
+ *
+ * The ceiling itself is right: a headline-only capture is a lead, not a
+ * confirmed match, and must not read as "60% match". But applying it with
+ * Math.min flattens every candidate above the ceiling onto the same number —
+ * observed live as 100 candidates all showing exactly 40%, where a strong
+ * intermediate and an over-qualified lead were indistinguishable. The AI's
+ * discrimination was computed, billed for, and then discarded at the last step.
+ *
+ * So compress instead of clamp. Scores comfortably below the ceiling pass
+ * through untouched (a genuinely poor candidate is not inflated); the range
+ * above is squeezed into the top BAND points beneath it, which keeps the order
+ * intact and keeps the honest ceiling. Monotonic and continuous at the join.
+ */
+export function capScorePreservingOrder(score: number, cap: number, band = 10): number {
+  if (cap >= 100) return score;          // full profiles: no ceiling to apply
+  if (score <= cap - band) return score; // well under the ceiling: untouched
+  const floor = cap - band;
+  const t = Math.min(1, Math.max(0, (score - floor) / (100 - floor)));
+  return Math.round(floor + t * band);
+}
+
 export function classifyDataQuality(charCount: number): DataQuality {
   if (charCount >= 2000) return "full_profile";
   if (charCount >= 200)  return "snippet";
@@ -778,7 +801,7 @@ export function buildScoreBreakdown(params: {
   // carries profile_capture_warning so the UI shows a "partial profile"
   // confidence badge alongside the score.
   const preConfidenceOverall = params.claudeOverallScore != null
-    ? Math.min(cap, params.claudeOverallScore)   // Claude's score, still capped by data quality
+    ? capScorePreservingOrder(params.claudeOverallScore, cap)   // ceiling applied WITHOUT flattening the ranking
     : formulaOverall;
 
   const evidenceCoverage = computeEvidenceCoverageScore(
@@ -797,7 +820,7 @@ export function buildScoreBreakdown(params: {
   // Higher confidence thresholds are intentionally NOT enforced — a
   // moderate-confidence candidate may have a legitimately good score.
   const overall = confidence.score < 30
-    ? Math.min(preConfidenceOverall, 40)
+    ? capScorePreservingOrder(preConfidenceOverall, 40)
     : preConfidenceOverall;
   if (params.profileCaptureWarning) {
     confidence.score = Math.min(confidence.score, 35);
