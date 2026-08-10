@@ -48,7 +48,10 @@ Set overall_score to your direct holistic verdict of how well this candidate fit
 - 40–59: partial — relevant background but meaningful gaps; a stretch or requires significant development
 - 20–39: weak — one or two overlapping signals but fundamentally misaligned on core requirements
 - 0–19: no match — wrong domain, wrong level, or critical must-haves all absent
-CRITICAL: if you have written reasons_against that describe fundamental blockers (core skill absent, wrong domain entirely, clearly wrong seniority), your overall_score MUST be below 40. Do not let a good location or one confirmed credential push a fundamentally mismatched candidate above 50. The score should reflect the hiring decision, not a balanced average.
+OVER-QUALIFICATION IS A BLOCKER, NOT A STRENGTH. If the candidate is currently operating materially ABOVE the role's band — a Tech Lead / Principal / Engineering Manager / Head of Engineering being considered for a hands-on senior or intermediate IC role, or someone whose current scope implies a salary well above the stated budget — you MUST say so in reasons_against and cap overall_score below 40. A stronger CV is not a better match: this candidate declines the offer, or accepts and leaves within a year. Do NOT reward them for exceeding must-haves they exceed by too much.
+When a budget is given, treat it as a hard ceiling on the level you are matching: score for who will ACCEPT and thrive at that number, not for the most impressive CV.
+
+CRITICAL: if you have written reasons_against that describe fundamental blockers (core skill absent, wrong domain entirely, clearly wrong seniority INCLUDING over-qualification), your overall_score MUST be below 40. Do not let a good location or one confirmed credential push a fundamentally mismatched candidate above 50. The score should reflect the hiring decision, not a balanced average.
 
 PARTIAL CAPTURE / SNIPPET RULE — read carefully:
 LinkedIn captures are often partial. The recruiter may have only the headline + About + current role + employer — not the historical work. **Absence of evidence on a partial capture is NOT evidence of mismatch.** The relevant facts may exist on LinkedIn but the scrape missed them. You are scoring at SOURCING stage; the recruiter needs a directional fit signal they can rank by.
@@ -68,7 +71,12 @@ The recruiter's question at sourcing stage is "who do I progress to the next fun
 export const SCORING_CATEGORY_RULES = `Category score rules:
 - skill_fit: 80+ = most must-have skills confirmed; 60-79 = several confirmed; 40-59 = adjacent; 0-39 = mismatch
 - location_fit: 100 = same city/region; 80 = commutable; 50 = same country; 0 = overseas
-- seniority_fit: 100 = exact match; 70 = one level off; 40 = two levels off; 0 = completely wrong level
+- seniority_fit: score the DISTANCE from the target band, and treat OVER-qualification as a mismatch — not a bonus. This dimension is symmetric in distance but NOT in meaning: a candidate above the band will not accept the salary, will be bored, and will leave.
+  * 100 = squarely in the band (incl. someone one step below who is visibly ready to step up — the ideal hire for a role that mentors juniors)
+  * 70  = one level off in EITHER direction
+  * 40  = two levels off in either direction
+  * 0–20 = clearly beyond the role: currently Lead/Principal/Architect/Head-of/Manager/Director where the role is an individual contributor, or running teams where the role has no direct reports
+  Judge the CURRENT level from recent titles and scope (team size, ownership, "leading a team of N"), not from years alone. A long-tenured senior IC is still a senior IC.
 - title_fit: do recent titles align with how people in this role describe themselves on LinkedIn?
 - domain_fit: assess sector/domain experience primarily, with vocabulary alignment as a secondary signal. Sector experience (actual work delivered in the domain) must carry most of the weight — vocabulary alone (using industry terms without the delivery history) should not push this above 55. 80+ = multiple years shipping in this sector AND language aligns; 60-79 = genuine adjacent sector with transferable delivery history; 40-59 = adjacent domain, some transferable skills; 0-39 = unrelated field. Do NOT score 70+ based on vocabulary alone.
 - nice_to_have_fit: 80+ = most nice-to-haves present; 50 = some; 20 = few; if none listed, score 50`;

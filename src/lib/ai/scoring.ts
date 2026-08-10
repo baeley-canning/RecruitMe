@@ -648,9 +648,18 @@ export function buildScorePrompt(
     };
   }
 
+  // Budget is a CEILING on the level we're matching, not a neutral fact. Stated
+  // plainly it was ignored: a Tech Lead maxes must-haves + skill_fit (58% of the
+  // weighting) and loses at most 10% on seniority, so the most over-qualified CV
+  // won. Say what the number MEANS so the model can act on it.
   const salaryLine    = salary?.min || salary?.max
-    ? `Budget: $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD` : "";
-  const seniorityLine = parsedRole.seniority_band ? `Seniority: ${parsedRole.seniority_band}` : "";
+    ? `Budget (HARD CEILING — match who will accept and stay at this number, not the most impressive CV): $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD`
+    : "";
+  // Same for the band: name the ceiling explicitly so "above it" reads as a
+  // mismatch rather than a bonus.
+  const seniorityLine = parsedRole.seniority_band
+    ? `Seniority: ${parsedRole.seniority_band} (target band — someone a step BELOW who is ready to step up fits; someone clearly ABOVE it does not)`
+    : "";
   const knockoutLine  = knockouts.length ? `Knockout criteria (instant fail if clearly absent): ${knockouts.join("; ")}` : "";
   const clearanceLine = clearanceContext.explicit || clearanceContext.inferred
     ? `Security clearance context: ${
