@@ -24,6 +24,7 @@ import { scoreCandidateStructured } from "@/lib/ai";
 import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { scorerFingerprint } from "@/lib/ai/scorer-fingerprint";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { checkRateLimit, checkSpendCap } from "@/lib/usage";
 import type { ParsedRole } from "@/lib/ai";
@@ -156,7 +157,8 @@ export async function PATCH(
         jobLocation2: candidate.job.location2,
         isRemote: candidate.job.isRemote,
         weights,
-      });
+      scorerFingerprint: scorerFingerprint(),
+    });
       await prisma.candidate.update({ where: { id }, data: scoreUpdates });
       scored = true;
       newScore = typeof scoreUpdates.matchScore === "number" ? scoreUpdates.matchScore : null;

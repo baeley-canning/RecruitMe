@@ -8,6 +8,7 @@ import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { requireCapability } from "@/lib/require-capability";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { scorerFingerprint } from "@/lib/ai/scorer-fingerprint";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getCorrectionsVersion } from "@/lib/recruiter-memory";
 import { shouldRejectAsOverseas } from "@/lib/location";
@@ -88,6 +89,7 @@ export async function POST(
       isRemote: job.isRemote,
       weights,
       correctionsVersion,
+      scorerFingerprint: scorerFingerprint(),
     });
     if (
       !force &&

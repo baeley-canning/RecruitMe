@@ -7,6 +7,7 @@ import {
   type ParsedRole,
 } from "./ai";
 import { buildScoreCacheKey, safeParseJson } from "./utils";
+import { scorerFingerprint } from "./ai/scorer-fingerprint";
 import { reportError } from "./error-reporting";
 import { normaliseLinkedInUrl } from "./linkedin";
 import {
@@ -487,7 +488,8 @@ async function buildIdentityData(args: {
         jobLocation2: job.location2,
         isRemote: job.isRemote,
         weights,
-      })
+      scorerFingerprint: scorerFingerprint(),
+    })
     : null;
   // Only skip Stage 2 when the existing score cache key proves the stored
   // score was computed against this exact profile text and the current

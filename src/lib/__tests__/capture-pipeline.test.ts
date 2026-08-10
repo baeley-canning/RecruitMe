@@ -51,6 +51,7 @@ import {
   applyAiEnrichmentInBackground,
 } from "../linkedin-capture";
 import { buildScoreCacheKey } from "../utils";
+import { scorerFingerprint } from "../ai/scorer-fingerprint";
 
 const testWeights = {
   must_have: 0.36,
@@ -207,6 +208,9 @@ describe("saveCapturedProfileFast (stage 1)", () => {
       jobLocation: baseJob.location,
       isRemote: baseJob.isRemote,
       weights: testWeights,
+      // Production stamps the rubric fingerprint into the key; the expected
+      // hash has to be built the same way or "unchanged profile" looks changed.
+      scorerFingerprint: scorerFingerprint(),
     });
     dbMocks.prisma.candidate.findUnique.mockResolvedValueOnce({
       id: "cand-1",

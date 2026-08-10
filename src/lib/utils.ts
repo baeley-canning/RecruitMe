@@ -40,6 +40,16 @@ type ScoreCacheKeyInput = {
   // Optional for back-compat with old callers; defaults to 0 (no corrections
   // ever recorded) which preserves existing hashes for orgs with no history.
   correctionsVersion?: number;
+  // Content hash of the scoring rubric (src/lib/ai/scorer-fingerprint.ts).
+  // Without it, editing the rubric changed nothing: the key stayed identical, so
+  // every candidate remained a cache hit and kept the verdict the OLD rubric
+  // gave. That is how the over-qualification rule stayed invisible on ~16,000
+  // stored scores. Passed IN rather than imported, because this module is pulled
+  // into client bundles for `cn` and importing the prompts here would ship the
+  // whole rubric to the browser.
+  // Optional for back-compat; omitted → absent from the payload, preserving
+  // existing hashes for any caller not yet threading it through.
+  scorerFingerprint?: string;
 };
 
 function stableStringify(value: unknown): string {
@@ -72,6 +82,9 @@ export function buildScoreCacheKey(input: ScoreCacheKeyInput): string {
     // (rather than omitting on 0) so the v7 version bump uniformly invalidates
     // all pre-v7 cached scores once and never has to be touched again.
     correctionsVersion: input.correctionsVersion ?? 0,
+    // Omitted when absent (stableStringify drops undefined) so callers that
+    // don't yet thread it keep their existing hashes.
+    ...(input.scorerFingerprint ? { scorerFingerprint: input.scorerFingerprint } : {}),
   });
 
   return createHash("sha256").update(payload).digest("hex").slice(0, 24);

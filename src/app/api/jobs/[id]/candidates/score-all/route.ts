@@ -9,6 +9,7 @@ import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { requireCapability } from "@/lib/require-capability";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
+import { scorerFingerprint } from "@/lib/ai/scorer-fingerprint";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import { getRecruitingContext, getCorrectionsVersion } from "@/lib/recruiter-memory";
@@ -238,7 +239,8 @@ export async function POST(
           isRemote: job.isRemote,
           weights,
           correctionsVersion,
-        });
+      scorerFingerprint: scorerFingerprint(),
+    });
 
         // Cache hit: profile + role + salary + location + weights unchanged AND a
         // real score is already stored → skip the API call entirely.

@@ -92,3 +92,42 @@ describe("buildScoreCacheKey", () => {
     expect(withZero).toBe(withoutVersion);
   });
 });
+
+// ── Rubric fingerprint ──────────────────────────────────────────────────────
+// The defect this closes: buildScoreCacheKey hashed everything that feeds a
+// score EXCEPT the rubric that produces it, so improving the rubric left every
+// candidate a cache hit holding the OLD rubric's verdict.
+describe("buildScoreCacheKey — scorer fingerprint", () => {
+  const base = {
+    profileText: "Senior Software Engineer, 15 years",
+    parsedRole: { title: "Senior Developer" },
+    salary: { min: 100_000, max: 125_000 },
+  };
+
+  it("changes the key when the rubric changes", () => {
+    const before = buildScoreCacheKey({ ...base, scorerFingerprint: "rubric-aaa" });
+    const after = buildScoreCacheKey({ ...base, scorerFingerprint: "rubric-bbb" });
+    expect(before).not.toBe(after);
+  });
+
+  it("is stable for an unchanged rubric", () => {
+    expect(buildScoreCacheKey({ ...base, scorerFingerprint: "rubric-aaa" }))
+      .toBe(buildScoreCacheKey({ ...base, scorerFingerprint: "rubric-aaa" }));
+  });
+
+  it("omitting it preserves the legacy key, so untouched callers don't invalidate", () => {
+    const legacy = buildScoreCacheKey({ ...base });
+    const explicitUndefined = buildScoreCacheKey({ ...base, scorerFingerprint: undefined });
+    expect(explicitUndefined).toBe(legacy);
+    expect(buildScoreCacheKey({ ...base, scorerFingerprint: "rubric-aaa" })).not.toBe(legacy);
+  });
+});
+
+describe("scorerFingerprint", () => {
+  it("is deterministic and derived from the rubric text", async () => {
+    const { scorerFingerprint } = await import("../ai/scorer-fingerprint");
+    const a = scorerFingerprint();
+    expect(a).toMatch(/^[0-9a-f]{12}$/);
+    expect(scorerFingerprint()).toBe(a);
+  });
+});
