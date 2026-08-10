@@ -10,8 +10,12 @@ import { enqueueScrapeJob } from "@/lib/scrape-queue";
 // click. We ONLY enqueue jobs here — the single-browser scraper-worker fetches
 // them sequentially at its existing safe ~30-40s/profile pace, so there are no
 // new requests, no bursts, and no account-ban risk introduced by this route.
-// SEEK is deliberately EXCLUDED: opening a SEEK profile costs a credit, so bulk
-// SEEK needs explicit credit-gating (a later version). enqueueScrapeJob dedupes
+// SEEK is INCLUDED. It was excluded because "opening a SEEK profile costs a
+// credit" — that premise is wrong. scrapeSeekProfile only navigates, scrolls and
+// reads the DOM; it never clicks a reveal/unlock/contact or download control, and
+// SEEK's metering sits behind contact details we never touch. The exclusion was
+// the reason every SEEK candidate sat at profileText "" and scored ~40 on a
+// ~150-char card. enqueueScrapeJob dedupes
 // on (orgId, profileUrl, status in pending/processing), so a double-click can't
 // double-queue.
 const BodySchema = z.object({
@@ -40,7 +44,7 @@ export async function POST(
 
   const candidates = await prisma.candidate.findMany({
     where: { id: { in: parsed.data.ids }, jobId: id },
-    select: { id: true, profileText: true, linkedinUrl: true, jobAdderUrl: true },
+    select: { id: true, profileText: true, linkedinUrl: true, seekUrl: true, jobAdderUrl: true },
   });
 
   const orgId = job.orgId ?? auth.orgId;
@@ -49,13 +53,17 @@ export async function POST(
   }
   let enqueued = 0;
   let alreadyFull = 0;
-  let noCapturableUrl = 0; // e.g. SEEK-only candidates (seekUrl) — excluded in v1
+  let noCapturableUrl = 0; // candidates with no linkedin/seek/jobadder URL at all
   let alreadyQueued = 0;
 
   for (const c of candidates) {
     if (c.profileText && c.profileText.trim().length >= FULL_PROFILE_CHARS) { alreadyFull += 1; continue; }
-    const platform: "linkedin" | "jobadder" | null = c.linkedinUrl ? "linkedin" : c.jobAdderUrl ? "jobadder" : null;
-    const url = c.linkedinUrl ?? c.jobAdderUrl ?? null;
+    // LinkedIn first (richest body), then SEEK, then JobAdder.
+    const platform: "linkedin" | "seek" | "jobadder" | null =
+      c.linkedinUrl ? "linkedin" : c.seekUrl ? "seek" : c.jobAdderUrl ? "jobadder" : null;
+    // MUST mirror the platform precedence above — a mismatch would scrape a
+    // SEEK candidate using a JobAdder URL.
+    const url = c.linkedinUrl ?? c.seekUrl ?? c.jobAdderUrl ?? null;
     if (!platform || !url) { noCapturableUrl += 1; continue; }
     const created = await enqueueScrapeJob({ orgId, platform, profileUrl: url, candidateId: c.id, requestedBy: auth.userId });
     if (created) enqueued += 1; else alreadyQueued += 1; // null = dedup hit (already pending/processing)
