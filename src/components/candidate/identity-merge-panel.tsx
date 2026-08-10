@@ -125,7 +125,7 @@ export function IdentityMergePanel({ candidateId }: { candidateId: string }) {
                   <button
                     onClick={() => void doMerge(s, current.candidateCount)}
                     disabled={busy}
-                    className="inline-flex items-center gap-1 px-2.5 h-8 text-sm bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 flex-shrink-0"
+                    className="inline-flex items-center gap-1 px-2.5 h-8 text-sm bg-accent text-text-inverse rounded-lg hover:bg-accent-hover disabled:opacity-50 flex-shrink-0"
                   >
                     {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitMerge className="w-3.5 h-3.5" />} Merge
                   </button>

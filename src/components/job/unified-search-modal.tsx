@@ -865,7 +865,7 @@ export function UnifiedSearchModal({
                 <button
                   type="button"
                   onClick={() => void runSearch(query, { forceLive: true })}
-                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded text-2xs font-medium bg-accent hover:bg-accent-hover text-white transition-colors"
+                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded text-2xs font-medium bg-accent hover:bg-accent-hover text-text-inverse transition-colors"
                   title="Also run a live LinkedIn/SEEK scrape for fresh results"
                 >
                   <Search className="w-3 h-3" /> Search live anyway

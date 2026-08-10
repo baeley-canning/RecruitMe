@@ -142,7 +142,7 @@ export function ReminderBell() {
       <button onClick={() => { if (!open) markSeen(); setOpen((v) => !v); }} className="relative h-7 w-7 rounded flex items-center justify-center hover:bg-surface-hover text-text-secondary" aria-label="Reminders" title="Reminders">
         <Bell className="w-4 h-4" />
         {badgeCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-danger text-white text-[9px] leading-[14px] text-center font-semibold">{badgeCount}</span>
+          <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-danger text-text-inverse text-[9px] leading-[14px] text-center font-semibold">{badgeCount}</span>
         )}
       </button>
 
@@ -166,7 +166,7 @@ export function ReminderBell() {
               </select>
               <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className="w-full h-8 px-2 text-xs rounded border border-separator bg-surface-sunken text-text-primary" />
               <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={2} placeholder="Note (optional)" className="w-full px-2 py-1 text-xs rounded border border-separator bg-surface-sunken text-text-primary placeholder:text-text-tertiary resize-none" />
-              <button onClick={() => void create()} className="w-full h-7 text-xs bg-accent text-white rounded hover:bg-accent-hover">Set reminder</button>
+              <button onClick={() => void create()} className="w-full h-7 text-xs bg-accent text-text-inverse rounded hover:bg-accent-hover">Set reminder</button>
             </div>
           )}
 

@@ -174,7 +174,7 @@ export function JobWeightsCard({ jobId }: { jobId: string }) {
                     <button
                       onClick={savePreset}
                       disabled={savingPreset || !presetName.trim()}
-                      className="h-6 px-2 rounded text-xs bg-accent hover:bg-accent-hover text-white disabled:opacity-50"
+                      className="h-6 px-2 rounded text-xs bg-accent hover:bg-accent-hover text-text-inverse disabled:opacity-50"
                     >
                       Save
                     </button>

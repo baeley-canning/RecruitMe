@@ -147,7 +147,7 @@ export function ProfileTextSection({ candidate, jobId: _jobId, onSaved }: Profil
                 "inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors",
                 saving || !draft.trim()
                   ? "bg-surface-hover text-text-tertiary cursor-not-allowed"
-                  : "bg-accent hover:bg-accent-hover text-white",
+                  : "bg-accent hover:bg-accent-hover text-text-inverse",
               )}
             >
               {saving ? <><Loader2 className="w-3 h-3 animate-spin" />Saving + re-scoring…</> : "Save & re-score"}

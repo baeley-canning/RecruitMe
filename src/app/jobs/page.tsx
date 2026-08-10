@@ -103,7 +103,7 @@ export default async function JobsPage() {
           )}
           <Link
             href="/jobs/new"
-            className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+            className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             New job
@@ -168,7 +168,7 @@ export default async function JobsPage() {
             <div className="text-center">
               <Link
                 href="/jobs/new"
-                className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+                className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" />
                 Create your first job

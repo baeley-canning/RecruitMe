@@ -75,7 +75,7 @@ export function TagManager() {
             onKeyDown={(e) => { if (e.key === "Enter") void create(); }}
             placeholder="Tag name" className="flex-1 h-8 px-3 text-sm rounded-lg border border-separator bg-surface-sunken text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent" />
           <button onClick={() => void create()} disabled={!newLabel.trim()}
-            className="inline-flex items-center gap-1 px-3 h-8 text-sm bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50">
+            className="inline-flex items-center gap-1 px-3 h-8 text-sm bg-accent text-text-inverse rounded-lg hover:bg-accent-hover disabled:opacity-50">
             <Plus className="w-3.5 h-3.5" /> Add
           </button>
         </div>

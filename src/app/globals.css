@@ -10,7 +10,7 @@
 @layer base {
   html {
     color-scheme: dark;
-    background-color: #1a1a1c; /* surface.base — prevents white flash */
+    background-color: #212429; /* surface.base — prevents white flash */
   }
   * {
     box-sizing: border-box;
@@ -24,7 +24,7 @@
   }
   /* Selection — use accent at low alpha. */
   ::selection {
-    background-color: rgba(10, 132, 255, 0.35);
+    background-color: rgba(125, 179, 216, 0.32);
   }
   /* Scrollbars — thin and dark, Logic Pro style. */
   ::-webkit-scrollbar {

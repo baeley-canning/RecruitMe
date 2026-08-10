@@ -599,7 +599,7 @@ function UploadZone({
             "inline-flex items-center gap-1.5 h-7 px-3 rounded text-md font-medium cursor-pointer transition-colors",
             uploading
               ? "bg-surface-hover text-text-tertiary cursor-not-allowed"
-              : "bg-accent hover:bg-accent-hover text-white",
+              : "bg-accent hover:bg-accent-hover text-text-inverse",
           )}
         >
           {uploading ? (

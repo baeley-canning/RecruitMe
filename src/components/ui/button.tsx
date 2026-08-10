@@ -16,7 +16,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
     const variants = {
       primary:
-        "bg-accent hover:bg-accent-hover text-white",
+        "bg-accent hover:bg-accent-hover text-text-inverse",
       secondary:
         "bg-surface-hover hover:bg-surface-overlay text-text-primary border border-separator",
       ghost:

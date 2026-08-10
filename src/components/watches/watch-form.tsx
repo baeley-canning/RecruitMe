@@ -153,7 +153,7 @@ export function WatchForm({
                 onClick={() => setIntervalMinutes(p.minutes)}
                 className={`px-1.5 py-0.5 rounded text-2xs border transition-colors ${
                   clampedInterval === p.minutes
-                    ? "bg-accent text-white border-accent"
+                    ? "bg-accent text-text-inverse border-accent"
                     : "border-separator text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
                 }`}
               >
@@ -171,7 +171,7 @@ export function WatchForm({
       {error && <div className="text-2xs text-danger">{error}</div>}
 
       <div className="flex items-center gap-2">
-        <button type="submit" disabled={busy} className="h-8 px-4 text-xs rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50 transition-colors">
+        <button type="submit" disabled={busy} className="h-8 px-4 text-xs rounded bg-accent text-text-inverse hover:bg-accent-hover disabled:opacity-50 transition-colors">
           {busy ? (editing ? "saving…" : "creating…") : (editing ? "save changes" : "create watch")}
         </button>
         {editing && onCancel && (

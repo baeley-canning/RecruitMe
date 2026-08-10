@@ -465,7 +465,7 @@ export default function AdminPage() {
         <div className="ml-auto flex items-center gap-3">
           <Link
             href="/admin/onboard"
-            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded bg-accent hover:bg-accent-hover text-white text-xs font-medium transition-colors"
+            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded bg-accent hover:bg-accent-hover text-text-inverse text-xs font-medium transition-colors"
           >
             <Rocket className="w-3.5 h-3.5" />
             Onboard agency
@@ -1440,7 +1440,7 @@ export default function AdminPage() {
               <button
                 onClick={() => handleWipeCandidates()}
                 disabled={wiping === "all"}
-                className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-danger hover:bg-danger-hover text-white text-md font-medium transition-colors disabled:opacity-50 flex-shrink-0"
+                className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-danger hover:bg-danger-hover text-text-inverse text-md font-medium transition-colors disabled:opacity-50 flex-shrink-0"
               >
                 {wiping === "all" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                 {wiping === "all" ? "Deleting…" : "Delete all candidates"}
@@ -1453,7 +1453,7 @@ export default function AdminPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-base font-medium text-text-primary">Purge JobAdder imports</p>
-                    <span className="text-2xs px-1.5 py-0.5 rounded-sm font-medium bg-danger text-white uppercase tracking-wider">
+                    <span className="text-2xs px-1.5 py-0.5 rounded-sm font-medium bg-danger text-text-inverse uppercase tracking-wider">
                       All orgs / platform-wide
                     </span>
                   </div>
@@ -1467,7 +1467,7 @@ export default function AdminPage() {
                 <button
                   onClick={handlePurgeJobadderImports}
                   disabled={wiping === "jobadder" || purgePhrase !== PURGE_JOBADDER_PHRASE}
-                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-danger hover:bg-danger-hover text-white text-md font-medium transition-colors disabled:opacity-50 flex-shrink-0"
+                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-danger hover:bg-danger-hover text-text-inverse text-md font-medium transition-colors disabled:opacity-50 flex-shrink-0"
                 >
                   {wiping === "jobadder" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                   {wiping === "jobadder" ? "Purging…" : "Purge JobAdder imports"}

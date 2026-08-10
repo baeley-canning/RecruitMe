@@ -112,7 +112,7 @@ export function ContactLog({ candidateId }: { candidateId: string }) {
             <button
               onClick={handleLog}
               disabled={saving}
-              className="px-3 py-1 text-xs font-medium bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 inline-flex items-center gap-1 transition-colors"
+              className="px-3 py-1 text-xs font-medium bg-accent text-text-inverse rounded hover:bg-accent-hover disabled:opacity-50 inline-flex items-center gap-1 transition-colors"
             >
               {saving && <Loader2 className="w-3 h-3 animate-spin" />}Save
             </button>

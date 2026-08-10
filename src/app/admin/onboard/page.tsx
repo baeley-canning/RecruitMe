@@ -24,7 +24,7 @@ function CopyRow({ value, mono = true }: { value: string; mono?: boolean }) {
       <button
         type="button"
         onClick={async () => { try { await navigator.clipboard.writeText(value); setCopied(true); } catch { /* selectable */ } }}
-        className="h-7 px-2.5 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium inline-flex items-center gap-1 transition-colors"
+        className="h-7 px-2.5 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium inline-flex items-center gap-1 transition-colors"
       >
         {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
         {copied ? "Copied" : "Copy"}
@@ -129,7 +129,7 @@ export default function OnboardWizard() {
             { n: 4, label: "Done", Icon: CheckCircle2 },
           ].map(({ n, label, Icon }) => (
             <div key={n} className="flex items-center gap-1.5 flex-1">
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${step >= n ? "bg-accent text-white" : "bg-surface-hover text-text-tertiary"}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${step >= n ? "bg-accent text-text-inverse" : "bg-surface-hover text-text-tertiary"}`}>
                 <Icon className="w-3 h-3" />
               </div>
               <span className={`text-2xs truncate ${step >= n ? "text-text-secondary" : "text-text-tertiary"}`}>{label}</span>
@@ -149,7 +149,7 @@ export default function OnboardWizard() {
                 <input type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)} autoFocus placeholder="e.g. Acme Recruitment" className={INPUT} />
               </div>
               <div className="flex justify-end">
-                <button type="submit" disabled={busy || !orgName.trim()} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-md font-medium inline-flex items-center gap-1.5 transition-colors">
+                <button type="submit" disabled={busy || !orgName.trim()} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-text-inverse text-md font-medium inline-flex items-center gap-1.5 transition-colors">
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
                   Create &amp; continue
                 </button>
@@ -164,7 +164,7 @@ export default function OnboardWizard() {
                 Generate a single-use invite link for <span className="text-text-secondary font-medium">{orgName}</span>. They pick their own username and password — you never handle a credential.
               </p>
               {!inviteUrl ? (
-                <button onClick={makeInvite} disabled={busy} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-md font-medium inline-flex items-center gap-1.5 transition-colors">
+                <button onClick={makeInvite} disabled={busy} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-text-inverse text-md font-medium inline-flex items-center gap-1.5 transition-colors">
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
                   Generate invite link
                 </button>
@@ -178,7 +178,7 @@ export default function OnboardWizard() {
                 <button onClick={() => go(1)} className="h-7 px-3 rounded text-text-secondary hover:bg-surface-hover text-md inline-flex items-center gap-1.5">
                   <ArrowLeft className="w-3.5 h-3.5" /> Back
                 </button>
-                <button onClick={() => go(3)} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium inline-flex items-center gap-1.5">
+                <button onClick={() => go(3)} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium inline-flex items-center gap-1.5">
                   Next <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -197,7 +197,7 @@ export default function OnboardWizard() {
                     <label className="block text-xs font-medium text-text-secondary mb-1">Box label</label>
                     <input type="text" value={tokenLabel} onChange={(e) => setTokenLabel(e.target.value)} placeholder="e.g. acme-nuc-scraper" className={INPUT} />
                   </div>
-                  <button onClick={mintToken} disabled={busy || !tokenLabel.trim()} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-md font-medium inline-flex items-center gap-1.5 transition-colors">
+                  <button onClick={mintToken} disabled={busy || !tokenLabel.trim()} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-text-inverse text-md font-medium inline-flex items-center gap-1.5 transition-colors">
                     {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Cpu className="w-3.5 h-3.5" />}
                     Mint token
                   </button>
@@ -212,7 +212,7 @@ export default function OnboardWizard() {
                 <button onClick={() => go(2)} className="h-7 px-3 rounded text-text-secondary hover:bg-surface-hover text-md inline-flex items-center gap-1.5">
                   <ArrowLeft className="w-3.5 h-3.5" /> Back
                 </button>
-                <button onClick={() => go(4)} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium inline-flex items-center gap-1.5">
+                <button onClick={() => go(4)} className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium inline-flex items-center gap-1.5">
                   {tokenValue ? "Next" : <>Skip <SkipForward className="w-3.5 h-3.5" /></>}
                   {tokenValue && <ArrowRight className="w-3.5 h-3.5" />}
                 </button>
@@ -239,7 +239,7 @@ export default function OnboardWizard() {
                 <button onClick={() => { setStep(1); setOrgName(""); setOrgId(null); setInviteUrl(null); setTokenValue(null); setTokenLabel(""); }} className="h-7 px-3 rounded text-text-secondary hover:bg-surface-hover text-md">
                   Onboard another
                 </button>
-                <Link href="/admin" className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium inline-flex items-center gap-1.5">
+                <Link href="/admin" className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium inline-flex items-center gap-1.5">
                   Done <Check className="w-3.5 h-3.5" />
                 </Link>
               </div>

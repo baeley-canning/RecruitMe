@@ -159,7 +159,7 @@ export function OrgAccessAdminPage() {
             <input id="expires" type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="w-full text-md border border-separator rounded px-3 py-2 bg-surface-sunken text-text-primary focus:outline-none focus:border-accent focus:shadow-focus transition-all" />
           </div>
         </div>
-        <button type="submit" disabled={submitting} className="mt-4 h-7 px-3 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-md font-medium rounded transition-colors">
+        <button type="submit" disabled={submitting} className="mt-4 h-7 px-3 bg-accent hover:bg-accent-hover disabled:opacity-50 text-text-inverse text-md font-medium rounded transition-colors">
           {submitting ? "Creating…" : "Grant access"}
         </button>
       </form>

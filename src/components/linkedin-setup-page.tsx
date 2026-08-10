@@ -81,7 +81,7 @@ export function LinkedInSetupPage() {
       {/* Step 1 — Download */}
       <div className="bg-surface-raised rounded-md border border-separator overflow-hidden">
         <div className="flex items-center gap-3 px-5 py-3 border-b border-separator bg-surface-sunken">
-          <span className="w-6 h-6 rounded-full bg-accent text-white text-xs font-semibold flex items-center justify-center flex-shrink-0 data-mono">1</span>
+          <span className="w-6 h-6 rounded-full bg-accent text-text-inverse text-xs font-semibold flex items-center justify-center flex-shrink-0 data-mono">1</span>
           <div className="flex items-center gap-2">
             <Download className="w-4 h-4 text-text-secondary" />
             <p className="text-md font-semibold text-text-primary">Download the extension</p>
@@ -106,7 +106,7 @@ export function LinkedInSetupPage() {
             <button
               type="button"
               onClick={handlePrepareExtension}
-              className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-accent hover:bg-accent-hover text-white rounded font-medium text-md transition-colors"
+              className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-accent hover:bg-accent-hover text-text-inverse rounded font-medium text-md transition-colors"
             >
               <FolderOpen className="w-4 h-4" />
               Prepare Extension Folder
@@ -115,7 +115,7 @@ export function LinkedInSetupPage() {
             <a
               href="/api/extension/download"
               download="recruitme-extension.zip"
-              className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-accent hover:bg-accent-hover text-white rounded font-medium text-md transition-colors"
+              className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-accent hover:bg-accent-hover text-text-inverse rounded font-medium text-md transition-colors"
             >
               <Download className="w-4 h-4" />
               Download RecruitMe Extension (.zip)
@@ -142,7 +142,7 @@ export function LinkedInSetupPage() {
       {/* Step 2 — Point at RecruitMe */}
       <div className="bg-surface-raised rounded-md border border-separator overflow-hidden">
         <div className="flex items-center gap-3 px-5 py-3 border-b border-separator bg-surface-sunken">
-          <span className="w-6 h-6 rounded-full bg-accent text-white text-xs font-semibold flex items-center justify-center flex-shrink-0 data-mono">2</span>
+          <span className="w-6 h-6 rounded-full bg-accent text-text-inverse text-xs font-semibold flex items-center justify-center flex-shrink-0 data-mono">2</span>
           <div className="flex items-center gap-2">
             <Settings className="w-4 h-4 text-text-secondary" />
             <p className="text-md font-semibold text-text-primary">Point the extension at RecruitMe</p>
@@ -173,7 +173,7 @@ export function LinkedInSetupPage() {
       {/* Step 3 — Use it */}
       <div className="bg-surface-raised rounded-md border border-separator overflow-hidden">
         <div className="flex items-center gap-3 px-5 py-3 border-b border-separator bg-surface-sunken">
-          <span className="w-6 h-6 rounded-full bg-accent text-white text-xs font-semibold flex items-center justify-center flex-shrink-0 data-mono">3</span>
+          <span className="w-6 h-6 rounded-full bg-accent text-text-inverse text-xs font-semibold flex items-center justify-center flex-shrink-0 data-mono">3</span>
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-text-secondary" />
             <p className="text-md font-semibold text-text-primary">Start capturing profiles</p>

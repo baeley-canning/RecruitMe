@@ -64,7 +64,7 @@ function DownloadFallback({
       <a
         href={`/api/candidates/${candidateId}/files/${file.id}`}
         download={file.filename}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-accent hover:bg-accent-hover text-white transition-colors"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-accent hover:bg-accent-hover text-text-inverse transition-colors"
       >
         <Download className="w-3.5 h-3.5" />
         Download

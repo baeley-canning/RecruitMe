@@ -46,7 +46,7 @@ const ImportRowSchema = z.object({
   linkedinUrl: z.string().nullable(),
   jobAdderUrl: z.string().nullable(),
   seekUrl: z.string().nullable().optional(),
-  sources: z.array(z.enum(["library", "linkedin", "seek"])).min(1),
+  sources: z.array(z.enum(["library", "linkedin", "seek", "pdl"])).min(1),
   candidateId: z.string().nullable(),
   candidateIdentityId: z.string().nullable(),
   snippet: z.string().nullable(),
@@ -240,6 +240,7 @@ async function importOne(
   // ── LinkedIn-only path ───────────────────────────────────────────────
   if (isLinkedinOnly) {
     const normalised = normaliseLinkedInUrl(row.linkedinUrl!);
+    const source = row.sources.includes("pdl") ? "pdl" : "scraper";
     const upserted = await prisma.candidate.upsert({
       where: { jobId_linkedinUrl: { jobId, linkedinUrl: normalised } },
       create: {
@@ -254,13 +255,13 @@ async function importOne(
         // the real profile. Mirrors the search route's snippet-import
         // behaviour.
         profileText: row.snippet,
-        source: "scraper",
+        source,
         status: "new",
       },
       update: {
         // Preserve any existing profileText / scoring — re-import shouldn't
         // wipe data. Only updates the source tag.
-        source: "scraper",
+        source,
       },
     });
     return { resultId: row.id, status: "attached", candidateId: upserted.id };

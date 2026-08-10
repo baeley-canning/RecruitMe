@@ -157,7 +157,7 @@ function NewPlacementForm() {
           <button type="button" onClick={() => router.push("/placements")} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary">
             Cancel
           </button>
-          <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50">
+          <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-accent text-text-inverse rounded-lg hover:bg-accent-hover disabled:opacity-50">
             {saving ? "Saving…" : "Record placement"}
           </button>
         </div>

@@ -136,7 +136,7 @@ export function ScoreCorrectionButton({
         <button
           onClick={handleSave}
           disabled={saving || score === currentScore}
-          className="text-xs font-medium px-3 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1 transition-colors"
+          className="text-xs font-medium px-3 py-1 rounded bg-accent text-text-inverse hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1 transition-colors"
         >
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
           Save correction

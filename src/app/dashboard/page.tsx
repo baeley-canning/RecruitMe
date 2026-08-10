@@ -131,7 +131,7 @@ export default function DashboardPage() {
                   <p className="text-sm text-text-secondary mb-3">No active jobs yet.</p>
                   <Link
                     href="/jobs/new"
-                    className="inline-flex items-center h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+                    className="inline-flex items-center h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium transition-colors"
                   >
                     Create your first job
                   </Link>

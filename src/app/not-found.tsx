@@ -9,7 +9,7 @@ export default function NotFound() {
         <p className="text-text-secondary text-md mb-6">This page doesn&apos;t exist or has been moved.</p>
         <Link
           href="/jobs"
-          className="inline-flex items-center gap-2 h-7 px-3 bg-accent hover:bg-accent-hover text-white text-md font-medium rounded transition-colors"
+          className="inline-flex items-center gap-2 h-7 px-3 bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium rounded transition-colors"
         >
           Back to jobs
         </Link>

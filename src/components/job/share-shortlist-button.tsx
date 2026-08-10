@@ -120,7 +120,7 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
                 />
                 <button
                   onClick={copy}
-                  className="inline-flex items-center gap-1 h-7 px-2 bg-accent hover:bg-accent-hover text-white text-xs rounded font-medium transition-colors"
+                  className="inline-flex items-center gap-1 h-7 px-2 bg-accent hover:bg-accent-hover text-text-inverse text-xs rounded font-medium transition-colors"
                   title="Copy link"
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -149,7 +149,7 @@ export function ShareShortlistButton({ jobId, shortlistCount = 0 }: { jobId: str
             <button
               onClick={generate}
               disabled={loading}
-              className="w-full inline-flex items-center justify-center gap-2 h-8 px-3 bg-accent hover:bg-accent-hover text-white text-md rounded font-medium disabled:opacity-50 transition-colors"
+              className="w-full inline-flex items-center justify-center gap-2 h-8 px-3 bg-accent hover:bg-accent-hover text-text-inverse text-md rounded font-medium disabled:opacity-50 transition-colors"
             >
               {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
               Generate share link

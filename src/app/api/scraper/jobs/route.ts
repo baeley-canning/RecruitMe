@@ -2,8 +2,9 @@
  * GET  /api/scraper/jobs  — worker polls for pending scrape jobs
  * POST /api/scraper/jobs  — enqueue a new scrape job
  *
- * Auth: x-scraper-secret header (timing-safe compare against SCRAPER_SECRET env).
- * The scraper worker uses this key on every request.
+ * Auth: per-box Bearer token (`SCRAPER_API_TOKEN`) or legacy shared
+ * x-scraper-secret (`SCRAPER_SECRET`). Tenant-bound Bearer tokens are pinned
+ * to one org; the shared secret / owner token is the platform operator path.
  *
  * GET: claims up to 5 pending jobs atomically (status pending → processing)
  * and returns them. The worker processes each and POSTes results to

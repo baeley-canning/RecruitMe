@@ -67,7 +67,7 @@ export function ConfirmDialogHost() {
       <div className="px-5 py-3 border-t border-separator flex items-center justify-end gap-2">
         <button
           onClick={() => close(false)}
-          className="h-8 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md border border-separator transition-colors"
+          className="h-8 px-3 rounded bg-surface-hover hover:bg-surface-hover-strong text-text-primary text-md border border-separator transition-colors"
         >
           {opts.cancelLabel ?? "Cancel"}
         </button>

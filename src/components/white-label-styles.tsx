@@ -22,33 +22,31 @@ export async function WhiteLabelStyles() {
     const hex = config.primaryColour;
     if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
 
-    let r = parseInt(hex.slice(1, 3), 16);
-    let g = parseInt(hex.slice(3, 5), 16);
-    let b = parseInt(hex.slice(5, 7), 16);
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
 
-    // Luminance guard: the whole app puts white text on the accent
-    // (`bg-accent text-white`). A genuinely light brand colour (pale yellow,
-    // mint) makes that text unreadable. Use perceived brightness (YIQ) and, only
-    // when the colour is clearly too light, darken it just enough to keep white
-    // legible. Normal brand colours (the default blue ≈110, reds/greens/purples)
-    // sit well under the threshold and pass through untouched.
+    // Pick the INK to suit the brand colour, rather than bending the brand
+    // colour to suit a fixed ink. The app now labels solid fills with
+    // `text-text-inverse`, itself var-driven, so the readable choice is a
+    // property of the colour: dark ink on a light accent, white on a dark one.
+    // This is why the previous luminance *clamp* is gone — it silently altered
+    // a customer's brand colour (a pale mint arrived visibly darker) to protect
+    // an assumption that no longer holds.
     const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-    const MAX_BRIGHTNESS_FOR_WHITE = 165;
-    if (brightness > MAX_BRIGHTNESS_FOR_WHITE) {
-      const scale = MAX_BRIGHTNESS_FOR_WHITE / brightness;
-      r = Math.round(r * scale);
-      g = Math.round(g * scale);
-      b = Math.round(b * scale);
-    }
+    const isLight = brightness > 150;
+    const ink = isLight ? "18 33 44" : "255 255 255";
 
     // Distinct hover shade — without this the accent-hover token collapses to
-    // the base colour and branded buttons lose their hover feedback. Darken the
-    // (possibly already luminance-corrected) base by 15%.
-    const hov = (c: number) => Math.round(c * 0.85);
+    // the base colour and branded buttons lose their hover feedback. Move AWAY
+    // from the ink: a light accent brightens, a dark one darkens, so the chosen
+    // ink stays legible through the hover state too.
+    const hov = (c: number) =>
+      isLight ? Math.round(c + (255 - c) * 0.22) : Math.round(c * 0.85);
 
     const channels = `${r} ${g} ${b}`;
     const hoverChannels = `${hov(r)} ${hov(g)} ${hov(b)}`;
-    const css = `:root{--brand-primary-rgb:${channels};--brand-primary-hover-rgb:${hoverChannels};}`;
+    const css = `:root{--brand-primary-rgb:${channels};--brand-primary-hover-rgb:${hoverChannels};--brand-ink-rgb:${ink};}`;
     return <style dangerouslySetInnerHTML={{ __html: css }} />;
   } catch {
     return null;

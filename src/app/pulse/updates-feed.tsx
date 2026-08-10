@@ -103,7 +103,7 @@ export function UpdatesFeed() {
         <div className="flex items-baseline gap-3">
           <h1 className="text-lg font-semibold">Pulse</h1>
           {unseen > 0 && (
-            <span className="text-2xs px-1.5 py-0.5 rounded-full bg-accent text-white animate-pulse">{unseen} new</span>
+            <span className="text-2xs px-1.5 py-0.5 rounded-full bg-accent text-text-inverse animate-pulse">{unseen} new</span>
           )}
         </div>
         {/* Live "listening" heartbeat pulse */}

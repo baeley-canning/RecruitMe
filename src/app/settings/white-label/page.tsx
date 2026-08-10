@@ -188,7 +188,7 @@ export default function WhiteLabelPage() {
         <button
           onClick={handleSave}
           disabled={saving || !isDirty}
-          className="h-8 px-4 rounded bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+          className="h-8 px-4 rounded bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-text-inverse text-sm font-medium transition-colors"
         >
           {saving ? "Saving…" : "Save changes"}
         </button>

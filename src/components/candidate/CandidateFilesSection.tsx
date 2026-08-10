@@ -168,7 +168,7 @@ function DrawerUploadZone({ candidateId, onUploaded }: { candidateId: string; on
         </select>
         <label className={cn(
           "flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors",
-          uploading ? "bg-surface-hover text-text-tertiary cursor-not-allowed" : "bg-accent hover:bg-accent-hover text-white"
+          uploading ? "bg-surface-hover text-text-tertiary cursor-not-allowed" : "bg-accent hover:bg-accent-hover text-text-inverse"
         )}>
           {uploading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Uploading…</> : <><Upload className="w-3.5 h-3.5" />Upload file</>}
           <input

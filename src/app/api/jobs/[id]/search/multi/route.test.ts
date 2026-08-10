@@ -48,6 +48,7 @@ const queueMocks = vi.hoisted(() => ({
 const searchRunMocks = vi.hoisted(() => ({
   createRun: vi.fn(),
   attachLibraryResults: vi.fn(),
+  attachPdlResults: vi.fn(),
   setSourceStatus: vi.fn(),
   loadRunSnapshot: vi.fn(),
 }));
@@ -100,6 +101,7 @@ beforeEach(() => {
   searchRunMocks.attachLibraryResults.mockImplementation(async (_id: string, results: Array<ReturnType<typeof lib>>) => {
     attachedLibrary = results;
   });
+  searchRunMocks.attachPdlResults.mockResolvedValue(undefined);
   searchRunMocks.setSourceStatus.mockResolvedValue(undefined);
   dbMocks.prisma.searchRun.update.mockResolvedValue({});
   // The snapshot reflects whatever library rows were attached (scraper rows
@@ -220,6 +222,19 @@ describe("POST /search/multi — rate limit", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/2 minutes/);
     expect(searchRunMocks.createRun).not.toHaveBeenCalled();
+    expect(libraryMocks.searchLibrary).not.toHaveBeenCalled();
+    expect(queueMocks.enqueueSearchJob).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /search/multi — PDL owner gate", () => {
+  it("403s PDL searches for non-owners before creating a run", async () => {
+    const res = await POST(makeReq({ query: "react", sources: ["pdl"] }), PARAMS);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code?: string; source?: string };
+    expect(body).toMatchObject({ code: "owner_only", source: "pdl" });
+    expect(searchRunMocks.createRun).not.toHaveBeenCalled();
+    expect(searchRunMocks.attachPdlResults).not.toHaveBeenCalled();
     expect(libraryMocks.searchLibrary).not.toHaveBeenCalled();
     expect(queueMocks.enqueueSearchJob).not.toHaveBeenCalled();
   });

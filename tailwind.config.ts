@@ -25,27 +25,39 @@ const config: Config = {
       colors: {
         surface: {
           // Outermost shell — what the OS chrome would frame.
-          base:    "#1a1a1c",
+          base:    "#212429",
           // Standard card / panel surface.
-          raised:  "#252527",
+          raised:  "#2a2e34",
           // Elevated surface (modals, popovers, tooltip backgrounds).
-          overlay: "#2c2c2e",
+          overlay: "#31363d",
           // Subtle hover lift, also used for inset rows.
-          hover:   "#323234",
+          hover:   "#343a42",
+          // Hover on top of an already-hovered/inset row (secondary buttons).
+          "hover-strong": "#3d444d",
           // Even-more-subtle row-stripe / pressed state.
-          sunken:  "#1f1f21",
+          sunken:  "#262a2f",
         },
         separator: {
           // Hairline borders — barely visible, just enough to delineate.
-          DEFAULT: "rgba(255, 255, 255, 0.08)",
-          strong:  "rgba(255, 255, 255, 0.12)",
-          subtle:  "rgba(255, 255, 255, 0.05)",
+          // Slightly stronger than before: on a lifted ground a 0.08 hairline
+          // disappears, and structure is doing more work in this design.
+          DEFAULT: "rgba(255, 255, 255, 0.10)",
+          strong:  "rgba(255, 255, 255, 0.17)",
+          subtle:  "rgba(255, 255, 255, 0.06)",
         },
         text: {
-          primary:   "#f5f5f7",  // headlines, key data
-          secondary: "#a1a1a6",  // body labels, meta
-          tertiary:  "#86868b",  // captions, placeholders, disabled — WCAG AA (~4.5:1 on base/raised; was #6e6e73 at ~3.4:1)
-          inverse:   "#1d1d1f",  // text-on-accent for high-contrast surfaces
+          primary:   "#eceef1",  // headlines, key data
+          secondary: "#aab1bb",  // body labels, meta
+          // Captions/placeholders. The design's own --ink-3 (#7d858f) measures
+          // ~4.2:1 on surface-raised, under the AA floor an earlier fix raised
+          // this token to clear — so this keeps that cool cast but lightens
+          // until it passes: 4.86:1 on raised, 5.54:1 on base.
+          tertiary:  "#939ba5",
+          // Ink for text sitting ON a solid accent/semantic fill. The accent is
+          // now a pale steel blue, so white-on-accent would be ~1.9:1; this dark
+          // ink measures 7.3:1 on accent and 5.8–8.0:1 on the semantic fills.
+          // Var-driven so a white-label brand colour can supply its own ink.
+          inverse:   "rgb(var(--brand-ink-rgb, 18 33 44) / <alpha-value>)",
         },
         accent: {
           // Apple "Blue" system color in dark mode — primary action.
@@ -54,30 +66,34 @@ const config: Config = {
           // while the `<alpha-value>` placeholder keeps every `accent/NN`
           // opacity modifier working. Fallback channels = the default blue, so
           // with white-label off (the default) rendering is byte-identical.
-          DEFAULT: "rgb(var(--brand-primary-rgb, 10 132 255) / <alpha-value>)",
-          hover:   "rgb(var(--brand-primary-hover-rgb, 64 156 255) / <alpha-value>)",
-          subtle:  "rgb(var(--brand-primary-rgb, 10 132 255) / 0.15)",
+          DEFAULT: "rgb(var(--brand-primary-rgb, 125 179 216) / <alpha-value>)",
+          hover:   "rgb(var(--brand-primary-hover-rgb, 154 200 229) / <alpha-value>)",
+          subtle:  "rgb(var(--brand-primary-rgb, 125 179 216) / 0.16)",
         },
+        // Semantic colours are DESATURATED on purpose. The vivid Apple system
+        // greens/reds read as decoration and are the single loudest "generic"
+        // signal in a dark UI; muted equivalents let colour mean state without
+        // shouting. All still clear AA as text on surface-raised (4.8–6.7:1).
         success: {
-          DEFAULT: "#30d158",
-          hover:   "#5cd97a",
-          subtle:  "rgba(48, 209, 88, 0.15)",
+          DEFAULT: "#6fc994",
+          hover:   "#8ad7ab",
+          subtle:  "rgba(111, 201, 148, 0.15)",
         },
         warning: {
-          DEFAULT: "#ff9f0a",
-          hover:   "#ffb340",
-          subtle:  "rgba(255, 159, 10, 0.15)",
+          DEFAULT: "#d9a94e",
+          hover:   "#e6bd70",
+          subtle:  "rgba(217, 169, 78, 0.15)",
         },
         danger: {
-          DEFAULT: "#ff453a",
-          hover:   "#ff6961",
-          subtle:  "rgba(255, 69, 58, 0.15)",
+          DEFAULT: "#dd7f7f",
+          hover:   "#e89a9a",
+          subtle:  "rgba(221, 127, 127, 0.15)",
         },
         llama: {
-          // Reserved for Llama-failover indicators (banner, badge). Apple
-          // "Purple" so it reads as "different mode" without alarm.
-          DEFAULT: "#bf5af2",
-          subtle:  "rgba(191, 90, 242, 0.18)",
+          // Reserved for Llama-failover indicators (banner, badge). Muted
+          // violet so it reads as "different mode" without alarm.
+          DEFAULT: "#b490dd",
+          subtle:  "rgba(180, 144, 221, 0.18)",
         },
         // Source-badge colours (candidateSourceBadge / search-result source
         // pills). Without these tokens the badges fell back to neutral grey —
@@ -85,12 +101,12 @@ const config: Config = {
         // colour-coding. Apple "Cyan" + "Indigo" so each source stays distinct
         // from accent-blue / success-green / warning-orange.
         info: {
-          DEFAULT: "#64d2ff",
-          subtle:  "rgba(100, 210, 255, 0.15)",
+          DEFAULT: "#6fc2c9",
+          subtle:  "rgba(111, 194, 201, 0.15)",
         },
         purple: {
-          DEFAULT: "#5e5ce6",
-          subtle:  "rgba(94, 92, 230, 0.18)",
+          DEFAULT: "#9a95e0",
+          subtle:  "rgba(154, 149, 224, 0.18)",
         },
       },
       fontFamily: {

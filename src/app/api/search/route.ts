@@ -99,6 +99,12 @@ export async function POST(req: Request) {
   const wantLinkedin = sources.includes("linkedin");
   const wantSeek = sources.includes("seek");
   const wantPdl = sources.includes("pdl");
+  if (wantPdl && !auth.isOwner) {
+    return NextResponse.json(
+      { error: "PDL search is owner-only.", code: "owner_only", source: "pdl" },
+      { status: 403 },
+    );
+  }
   const scraperOn = isScraperDiscoveryEnabled();
   const queryRaw = parsedQuery.raw.trim();
   // A scraper job needs a concrete orgId — an untargeted owner run can't scrape.

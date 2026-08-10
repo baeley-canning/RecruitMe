@@ -1504,7 +1504,7 @@ ${toHtml(job.rawJd)}
         <p className="text-text-tertiary text-sm mb-4">Check your connection and try again.</p>
         <button
           onClick={() => { setLoading(true); setFetchError(false); fetchJob(); }}
-          className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+          className="h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium transition-colors"
         >
           Retry
         </button>
@@ -1819,14 +1819,14 @@ ${toHtml(job.rawJd)}
                         if (jdDraft !== job.rawJd && !await confirm({ message: "Discard unsaved changes to the job description?", confirmLabel: "Discard" })) return;
                         setEditingJd(false);
                       }}
-                      className="h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md border border-separator transition-colors"
+                      className="h-7 px-3 rounded bg-surface-hover hover:bg-surface-hover-strong text-text-primary text-md border border-separator transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSaveJd}
                       disabled={savingJd || !jdDraft.trim()}
-                      className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-md font-medium transition-colors"
+                      className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 text-text-inverse text-md font-medium transition-colors"
                     >
                       {savingJd ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                       {savingJd ? "Saving…" : "Save & Re-analyse"}
@@ -1892,7 +1892,7 @@ ${toHtml(job.rawJd)}
                           />
                         </div>
                         <span className="text-text-tertiary text-xs">NZD</span>
-                        <button onClick={handleSaveSalary} disabled={savingSalary} className="h-7 px-3 bg-accent hover:bg-accent-hover text-white text-md font-medium rounded disabled:opacity-50 transition-colors">
+                        <button onClick={handleSaveSalary} disabled={savingSalary} className="h-7 px-3 bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium rounded disabled:opacity-50 transition-colors">
                           {savingSalary ? "…" : "Save"}
                         </button>
                         <button onClick={() => { setEditingSalary(false); setSalaryError(""); }} className="h-7 w-7 rounded flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors">
@@ -2475,7 +2475,7 @@ ${toHtml(job.rawJd)}
                 </p>
                 <button
                   onClick={() => document.getElementById("job-search-card")?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-white text-md font-medium transition-colors"
+                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover text-text-inverse text-md font-medium transition-colors"
                 >
                   Find candidates
                 </button>

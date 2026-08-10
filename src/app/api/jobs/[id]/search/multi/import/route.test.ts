@@ -184,6 +184,26 @@ describe("POST /search/multi/import — LinkedIn-only path", () => {
     expect(call.update).toEqual({ source: "scraper" });
   });
 
+  it("attaches a PDL row with a LinkedIn URL and preserves PDL provenance", async () => {
+    const res = await POST(
+      makeReq({
+        results: [row({ sources: ["pdl"], candidateId: null })],
+      }),
+      PARAMS,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      counts: { attached: number; skipped: number; failed: number; total: number };
+    };
+    expect(body.counts).toEqual({ attached: 1, skipped: 0, failed: 0, total: 1 });
+
+    const call = dbMocks.prisma.candidate.upsert.mock.calls[0][0];
+    expect(call.create.source).toBe("pdl");
+    expect(call.update).toEqual({ source: "pdl" });
+    expect(call.create.linkedinUrl).toMatch(/linkedin\.com\/in\/test-person/);
+    expect(call.create.profileText).toBe("Snippet text from SerpAPI");
+  });
+
   it("normalises the LinkedIn URL before upsert (idempotency)", async () => {
     await POST(
       makeReq({

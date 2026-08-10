@@ -331,7 +331,7 @@ export default function ShortlistPage({
           {shortlisted.length > 0 && (
             <button
               onClick={() => setShowClientReport(true)}
-              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md font-medium border border-separator transition-colors"
+              className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-hover-strong text-text-primary text-md font-medium border border-separator transition-colors"
             >
               <FileText className="w-3.5 h-3.5" />
               Client Report
@@ -339,7 +339,7 @@ export default function ShortlistPage({
           )}
           <button
             onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-[#3a3a3c] text-text-primary text-md font-medium border border-separator transition-colors"
+            className="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-surface-hover hover:bg-surface-hover-strong text-text-primary text-md font-medium border border-separator transition-colors"
           >
             <Printer className="w-3.5 h-3.5" />
             Print / Save PDF

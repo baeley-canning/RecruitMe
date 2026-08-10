@@ -192,7 +192,7 @@ export function TokenRedeemForm({ kind, token }: { kind: Kind; token: string }) 
                 <button
                   type="submit"
                   disabled={loading || !password || !confirm || (kind === "invite" && !username.trim())}
-                  className="w-full inline-flex items-center justify-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-md transition-colors"
+                  className="w-full inline-flex items-center justify-center gap-1.5 h-7 px-3 rounded bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-text-inverse font-medium text-md transition-colors"
                 >
                   {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   {loading ? "Saving…" : kind === "invite" ? "Create account" : "Set password"}

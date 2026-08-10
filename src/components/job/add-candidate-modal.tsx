@@ -257,7 +257,7 @@ export function AddCandidateModal({ jobId, parsedRole, onComplete, onClose }: Ad
               return (
                 <button key={c.id} type="button" onClick={() => toggle(c.id)}
                   className={`flex items-start gap-3 w-full text-left px-3 py-2.5 transition-colors ${isSel ? "bg-accent-subtle" : "hover:bg-surface-hover"}`}>
-                  <span className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${isSel ? "bg-accent border-accent text-white" : "border-separator-strong"}`}>
+                  <span className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${isSel ? "bg-accent border-accent text-text-inverse" : "border-separator-strong"}`}>
                     {isSel && <CheckCircle2 className="w-3 h-3" />}
                   </span>
                   <span className="min-w-0 flex-1">

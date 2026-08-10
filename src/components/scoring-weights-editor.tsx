@@ -245,7 +245,7 @@ export function ScoringWeightsEditor({
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-2 h-7 px-3 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded text-md font-medium transition-colors"
+            className="flex items-center gap-2 h-7 px-3 bg-accent hover:bg-accent-hover disabled:opacity-50 text-text-inverse rounded text-md font-medium transition-colors"
           >
             {saved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
             {saving ? "Saving…" : saved ? "Saved" : "Save weights"}
