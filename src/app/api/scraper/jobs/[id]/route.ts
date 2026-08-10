@@ -344,6 +344,10 @@ export async function PATCH(
       orgId: job.orgId,
       platform: job.platform as "linkedin" | "seek" | "jobadder",
       profileUrl: job.profileUrl,
+      // Write to the row this job was queued for, not an arbitrary row that
+      // happens to share the URL (candidates are job-scoped, so one person has
+      // many rows).
+      candidateId: job.candidateId,
       profileText: result.profileText,
       name: result.name,
       headline: result.headline,

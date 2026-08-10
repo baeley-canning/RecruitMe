@@ -57,6 +57,17 @@ export interface IngestArgs {
   seekUrl?: string | null;
   /** Phase E — group rows created in the same operation for filter chips. */
   importBatchId?: string | null;
+  /**
+   * The candidate row this fetch was queued FOR (ScrapeJob.candidateId).
+   *
+   * Candidate rows are job-scoped, so one person has a row per job. Resolving
+   * by URL alone picks an arbitrary one of those rows via findFirst, so a
+   * profile fetched for job A could be written to the person's row on job B —
+   * observed live: the scraper completed with 4,834 chars while all 100
+   * candidates on the target job still had none. When the caller knows which
+   * row it asked about, that row wins.
+   */
+  candidateId?: string | null;
 }
 
 export interface IngestResult {
@@ -314,13 +325,23 @@ export async function ingestScraperResult(args: IngestArgs): Promise<IngestResul
     ? normaliseLinkedInUrl(args.linkedinUrl ?? args.profileUrl)
     : null;
 
-  let existing = whereLinkedin
+  // The row this fetch was explicitly queued for takes precedence over any
+  // URL-based guess. Still scoped by orgId so a stale/forged id can't write
+  // across tenants.
+  let existing = args.candidateId
     ? await prisma.candidate.findFirst({
-        where: { orgId: args.orgId, linkedinUrl: whereLinkedin },
+        where: { id: args.candidateId, orgId: args.orgId },
         select: { id: true, profileText: true },
-        orderBy: { updatedAt: "desc" },
       })
     : null;
+
+  if (!existing && whereLinkedin) {
+    existing = await prisma.candidate.findFirst({
+      where: { orgId: args.orgId, linkedinUrl: whereLinkedin },
+      select: { id: true, profileText: true },
+      orderBy: { updatedAt: "desc" },
+    });
+  }
 
   // Fall back to the platform's OWN url key when there's no LinkedIn match.
   // (This used to always query jobAdderUrl, so a re-scraped SEEK person never
