@@ -195,7 +195,7 @@ function statementContradictedByStoredSignals(statement: string, signals: Set<st
 export async function predictAcceptance(
   profileText: string,
   parsedRole: ParsedRole,
-  salary?: { min: number; max: number } | null,
+  salary?: { min: number; max: number; inferred?: boolean } | null,
   // Cost attribution: every score path fires predictAcceptance in parallel
   // with the structured score, so its Claude call must be billed to the same
   // org or the daily spend cap under-counts by ~2x (the cap only sums the
@@ -553,7 +553,7 @@ export function finalizeScoreFromText(
 export function buildScorePrompt(
   profileText: string,
   parsedRole: ParsedRole,
-  salary: { min: number; max: number } | null | undefined,
+  salary: { min: number; max: number; inferred?: boolean } | null | undefined,
   weights: ScoringWeights | undefined,
   resolvedRecruiterContext: string,
   // orgId is carried only so the assembled chatOpts stays byte-identical to
@@ -652,8 +652,11 @@ export function buildScorePrompt(
   // plainly it was ignored: a Tech Lead maxes must-haves + skill_fit (58% of the
   // weighting) and loses at most 10% on seniority, so the most over-qualified CV
   // won. Say what the number MEANS so the model can act on it.
+  // An inferred band is still the number the recruiter is hiring to, so it must
+  // gate — but it is an estimate, so it is labelled as one rather than passed
+  // off as a figure the ad stated.
   const salaryLine    = salary?.min || salary?.max
-    ? `Budget (HARD CEILING — match who will accept and stay at this number, not the most impressive CV): $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD`
+    ? `Budget (HARD CEILING — match who will accept and stay at this number, not the most impressive CV): $${((salary.min || 0) / 1000).toFixed(0)}k–$${((salary.max || 0) / 1000).toFixed(0)}k NZD${salary.inferred ? " (estimated from the role and NZ market rates — the ad did not state a range; treat it as the ceiling, but say it is an estimate when you rely on it)" : ""}`
     : "";
   // Same for the band: name the ceiling explicitly so "above it" reads as a
   // mismatch rather than a bonus.
@@ -759,7 +762,7 @@ ${escapeXmlForPrompt(profileSlice)}
 export async function scoreCandidateStructured(
   profileText: string,
   parsedRole: ParsedRole,
-  salary?: { min: number; max: number } | null,
+  salary?: { min: number; max: number; inferred?: boolean } | null,
   weights?: ScoringWeights,
   orgId?: string | null,         // used to retrieve recruiter memory examples
   recruiterContext?: string,     // pre-fetched context (avoids DB call inside scoring)
@@ -841,7 +844,7 @@ interface BatchCandidatePrep {
 export async function scoreCandidatesBatch(
   inputs: BatchScoreInput[],
   parsedRole: ParsedRole,
-  salary?: { min: number; max: number } | null,
+  salary?: { min: number; max: number; inferred?: boolean } | null,
   weights?: ScoringWeights,
   orgId?: string | null,
   recruiterContext?: string,

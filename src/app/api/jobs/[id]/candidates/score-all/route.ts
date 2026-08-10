@@ -8,6 +8,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireJobAccess, unauthorized } from "@/lib/session";
 import { requireCapability } from "@/lib/require-capability";
+import { parseSalaryBandRange } from "@/lib/job-brief-prefill";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { scorerFingerprint } from "@/lib/ai/scorer-fingerprint";
 import { checkRateLimit, checkSpendCap, recordUsage } from "@/lib/usage";
@@ -154,8 +155,15 @@ export async function POST(
   if (!parsedRole) {
     return NextResponse.json({ error: "Job parse data is invalid. Parse the job description again." }, { status: 400 });
   }
+  // Fall back to the band the JD parser inferred. Most jobs here carry no
+  // explicit salaryMin/Max — the PTML .NET role is typical — and without this
+  // NO ceiling reached the prompt at all, so every over-qualification rule was
+  // silently inert on exactly the roles that needed it most.
+  const inferredBand = parseSalaryBandRange(parsedRole.salary_band ?? "");
   const salary = (job.salaryMin || job.salaryMax)
     ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
+    : (inferredBand.min || inferredBand.max)
+    ? { min: inferredBand.min ?? 0, max: inferredBand.max ?? 0, inferred: true }
     : null;
   const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
 

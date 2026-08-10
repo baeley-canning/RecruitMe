@@ -7,6 +7,7 @@ import { applyLocationFitOverride, deriveUpdateData } from "@/lib/score-utils";
 import { getJobTargetLocation } from "@/lib/job-target-location";
 import { getAuth, requireCandidateAccess, unauthorized } from "@/lib/session";
 import { requireCapability } from "@/lib/require-capability";
+import { parseSalaryBandRange } from "@/lib/job-brief-prefill";
 import { buildScoreCacheKey, safeParseJson } from "@/lib/utils";
 import { scorerFingerprint } from "@/lib/ai/scorer-fingerprint";
 import { getJobScoringWeights } from "@/lib/scoring-config";
@@ -70,8 +71,14 @@ export async function POST(
     if (!parsedRole) {
       return NextResponse.json({ error: "Job parse data is invalid. Parse the job description again." }, { status: 400 });
     }
+    // Same fallback as score-all: most jobs carry no explicit salaryMin/Max, and
+    // without the parser's inferred band NO ceiling reaches the prompt, leaving
+    // the over-qualification rules inert on the roles that need them most.
+    const inferredBand = parseSalaryBandRange(parsedRole.salary_band ?? "");
     const salary = (job.salaryMin || job.salaryMax)
       ? { min: job.salaryMin ?? 0, max: job.salaryMax ?? 0 }
+      : (inferredBand.min || inferredBand.max)
+      ? { min: inferredBand.min ?? 0, max: inferredBand.max ?? 0, inferred: true }
       : null;
     const weights = await getJobScoringWeights(job.scoringWeights, auth.orgId);
     const correctionsVersion = await getCorrectionsVersion(auth.orgId);
