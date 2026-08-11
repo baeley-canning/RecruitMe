@@ -342,7 +342,18 @@ export async function authenticate(platform: string, page: Page): Promise<void> 
     // Success = bounced back off the Auth0 host onto an authenticated SEEK
     // host (the OAuth callback lands on au.employer.seek.com, then the talent
     // app). Accept either employer or talent host as the logged-in signal.
-    await page.waitForURL(/(talent\.seek\.com\.au|employer\.seek\.com)(?!.*\/(login|oauth|sign-in))/, { timeout: 30_000 });
+    // Surface WHERE the login stalled. A bare "waitForURL: Timeout" classifies
+    // as a soft/transient failure and keeps burning the retry budget, so an MFA
+    // wall was retried dozens of times. Including the landing URL lets
+    // classifyAuthFailure recognise authenticate.seek.com / mfa-otp-challenge as
+    // HARD and stop after one attempt.
+    try {
+      await page.waitForURL(/(talent\.seek\.com\.au|employer\.seek\.com)(?!.*\/(login|oauth|sign-in))/, { timeout: 30_000 });
+    } catch (waitErr) {
+      throw new Error(
+        `seek login did not settle (${waitErr instanceof Error ? waitErr.message : String(waitErr)}) — stalled at ${page.url()}`,
+      );
+    }
     log.info("seek: authenticated");
     // Establish the advertiser scope so the session we save next can hit talent
     // search directly — a fresh login lands on /account/select, which loops if

@@ -101,3 +101,26 @@ describe("circuit breaker (pure, time injected)", () => {
     expect(s1).not.toBe(s0);
   });
 });
+
+describe("MFA walls must stop immediately, not consume a retry budget", () => {
+  it("classifies an MFA/OTP stall as HARD", () => {
+    expect(classifyAuthFailure(new Error(
+      "seek login did not settle (page.waitForURL: Timeout 30000ms exceeded.) — stalled at https://authenticate.seek.com/u/mfa-otp-challenge?state=x",
+    ))).toBe("hard");
+  });
+
+  it("classifies a bare login-page stall as HARD", () => {
+    expect(classifyAuthFailure(new Error(
+      "seek login did not settle (Timeout) — stalled at https://authenticate.seek.com/login?state=x",
+    ))).toBe("hard");
+  });
+
+  it("a HARD failure opens the circuit on the FIRST occurrence", () => {
+    const s = recordAuthFailure(createBreakerState(), "seek", "hard", 1000);
+    expect(isCircuitOpen(s, "seek", 1001)).toBe(true);
+  });
+
+  it("still treats an ordinary network blip as soft", () => {
+    expect(classifyAuthFailure(new Error("net::ERR_CONNECTION_RESET"))).toBe("soft");
+  });
+});

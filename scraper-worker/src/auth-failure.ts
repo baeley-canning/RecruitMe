@@ -16,10 +16,30 @@
 
 export type AuthFailureKind = "soft" | "hard";
 
-/** Consecutive failures before a SOFT-failure streak opens the circuit. */
-export const BREAKER_THRESHOLD = 3;
-/** How long the circuit stays open once tripped (matches the rate-limit backoff). */
-export const BREAKER_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2h
+/**
+ * Consecutive failures before a SOFT-failure streak opens the circuit.
+ *
+ * Raised from 3 after watching this in production: the SEEK warm-up
+ * (/account/select -> /oauth/callback -> /dashboard) intermittently exceeds its
+ * 30s budget on a cold chain, and a timeout is classified "soft". Three of those
+ * — with a perfectly valid session — locked SEEK out for two hours. Observed
+ * repeatedly: scrape one or two profiles successfully, then lock out.
+ *
+ * A genuinely dead session fails EVERY attempt, so it still trips, just after
+ * more evidence. Flakiness needs more than three data points to be called an
+ * outage.
+ */
+export const BREAKER_THRESHOLD = 8;
+/**
+ * How long the circuit stays open once tripped.
+ *
+ * Cut from 2h. The cost of being wrong here is asymmetric and was badly
+ * mispriced: a false trip idles the box for two hours, while a real outage just
+ * re-trips after a few cheap probes. 15 minutes is long enough to stop hammering
+ * a genuinely broken login and short enough that a false positive is a hiccup
+ * rather than a lost morning.
+ */
+export const BREAKER_COOLDOWN_MS = 15 * 60 * 1000; // 15m
 
 /**
  * Does an error message signal a scraper-detected auth wall (the "_challenge:"
@@ -40,11 +60,17 @@ export function isAuthChallengeMessage(message: string): boolean {
  * unrecoverable (hard — wrong creds, login wall, missing auth flow, manual
  * re-login required; retrying is pointless and should open the circuit now).
  * Unknown errors default to soft (the breaker still caps the streak).
+ *
+ * MFA/OTP walls are HARD. No amount of retrying answers a one-time passcode, and
+ * retrying is not free: 33 failed SEEK logins were attempted in a single day
+ * because an MFA timeout read as "soft" and kept its place in the retry budget.
+ * Repeated failed logins are what gets an account flagged — the same way the
+ * owner's LinkedIn was. One attempt, then stop and ask for a human.
  */
 export function classifyAuthFailure(err: unknown): AuthFailureKind {
   const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
   const HARD =
-    /(invalid|incorrect|wrong)\s+(password|credentials|email|username)|re-?run\b.*login\.ts|no authentication flow|account.*(locked|disabled|suspended)|login wall|sign[- ]?in failed|missing\b.*(password|credentials)|_email\/password not set/i;
+    /(invalid|incorrect|wrong)\s+(password|credentials|email|username)|re-?run\b.*login\.ts|no authentication flow|account.*(locked|disabled|suspended)|login wall|sign[- ]?in failed|missing\b.*(password|credentials)|_email\/password not set|mfa|otp[- ]?challenge|authenticate\.seek\.com/i;
   if (HARD.test(msg)) return "hard";
   return "soft";
 }
