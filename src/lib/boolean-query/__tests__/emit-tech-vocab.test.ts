@@ -32,8 +32,16 @@ describe("tsqueryFromParsed — technical terms become sentinels", () => {
     expect(cpp).not.toBe(csharp);
   });
 
-  it("asks for dotnetx for .NET so it cannot match 'net profit'", () => {
-    expect(tsqueryFromParsed(q({ mustHave: [".net"] }))).toBe("dotnetx");
+  it("asks for the .NET sentinels so it cannot match 'net profit'", () => {
+    // Widened to include ASP.NET: 357 people in the live library carry ASP.NET
+    // and never write bare ".NET", and an ASP.NET dev is a .NET dev.
+    const out = tsqueryFromParsed(q({ mustHave: [".net"] })) ?? "";
+    expect(out).toBe("(dotnetx | aspdotnetx)");
+    expect(out).not.toContain("net profit");
+  });
+
+  it("keeps ASP.NET specific — the widening is one-directional", () => {
+    expect(tsqueryFromParsed(q({ mustHave: ["asp.net"] }))).toBe("aspdotnetx");
   });
 
   it("AND-s a rewritten multi-word term instead of using the <-> adjacency operator", () => {

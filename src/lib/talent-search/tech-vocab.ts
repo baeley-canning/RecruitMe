@@ -33,7 +33,17 @@
  * which is what stops "ASP.NET" also emitting `dotnetx` while
  * "ASP.NET on .NET 8" still correctly emits both.
  */
-const VOCAB: ReadonlyArray<{ readonly source: string; readonly sentinel: string }> = [
+const VOCAB: ReadonlyArray<{
+  readonly source: string;
+  readonly sentinel: string;
+  /**
+   * Sentinels that ALSO satisfy a query for this token, because they name a
+   * strict specialisation of it. One-directional: searching ".NET" should
+   * return ASP.NET developers (they are .NET developers), but searching
+   * "ASP.NET" must not return everyone who has merely touched .NET.
+   */
+  readonly alsoMatches?: readonly string[];
+}> = [
   { source: "asp\\.net", sentinel: "aspdotnetx" },
   { source: "objective-c", sentinel: "objectivecx" },
   { source: "c\\+\\+", sentinel: "cplusplusx" },
@@ -41,7 +51,9 @@ const VOCAB: ReadonlyArray<{ readonly source: string; readonly sentinel: string 
   { source: "f#", sentinel: "fsharpx" },
   // The dot must open the token — otherwise "subnet.network" and friends would
   // read as .NET. Matched last so asp.net is already gone.
-  { source: "(^|[^a-z0-9])\\.net", sentinel: "dotnetx" },
+  // Measured on the live library: 357 people carry ASP.NET but never write bare
+  // ".NET", so without this widening a .NET search silently loses all of them.
+  { source: "(^|[^a-z0-9])\\.net", sentinel: "dotnetx", alsoMatches: ["aspdotnetx"] },
 ];
 
 /** The complete sentinel vocabulary. Must match the SQL function. */
@@ -52,16 +64,16 @@ export const TECH_SENTINELS: readonly string[] = VOCAB.map((v) => v.sentinel);
  * cannot re-match text an earlier one already claimed. Returns the sentinels
  * found and whatever text is left over.
  */
-function scan(text: string): { sentinels: string[]; remainder: string } {
+function scan(text: string): { matched: typeof VOCAB[number][]; remainder: string } {
   let remainder = text.toLowerCase();
-  const sentinels: string[] = [];
-  for (const { source, sentinel } of VOCAB) {
-    const re = new RegExp(source, "g");
+  const matched: typeof VOCAB[number][] = [];
+  for (const entry of VOCAB) {
+    const re = new RegExp(entry.source, "g");
     if (!re.test(remainder)) continue;
-    sentinels.push(sentinel);
-    remainder = remainder.replace(new RegExp(source, "g"), " ");
+    matched.push(entry);
+    remainder = remainder.replace(new RegExp(entry.source, "g"), " ");
   }
-  return { sentinels, remainder };
+  return { matched, remainder };
 }
 
 /**
@@ -71,7 +83,10 @@ function scan(text: string): { sentinels: string[]; remainder: string } {
  */
 export function techSentinelsFor(text: string | null | undefined): string[] {
   if (!text) return [];
-  return scan(text).sentinels;
+  // Index side stores exactly ONE sentinel per token found. Widening belongs on
+  // the query side only — storing aspdotnetx AND dotnetx for every ASP.NET
+  // profile would make it impossible to search for one without the other.
+  return scan(text).matched.map((e) => e.sentinel);
 }
 
 /**
@@ -85,12 +100,19 @@ export function techSentinelsFor(text: string | null | undefined): string[] {
  *   ["dotnetx", "core"], never a stray "net" that would re-introduce the
  *   "net profit" collision this module exists to remove.
  *
- * Every atom matches /^[a-z0-9]+$/, so the result is always safe to hand to
- * to_tsquery.
+ * A token that has specialisations becomes an OR-group atom rather than a bare
+ * word: ".net" emits `(dotnetx | aspdotnetx)`, because 357 people in the live
+ * library carry ASP.NET and never write bare ".NET".
+ *
+ * Every atom is either a bare lowercase word or a parenthesised OR-group of
+ * them, so the result is always safe to hand to to_tsquery.
  */
 export function rewriteTechTerm(term: string): { rewritten: boolean; atoms: string[] } {
-  const { sentinels, remainder } = scan(term ?? "");
-  if (sentinels.length === 0) return { rewritten: false, atoms: [] };
+  const { matched, remainder } = scan(term ?? "");
+  if (matched.length === 0) return { rewritten: false, atoms: [] };
+  const sentinelAtoms = matched.map((e) =>
+    e.alsoMatches?.length ? `(${[e.sentinel, ...e.alsoMatches].join(" | ")})` : e.sentinel,
+  );
   const leftovers = remainder.match(/[a-z0-9]+/g) ?? [];
-  return { rewritten: true, atoms: [...new Set([...sentinels, ...leftovers])] };
+  return { rewritten: true, atoms: [...new Set([...sentinelAtoms, ...leftovers])] };
 }
