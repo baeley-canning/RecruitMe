@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { Browser, BrowserContext, Page } from "patchright";
@@ -30,7 +30,15 @@ export async function saveSession(platform: string, context: BrowserContext): Pr
     const cookies = await context.cookies();
     const storage = await context.storageState();
     const data = JSON.stringify({ cookies, storage });
-    writeFileSync(sessionPath(platform), encrypt(data, key), "utf8");
+    // Atomic: write a temp file then rename over the target. A direct write that
+    // is interrupted (power cut, systemctl restart mid-write) leaves a truncated
+    // file; loadStorageStateFromDisk swallows the decrypt error and returns null,
+    // so the session silently vanishes and a human has to log in again. rename()
+    // is atomic on POSIX, so the file is either the old session or the new one.
+    const target = sessionPath(platform);
+    const tmp = `${target}.tmp`;
+    writeFileSync(tmp, encrypt(data, key), "utf8");
+    renameSync(tmp, target);
     const bytes = statSync(sessionPath(platform)).size;
     log.info(`session saved for ${platform} (${bytes} bytes) -> ${sessionPath(platform)}`);
   } catch (err) {
@@ -328,8 +336,22 @@ export async function authenticate(platform: string, page: Page): Promise<void> 
       .then(() => true)
       .catch(() => false);
     if (!needsLogin) {
-      log.info(`seek: no login form after 40s (${page.url()}) — session valid, warming scope, skipping credential login`);
-      await warmSeekAccount(page).catch(() => {});
+      // "No login form" is NOT proof of a session. authenticate() runs in a
+      // FRESH, cookie-less context, so a form that is merely slow (Turnstile,
+      // cold network) looks identical to being logged in. The caller then saves
+      // this context over seek.enc — writing an UNAUTHENTICATED state over a
+      // good login, which is why the owner kept being signed out.
+      //
+      // Demand proof: warmSeekAccount must actually land on an authed app page.
+      // If it does not, throw, so no session is saved and the file survives.
+      const warmed = await warmSeekAccount(page).catch(() => false);
+      if (!warmed) {
+        throw new Error(
+          `seek_challenge: no login form appeared and the session did not warm (${page.url()}) — ` +
+          `refusing to save an unauthenticated context over the stored session`,
+        );
+      }
+      log.info(`seek: no login form and scope warmed (${page.url()}) — session valid, skipping credential login`);
       return;
     }
     await randomDelay(800, 1500);
