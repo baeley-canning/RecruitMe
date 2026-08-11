@@ -7,6 +7,12 @@ const dbMocks = vi.hoisted(() => ({
     candidate: {
       findMany: vi.fn(),
     },
+    // The index-backed recall pass (talent-search/recall.ts) queries through
+    // $queryRaw. It MUST be mocked here: without it the call throws, recall's
+    // error path returns [], and the whole feature looks green while never
+    // running. Default is "the index found nothing extra", so every existing
+    // assertion still describes the recency-window behaviour on its own.
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -101,6 +107,150 @@ describe("searchTalentPoolForRole", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     aiMocks.scoreCandidateStructured.mockResolvedValue(makeBreakdown(72));
+    // Index recall finds nothing extra by default, so each existing assertion
+    // continues to describe the recency-window behaviour in isolation.
+    dbMocks.prisma.$queryRaw.mockResolvedValue([]);
+  });
+
+  // ── Index-backed recall ────────────────────────────────────────────────
+  // The recency window examines the newest 2,000 rows. Measured on production
+  // 2026-08-11: 13,189 JobAdder rows were bulk-inserted inside a four-minute
+  // window, so they sort as one block and only 1,498 land inside it. 11,488
+  // candidates with full profile text were unreachable by this search, and not
+  // one had ever been scored. These tests lock in the fix.
+  describe("index-backed recall", () => {
+    const olderThanTheWindow = new Date("2026-05-30T01:01:00Z");
+
+    it("finds a candidate the recency window missed entirely", async () => {
+      // The window returns NOTHING — this person is too old to be in it.
+      dbMocks.prisma.candidate.findMany.mockResolvedValue([]);
+      dbMocks.prisma.$queryRaw.mockResolvedValue([
+        {
+          id: "archive-row",
+          name: "Buried In The Archive",
+          headline: "SCADA Engineer at Transpower",
+          location: "Christchurch, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/buried/",
+          profileText: longProfile("SCADA RTU metering"),
+          profileCapturedAt: olderThanTheWindow,
+          createdAt: olderThanTheWindow,
+        },
+      ]);
+
+      const summary = await searchTalentPoolForRole({
+        parsedRole: POWER_ROLE,
+        job: { isRemote: false },
+        orgScope: "org-1",
+        excludeLinkedInUrls: new Set(),
+        maxResults: 5,
+        targetLocation: "Christchurch, New Zealand",
+        scoringOrgId: "org-1",
+        salary: null,
+      });
+
+      expect(summary.results).toHaveLength(1);
+      expect(summary.results[0].hit.candidateId).toBe("archive-row");
+    });
+
+    it("unions the two passes rather than replacing one with the other", async () => {
+      dbMocks.prisma.candidate.findMany.mockResolvedValue([
+        {
+          id: "recent-row",
+          name: "Recently Added",
+          headline: "SCADA Engineer at Mercury",
+          location: "Christchurch, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/recent/",
+          profileText: longProfile("SCADA RTU metering"),
+          profileCapturedAt: new Date(),
+          createdAt: new Date(),
+        },
+      ]);
+      dbMocks.prisma.$queryRaw.mockResolvedValue([
+        {
+          id: "archive-row",
+          name: "Buried In The Archive",
+          headline: "SCADA Engineer at Transpower",
+          location: "Christchurch, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/buried/",
+          profileText: longProfile("SCADA RTU metering"),
+          profileCapturedAt: olderThanTheWindow,
+          createdAt: olderThanTheWindow,
+        },
+      ]);
+
+      const summary = await searchTalentPoolForRole({
+        parsedRole: POWER_ROLE,
+        job: { isRemote: false },
+        orgScope: "org-1",
+        excludeLinkedInUrls: new Set(),
+        maxResults: 5,
+        targetLocation: "Christchurch, New Zealand",
+        scoringOrgId: "org-1",
+        salary: null,
+      });
+
+      const ids = summary.results.map((r) => r.hit.candidateId).sort();
+      expect(ids).toEqual(["archive-row", "recent-row"]);
+    });
+
+    it("counts a row appearing in BOTH passes only once", async () => {
+      const row = {
+        id: "in-both",
+        name: "Found Twice",
+        headline: "SCADA Engineer at Mercury",
+        location: "Christchurch, New Zealand",
+        linkedinUrl: "https://www.linkedin.com/in/both/",
+        profileText: longProfile("SCADA RTU metering"),
+        profileCapturedAt: new Date(),
+        createdAt: new Date(),
+      };
+      dbMocks.prisma.candidate.findMany.mockResolvedValue([row]);
+      dbMocks.prisma.$queryRaw.mockResolvedValue([row]);
+
+      const summary = await searchTalentPoolForRole({
+        parsedRole: POWER_ROLE,
+        job: { isRemote: false },
+        orgScope: "org-1",
+        excludeLinkedInUrls: new Set(),
+        maxResults: 5,
+        targetLocation: "Christchurch, New Zealand",
+        scoringOrgId: "org-1",
+        salary: null,
+      });
+
+      expect(summary.preRankPool).toBe(1);
+      expect(summary.results).toHaveLength(1);
+      expect(aiMocks.scoreCandidateStructured).toHaveBeenCalledTimes(1);
+    });
+
+    it("still returns the recency window's results when the index pass finds nothing", async () => {
+      dbMocks.prisma.candidate.findMany.mockResolvedValue([
+        {
+          id: "recent-row",
+          name: "Recently Added",
+          headline: "SCADA Engineer at Mercury",
+          location: "Christchurch, New Zealand",
+          linkedinUrl: "https://www.linkedin.com/in/recent/",
+          profileText: longProfile("SCADA RTU metering"),
+          profileCapturedAt: new Date(),
+          createdAt: new Date(),
+        },
+      ]);
+      dbMocks.prisma.$queryRaw.mockResolvedValue([]);
+
+      const summary = await searchTalentPoolForRole({
+        parsedRole: POWER_ROLE,
+        job: { isRemote: false },
+        orgScope: "org-1",
+        excludeLinkedInUrls: new Set(),
+        maxResults: 5,
+        targetLocation: "Christchurch, New Zealand",
+        scoringOrgId: "org-1",
+        salary: null,
+      });
+
+      expect(summary.results.map((r) => r.hit.candidateId)).toEqual(["recent-row"]);
+    });
   });
 
   it("dedupes the same person across multiple jobs by linkedinUrl (most recent capture wins)", async () => {

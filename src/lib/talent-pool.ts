@@ -26,6 +26,7 @@ import {
 import type { ParsedRole } from "./ai";
 import { scoreCandidateStructured } from "./ai";
 import { applyLocationFitOverride } from "./score-utils";
+import { recallCandidatesForRole } from "./talent-search/recall";
 import { isExplicitlyOverseasLocation, isOverseasForNzRole, inferCandidateLocation } from "./location";
 import type { ScoringWeights } from "./scoring-config";
 import type { ScoreBreakdown } from "./scoring";
@@ -368,6 +369,21 @@ export async function searchTalentPoolForRole(args: {
   });
   const flattenedRoleAnchors = [...new Set(roleAnchorGroups.flat())];
 
+  // ── Index-backed recall ──────────────────────────────────────────────────
+  // The recency window below examines the newest 2,000 rows. That was written
+  // when a pool was expected to hold ~200-500 people. The library now holds
+  // 16,927, of which 13,189 arrived as one JobAdder bulk import inside a
+  // four-minute window on 30 May — so they sort as a single block and only
+  // 1,498 of them land inside the window. 11,488 candidates with full profile
+  // text, most with a CV attached, were unreachable by this search entirely,
+  // and not one of them had ever been scored.
+  //
+  // This pass asks the full-text index instead, so age stops deciding
+  // visibility. It is MERGED with the recency window rather than replacing it:
+  // the candidate set can only grow, so nothing that surfaced before stops
+  // surfacing.
+  const recallRows = await recallCandidatesForRole({ parsedRole, orgScope });
+
   const baseRows = await prisma.candidate.findMany({
     where: {
       profileText: { not: null },
@@ -393,6 +409,9 @@ export async function searchTalentPoolForRole(args: {
     take: 2000,
   });
   const rowsById = new Map<string, typeof baseRows[number]>();
+  // Index hits first, then the recency window — same map, so a row present in
+  // both is stored once and the union is what gets pre-ranked.
+  for (const row of recallRows) rowsById.set(row.id, row);
   for (const row of baseRows) rowsById.set(row.id, row);
 
   // Rare anchors can sit outside the newest-2000 window in older library
