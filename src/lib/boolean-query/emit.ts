@@ -13,6 +13,7 @@
  */
 
 import type { ParsedQuery } from "../boolean-query";
+import { rewriteTechTerm } from "../talent-search/tech-vocab";
 
 // ─── Postgres to_tsquery ───────────────────────────────────────────────────
 //
@@ -29,6 +30,21 @@ const TSQUERY_RESERVED = /[&|!():*<>\\']/g;
 /** One ParsedQuery term → a tsquery atom. A multi-word phrase becomes
  *  `word1 <-> word2` (followed-by) so ts_rank rewards proximity. */
 function termToTsqueryAtom(term: string): string {
+  // Technical tokens first. Postgres's `english` config reduces `c#` and `c++`
+  // to the same lexeme 'c', and `.net` to 'net' (which "net profit" also
+  // produces) — so a C# search returned 38% C++ and unrelated rows. Terms that
+  // contain one of these are asked for by sentinel instead
+  // (src/lib/talent-search/tech-vocab.ts + the searchTsv migration).
+  //
+  // Sentinels live in their OWN tsvector component, so their positions do not
+  // line up with the english-parsed text. That means they must be AND-ed, never
+  // joined with the `<->` adjacency operator — ".net core" is
+  // `(dotnetx & core)`, not `dotnetx <-> core`, which would match nothing.
+  const tech = rewriteTechTerm(term);
+  if (tech.rewritten && tech.atoms.length > 0) {
+    return tech.atoms.length === 1 ? tech.atoms[0] : `(${tech.atoms.join(" & ")})`;
+  }
+
   const cleaned = term.replace(TSQUERY_RESERVED, " ").trim();
   if (!cleaned) return "";
   const words = cleaned.split(/\s+/);

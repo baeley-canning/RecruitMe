@@ -830,14 +830,37 @@ await step("ScrapeJob.priority for live-search queue jumping", async () => {
 //     write. Prisma 5.22 has no first-class tsvector mapping; we declare
 //     it as Unsupported("tsvector") in the schema so `prisma db push` leaves
 //     it alone, and query through $queryRaw.
+// NOTE: the authoritative definition of this column now lives in the migration
+// prisma/migrations/20260812000000_searchtsv_tech_vocab/, which added the
+// technical-vocabulary sentinel components (see src/lib/talent-search/tech-vocab.ts).
+// This step is ADD COLUMN IF NOT EXISTS, so it is a no-op on any database the
+// migration has touched. It is kept in sync only so that dropping the column by
+// hand recreates the CURRENT definition rather than silently reverting search to
+// the version where C# and C++ were the same token.
 await step("Candidate.searchTsv generated tsvector + GIN (Phase F boolean search)", async () => {
+  await prisma.$executeRaw`
+    CREATE OR REPLACE FUNCTION recruitme_tech_tokens(t text)
+    RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+      SELECT btrim(
+        (CASE WHEN lower(t) LIKE '%asp.net%'     THEN 'aspdotnetx '  ELSE '' END) ||
+        (CASE WHEN regexp_replace(lower(t), 'asp\.net', ' ', 'g') ~ '(^|[^a-z0-9])\.net'
+                                                 THEN 'dotnetx '     ELSE '' END) ||
+        (CASE WHEN lower(t) LIKE '%c++%'         THEN 'cplusplusx '  ELSE '' END) ||
+        (CASE WHEN lower(t) LIKE '%c#%'          THEN 'csharpx '     ELSE '' END) ||
+        (CASE WHEN lower(t) LIKE '%f#%'          THEN 'fsharpx '     ELSE '' END) ||
+        (CASE WHEN lower(t) LIKE '%objective-c%' THEN 'objectivecx ' ELSE '' END)
+      );
+    $$
+  `;
   await prisma.$executeRaw`
     ALTER TABLE "Candidate" ADD COLUMN IF NOT EXISTS "searchTsv" tsvector
     GENERATED ALWAYS AS (
       setweight(to_tsvector('english', coalesce("name", '')), 'A') ||
       setweight(to_tsvector('english', coalesce("headline", '') || ' ' || coalesce("archivedJobTitle", '')), 'B') ||
       setweight(to_tsvector('english', coalesce("location", '') || ' ' || coalesce("archivedJobCompany", '')), 'C') ||
-      setweight(to_tsvector('english', coalesce("profileText", '')), 'D')
+      setweight(to_tsvector('english', coalesce("profileText", '')), 'D') ||
+      setweight(to_tsvector('simple', recruitme_tech_tokens(coalesce("headline", ''))), 'B') ||
+      setweight(to_tsvector('simple', recruitme_tech_tokens(coalesce("profileText", ''))), 'D')
     ) STORED
   `;
   await prisma.$executeRaw`
