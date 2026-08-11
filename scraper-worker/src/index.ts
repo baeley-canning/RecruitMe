@@ -26,6 +26,7 @@ import { scrapeJobAdderProfile } from "./scrapers/jobadder-profile.js";
 import { closeArchive } from "./archive.js";
 import { log } from "./util/log.js";
 import { isAuthChallengeMessage } from "./auth-failure.js";
+import { resolveJobTarget } from "./job-routing.js";
 import { hostname } from "node:os";
 
 const RAILWAY_URL = (process.env.RAILWAY_API_URL ?? "").replace(/\/$/, "");
@@ -450,31 +451,42 @@ async function processJob(
       return;
     }
 
-    // --- Profile jobs (existing behaviour) ----------------------------------
-    if (!job.profileUrl) {
-      await postResult(job.id, { status: "failed", error: "Profile job missing profileUrl" });
+    // --- Profile jobs -------------------------------------------------------
+    // Route by the URL, not by the platform column it arrived in. A merge-key
+    // string ("seek:https://…") sitting in the linkedinUrl column once sent 100
+    // SEEK URLs to the LinkedIn scraper; each failed in ~4s, which spun this
+    // loop ~6x faster than intended and got the owner's account flagged.
+    const target = resolveJobTarget({ platform: job.platform, profileUrl: job.profileUrl });
+    if (!target.ok) {
+      await postResult(job.id, { status: "failed", error: target.error });
       return;
     }
+    const { platform: targetPlatform, url: targetUrl } = target;
+    if (targetPlatform !== job.platform) {
+      log.warn(
+        `job ${job.id} was filed as ${job.platform} but its URL is ${targetPlatform} — routing by URL (${targetUrl})`,
+      );
+    }
 
-    if (job.platform === "linkedin") {
+    if (targetPlatform === "linkedin") {
       const page = await ensureSession("linkedin", browser);
       const profile = await withTimeout(
-        scrapeLinkedInProfile(job.profileUrl, page),
+        scrapeLinkedInProfile(targetUrl, page),
         PROFILE_TIMEOUT_MS,
         "linkedin-profile",
       );
       await postResult(job.id, { status: "completed", result: profile });
       log.info(`job ${job.id} completed — ${profile.profileText.length} chars — name="${profile.name ?? "(none)"}"`);
-    } else if (job.platform === "seek") {
+    } else if (targetPlatform === "seek") {
       const page = await ensureSession("seek", browser);
       const profile = await withTimeout(
-        scrapeSeekProfile(job.profileUrl, page),
+        scrapeSeekProfile(targetUrl, page),
         PROFILE_TIMEOUT_MS,
         "seek-profile",
       );
       await postResult(job.id, { status: "completed", result: profile });
       log.info(`job ${job.id} completed — ${profile.profileText.length} chars`);
-    } else if (job.platform === "jobadder") {
+    } else if (targetPlatform === "jobadder") {
       if (!JOBADDER_ENABLED) {
         await postResult(job.id, {
           status: "failed",
@@ -496,7 +508,7 @@ async function processJob(
       let result;
       try {
         result = await withTimeout(
-          scrapeJobAdderProfile(job.profileUrl, jaPage, jaCtx),
+          scrapeJobAdderProfile(targetUrl, jaPage, jaCtx),
           PROFILE_TIMEOUT_MS,
           "jobadder-profile",
         );

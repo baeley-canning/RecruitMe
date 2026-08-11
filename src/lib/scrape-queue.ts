@@ -22,6 +22,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { reportError } from "./error-reporting";
 import { applyPlatformBudget, parsePlatformBudgets } from "./platform-budget";
+import { cleanProfileUrl, platformForUrl } from "./profile-url";
 
 export type ScrapePlatform = "linkedin" | "seek" | "jobadder";
 
@@ -33,10 +34,26 @@ export async function enqueueScrapeJob(args: {
   requestedBy?: string | null;
 }): Promise<{ id: string } | null> {
   try {
+    // Never store a row whose platform disagrees with its URL. A merge-key
+    // string ("seek:https://…") that leaked into the linkedinUrl column once
+    // filed 100 SEEK profiles as LinkedIn work — they failed in ~4s each,
+    // spinning the worker loop ~6x too fast and getting the account flagged.
+    // Cleaning here also keeps the per-platform daily budget honest, since it
+    // counts what the queue claims each platform is doing.
+    const profileUrl = cleanProfileUrl(args.profileUrl);
+    if (!profileUrl) {
+      reportError(new Error(`Refusing to enqueue an unusable profile URL: ${args.profileUrl}`), {
+        route: "scrape-queue:enqueue",
+        orgId: args.orgId,
+      });
+      return null;
+    }
+    const platform = platformForUrl(profileUrl, args.platform) ?? args.platform;
+
     const existing = await prisma.scrapeJob.findFirst({
       where: {
         orgId: args.orgId,
-        profileUrl: args.profileUrl,
+        profileUrl,
         status: { in: ["pending", "processing"] },
       },
       select: { id: true },
@@ -46,9 +63,9 @@ export async function enqueueScrapeJob(args: {
     return await prisma.scrapeJob.create({
       data: {
         orgId: args.orgId,
-        platform: args.platform,
+        platform,
         kind: "profile",
-        profileUrl: args.profileUrl,
+        profileUrl,
         candidateId: args.candidateId ?? null,
         requestedBy: args.requestedBy ?? null,
         status: "pending",
