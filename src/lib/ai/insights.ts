@@ -39,7 +39,7 @@ import { chatWithFailover, type ChatSource } from "./chat-with-failover";
 import { parseJson, withRetry } from "./chat";
 
 /** Bump on prompt edits. Persisted in ProfileInsight.promptVersion. */
-export const INSIGHT_PROMPT_VERSION = "insight-v1.0";
+export const INSIGHT_PROMPT_VERSION = "insight-v1.1-tenure";
 
 /** Integer gate for the Stage 1 ranker. New insights land at this version.
  *  PR 3 reads MIN_VERSION_FOR_RANKING (a separate constant) to decide which
@@ -74,6 +74,13 @@ export interface InsightEvidenceSnippet {
  * The structured payload persisted as ProfileInsight.factsJson. Every field
  * is optional / nullable so consumers can render "unknown" gracefully.
  */
+export type InsightSeniority =
+  | "junior" | "intermediate" | "senior" | "lead" | "principal" | "manager";
+
+const INSIGHT_SENIORITY: readonly InsightSeniority[] = [
+  "junior", "intermediate", "senior", "lead", "principal", "manager",
+];
+
 export interface InsightFacts {
   currentTitle: string | null;
   currentEmployer: string | null;
@@ -84,6 +91,15 @@ export interface InsightFacts {
   education: InsightEducation[];
   certifications: string[];
   evidenceSnippets: InsightEvidenceSnippet[];
+  /** Total years of relevant professional experience, derived from role dates.
+   *  The Candidate row has no such column, so "years worked" could not be
+   *  filtered or sorted at all — the scorer re-derived it from prose on every
+   *  candidate, every run. Bounded 0-60 by the validator: a hallucinated 90
+   *  must never reach the over-qualification rule. */
+  totalYearsExperience: number | null;
+  /** Current level from titles and scope. Fixed vocabulary so it is filterable;
+   *  free text would be unsortable and unqueryable. */
+  currentSeniority: InsightSeniority | null;
   /** Set by validator when input profileText was below the extraction
    *  threshold — extractor returns "unknown" for everything and flags this
    *  so consumers don't mistake it for a confident-empty result. */
@@ -130,7 +146,9 @@ Return ONLY compact JSON (no markdown, no prose) matching exactly this schema:
   "titlesHeld": [string],
   "education": [{"institution": string, "degree"?: string, "fieldOfStudy"?: string, "graduationYear"?: number}],
   "certifications": [string],
-  "evidenceSnippets": [{"field": string, "value": string, "quote": string}]
+  "evidenceSnippets": [{"field": string, "value": string, "quote": string}],
+  "totalYearsExperience": number|null,
+  "currentSeniority": "junior"|"intermediate"|"senior"|"lead"|"principal"|"manager"|null
 }
 
 Rules:
@@ -140,7 +158,24 @@ Rules:
 - titlesHeld: most-recent first. Roles only — don't include volunteer/coaching activities unless they ARE the role.
 - evidenceSnippets MUST include at least one quote per extracted non-null/non-empty field. Quotes are verbatim — copy them exactly from the input. No paraphrasing.
 - If a field cannot be supported by a quote, return null/[] for it. Do not invent.
-- titlesHeld + primaryStack are the load-bearing fields for cross-role retrieval — be thorough.`;
+- titlesHeld + primaryStack are the load-bearing fields for cross-role retrieval — be thorough.
+- totalYearsExperience: DERIVE it by adding up the role dates. Do not guess it from job titles — "Senior" says nothing about how long. Null when the dates aren't there.
+- currentSeniority: the level they operate at NOW, from recent titles and scope (team size, ownership), not from length of service. A long-tenured senior IC is still "senior", not "lead".`;
+
+/** Years must be a plausible working life. A hallucinated 90 would otherwise
+ *  flow straight into the over-qualification rule and bury a real candidate. */
+function asYears(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (value < 0 || value > 60) return null;
+  return Math.round(value);
+}
+
+/** Only the known vocabulary — free text here would be unfilterable. */
+function asSeniority(value: unknown): InsightSeniority | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim().toLowerCase();
+  return INSIGHT_SENIORITY.includes(v as InsightSeniority) ? (v as InsightSeniority) : null;
+}
 
 function buildUserPrompt(profileText: string): string {
   return `Extract reusable facts from this candidate profile. Return ONLY JSON.
@@ -253,6 +288,8 @@ function validateAndCoerce(raw: unknown, sourceText: string): InsightFacts {
     education,
     certifications: asTitlesArr(r.certifications),
     evidenceSnippets,
+    totalYearsExperience: asYears(r.totalYearsExperience),
+    currentSeniority: asSeniority(r.currentSeniority),
   };
 }
 
@@ -272,6 +309,8 @@ export function buildThinProfileInsight(): InsightFacts {
     education: [],
     certifications: [],
     evidenceSnippets: [],
+    totalYearsExperience: null,
+    currentSeniority: null,
     thinProfile: true,
   };
 }

@@ -14,7 +14,8 @@ const pq = (over: Partial<ParsedQuery>): ParsedQuery => ({
 
 const facts = (over: Partial<InsightFacts>): InsightFacts => ({
   currentTitle: null, currentEmployer: null, primaryStack: [], secondaryStack: [],
-  domains: [], titlesHeld: [], education: [], certifications: [], evidenceSnippets: [], ...over,
+  domains: [], titlesHeld: [], education: [], certifications: [], evidenceSnippets: [],
+  totalYearsExperience: null, currentSeniority: null, ...over,
 });
 
 describe("positiveQueryTerms", () => {

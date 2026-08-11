@@ -51,6 +51,8 @@ const FACTS = {
   education: [],
   certifications: [],
   evidenceSnippets: [{ field: "currentTitle", value: "Senior Engineer", quote: "Senior Engineer at Acme" }],
+  totalYearsExperience: 8,
+  currentSeniority: "senior" as const,
 };
 
 function buildExtractedInsight(overrides: Partial<ExtractedInsight> = {}): ExtractedInsight {

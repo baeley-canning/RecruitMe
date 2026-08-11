@@ -68,6 +68,8 @@ function rowToTyped(row: {
       secondaryStack: [],
       domains: [],
       titlesHeld: [],
+      totalYearsExperience: null,
+      currentSeniority: null,
       education: [],
       certifications: [],
       evidenceSnippets: [],
