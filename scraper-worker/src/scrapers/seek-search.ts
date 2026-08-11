@@ -275,8 +275,22 @@ export async function scrapeSeekSearch(
     // harvest stays byte-safe (never crashes, never empties).
     const SEEK_SORT_PARAM = process.env.SEEK_SORT_PARAM ?? "modifiedDate";
     try {
+      // Pick the sort control by CAPABILITY, never by position.
+      //
+      // This used to fall back to `page.locator("select").first()`, and on
+      // 2026-08-12 SEEK's page had a location dropdown first: the fallback
+      // resolved to <select id="location-market-selector"> and tried to set
+      // "modifiedDate" on it ("did not find some options", 6s timeout). It
+      // failed harmlessly only because that select had no matching option — a
+      // select that DID would have silently changed the search's location
+      // market, quietly returning the wrong country's candidates.
+      //
+      // The sort control is definitionally "the select that offers this sort
+      // value", so ask for exactly that. Robust to re-ordering and to the
+      // aria-label being renamed again.
       const named = page.locator('select[aria-label="Options"]').first();
-      const sel = (await named.count().catch(() => 0)) ? named : page.locator("select").first();
+      const byOption = page.locator(`select:has(option[value="${SEEK_SORT_PARAM}"])`).first();
+      const sel = (await named.count().catch(() => 0)) ? named : byOption;
       if (await sel.count().catch(() => 0)) {
         await sel.selectOption({ value: SEEK_SORT_PARAM }, { timeout: 6_000 });
         await page
