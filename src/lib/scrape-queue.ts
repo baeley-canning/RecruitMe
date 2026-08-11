@@ -21,6 +21,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { reportError } from "./error-reporting";
+import { applyPlatformBudget, parsePlatformBudgets } from "./platform-budget";
 
 export type ScrapePlatform = "linkedin" | "seek" | "jobadder";
 
@@ -161,9 +162,8 @@ export interface ClaimedScrapeJob {
   searchRunId: string | null;
   priority: number;
   retryCount: number;
-  // kind="score" carries the prompt (scorePayload) the box runs against its
-  // local Ollama, keyed back to the candidate it scores (candidateId). Both
-  // are null for kind="profile"/"search" jobs.
+  // Legacy score-offload fields. No active writer creates kind="score" jobs
+  // anymore; these stay nullable so old rows/schema shape remain readable.
   scorePayload: string | null;
   candidateId: string | null;
 }
@@ -221,6 +221,42 @@ export async function claimScrapeJobs(
       RETURNING id, "orgId", platform, kind, "profileUrl", "searchQuery", "searchLocation", "searchRunId", priority, "retryCount", "scorePayload", "candidateId"
     `;
 
-    return [...priorityClaim, ...reserved];
+    const claimed = [...priorityClaim, ...reserved];
+
+    // Daily ceiling per platform, enforced HERE because it is the one point the
+    // worker cannot route around: it can only act on what this returns. Today a
+    // routing bug made jobs fail in ~4s and the loop ran six times faster than
+    // intended (LinkedIn flagged the account), and a separate bug retried an MFA
+    // wall 33 times. Both were stopped by a human reading logs, which is not a
+    // control. Unbudgeted platforms are unlimited, so this changes nothing until
+    // a budget is set; a budget of 0 is a real stop.
+    const budgets = parsePlatformBudgets(process.env.SCRAPE_DAILY_BUDGETS);
+    if (Object.keys(budgets).length === 0 || claimed.length === 0) return claimed;
+
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+    const usedRows = await tx.scrapeJob.groupBy({
+      by: ["platform"],
+      where: { updatedAt: { gte: since }, status: { in: ["processing", "completed", "failed"] } },
+      _count: { _all: true },
+    });
+    const usedToday: Record<string, number> = {};
+    for (const row of usedRows) usedToday[row.platform] = row._count._all;
+
+    const { allowed, deferred, cappedPlatforms } = applyPlatformBudget(claimed, usedToday, budgets);
+
+    if (deferred.length > 0) {
+      // Put the held-back jobs straight back to pending — they were flipped to
+      // "processing" by the UPDATE above and would otherwise be stranded.
+      await tx.scrapeJob.updateMany({
+        where: { id: { in: deferred.map((j) => j.id) } },
+        data: { status: "pending", updatedAt: new Date() },
+      });
+      console.warn(
+        `[scrape-queue] daily budget reached for ${cappedPlatforms.join(", ")} — ` +
+        `deferred ${deferred.length} job(s); used today: ${JSON.stringify(usedToday)}`,
+      );
+    }
+    return allowed;
   });
 }
