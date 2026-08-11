@@ -413,6 +413,16 @@ async function rollSessionForward(platform: string, context: BrowserContext): Pr
   }
 }
 
+/**
+ * Platforms whose login requires a one-time passcode a human must type.
+ *
+ * For these the worker must NEVER attempt an automated login. It cannot succeed,
+ * and the attempt runs in a fresh context that throws away the session the owner
+ * just created by hand — turning one transient validity blip into a repeated
+ * "log in again" loop for them.
+ */
+const MFA_PLATFORMS = new Set((process.env.MFA_PLATFORMS ?? "seek").split(",").map((p) => p.trim()).filter(Boolean));
+
 export async function ensureSession(platform: string, browser: Browser): Promise<Page> {
   if (isCircuitOpen(authBreaker, platform, Date.now())) {
     // SELF-HEAL: a transient blip can trip the breaker while the session is
@@ -451,6 +461,19 @@ export async function ensureSession(platform: string, browser: Browser): Promise
       return page;
     }
     log.info(`${platform}: session expired, re-authenticating`);
+  }
+
+  // Platforms that demand a one-time passcode cannot be logged in by a worker.
+  // Attempting it is pure downside: getPlatformPage({fresh:true}) below discards
+  // the existing cookies, so a failed attempt DESTROYS whatever session the
+  // owner had just established by hand — they reported re-logging in repeatedly
+  // while this ran. Refuse instead: keep the context intact and ask for a human.
+  if (MFA_PLATFORMS.has(platform)) {
+    throw new Error(
+      `${platform}_challenge: session invalid and ${platform} requires a one-time passcode — ` +
+      `a worker cannot complete this. Run \`npx tsx login.ts ${platform}\` on the box. ` +
+      `NOT attempting an automated login, which would discard the current session.`,
+    );
   }
 
   try {
