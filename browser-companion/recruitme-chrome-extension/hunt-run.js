@@ -106,7 +106,10 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
     };
   }
 
-  const emit = () => onProgress({ ...state, trace: [...state.trace] });
+  const emit = () => {
+    state.lastEmitAt = Date.now();
+    onProgress({ ...state, trace: [...state.trace] });
+  };
   const step = (tool, detail) => {
     state.steps += 1;
     state.lastTool = tool;
@@ -213,12 +216,36 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
 
   return {
     getState: () => ({ ...state, trace: [...state.trace] }),
+    /**
+     * Stop now, and SAY so.
+     *
+     * This used to set a flag and nothing else: it did not clear `running`, did
+     * not emit, and did not close the tab. So pressing Stop left the panel
+     * ticking and left the cached runner marked busy — which then refused every
+     * later hunt. Stop has to actually stop.
+     */
     abort() {
       aborted = true;
+      state.halted = "Stopped at your request.";
+      state.running = false;
+      record.note("aborted by user");
+      if (tabId !== null) {
+        tabs.remove(tabId).catch(() => {});
+        tabId = null;
+      }
+      emit();
     },
 
     async run({ instruction }) {
-      if (state.running) throw new Error("A hunt is already running.");
+      // A previous run that hung left state.running === true, and because the
+      // runner is cached in the worker that permanently bricked the feature:
+      // every later attempt threw "already running" against a hunt that was
+      // never going to finish. Take over a stale run instead of refusing.
+      if (state.running) {
+        const idleMs = Date.now() - (state.lastEmitAt || 0);
+        if (idleMs < 90_000) throw new Error("A hunt is already running.");
+        record.fail("takeover", `previous run idle ${Math.round(idleMs / 1000)}s — starting fresh`);
+      }
       const apiKey = await getApiKey();
       if (!apiKey) throw new Error("No DeepSeek API key saved — open Options and paste one.");
 
@@ -226,6 +253,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
       state.running = true;
       aborted = false;
       lastActionAt = 0;
+      record.note(`run() entered — ${instruction.length} chars of instruction`);
       emit();
 
       /** Every profile URL we have harvested or opened — the missing memory. */
@@ -393,6 +421,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
         await tabs.remove(tabId).catch(() => {});
         tabId = null;
       }
+      record.note(`run() finished — ${state.read} read, answer ${state.answer ? "yes" : "no"}`);
       emit();
       return this.getState();
     },

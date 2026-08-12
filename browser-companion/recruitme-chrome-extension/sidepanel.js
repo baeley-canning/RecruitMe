@@ -63,11 +63,30 @@ function humanSecs(ms) {
  * hung. A local ticker proves it is alive and shows how long the current step
  * has actually taken.
  */
+let lastProgressAt = 0;
+let stallWarned = false;
+
 function startTicker() {
   stopTicker();
+  lastProgressAt = Date.now();
+  stallWarned = false;
   ticker = setInterval(() => {
     if (!workingLine) return;
     workingLine.textContent = `${workingLabel} · ${humanSecs(Date.now() - workingSince)}`;
+    // A step that has not moved in 90s is stuck, not slow. Say so, and say what
+    // to do about it, rather than letting the clock tick to four minutes.
+    if (!stallWarned && Date.now() - lastProgressAt > 90_000) {
+      stallWarned = true;
+      thread.appendChild(
+        el(
+          "div",
+          "banner warn",
+          "No progress for 90 seconds — this looks stuck rather than slow. " +
+            "Press Stop, then Copy report and send it over; the report says exactly where it stopped.",
+        ),
+      );
+      scrollDown();
+    }
   }, 1000);
 }
 
@@ -227,6 +246,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message?.type !== "RECRUITME_AGENT_PROGRESS") return;
   const s = message.snapshot || {};
   if (s.running) {
+    lastProgressAt = Date.now();
     renderTrace(s);
     const bits = [];
     if (s.found) bits.push(`${s.found} found`);
