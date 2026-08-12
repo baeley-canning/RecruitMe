@@ -233,10 +233,12 @@ async function attachFile(file) {
     form.append("file", file);
     // Multipart must go through the panel's own fetch: the background worker
     // cannot reconstruct a File, and FormData does not survive sendMessage.
-    const { base, headers } = await new Promise((resolve) => {
+    const conn = await new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: "RECRUITME_CONN" }, (r) => resolve(r || {}));
     });
-    if (!base) throw new Error("Set your RecruitMe server URL and API key in the extension options.");
+    const { base, headers } = conn;
+    // Say WHICH setting is missing rather than a generic "unauthorized".
+    if (!base) throw new Error(conn.error || "No RecruitMe server configured — check the extension's Options.");
     const res = await fetch(`${base}/api/hunt/extract`, { method: "POST", headers, body: form });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);

@@ -1379,11 +1379,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     try {
       const settings = await getStoredSettings();
       const bases = await getServerBases();
-      const base = bases[0] || "";
-      const headers = {};
       const authHeader = await getBasicAuthHeader();
-      if (authHeader && base && isCredentialSafeBase(base, settings)) {
-        headers.Authorization = authHeader;
+
+      // Pick the first base we are allowed to send the credential to, NOT
+      // simply bases[0]. getServerBases() returns
+      // [configured, lastWorking, ...DEFAULTS], so when no server URL has been
+      // configured, bases[0] is a DEFAULT — which isCredentialSafeBase rightly
+      // refuses. Taking it blindly meant the request went out with no
+      // Authorization header at all and came back "Unauthorized".
+      const base = bases.find((b) => isCredentialSafeBase(b, settings)) || "";
+      const headers = {};
+      if (authHeader && base) headers.Authorization = authHeader;
+
+      if (!base || !authHeader) {
+        sendResponse({
+          base: "",
+          headers: {},
+          error: !authHeader
+            ? "No RecruitMe username/password saved — open the extension's Options and sign in."
+            : "No trusted RecruitMe server URL saved — set it in the extension's Options.",
+        });
+        return;
       }
       sendResponse({ base, headers });
     } catch (error) {
