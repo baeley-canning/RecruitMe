@@ -4,148 +4,170 @@
 <meta charset="utf-8">
 <title>RecruitMe</title>
 <style>
-  /* Docked side panel: full height, its own scroll, conversation-shaped.
-     A popup was the wrong container — it closes the moment focus leaves it,
-     and a hunt runs for minutes while the recruiter keeps working. */
+  /* Docked side panel. A popup was the wrong container — it closes the moment
+     focus leaves it, and a hunt runs for minutes while the recruiter keeps
+     using the very tab it is driving. */
   :root {
     --bg: #faf9f7;
+    --panel: #fffefc;
     --surface: #ffffff;
-    --surface-2: #f3f1ee;
-    --border: #e3dfd9;
-    --text: #1f1d1b;
-    --text-2: #6b6560;
-    --accent: #c86a3e;
+    --surface-2: #f2efea;
+    --border: #e5e0d8;
+    --border-strong: #d5cec3;
+    --text: #24211e;
+    --text-2: #6f6862;
+    --text-3: #9a938b;
+    --accent: #c96442;
     --accent-ink: #ffffff;
-    --good: #2f7d5c;
     --warn: #8a6416;
-    --warn-bg: #fdf4e3;
+    --warn-bg: #fbf3e2;
     --bad: #a8403c;
-    --bad-bg: #fbeceb;
-    --radius: 10px;
+    --bad-bg: #fbecea;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #1a1917;
-      --surface: #232120;
-      --surface-2: #2b2927;
-      --border: #3a3734;
-      --text: #ece9e5;
-      --text-2: #a29c95;
-      --accent: #d87d4f;
-      --accent-ink: #1a1917;
-      --good: #5fb98d;
-      --warn: #d9ad55;
-      --warn-bg: #302a1d;
-      --bad: #dd857f;
+      --bg: #1b1a18;
+      --panel: #221f1d;
+      --surface: #2a2724;
+      --surface-2: #302c29;
+      --border: #3b3733;
+      --border-strong: #4a4540;
+      --text: #eeeae5;
+      --text-2: #a49d95;
+      --text-3: #7d766f;
+      --accent: #d97757;
+      --accent-ink: #1b1a18;
+      --warn: #d7ab55;
+      --warn-bg: #302a1c;
+      --bad: #de8781;
       --bad-bg: #33211f;
     }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    display: flex;
-    flex-direction: column;
-    -webkit-font-smoothing: antialiased;
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; -webkit-font-smoothing: antialiased;
   }
 
+  /* Header */
   header {
     display: flex; align-items: center; gap: 8px;
-    padding: 12px 14px; border-bottom: 1px solid var(--border);
-    background: var(--surface); flex: none;
+    padding: 12px 14px; flex: none;
   }
-  .brand { font-weight: 650; letter-spacing: -.01em; }
+  .mark {
+    width: 16px; height: 16px; flex: none; color: var(--accent);
+  }
+  .brand { font-weight: 600; font-size: 14.5px; letter-spacing: -.01em; }
   .spacer { flex: 1; }
-  select#job {
-    font: inherit; color: var(--text); background: var(--surface-2);
-    border: 1px solid var(--border); border-radius: 8px;
-    padding: 5px 8px; max-width: 190px;
+  .model {
+    font-size: 12.5px; color: var(--text-2);
+    padding: 3px 8px; border-radius: 6px;
   }
 
   /* Conversation */
-  #thread { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-  .msg { max-width: 100%; }
+  #thread {
+    flex: 1; overflow-y: auto; padding: 6px 14px 14px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .msg .bubble { border-radius: 12px; padding: 10px 13px; }
   .msg.user .bubble {
-    background: var(--accent); color: var(--accent-ink);
-    border-radius: var(--radius) var(--radius) 2px var(--radius);
-    padding: 9px 12px; margin-left: auto; width: fit-content; max-width: 88%;
+    background: var(--surface-2); width: fit-content; max-width: 92%; margin-left: auto;
+    white-space: pre-wrap; word-break: break-word;
   }
   .msg.agent .bubble {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius) var(--radius) var(--radius) 2px;
-    padding: 11px 13px; white-space: pre-wrap;
+    background: var(--panel); border: 1px solid var(--border);
+    white-space: pre-wrap; word-break: break-word;
   }
-  .empty { color: var(--text-2); text-align: center; margin-top: 32px; padding: 0 20px; }
-  .empty h2 { font-size: 15px; margin: 0 0 6px; color: var(--text); }
-  .suggest {
-    display: block; width: 100%; text-align: left; margin-top: 8px;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    padding: 9px 11px; font: inherit; color: var(--text); cursor: pointer;
-  }
-  .suggest:hover { background: var(--surface-2); }
 
-  /* Live step trace — what it is doing right now */
-  .trace { border-left: 2px solid var(--border); padding-left: 10px; display: flex; flex-direction: column; gap: 4px; }
-  .step { color: var(--text-2); font-size: 12.5px; display: flex; gap: 6px; }
+  .empty { color: var(--text-2); margin: auto 0; text-align: center; padding: 0 8px; }
+  .empty h2 { font-size: 16px; margin: 0 0 6px; color: var(--text); font-weight: 600; }
+  .empty p { margin: 0 0 14px; font-size: 13px; }
+  .suggest {
+    display: block; width: 100%; text-align: left; margin-top: 7px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+    padding: 9px 11px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer;
+  }
+  .suggest:hover { border-color: var(--border-strong); }
+
+  /* Live trace of tool calls */
+  .trace { display: flex; flex-direction: column; gap: 5px; padding-left: 2px; }
+  .step { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); }
+  .step .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; margin-top: 7px; }
   .step .tool { color: var(--text); font-weight: 550; }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; margin-top: 6px; }
-  .working { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 12.5px; }
-  .spin { width: 11px; height: 11px; border: 2px solid var(--border); border-top-color: var(--accent);
-          border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+  .working { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+  .spin {
+    width: 11px; height: 11px; flex: none; border: 2px solid var(--border-strong);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+  }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 
-  .banner { border-radius: 8px; padding: 9px 11px; font-size: 13px; }
+  .banner { border-radius: 9px; padding: 9px 11px; font-size: 13px; }
   .banner.warn { background: var(--warn-bg); color: var(--warn); }
   .banner.bad  { background: var(--bad-bg);  color: var(--bad); }
 
   /* Composer */
-  footer { flex: none; border-top: 1px solid var(--border); background: var(--surface); padding: 10px 12px 12px; }
-  .composer { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); padding: 8px 10px; }
+  footer { flex: none; padding: 0 12px 10px; }
+  .composer {
+    background: var(--panel); border: 1px solid var(--border-strong);
+    border-radius: 14px; padding: 10px 12px 8px;
+  }
   #ask {
     width: 100%; border: 0; outline: 0; resize: none; background: transparent;
-    color: var(--text); font: inherit; max-height: 140px;
+    color: var(--text); font: inherit; max-height: 180px; min-height: 22px;
   }
-  .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-  button {
-    font: inherit; border-radius: 8px; padding: 6px 12px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  #ask::placeholder { color: var(--text-3); }
+  .controls { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .mode { font-size: 12.5px; color: var(--text-2); display: flex; align-items: center; gap: 5px; }
+  .send {
+    width: 30px; height: 30px; flex: none; border: 0; border-radius: 50%;
+    background: var(--accent); color: var(--accent-ink); cursor: pointer;
+    display: grid; place-items: center; padding: 0;
   }
-  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 550; }
-  button:disabled { opacity: .5; cursor: default; }
-  .hint { color: var(--text-2); font-size: 12px; }
+  .send:disabled { opacity: .4; cursor: default; }
+  .ghost {
+    border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+    border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .disclaimer { text-align: center; font-size: 11.5px; color: var(--text-3); margin: 8px 0 0; }
 </style>
 </head>
 <body>
   <header>
+    <svg class="mark" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+      <path d="M8 0l1.9 5.1L15 7l-5.1 1.9L8 14l-1.9-5.1L1 7l5.1-1.9z"/>
+    </svg>
     <span class="brand">RecruitMe</span>
     <span class="spacer"></span>
-    <select id="job" title="Which job to hunt for"><option>Loading…</option></select>
+    <span class="model">DeepSeek V4</span>
   </header>
 
   <div id="thread">
     <div class="empty" id="empty">
-      <h2>Hunt LinkedIn from here</h2>
-      <div>Pick a job, then ask. It searches, opens profiles and reads them in this browser session.</div>
-      <button class="suggest" data-fill="Find me the top 3 for this role and rate them out of 10. Also tell me how you searched.">Find me the top 3 and rate them out of 10</button>
-      <button class="suggest" data-fill="Search Wellington for this role and shortlist anyone with the must-have skills. Tell me who you rejected and why.">Shortlist Wellington, and say who you rejected</button>
-      <button class="suggest" data-fill="Check which of these people are already in my library before you rank them.">Cross-check against my library</button>
+      <h2>Paste a job description</h2>
+      <p>Then tell it what you want. It searches LinkedIn, opens profiles and reads them in this browser session.</p>
+      <button class="suggest" data-fill="Find me the top 3 applicants for the role below and rate them out of 10. Please also provide a separate recount of how you did your search, so I can learn how you work.&#10;&#10;">Top 3, rated out of 10, plus how you searched</button>
+      <button class="suggest" data-fill="Find the best candidates in Wellington for the role below. Open their profiles and read the real work history before judging — do not go on job titles alone. Tell me who you rejected and why.&#10;&#10;">Wellington only, and tell me who you rejected</button>
     </div>
   </div>
 
   <footer>
     <div class="composer">
-      <textarea id="ask" rows="2" placeholder="Ask it to find someone…"></textarea>
-      <div class="row">
-        <button id="send" class="primary" type="button">Ask</button>
-        <button id="stop" type="button" hidden>Stop</button>
+      <textarea id="ask" rows="2" placeholder="Paste a job description and ask…"></textarea>
+      <div class="controls">
+        <span class="mode">Reads pages · never messages anyone</span>
         <span class="spacer"></span>
-        <span class="hint" id="hint"></span>
+        <button id="stop" class="ghost" type="button" hidden>Stop</button>
+        <button id="send" class="send" type="button" title="Ask (Enter)">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true">
+            <path d="M8 1.5l5 5-1.1 1.1L8.8 4.4V14H7.2V4.4L4.1 7.6 3 6.5z"/>
+          </svg>
+        </button>
       </div>
     </div>
+    <p class="disclaimer">RecruitMe reads pages in your browser. Check its findings.</p>
   </footer>
 
   <script src="sidepanel.js"></script>

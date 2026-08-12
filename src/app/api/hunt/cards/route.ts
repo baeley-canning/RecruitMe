@@ -41,7 +41,8 @@ const CardSchema = z.object({
 });
 
 const BodySchema = z.object({
-  jobId: z.string().min(1),
+  /** Optional: with no job, this is a pure library-membership check (no scoring). */
+  jobId: z.string().min(1).optional(),
   // One results page is ~10 cards; 100 is a generous ceiling that still bounds
   // the work a single request can ask for.
   cards: z.array(CardSchema).min(1).max(100),
@@ -79,16 +80,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 422, headers: extensionCorsHeaders(req) });
   }
 
-  const job = await prisma.job.findUnique({ where: { id: parsed.data.jobId } });
-  if (!job) {
+  // With no jobId this is a membership check only: "have I seen these people
+  // before?" That is the shape the agent needs when the recruiter pasted a JD
+  // straight into the panel rather than picking a stored job.
+  const job = parsed.data.jobId
+    ? await prisma.job.findUnique({ where: { id: parsed.data.jobId } })
+    : null;
+  if (parsed.data.jobId && !job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404, headers: extensionCorsHeaders(req) });
   }
-  if (!auth.isOwner && job.orgId !== auth.orgId) {
+  if (job && !auth.isOwner && job.orgId !== auth.orgId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: extensionCorsHeaders(req) });
   }
 
-  const role = safeParseRole(job.parsedRole);
-  if (!role) {
+  const role = job ? safeParseRole(job.parsedRole) : null;
+  if (job && !role) {
     return NextResponse.json(
       { error: "This job has not been analysed yet — open it in RecruitMe and press Re-analyse first." },
       { status: 409, headers: extensionCorsHeaders(req) },
@@ -141,7 +147,7 @@ export async function POST(req: Request) {
     if (!prev || ((k.profileText?.length ?? 0) > (prev.profileText?.length ?? 0))) bestByUrl.set(key, k);
   }
 
-  const weights = await getJobScoringWeights(job.scoringWeights, job.orgId).catch(() => undefined);
+  const weights = job ? await getJobScoringWeights(job.scoringWeights, job.orgId).catch(() => undefined) : undefined;
 
   const results = [...byUrl.values()].map((card) => {
     const hit = bestByUrl.get(card.url) ?? null;
@@ -149,12 +155,15 @@ export async function POST(req: Request) {
     // it, otherwise the card's own headline. The breakdown records which, so a
     // 40-from-a-headline is never mistaken for a 40-from-a-CV.
     const evidenceText = hit?.profileText ?? null;
-    const scored = baseScoreUpdateData(
-      { name: card.name, headline: card.headline ?? null, location: card.location ?? null, evidenceText },
-      { location: job.location, location2: job.location2, isRemote: job.isRemote },
-      role,
-      weights,
-    );
+    const scored =
+      job && role
+        ? baseScoreUpdateData(
+            { name: card.name, headline: card.headline ?? null, location: card.location ?? null, evidenceText },
+            { location: job.location, location2: job.location2, isRemote: job.isRemote },
+            role,
+            weights,
+          )
+        : null;
     return {
       url: card.url,
       name: card.name,
@@ -164,23 +173,27 @@ export async function POST(req: Request) {
       known: Boolean(hit),
       candidateId: hit?.id ?? null,
       /** Already attached to THIS job — no point re-adding. */
-      onThisJob: hit?.jobId === job.id,
+      onThisJob: job ? hit?.jobId === job.id : false,
       /** True when opening the profile would actually teach us something. */
       needsCapture: !evidenceText,
       evidence: evidenceText ? "profile" : "headline",
-      fit: scored.matchScore,
-      reason: scored.matchReason,
+      fit: scored ? scored.matchScore : null,
+      reason: scored ? scored.matchReason : null,
     };
   });
 
   // Rank: best fit first, but a row we can only judge from a headline never
   // outranks one judged on a real profile at the same score — otherwise a
   // confident-sounding headline beats a candidate we actually know.
-  results.sort((a, b) => b.fit - a.fit || Number(b.evidence === "profile") - Number(a.evidence === "profile"));
+  results.sort(
+    (a, b) =>
+      (b.fit ?? -1) - (a.fit ?? -1) ||
+      Number(b.evidence === "profile") - Number(a.evidence === "profile"),
+  );
 
   return NextResponse.json(
     {
-      jobId: job.id,
+      jobId: job?.id ?? null,
       received: parsed.data.cards.length,
       location: wantedLocation,
       droppedByLocation: allCards.length - cards.length,
