@@ -1370,9 +1370,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // Toolbar icon opens the docked side panel. A popup was the wrong container:
 // it closes the moment focus leaves it, and a hunt runs for minutes while the
 // recruiter keeps using the very tab it is driving.
-if (chrome.sidePanel?.setPanelBehavior) {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+// Opening the side panel from the toolbar icon, reliably.
+//
+// setPanelBehavior alone was not enough: it only runs once the service worker
+// has started, and an MV3 worker starts lazily — so the FIRST click after a
+// reload found no popup (removed deliberately), no click handler, and a
+// behaviour that had not been applied yet. The icon simply did nothing.
+//
+// Belt and braces: apply the behaviour at install AND at every worker start,
+// and keep an explicit onClicked handler as the fallback. A click is a user
+// gesture, which is what sidePanel.open() requires.
+function applyPanelBehavior() {
+  chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
 }
+applyPanelBehavior();
+chrome.runtime.onInstalled.addListener(applyPanelBehavior);
+chrome.runtime.onStartup.addListener(applyPanelBehavior);
+
+chrome.action?.onClicked?.addListener(async (tab) => {
+  try {
+    await chrome.sidePanel.open({ windowId: tab.windowId });
+  } catch (err) {
+    record.fail("sidePanel.open", String(err?.message || err));
+  }
+});
 
 // The side panel needs to POST multipart itself: a File cannot survive
 // sendMessage, so requestRecruitMe can't carry an attachment. Hand the panel
