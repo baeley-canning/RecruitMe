@@ -149,6 +149,18 @@ export async function scrapeLinkedInSearch(
   query: string,
   page: Page,
   maxPages = 1,
+  /**
+   * Optional live view of what has been harvested so far.
+   *
+   * The caller wraps this function in a wedge-guard timeout. When that fires
+   * the promise is killed and everything local to this function — including
+   * the `bySlug` accumulator — is lost, which on 2026-08-12 threw away four
+   * real candidates a search had already found and reported the job as failed.
+   * Writing through to a caller-owned object means a killed search can still
+   * report the people it found. Kept optional so existing callers and tests are
+   * unaffected.
+   */
+  sink?: LinkedInSearchHarvest,
 ): Promise<LinkedInSearchHarvest> {
   const encoded = encodeURIComponent(query);
   // The country geoUrn filter (geoId 103844754) was REMOVED 2026-06-15: it
@@ -180,6 +192,12 @@ export async function scrapeLinkedInSearch(
       if (!slug || bySlug.has(slug)) continue;
       bySlug.set(slug, c);
       added++;
+    }
+    // Publish after every page, so a wedge-guard timeout mid-pagination still
+    // leaves the caller holding everything harvested up to that point.
+    if (sink && added > 0) {
+      sink.cards = [...bySlug.values()];
+      sink.urls = sink.cards.map((c) => c.url);
     }
     return added;
   };

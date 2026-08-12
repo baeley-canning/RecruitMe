@@ -19,13 +19,14 @@ import { msUntilNextJobAllowed } from "./job-pacing.js";
 import { ensureSession, openContextWithSavedSession, discardPlatformSession } from "./session-manager.js";
 import { scrapeLinkedInProfile, RateLimitError } from "./scrapers/linkedin.js";
 import { scrapeSeekProfile } from "./scrapers/seek.js";
-import { scrapeLinkedInSearch } from "./scrapers/linkedin-search.js";
+import { scrapeLinkedInSearch, type LinkedInSearchHarvest } from "./scrapers/linkedin-search.js";
 import { scrapeSeekSearch } from "./scrapers/seek-search.js";
 import { scrapeJobAdderList } from "./scrapers/jobadder-list.js";
 import { scrapeJobAdderProfile } from "./scrapers/jobadder-profile.js";
 import { closeArchive } from "./archive.js";
 import { log } from "./util/log.js";
 import { isAuthChallengeMessage } from "./auth-failure.js";
+import { shouldSalvagePartialHarvest } from "./partial-harvest.js";
 import { resolveJobTarget } from "./job-routing.js";
 import { hostname } from "node:os";
 
@@ -335,13 +336,30 @@ async function processJob(
           return;
         }
         const page = await ensureSession("linkedin", browser);
-        const harvest = await withTimeout(
-          scrapeLinkedInSearch(job.searchQuery, page, SCRAPER_SEARCH_MAX_PAGES),
-          // Scale the wedge guard with page depth (60s headroom per extra page);
-          // default maxPages=1 leaves the 120s budget unchanged.
-          HARVEST_TIMEOUT_MS + (SCRAPER_SEARCH_MAX_PAGES - 1) * 60_000,
-          "linkedin-search",
-        );
+        // A search killed by the wedge guard has usually already found people.
+        // On 2026-08-12 a 240s timeout during pagination discarded four real
+        // candidates from page 1 and posted the job FAILED. The scraper writes
+        // through to `partial` after every page so we can still report them.
+        const partial: LinkedInSearchHarvest = { urls: [], cards: [] };
+        let harvest: LinkedInSearchHarvest;
+        try {
+          harvest = await withTimeout(
+            scrapeLinkedInSearch(job.searchQuery, page, SCRAPER_SEARCH_MAX_PAGES, partial),
+            // Scale the wedge guard with page depth (60s headroom per extra page);
+            // default maxPages=1 leaves the 120s budget unchanged.
+            HARVEST_TIMEOUT_MS + (SCRAPER_SEARCH_MAX_PAGES - 1) * 60_000,
+            "linkedin-search",
+          );
+        } catch (err) {
+          // Timeouts with results in hand are salvageable. Auth challenges and
+          // everything else still fail the job — see partial-harvest.ts.
+          if (!shouldSalvagePartialHarvest(err, partial.cards.length, "linkedin-search")) throw err;
+          log.warn(
+            `linkedin-search: timed out mid-pagination — reporting the ${partial.cards.length} card(s) ` +
+              `harvested before the wedge guard fired rather than discarding them`,
+          );
+          harvest = partial;
+        }
         searchCountToday += 1;
         // Phase K: POST profile children BEFORE settling the search job. Cap
         // fan-out so a broad live search can't starve background work — but
