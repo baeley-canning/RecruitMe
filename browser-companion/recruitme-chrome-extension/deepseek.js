@@ -34,11 +34,32 @@ export const TOOLS = [
         "Run a LinkedIn people search. Use TWO OR THREE plain keywords — LinkedIn's basic " +
         'people search returns nothing for long quoted boolean queries. Good: "Network Operations ' +
         'Manager". Bad: \'("A" OR "B") AND "C"\'. Run several different searches to cover a role ' +
-        "from different angles. Returns the visible text of the results page.",
+        "from different angles. Returns the visible text of the results page. " +
+        "Do NOT put a place name in the keywords — that searches for the WORD. " +
+        "Use set_location_filter instead.",
       parameters: {
         type: "object",
         properties: { keywords: { type: "string", description: "Two or three plain keywords." } },
         required: ["keywords"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_location_filter",
+      description:
+        "Set LinkedIn's own Locations filter on the people-search results page. Call this ONCE " +
+        "after your first search, before judging anyone, whenever the recruiter named a place. " +
+        "LinkedIn REMEMBERS this filter for later searches, so setting it once constrains the " +
+        "whole hunt — and if it is left on a previous session's city, every search silently " +
+        "returns the wrong country. Use the form LinkedIn uses, e.g. \"Wellington, New Zealand\".",
+      parameters: {
+        type: "object",
+        properties: {
+          location: { type: "string", description: 'e.g. "Wellington, New Zealand"' },
+        },
+        required: ["location"],
       },
     },
   },
@@ -84,7 +105,9 @@ How to work:
 - Run SEVERAL different searches to cover the role from different angles — the exact title, alternative titles people actually use, and a title plus a distinctive skill. One search only ever finds one slice of a market.
 - Use two or three plain keywords per search. Long quoted boolean queries return nothing on LinkedIn's basic people search.
 - Judge nobody on a headline alone. Open the promising profiles and read the real work history before ranking. Titles lie: a "Network Operations Manager" may run ELECTRICITY networks, not IT.
-- Respect the location the recruiter asked for. Discard people outside it and say so.
+- LOCATION FIRST. If the recruiter named a place, run one search, then immediately call set_location_filter with it (e.g. "Wellington, New Zealand") before judging anyone. LinkedIn REMEMBERS that filter across searches — including one left over from a previous session, which is how a Wellington hunt comes back full of people in Spain. Setting it once constrains the whole hunt. Never put a place name in the keywords; that searches for the word, not the region.
+- After setting it, sanity-check that the locations in the results actually match. If they do not, say so rather than reporting the wrong country's people.
+- Discard anyone outside the requested region and say who you dropped.
 - Work at a human pace. If you hit a login wall or security check, stop and say so rather than pushing on.
 
 When you have enough, give your final answer as prose:

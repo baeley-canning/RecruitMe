@@ -144,6 +144,24 @@ export function createAgentLoop({ getApiKey, onProgress, tabs, now }) {
         return await readPage();
       }
 
+      if (call.name === "set_location_filter") {
+        // Drive LinkedIn's OWN Locations filter rather than inventing our own.
+        // Putting the place name in the keywords searches for the WORD, which
+        // is not the same thing at all. LinkedIn also REMEMBERS this filter
+        // between searches — which is how a Wellington role came back full of
+        // Barcelona people — so once it is set correctly that stickiness works
+        // in our favour for every subsequent search.
+        const loc = String(call.args.location || "").trim();
+        if (!loc) return "No location was given.";
+        detail(loc);
+        const id = await ensureTab();
+        const res = await ask(id, { type: "RECRUITME_SET_LOCATION", location: loc });
+        if (!res.ok) return `Could not set the Locations filter: ${res.error}`;
+        await sleep(rand(1500, 2500));
+        return `Locations filter set to "${res.applied}". It stays applied to later searches. ` +
+          (await readPage());
+      }
+
       if (call.name === "open_profile") {
         const url = String(call.args.url || "");
         if (!/^https:\/\/([a-z]+\.)?linkedin\.com\/in\//i.test(url)) {
