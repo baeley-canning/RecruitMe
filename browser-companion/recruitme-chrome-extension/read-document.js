@@ -10,15 +10,30 @@
  * text goes into the message you send.
  */
 
-/** Lazily set up pdf.js — 2MB should not load unless a PDF is actually attached. */
+/**
+ * Lazily set up pdf.js — 2MB should not load unless a PDF is actually attached.
+ *
+ * It MUST be injected as a classic <script>, not `import()`ed. The vendored
+ * build is UMD: it assigns `this.pdfjsLib = factory()`, and in an ES module
+ * `this` is undefined at top level, so importing it throws
+ * "Cannot set properties of undefined (setting 'pdfjsLib')". A script tag runs
+ * in classic scope where `this` is the window, which is what it expects.
+ */
 let pdfjsReady = null;
 async function getPdfjs() {
   if (pdfjsReady) return pdfjsReady;
   pdfjsReady = (async () => {
-    await import(chrome.runtime.getURL("vendor/pdf.js"));
-    // The vendored build attaches itself to the global scope.
+    if (!globalThis.pdfjsLib) {
+      await new Promise((resolve, reject) => {
+        const tag = document.createElement("script");
+        tag.src = chrome.runtime.getURL("vendor/pdf.js");
+        tag.onload = resolve;
+        tag.onerror = () => reject(new Error("pdf.js failed to load from the extension bundle"));
+        document.head.appendChild(tag);
+      });
+    }
     const lib = globalThis.pdfjsLib;
-    if (!lib) throw new Error("pdf.js failed to load");
+    if (!lib) throw new Error("pdf.js loaded but did not register itself");
     lib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.js");
     return lib;
   })();
