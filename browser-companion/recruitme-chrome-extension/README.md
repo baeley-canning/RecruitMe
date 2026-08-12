@@ -10,7 +10,7 @@ Load this folder as an unpacked extension in Opera or any Chromium-based browser
 4. Select this folder:
 
 ```text
-browser-companion/recruitme-opera-linkedin-capture
+browser-companion/recruitme-chrome-extension
 ```
 
 ## Usage

@@ -1356,7 +1356,7 @@ The severity should be corrected to "low" rather than "medium": the endpoint dis
 
 ### 58. [LOW] _(orig medium)_ Basic auth credentials stored plaintext in chrome.storage.local
 - **Subsystem:** Browser Extension + Extension API · **Category:** security · **Verifier confidence:** high · votes: 1
-- **Location:** `browser-companion/recruitme-opera-linkedin-capture/background.js:75-88`
+- **Location:** `browser-companion/recruitme-chrome-extension/background.js:75-88`
 - **Evidence:** getStoredSettings reads extUsername and extPassword from chrome.storage.local. They are written in options.js:148-172 directly from the form fields after a save. chrome.storage.local is accessible to any extension in the same browser profile with the 'storage' permission and is not encrypted at rest on disk (it is a LevelDB file in the browser profile). The options page explicitly states: 'Stored locally in your browser — never sent anywhere except your own RecruitMe server.'
 - **Impact:** If the user's OS account is compromised, or another malicious extension with 'storage' permission is installed, the plaintext recruiter credentials can be extracted from chrome.storage.local.
 - **Fix:** Use chrome.storage.session for the in-memory working copy and only persist an encrypted blob in chrome.storage.local, or document to users that the stored credentials are only as secure as their OS account.
@@ -1547,7 +1547,7 @@ However, the practical impact is lower than "medium" because: (a) Claude's instr
 - **[security]** Packer user-data grants ubuntu NOPASSWD sudo and leaves the account with a blank password — `appliance/packer/http/user-data:37`
 - **[security]** IP allowlist for /box-dashboard trusts X-Forwarded-For without verifying the request passed through Caddy — `src/middleware.ts:40-45`
 - **[security]** OrgAccessGrant in-process cache is process-local — grant revocation takes up to 60s per replica — `src/lib/org-access.ts:12-14`
-- **[tech-debt]** setup-contract.test.ts references electron/main.js which likely does not exist in the repo — `browser-companion/recruitme-opera-linkedin-capture/setup-contract.test.ts:27-31`
+- **[tech-debt]** setup-contract.test.ts references electron/main.js which likely does not exist in the repo — `browser-companion/recruitme-chrome-extension/setup-contract.test.ts:27-31`
 - **[correctness]** orgId derivation order inconsistency between /photo and /files routes — `src/app/api/candidates/[id]/photo/route.ts:52`
 - **[tech-debt]** Missing magic-byte validation in /api/upload — comment claims it exists but it does not — `src/app/api/upload/route.ts:41`
 - **[correctness]** Content-Disposition filename uses encodeURIComponent inside a quoted-string — not RFC 6266 compliant for non-ASCII names — `src/app/api/candidates/[id]/files/[fileId]/route.ts:147`

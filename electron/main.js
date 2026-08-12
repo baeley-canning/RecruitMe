@@ -32,7 +32,7 @@ const EXTENSION_FILES = [
   "options.js",
   "README.md",
 ];
-const EXTENSION_RELATIVE_DIR = path.join("browser-companion", "recruitme-opera-linkedin-capture");
+const EXTENSION_RELATIVE_DIR = path.join("browser-companion", "recruitme-chrome-extension");
 
 function getBundledExtensionDir() {
   const candidates = [

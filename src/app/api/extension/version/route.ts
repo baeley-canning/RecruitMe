@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { extensionCorsHeaders } from "@/lib/extension-cors";
 
-const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-opera-linkedin-capture");
+const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-chrome-extension");
 
 export async function OPTIONS(req: Request) {
   return new Response(null, { status: 204, headers: extensionCorsHeaders(req) });

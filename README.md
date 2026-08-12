@@ -173,7 +173,7 @@ prisma/
 └── migrations/                 # All schema migrations (committed to git)
 
 browser-companion/
-└── recruitme-opera-linkedin-capture/
+└── recruitme-chrome-extension/
     ├── manifest.json
     ├── background.js            # Extension alarm, pending session polling
     ├── content.js               # LinkedIn DOM scraping + profile extraction
@@ -198,7 +198,7 @@ Each `Job` and derived data is scoped to an `orgId`. The `requireJobAccess` help
 
 ## Browser extension
 
-The extension ships as a zip download from `/api/extension/download`. Source lives in `browser-companion/recruitme-opera-linkedin-capture/`.
+The extension ships as a zip download from `/api/extension/download`. Source lives in `browser-companion/recruitme-chrome-extension/`.
 
 **To install locally:**
 1. Open Chrome, Opera, Edge, Brave, or another Chromium browser → Extensions → Load unpacked → select the folder above

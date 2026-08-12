@@ -7,7 +7,7 @@ Use these instructions for Claude Code work in this repository. `AGENTS.md` mirr
 - Main app: Next.js 15 App Router, TypeScript, React 19, Prisma, PostgreSQL.
 - Main source: `src/`.
 - Prisma schema and migrations: `prisma/`.
-- Browser companion extension: `browser-companion/recruitme-opera-linkedin-capture/`.
+- Browser companion extension: `browser-companion/recruitme-chrome-extension/`.
 - Electron shell: `electron/`.
 - Admin portal: `admin-portal/`, a separate Hono/Node app.
 - Scraper worker: `scraper-worker/`, a separate TypeScript worker for self-hosted discovery.

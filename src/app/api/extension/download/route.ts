@@ -5,7 +5,7 @@ import path from "path";
 import { getAuth, unauthorized } from "@/lib/session";
 import { reportError } from "@/lib/error-reporting";
 
-const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-opera-linkedin-capture");
+const EXTENSION_DIR = path.join(process.cwd(), "browser-companion", "recruitme-chrome-extension");
 
 // Files we deliberately don't ship to end users. Anything else in the extension
 // directory is bundled — this prevents the kind of bug where the manifest
