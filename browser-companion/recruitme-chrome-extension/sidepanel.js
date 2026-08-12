@@ -11,9 +11,19 @@
  * innerHTML here.
  */
 
-import { createHuntRunner } from "./hunt-run.js";
-import { createDiagnostic } from "./diagnose.js";
-import { buildReport, record, installErrorCapture } from "./recorder.js";
+
+
+
+// Classic script, no imports. sidepanel.js was briefly a module and the whole
+// panel went dead: an extension-page module that cannot resolve an import runs
+// nothing and reports nothing, so every button silently stopped working.
+// panel-lib.js is loaded as a plain script before this one.
+const { createHuntRunner, createDiagnostic, buildReport, record, installErrorCapture } = window.RM || {};
+if (!window.RM) {
+  document.getElementById("boot-error").style.display = "block";
+  document.getElementById("boot-error").textContent =
+    "panel-lib.js did not load, so nothing on this page will work. Reinstall the extension.";
+}
 
 installErrorCapture("panel");
 void record.note(`panel opened v${chrome.runtime.getManifest().version}`);

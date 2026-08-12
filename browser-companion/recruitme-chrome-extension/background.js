@@ -1,15 +1,9 @@
-// MV3 service workers may NOT use dynamic import() — the HTML spec disallows it
-// on ServiceWorkerGlobalScope, and Chrome throws
-// "import() is disallowed on ServiceWorkerGlobalScope". The worker is declared
-// "type": "module" in the manifest so these STATIC imports are legal instead.
-import { createHuntDriver } from "./hunt-driver.js";
-import { createHuntRunner } from "./hunt-run.js";
-import { createDiagnostic } from "./diagnose.js";
-import { record, installErrorCapture, buildReport, clearLog } from "./recorder.js";
+// Plain classic worker: it imports nothing. The hunt moved to the side panel,
+// so there is no module graph here to fail to resolve.
 
-// First thing the worker does. If it dies later, THIS is what tells us why.
-installErrorCapture("worker");
-record.note(`worker loaded v${chrome.runtime.getManifest().version}`);
+// The hunt, the diagnostic and the log all live in the SIDE PANEL now — a real
+// document with a normal event loop. The worker keeps only the legacy capture
+// flow, so it no longer imports anything that could fail to resolve.
 
 const DEFAULT_SERVER_BASES = [
   "https://recruitme-production-8cc6.up.railway.app",
@@ -1252,251 +1246,19 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 void ensurePendingCaptureAlarm();
 void maybeKickAutoCapture();
 
-// ── Hunt: trawl LinkedIn people-search for a job ─────────────────────────────
+// ── Side panel ───────────────────────────────────────────────────────────────
 //
-// The popup approves a plan; this wires that plan to the tested state machine
-// in hunt-queue.js via hunt-driver.js. Nothing here decides pacing or when to
-// stop — those live in the reducer, deliberately, because a runaway loop costs
-// the recruiter their own LinkedIn account (one was flagged on 2026-08-12 by a
-// loop running ~6x faster than intended whose pacing was spread across
-// callbacks like these).
+// The hunt, the diagnostic and the log all run in the SIDE PANEL — a real
+// document with a normal event loop, direct access to chrome.tabs, and open for
+// the whole run because the user is watching it. The worker deliberately does
+// none of it: when it did, every message from the panel went unanswered and a
+// reply that never arrives is indistinguishable from a slow one.
 //
-// MV3 service workers ARE modules only if declared so; this file is classic, so
-// the driver is pulled in with a dynamic import of an extension URL.
-
-let huntDriver = null;
-let huntSnapshot = null;
-
-async function getHuntDriver() {
-  if (huntDriver) return huntDriver;
-  huntDriver = createHuntDriver({
-    requestRecruitMe: (path, opts) => requestRecruitMe(path, opts),
-    onProgress: (snapshot) => {
-      huntSnapshot = snapshot;
-      // The popup may be closed; a failed send is normal and must not throw.
-      try {
-        chrome.runtime.sendMessage({ type: "RECRUITME_HUNT_PROGRESS", snapshot }, () => void chrome.runtime.lastError);
-      } catch {
-        /* popup closed */
-      }
-    },
-    tabs: chrome.tabs,
-    runtime: chrome.runtime,
-    now: () => Date.now(),
-  });
-  return huntDriver;
-}
-
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "RECRUITME_API") {
-    requestRecruitMe(message.path, message.opts || {})
-      .then((data) => sendResponse({ ok: true, data }))
-      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
-    return true;
-  }
-
-  if (message?.type === "RECRUITME_HUNT_START") {
-    getHuntDriver()
-      .then((driver) => driver.start(message.plan))
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
-    return true;
-  }
-
-  if (message?.type === "RECRUITME_HUNT_ABORT") {
-    getHuntDriver()
-      .then((driver) => driver.abort())
-      .catch(() => {})
-      .finally(() => sendResponse({ ok: true }));
-    return true;
-  }
-
-  if (message?.type === "RECRUITME_HUNT_STATE") {
-    sendResponse(huntSnapshot);
-    return false;
-  }
-
-  return undefined;
-});
-
-// ── Agent: DeepSeek drives the browser ───────────────────────────────────────
-// The MODEL decides what to do next; agent-loop.js performs it and feeds the
-// result back. The API key lives on the server — /api/hunt/agent is the only
-// thing that talks to the model, because this file ships to customers.
-let agentLoop = null;
-let agentSnapshot = null;
-
-async function getAgentLoop() {
-  if (agentLoop) return agentLoop;
-  agentLoop = createHuntRunner({
-    // Standalone: the key is yours, stored in this browser. No app, no login.
-    getApiKey: async () => (await chrome.storage.local.get("deepseekKey")).deepseekKey || "",
-    onProgress: (snapshot) => {
-      agentSnapshot = snapshot;
-      try {
-        chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_PROGRESS", snapshot }, () => void chrome.runtime.lastError);
-      } catch {
-        /* popup closed */
-      }
-    },
-    tabs: chrome.tabs,
-    now: () => Date.now(),
-  });
-  return agentLoop;
-}
-
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "RECRUITME_AGENT_RUN") {
-    getAgentLoop()
-      .then((loop) => loop.run({ jobId: message.jobId, instruction: message.instruction }))
-      .then((state) => sendResponse({ ok: true, state }))
-      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
-    return true;
-  }
-  if (message?.type === "RECRUITME_AGENT_ABORT") {
-    getAgentLoop()
-      .then((loop) => loop.abort())
-      .catch(() => {})
-      .finally(() => sendResponse({ ok: true }));
-    return true;
-  }
-  if (message?.type === "RECRUITME_AGENT_STATE") {
-    sendResponse(agentSnapshot);
-    return false;
-  }
-  return undefined;
-});
-
-// Toolbar icon opens the docked side panel. A popup was the wrong container:
-// it closes the moment focus leaves it, and a hunt runs for minutes while the
-// recruiter keeps using the very tab it is driving.
-// Opening the side panel from the toolbar icon, reliably.
-//
-// setPanelBehavior alone was not enough: it only runs once the service worker
-// has started, and an MV3 worker starts lazily — so the FIRST click after a
-// reload found no popup (removed deliberately), no click handler, and a
-// behaviour that had not been applied yet. The icon simply did nothing.
-//
-// Belt and braces: apply the behaviour at install AND at every worker start,
-// and keep an explicit onClicked handler as the fallback. A click is a user
-// gesture, which is what sidePanel.open() requires.
+// The icon opens launch.html (a popup always renders); that popup calls
+// sidePanel.open() from a real click, which is the gesture the API requires.
 function applyPanelBehavior() {
-  chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
+  chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: false }).catch(() => {});
 }
 applyPanelBehavior();
 chrome.runtime.onInstalled.addListener(applyPanelBehavior);
 chrome.runtime.onStartup.addListener(applyPanelBehavior);
-
-// NOTE: no chrome.action.onClicked handler here on purpose. The icon now opens
-// launch.html, and Chrome does not fire onClicked when a popup is set. The
-// popup opens the side panel from a real click, which is the gesture
-// sidePanel.open() requires.
-
-// The side panel needs to POST multipart itself: a File cannot survive
-// sendMessage, so requestRecruitMe can't carry an attachment. Hand the panel
-// the resolved base URL and auth header instead, and only for a base the
-// credential rule already allows — the same isCredentialSafeBase check
-// requestRecruitMe applies, so this cannot leak the credential to a host that
-// path would have refused.
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "RECRUITME_CONN") return undefined;
-  (async () => {
-    try {
-      const settings = await getStoredSettings();
-      const bases = await getServerBases();
-      const authHeader = await getBasicAuthHeader();
-
-      // Pick the first base we are allowed to send the credential to, NOT
-      // simply bases[0]. getServerBases() returns
-      // [configured, lastWorking, ...DEFAULTS], so when no server URL has been
-      // configured, bases[0] is a DEFAULT — which isCredentialSafeBase rightly
-      // refuses. Taking it blindly meant the request went out with no
-      // Authorization header at all and came back "Unauthorized".
-      const base = bases.find((b) => isCredentialSafeBase(b, settings)) || "";
-      const headers = {};
-      if (authHeader && base) headers.Authorization = authHeader;
-
-      if (!base || !authHeader) {
-        sendResponse({
-          base: "",
-          headers: {},
-          error: !authHeader
-            ? "No RecruitMe username/password saved — open the extension's Options and sign in."
-            : "No trusted RecruitMe server URL saved — set it in the extension's Options.",
-        });
-        return;
-      }
-      sendResponse({ base, headers });
-    } catch (error) {
-      sendResponse({ base: "", headers: {}, error: error?.message || String(error) });
-    }
-  })();
-  return true;
-});
-
-
-// ── Keep the service worker alive for the length of a hunt ───────────────────
-//
-// MV3 service workers are torn down when idle, and Anthropic documents this
-// exact failure in their OWN Chrome extension: "The Chrome extension's service
-// worker can go idle during extended sessions, which breaks the connection."
-// A hunt runs for minutes and ends with a model call that can take tens of
-// seconds — precisely when losing the worker would throw away every profile it
-// read.
-//
-// A connected Port is the documented keep-alive: while the side panel holds one
-// open, the worker is not torn down. The panel opens it when a hunt starts and
-// drops it when the hunt ends, so nothing is kept alive longer than needed.
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "recruitme-hunt") return;
-  // Nothing to do — merely holding the connection is the point.
-  port.onDisconnect.addListener(() => void chrome.runtime.lastError);
-});
-
-
-// Diagnose: prove the three DOM-dependent pieces against a live page. No model
-// calls, so it is free to run as often as needed.
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "RECRUITME_DIAGNOSE") return undefined;
-  const diag = createDiagnostic({
-    tabs: chrome.tabs,
-    onProgress: (text) => {
-      try {
-        chrome.runtime.sendMessage({ type: "RECRUITME_DIAGNOSE_PROGRESS", text }, () => void chrome.runtime.lastError);
-      } catch { /* panel closed */ }
-    },
-  });
-  diag.run({ location: message.location })
-    .then((report) => sendResponse({ ok: true, report }))
-    .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
-  return true;
-});
-
-
-// Cheapest possible proof of life. The panel asks on open, so a worker that
-// failed to load is reported immediately instead of every button silently
-// doing nothing.
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "RECRUITME_PING") return undefined;
-  sendResponse({ ok: true, version: chrome.runtime.getManifest().version });
-  return false;
-});
-
-
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "RECRUITME_REPORT") {
-    buildReport()
-      .then((report) => sendResponse({ ok: true, report }))
-      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
-    return true;
-  }
-  if (message?.type === "RECRUITME_PANEL_ERROR") {
-    record.fail("panel", message.detail);
-    return false;
-  }
-  if (message?.type === "RECRUITME_CLEAR_LOG") {
-    clearLog().finally(() => sendResponse({ ok: true }));
-    return true;
-  }
-  return undefined;
-});
