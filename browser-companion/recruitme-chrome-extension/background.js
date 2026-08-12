@@ -1,3 +1,10 @@
+// MV3 service workers may NOT use dynamic import() — the HTML spec disallows it
+// on ServiceWorkerGlobalScope, and Chrome throws
+// "import() is disallowed on ServiceWorkerGlobalScope". The worker is declared
+// "type": "module" in the manifest so these STATIC imports are legal instead.
+import { createHuntDriver } from "./hunt-driver.js";
+import { createAgentLoop } from "./agent-loop.js";
+
 const DEFAULT_SERVER_BASES = [
   "https://recruitme-production-8cc6.up.railway.app",
   "https://recruitme.railway.app",
@@ -1256,7 +1263,6 @@ let huntSnapshot = null;
 
 async function getHuntDriver() {
   if (huntDriver) return huntDriver;
-  const { createHuntDriver } = await import(chrome.runtime.getURL("hunt-driver.js"));
   huntDriver = createHuntDriver({
     requestRecruitMe: (path, opts) => requestRecruitMe(path, opts),
     onProgress: (snapshot) => {
@@ -1316,7 +1322,6 @@ let agentSnapshot = null;
 
 async function getAgentLoop() {
   if (agentLoop) return agentLoop;
-  const { createAgentLoop } = await import(chrome.runtime.getURL("agent-loop.js"));
   agentLoop = createAgentLoop({
     requestRecruitMe: (path, opts) => requestRecruitMe(path, opts),
     onProgress: (snapshot) => {
