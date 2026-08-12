@@ -63,6 +63,30 @@ function slugFromCardUrl(u: string): string | null {
 // (works whether LinkedIn wraps cards in <li> or <div>): for each /in/ anchor,
 // climb to the smallest ancestor holding exactly one profile and ≥2 text lines,
 // then parse: line 0 = name, "• 2nd" = degree (skip), then headline, location.
+/**
+ * Per-page ceiling on harvesting.
+ *
+ * The job-level wedge guard is 240s for the whole search. On 2026-08-12 a
+ * single wedged page ate all of it twice: both searches were recorded as
+ * timeouts, and the four and one candidates they HAD found were discarded.
+ * Bounding each page means a bad page costs one page — the pagination loop's
+ * catch keeps whatever earlier pages produced and the job completes normally.
+ */
+const PAGE_HARVEST_TIMEOUT_MS = 45_000;
+
+function pageBudget<T>(p: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error(`linkedin-search: ${label} harvest exceeded ${PAGE_HARVEST_TIMEOUT_MS}ms`)),
+      PAGE_HARVEST_TIMEOUT_MS,
+    );
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 async function harvestVisibleCards(page: Page): Promise<SearchCard[]> {
   const pageHeight = await page.evaluate(() => document.body.scrollHeight);
   await humanScroll(page, pageHeight * 0.45);
@@ -206,7 +230,7 @@ export async function scrapeLinkedInSearch(
   await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await randomDelay(2_500, 5_000); // human "loads page, glances at the top"
   challenge(page.url(), "");
-  absorb(await harvestVisibleCards(page));
+  absorb(await pageBudget(harvestVisibleCards(page), "page 1"));
 
   // Pages 2..N — opt-in via SCRAPER_SEARCH_MAX_PAGES (default 1 → this loop
   // never runs). Long human pause between pages; stop the moment a page yields
@@ -217,7 +241,7 @@ export async function scrapeLinkedInSearch(
       await page.goto(`${baseUrl}&page=${p}`, { waitUntil: "domcontentloaded", timeout: 30_000 });
       await randomDelay(2_500, 5_000);
       challenge(page.url(), ` (page ${p})`);
-      const added = absorb(await harvestVisibleCards(page));
+      const added = absorb(await pageBudget(harvestVisibleCards(page), `page ${p}`));
       log.info(`linkedin-search: page ${p} added ${added} new card(s)`);
       if (added === 0) break;
     } catch (err) {

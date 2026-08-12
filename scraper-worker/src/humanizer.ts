@@ -14,11 +14,27 @@ export async function humanScroll(page: Page, targetY: number): Promise<void> {
   const current = await page.evaluate(() => window.scrollY);
   const step = targetY > current ? 1 : -1;
   let pos = current;
-  while (Math.abs(pos - targetY) > 50) {
+  // The walk is bounded because its cost scales with PAGE HEIGHT, and LinkedIn
+  // results pages run to 20,000px+. At 50-150px a step with an 80-200ms pause,
+  // an unbounded walk is ~340 steps ≈ 45s for ONE scroll; harvestVisibleCards
+  // does two. On 2026-08-12 that consumed the entire 240s search budget twice
+  // over — both jobs were recorded as timeouts having harvested 4 and 1 cards.
+  //
+  // Capping the steps and jumping the remainder keeps the incremental, lazy-
+  // load-triggering motion that makes this look human while putting a ceiling
+  // on the cost: MAX_STEPS * 200ms ≈ 8s worst case, whatever the page height.
+  const MAX_STEPS = 40;
+  let steps = 0;
+  while (Math.abs(pos - targetY) > 50 && steps < MAX_STEPS) {
     const increment = step * (50 + Math.floor(Math.random() * 100));
     pos += increment;
     await page.evaluate((y: number) => window.scrollTo({ top: y, behavior: "instant" }), pos);
     await randomDelay(80, 200);
+    steps++;
+  }
+  if (Math.abs(pos - targetY) > 50) {
+    await page.evaluate((y: number) => window.scrollTo({ top: y, behavior: "instant" }), targetY);
+    await randomDelay(120, 300);
   }
 }
 
