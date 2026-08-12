@@ -28,6 +28,7 @@ import { log } from "./util/log.js";
 import { isAuthChallengeMessage } from "./auth-failure.js";
 import { shouldSalvagePartialHarvest } from "./partial-harvest.js";
 import { resolveJobTarget } from "./job-routing.js";
+import { relaxToTitleGroup } from "./query-relax.js";
 import { hostname } from "node:os";
 
 const RAILWAY_URL = (process.env.RAILWAY_API_URL ?? "").replace(/\/$/, "");
@@ -406,11 +407,35 @@ async function processJob(
           return;
         }
         const page = await ensureSession("seek", browser);
-        const harvest = await withTimeout(
+        let harvest = await withTimeout(
           scrapeSeekSearch(job.searchQuery, page, job.searchLocation ?? null),
           HARVEST_TIMEOUT_MS,
           "seek-search",
         );
+        // RELAX ON EMPTY. The library path already retries a query that returns
+        // nothing by demoting its required terms; the live path did not, so a
+        // query nobody could satisfy read as "no such candidates exist".
+        //
+        // Observed 2026-08-12: SEEK correctly reported `0 matching candidates`
+        // for `c# AND (5 title phrases) AND (.net OR react)` — three hard-ANDed
+        // groups against a country-sized pool. Retrying on the title group
+        // alone is the rule already proven for LinkedIn: titles find people,
+        // skills rank them afterwards (scoring still filters on the skills).
+        //
+        // At most ONE retry — relaxToTitleGroup is idempotent, so this cannot
+        // loop, and an already-wide query returns null and is left alone.
+        if (harvest.cards.length === 0) {
+          const relaxed = relaxToTitleGroup(job.searchQuery);
+          if (relaxed) {
+            log.info(`seek-search: 0 cards for the full boolean — retrying on the title group: ${relaxed}`);
+            harvest = await withTimeout(
+              scrapeSeekSearch(relaxed, page, job.searchLocation ?? null),
+              HARVEST_TIMEOUT_MS,
+              "seek-search",
+            );
+            searchCountToday += 1;
+          }
+        }
         searchCountToday += 1;
         // Report all harvested cards as results; do NOT dispatch profile
         // children (credit safety — see branch comment above). locationApplied
