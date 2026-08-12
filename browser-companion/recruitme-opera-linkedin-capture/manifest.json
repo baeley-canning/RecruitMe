@@ -3,7 +3,13 @@
   "name": "RecruitMe LinkedIn Capture",
   "description": "Capture full LinkedIn profiles into RecruitMe. Works in Chrome, Opera, Edge, and Firefox.",
   "version": "1.4.22",
-  "permissions": ["storage", "tabs", "activeTab", "alarms", "notifications"],
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "alarms",
+    "notifications"
+  ],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://*.up.railway.app/*",
@@ -27,9 +33,33 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.linkedin.com/in/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://www.linkedin.com/in/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.linkedin.com/search/results/people/*"
+      ],
+      "js": [
+        "results-content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "card-parse.js",
+        "results-extract.js"
+      ],
+      "matches": [
+        "https://www.linkedin.com/*"
+      ]
     }
   ],
   "browser_specific_settings": {
