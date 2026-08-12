@@ -30,6 +30,7 @@ import { verifyExtensionAuth } from "@/lib/session";
 import { checkRateLimit, recordUsage } from "@/lib/usage";
 import { reportError } from "@/lib/error-reporting";
 import { linkedinTitleQuery } from "@/lib/boolean-query/emit";
+import { buildHuntQueries } from "@/lib/talent-search/hunt-queries";
 import type { ParsedRole } from "@/lib/ai";
 
 export const maxDuration = 30;
@@ -97,8 +98,16 @@ export async function POST(req: Request) {
   }
 
   const titles = [role.title, ...(role.synonym_titles ?? [])].filter(Boolean) as string[];
-  const titleQuery = linkedinTitleQuery(titles);
-  if (!titleQuery) {
+  // A PORTFOLIO of short searches, not one boolean — each a different angle on
+  // the role. Modelled on a transcript of Claude-in-Chrome sourcing a real
+  // "Observability and Networks Manager" role, which ran four separate searches
+  // ("Network Operations Manager", "Observability Manager",
+  // "Infrastructure Manager AIOps", "Network Manager Observability") rather than
+  // one query. One query finds one slice of a market.
+  const queries = buildHuntQueries(role);
+  // Kept for callers that want the strict boolean (the box scraper's shape).
+  const booleanQuery = linkedinTitleQuery(titles);
+  if (queries.length === 0) {
     return NextResponse.json(
       { error: "This job has no usable job titles to search on." },
       { status: 409, headers: extensionCorsHeaders(req) },
@@ -119,8 +128,12 @@ export async function POST(req: Request) {
       jobTitle: job.title,
       company: job.company,
       location,
-      // What the extension types into LinkedIn's own search box.
-      query: titleQuery,
+      // What the extension types into LinkedIn's own search box, one angle at a
+      // time. Short bare keywords, no quotes or booleans — that is what
+      // LinkedIn's basic people-search rewards.
+      queries,
+      // The strict quoted OR-group, for callers that want the box scraper's shape.
+      booleanQuery,
       // Shown to the recruiter before anything opens, so the plan is approved
       // rather than discovered.
       titles: titles.slice(0, 6),
