@@ -26,6 +26,7 @@
 import { planHunt } from "./hunt-plan.js";
 import { chatProse } from "./deepseek.js";
 import { parseCard } from "./card-parse.js";
+import { record } from "./recorder.js";
 
 /**
  * Where a hunt's progress is kept between steps.
@@ -109,6 +110,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
   const step = (tool, detail) => {
     state.steps += 1;
     state.lastTool = tool;
+    record.step(tool, detail);
     state.trace.push({ tool, detail });
     state.lastDetail = detail;
     emit();
@@ -121,6 +123,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
   };
   const warn = (t) => {
     state.warnings.push(t);
+    record.fail("warn", t);
     emit();
   };
 
@@ -273,6 +276,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
             warn(`"${query}" returned nothing readable (${res.error || "no cards"}).`);
             continue;
           }
+          record.ok("cards", `${(res.cards || []).length} parsed for "${query}"`);
           let added = 0;
           for (const c of res.cards || []) {
             if (!c?.slug || pool.has(c.slug)) continue;
@@ -317,6 +321,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
             res = await ask(id, { type: "RECRUITME_PROFILE" });
           }
           if (res.ok && res.profile) {
+            record.ok("profile", `${card.name || card.slug}: exp ${(res.profile.experience || "").length}c, about ${(res.profile.about || "").length}c`);
             readProfiles.push({ card, profile: res.profile });
             state.read = readProfiles.length;
             emit();

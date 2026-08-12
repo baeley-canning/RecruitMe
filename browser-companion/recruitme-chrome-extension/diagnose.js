@@ -10,6 +10,8 @@
  * the fastest way to turn a vague failure into a named one.
  */
 
+import { record } from "./recorder.js";
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function createDiagnostic({ onProgress, tabs }) {
@@ -43,6 +45,7 @@ export function createDiagnostic({ onProgress, tabs }) {
       const lines = [];
       const say = (s) => {
         lines.push(s);
+        record.note(s);
         onProgress(lines.join("\n"));
       };
 

@@ -5,6 +5,11 @@
 import { createHuntDriver } from "./hunt-driver.js";
 import { createHuntRunner } from "./hunt-run.js";
 import { createDiagnostic } from "./diagnose.js";
+import { record, installErrorCapture, buildReport, clearLog } from "./recorder.js";
+
+// First thing the worker does. If it dies later, THIS is what tells us why.
+installErrorCapture("worker");
+record.note(`worker loaded v${chrome.runtime.getManifest().version}`);
 
 const DEFAULT_SERVER_BASES = [
   "https://recruitme-production-8cc6.up.railway.app",
@@ -1457,4 +1462,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "RECRUITME_PING") return undefined;
   sendResponse({ ok: true, version: chrome.runtime.getManifest().version });
   return false;
+});
+
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "RECRUITME_REPORT") {
+    buildReport()
+      .then((report) => sendResponse({ ok: true, report }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+  if (message?.type === "RECRUITME_PANEL_ERROR") {
+    record.fail("panel", message.detail);
+    return false;
+  }
+  if (message?.type === "RECRUITME_CLEAR_LOG") {
+    clearLog().finally(() => sendResponse({ ok: true }));
+    return true;
+  }
+  return undefined;
 });

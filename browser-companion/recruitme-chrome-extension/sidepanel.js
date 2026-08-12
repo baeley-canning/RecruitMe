@@ -383,3 +383,43 @@ chrome.runtime.sendMessage({ type: "RECRUITME_PING" }, (res) => {
     );
   }
 });
+
+
+// ── Copy report ──────────────────────────────────────────────────────────────
+// Hands over everything the recorder captured — worker errors, every step,
+// every failure, with timings. One click instead of hunting through a console.
+// Profile body text is never recorded, only lengths, so this is safe to paste.
+$("report")?.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "RECRUITME_REPORT" }, async (res) => {
+    const err = chrome.runtime.lastError;
+    const text =
+      err || !res
+        ? `Could not reach the background worker${err ? `: ${err.message}` : ""}.`
+        : res.ok
+          ? res.report
+          : `Report failed: ${res.error}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      $("report").textContent = "Copied";
+      setTimeout(() => ($("report").textContent = "Copy report"), 2000);
+    } catch {
+      // Clipboard can be refused; show it so it can be selected by hand.
+      dropEmptyState();
+      const m = el("div", "msg agent");
+      m.appendChild(el("div", "bubble", text));
+      thread.appendChild(m);
+      scrollDown();
+    }
+  });
+});
+
+// The panel's own failures belong in the same report as the worker's.
+window.addEventListener("error", (e) => {
+  chrome.runtime.sendMessage({ type: "RECRUITME_PANEL_ERROR", detail: `${e.message} @ ${e.lineno}` });
+});
+window.addEventListener("unhandledrejection", (e) => {
+  chrome.runtime.sendMessage({
+    type: "RECRUITME_PANEL_ERROR",
+    detail: String(e.reason?.stack || e.reason).split("\n").slice(0, 2).join(" | "),
+  });
+});
