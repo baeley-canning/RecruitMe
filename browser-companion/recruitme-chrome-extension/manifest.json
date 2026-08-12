@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "RecruitMe Sourcing Agent",
   "description": "Paste a job description and let DeepSeek hunt LinkedIn in your own browser session.",
-  "version": "3.1.0",
+  "version": "3.3.0",
   "permissions": [
     "storage",
     "tabs",
@@ -75,7 +75,8 @@
         "vendor/pdf.worker.js",
         "deepseek.js",
         "hunt-run.js",
-        "hunt-plan.js"
+        "hunt-plan.js",
+        "diagnose.js"
       ],
       "matches": [
         "https://www.linkedin.com/*"

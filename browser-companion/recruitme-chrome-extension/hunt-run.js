@@ -27,6 +27,38 @@ import { planHunt } from "./hunt-plan.js";
 import { chatProse } from "./deepseek.js";
 import { parseCard } from "./card-parse.js";
 
+/**
+ * Where a hunt's progress is kept between steps.
+ *
+ * An MV3 worker can be torn down, the panel can be closed, and LinkedIn can put
+ * a checkpoint in front of you fifteen profiles deep. Any of those used to lose
+ * every profile already read. State is checkpointed after each read so a run is
+ * resumable and nothing is paid for twice.
+ */
+const STATE_KEY = "huntState";
+
+async function saveCheckpoint(data) {
+  try {
+    await chrome.storage.session.set({ [STATE_KEY]: data });
+  } catch {
+    /* storage.session is unavailable in some contexts; a hunt must not die for it */
+  }
+}
+
+async function loadCheckpoint() {
+  try {
+    return (await chrome.storage.session.get(STATE_KEY))[STATE_KEY] || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearCheckpoint() {
+  try {
+    await chrome.storage.session.remove(STATE_KEY);
+  } catch { /* nothing to do */ }
+}
+
 const MAX_QUERIES = 5;
 const MAX_PROFILE_READS = 20;
 const MIN_ACTION_GAP_MS = 2500;
@@ -102,14 +134,32 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
     return tabId;
   }
 
+  /**
+   * Navigate and wait for the load EVENT rather than polling every 500ms.
+   *
+   * Polling meant every navigation cost up to half a second of dead time it did
+   * not need, ~25 times a hunt. Listening to tabs.onUpdated returns the moment
+   * the page is actually complete. The polling fallback stays as a safety net
+   * because a tab that never fires "complete" must not hang the run forever.
+   */
   async function navigate(url) {
     const id = await ensureTab();
+    const done = new Promise((resolve) => {
+      const listener = (changedId, info) => {
+        if (changedId === id && info.status === "complete") {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve(true);
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      // Hard ceiling: a page that never completes should cost 20s, not the hunt.
+      setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(false);
+      }, 20000);
+    });
     await tabs.update(id, { url, active: false });
-    for (let i = 0; i < 40; i++) {
-      await sleep(500);
-      const t = await tabs.get(id).catch(() => null);
-      if (t && t.status === "complete") break;
-    }
+    await done;
     return (await tabs.get(id).catch(() => null))?.url || url;
   }
 
@@ -127,6 +177,27 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
     const id = await ensureTab();
     const res = await ask(id, { type: "RECRUITME_PAGE_TEXT" });
     return res.ok ? String(res.text || "") : "";
+  }
+
+  /**
+   * A checkpoint is not the end of the hunt.
+   *
+   * Anthropic's own extension pauses and hands control to the human rather than
+   * aborting, and for a sourcing run that is plainly right: hitting a security
+   * check on profile fifteen should not throw away the fourteen already read.
+   * We stop touching LinkedIn, surface the tab, and let the recruiter clear it.
+   * Whatever has been read is still judged.
+   */
+  async function pauseForHuman() {
+    state.halted =
+      "LinkedIn asked for a security check. It has been opened for you — clear it, then run again. " +
+      "Everything read so far is still ranked below.";
+    if (tabId !== null) {
+      // Bring it to the front: a background tab the recruiter cannot see is a
+      // hunt that looks hung.
+      await tabs.update(tabId, { active: true }).catch(() => {});
+    }
+    emit();
   }
 
   return {
@@ -181,7 +252,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
             `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}`,
           );
           if (isAuthWall(landed)) {
-            state.halted = "LinkedIn showed a login or security check. Solve it in the tab, then run again.";
+            await pauseForHuman();
             break;
           }
           await sleep(rand(1500, 2600));
@@ -220,16 +291,24 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
           step("open_profile", card.name || card.slug);
           const landed = await navigate(card.url);
           if (isAuthWall(landed)) {
-            state.halted = "LinkedIn showed a login or security check. Solve it in the tab, then run again.";
+            await pauseForHuman();
             break;
           }
           await sleep(rand(2500, 4000));
           const id = await ensureTab();
-          const res = await ask(id, { type: "RECRUITME_PROFILE" });
+          let res = await ask(id, { type: "RECRUITME_PROFILE" });
+          if (!res.ok) {
+            // One retry only. LinkedIn's profile sections lazy-load and a slow
+            // render is common; a retry LOOP is what gets an account flagged,
+            // so this is deliberately a single second chance.
+            await sleep(2000);
+            res = await ask(id, { type: "RECRUITME_PROFILE" });
+          }
           if (res.ok && res.profile) {
             readProfiles.push({ card, profile: res.profile });
             state.read = readProfiles.length;
             emit();
+            await saveCheckpoint({ plan, read: readProfiles.length, at: Date.now() });
           } else {
             // Fall back to raw text rather than losing the person entirely —
             // but say so, because a structured read failing on every profile

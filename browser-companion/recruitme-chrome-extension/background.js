@@ -4,6 +4,7 @@
 // "type": "module" in the manifest so these STATIC imports are legal instead.
 import { createHuntDriver } from "./hunt-driver.js";
 import { createHuntRunner } from "./hunt-run.js";
+import { createDiagnostic } from "./diagnose.js";
 
 const DEFAULT_SERVER_BASES = [
   "https://recruitme-production-8cc6.up.railway.app",
@@ -1427,4 +1428,23 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "recruitme-hunt") return;
   // Nothing to do — merely holding the connection is the point.
   port.onDisconnect.addListener(() => void chrome.runtime.lastError);
+});
+
+
+// Diagnose: prove the three DOM-dependent pieces against a live page. No model
+// calls, so it is free to run as often as needed.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "RECRUITME_DIAGNOSE") return undefined;
+  const diag = createDiagnostic({
+    tabs: chrome.tabs,
+    onProgress: (text) => {
+      try {
+        chrome.runtime.sendMessage({ type: "RECRUITME_DIAGNOSE_PROGRESS", text }, () => void chrome.runtime.lastError);
+      } catch { /* panel closed */ }
+    },
+  });
+  diag.run({ location: message.location })
+    .then((report) => sendResponse({ ok: true, report }))
+    .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+  return true;
 });

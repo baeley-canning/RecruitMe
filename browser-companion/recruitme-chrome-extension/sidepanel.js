@@ -288,3 +288,35 @@ $("ask").addEventListener("paste", async (e) => {
   e.preventDefault();
   for (const f of files) await attachFile(f);
 });
+
+
+// ── Diagnose ─────────────────────────────────────────────────────────────────
+// Proves card extraction, the Locations filter and the profile section reader
+// against a live page. Free — no model calls — so run it whenever a hunt
+// behaves oddly, and paste the report.
+
+let diagBubble = null;
+
+$("diagnose")?.addEventListener("click", () => {
+  dropEmptyState();
+  const m = el("div", "msg agent");
+  diagBubble = el("div", "bubble", "Running diagnostic…");
+  m.appendChild(diagBubble);
+  thread.appendChild(m);
+  scrollDown();
+  $("diagnose").disabled = true;
+  chrome.runtime.sendMessage({ type: "RECRUITME_DIAGNOSE" }, (res) => {
+    $("diagnose").disabled = false;
+    if (res && res.ok === false) {
+      diagBubble.textContent = `Diagnostic failed: ${res.error}`;
+    }
+  });
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== "RECRUITME_DIAGNOSE_PROGRESS") return;
+  if (diagBubble) {
+    diagBubble.textContent = message.text;
+    scrollDown();
+  }
+});
