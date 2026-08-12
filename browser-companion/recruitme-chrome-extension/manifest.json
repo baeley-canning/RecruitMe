@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "RecruitMe LinkedIn Capture",
-  "description": "Capture full LinkedIn profiles into RecruitMe. Works in Chrome, Opera, Edge, and Firefox.",
-  "version": "1.9.2",
+  "name": "RecruitMe Sourcing Agent",
+  "description": "Paste a job description and let DeepSeek hunt LinkedIn in your own browser session.",
+  "version": "2.0.0",
   "permissions": [
     "storage",
     "tabs",
@@ -16,7 +16,8 @@
     "https://*.up.railway.app/*",
     "https://recruitme.railway.app/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://api.deepseek.com/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
@@ -68,7 +69,11 @@
         "results-extract.js",
         "hunt-driver.js",
         "hunt-queue.js",
-        "agent-loop.js"
+        "agent-loop.js",
+        "read-document.js",
+        "vendor/pdf.js",
+        "vendor/pdf.worker.js",
+        "deepseek.js"
       ],
       "matches": [
         "https://www.linkedin.com/*"

@@ -1,10 +1,9 @@
 /**
  * RecruitMe side panel — the conversation surface.
  *
- * You paste a job description and say what you want. There is deliberately NO
- * job picker: the recruiter is reading a JD somewhere else and pasting it, and
- * making them first create a matching job in RecruitMe put a form between them
- * and the thing they actually wanted.
+ * You paste or attach a job description and say what you want. The extension is
+ * STANDALONE — no RecruitMe login, no server, no mini-PC. Your own DeepSeek key
+ * lives in this browser and the agent drives LinkedIn in your own session.
  *
  * ESCAPING: every string rendered here — candidate names, headlines, the
  * agent's own summary of pages it read — ultimately originates on LinkedIn and
@@ -189,11 +188,10 @@ chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_STATE" }, (s) => {
 
 // ── Attachments ──────────────────────────────────────────────────────────────
 //
-// A recruiter is usually holding the JD as a PDF or Word file, not as text they
-// can paste. The file is read HERE and posted to /api/hunt/extract, which turns
-// it into text — pdf-parse and mammoth are Node libraries and the extension
-// should stay small. Nothing is stored server-side; this is a paste shortcut,
-// not an upload.
+// A recruiter is usually holding the JD as a PDF, not as text they can paste.
+// It is read entirely in this browser with a vendored pdf.js — the extension is
+// standalone, so there is no server to post a file to and nothing is uploaded
+// anywhere.
 
 /** @type {{name: string, text: string}[]} */
 const attached = [];
@@ -229,22 +227,13 @@ async function attachFile(file) {
   if (!file) return;
   showPending(file.name);
   try {
-    const form = new FormData();
-    form.append("file", file);
-    // Multipart must go through the panel's own fetch: the background worker
-    // cannot reconstruct a File, and FormData does not survive sendMessage.
-    const conn = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "RECRUITME_CONN" }, (r) => resolve(r || {}));
-    });
-    const { base, headers } = conn;
-    // Say WHICH setting is missing rather than a generic "unauthorized".
-    if (!base) throw new Error(conn.error || "No RecruitMe server configured — check the extension's Options.");
-    const res = await fetch(`${base}/api/hunt/extract`, { method: "POST", headers, body: form });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
-    attached.push({ name: data.filename || file.name, text: data.text || "" });
-    if (data.truncated) {
-      thread.appendChild(el("div", "banner warn", `${data.filename}: only the first 40,000 characters were used.`));
+    // Read it HERE. The extension is standalone — there is no server to post a
+    // file to, and nothing is uploaded anywhere.
+    const { readDocument } = await import("./read-document.js");
+    const doc = await readDocument(file);
+    attached.push({ name: doc.name, text: doc.text });
+    if (doc.truncated) {
+      thread.appendChild(el("div", "banner warn", `${doc.name}: only the first 40,000 characters were used.`));
     }
   } catch (err) {
     thread.appendChild(el("div", "banner bad", `Couldn't read ${file.name}: ${err.message}`));

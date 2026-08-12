@@ -1323,7 +1323,8 @@ let agentSnapshot = null;
 async function getAgentLoop() {
   if (agentLoop) return agentLoop;
   agentLoop = createAgentLoop({
-    requestRecruitMe: (path, opts) => requestRecruitMe(path, opts),
+    // Standalone: the key is yours, stored in this browser. No app, no login.
+    getApiKey: async () => (await chrome.storage.local.get("deepseekKey")).deepseekKey || "",
     onProgress: (snapshot) => {
       agentSnapshot = snapshot;
       try {

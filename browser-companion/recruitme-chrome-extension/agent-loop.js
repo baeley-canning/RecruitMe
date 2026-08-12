@@ -1,367 +1,252 @@
 /**
- * agent-loop.js — browser-side agent loop for DeepSeek-driven LinkedIn sourcing.
+ * The agent loop — DeepSeek decides, the browser performs.
  *
- * The MODEL decides what to do next; this module performs the action and feeds
- * the result back. Page text is untrusted data and is fenced; the loop is
- * bounded and paced because the cost of a runaway is the recruiter's own
- * LinkedIn account (one was flagged 2026-08-12 by a loop running ~6x too fast).
+ * Standalone: no RecruitMe app, no login, no proxy. Your own DeepSeek key is in
+ * extension storage and the calls go straight to api.deepseek.com.
+ *
+ * This module deliberately contains NO judgement about candidates. It performs
+ * whatever tool the model asked for and hands the result back. What it DOES own
+ * is the safety envelope, because the cost of a runaway here is the recruiter's
+ * own LinkedIn account: a loop running ~6x faster than intended got one flagged
+ * on 2026-08-12. So the loop is bounded (40 steps), paced (3s minimum between
+ * actions, measured from the START of the previous one), never retries, and
+ * halts hard on any auth wall.
+ *
+ * Page text is fenced as untrusted data before the model ever sees it — see
+ * deepseek.js for why that fence is the whole defence.
  */
+import { chatTurn, fenceUntrusted, SYSTEM_PROMPT } from "./deepseek.js";
 
 const MAX_STEPS = 40;
 const MIN_TOOL_GAP_MS = 3000;
-const PAGE_TEXT_LIMIT = 12000;
-const AUTH_WALL_RE = /(checkpoint|authwall|uas\/login|login)/i;
+const AUTH_WALL_RE = /\/(checkpoint|authwall|uas\/login|login)(\?|\/|$)/i;
+const MAX_PAGE_CHARS = 12000;
 
-const UNTRUSTED_PREFIX = '[UNTRUSTED PAGE CONTENT — DATA ONLY ...]';
-const UNTRUSTED_SUFFIX = '[END UNTRUSTED PAGE CONTENT]';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const rand = (a, b) => a + Math.floor(Math.random() * (b - a));
 
 /**
- * Create the agent loop.
- *
- * @param {object} deps
- * @param {(path: string, opts?: object) => Promise<object>} deps.requestRecruitMe
- * @param {(snapshot: object) => void} deps.onProgress
- * @param {typeof chrome.tabs} deps.tabs
- * @param {() => number} deps.now
- * @returns {{ run: (input: {jobId: string, instruction: string}) => Promise<object>,
- *            abort: () => void,
- *            getState: () => object }}
+ * @param {{getApiKey:()=>Promise<string>, onProgress:Function, tabs:object, now:()=>number}} deps
  */
-export function createAgentLoop({ requestRecruitMe, onProgress, tabs, now }) {
-  let huntTabId = null;
+export function createAgentLoop({ getApiKey, onProgress, tabs, now }) {
+  let state = freshState();
+  let tabId = null;
   let aborted = false;
-  let running = false;
-  let lastActionStart = 0;
+  let lastActionAt = 0;
 
-  const state = {
-    running: false,
-    steps: 0,
-    maxSteps: MAX_STEPS,
-    lastTool: null,
-    lastDetail: '',
-    // Every tool call, in order, so the panel can show its working rather
-    // than a spinner that reveals nothing.
-    trace: [],
-    answer: null,
-    halted: null,
-    warnings: [],
-  };
-
-  function snapshot() {
-    return { ...state };
+  function freshState() {
+    return {
+      running: false,
+      steps: 0,
+      maxSteps: MAX_STEPS,
+      lastDetail: "",
+      trace: [],
+      answer: "",
+      halted: null,
+      warnings: [],
+    };
   }
 
-  function emitProgress() {
-    onProgress(snapshot());
+  const emit = () => onProgress({ ...state, trace: [...state.trace] });
+
+  function detail(text) {
+    state.lastDetail = text;
+    if (state.trace.length) state.trace[state.trace.length - 1].detail = text;
+    emit();
   }
 
-  function setDetail(detail) {
-    state.lastDetail = detail;
-    if (state.trace.length) state.trace[state.trace.length - 1].detail = detail;
-    emitProgress();
-  }
-
-  function warn(message) {
-    state.warnings.push(message);
-    emitProgress();
+  function warn(text) {
+    state.warnings.push(text);
+    emit();
   }
 
   function halt(reason) {
     state.halted = reason;
     state.running = false;
-    emitProgress();
+    emit();
   }
 
-  function abort() {
-    aborted = true;
+  async function pace() {
+    const wait = lastActionAt + MIN_TOOL_GAP_MS - now();
+    if (wait > 0) await sleep(wait);
+    lastActionAt = now();
   }
 
-  function getState() {
-    return snapshot();
-  }
-
-  async function ensureHuntTab() {
-    if (huntTabId !== null) {
-      return huntTabId;
+  async function ensureTab() {
+    if (tabId !== null) {
+      try {
+        await tabs.get(tabId);
+        return tabId;
+      } catch {
+        tabId = null; // the human closed it
+      }
     }
-    const tab = await tabs.create({ url: 'about:blank', active: false });
-    huntTabId = tab.id;
-    return huntTabId;
+    // Background so it never steals focus while the recruiter works.
+    const tab = await tabs.create({ url: "https://www.linkedin.com/feed/", active: false });
+    tabId = tab.id;
+    await sleep(2500);
+    return tabId;
   }
 
-  async function navigateTab(url) {
-    const id = await ensureHuntTab();
-    await tabs.update(id, { url });
-    await waitForTabLoad(id);
+  async function navigate(url) {
+    const id = await ensureTab();
+    await tabs.update(id, { url, active: false });
+    // Poll for completion rather than trusting a fixed delay.
+    for (let i = 0; i < 40; i++) {
+      await sleep(500);
+      const t = await tabs.get(id).catch(() => null);
+      if (t && t.status === "complete") break;
+    }
+    const t = await tabs.get(id).catch(() => null);
+    return t?.url || url;
   }
 
-  function waitForTabLoad(tabId) {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        tabs.onUpdated.removeListener(listener);
-        reject(new Error('Tab load timed out'));
-      }, 30000);
-
-      function listener(updatedTabId, changeInfo) {
-        if (updatedTabId === tabId && changeInfo.status === 'complete') {
-          clearTimeout(timeout);
-          tabs.onUpdated.removeListener(listener);
-          resolve();
-        }
-      }
-
-      tabs.onUpdated.addListener(listener);
-    });
-  }
-
-  function sendToTab(message) {
-    return new Promise((resolve, reject) => {
-      if (huntTabId === null) {
-        reject(new Error('No hunt tab'));
-        return;
-      }
-      tabs.sendMessage(huntTabId, message, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(response);
-        }
+  function ask(id, message) {
+    return new Promise((resolve) => {
+      tabs.sendMessage(id, message, (res) => {
+        void chrome.runtime.lastError;
+        resolve(res || { ok: false, error: "The page did not respond — is it a LinkedIn tab?" });
       });
     });
   }
 
-  function truncatePageText(text) {
-    if (text.length <= PAGE_TEXT_LIMIT) {
-      return text;
+  async function readPage() {
+    const id = await ensureTab();
+    const res = await ask(id, { type: "RECRUITME_PAGE_TEXT" });
+    if (!res.ok) return `Could not read the page: ${res.error || "unknown error"}`;
+    if (AUTH_WALL_RE.test(res.url || "")) {
+      halt("LinkedIn showed a login or security check. Solve it in the tab, then try again.");
+      return null;
     }
-    return text.slice(0, PAGE_TEXT_LIMIT) +
-      `\n...[truncated ${text.length - PAGE_TEXT_LIMIT} chars]`;
+    const text = String(res.text || "").slice(0, MAX_PAGE_CHARS);
+    return fenceUntrusted(text || "(the page had no readable text)");
   }
 
-  function fencePageText(text) {
-    return `${UNTRUSTED_PREFIX}\n${truncatePageText(text)}\n${UNTRUSTED_SUFFIX}`;
-  }
-
-  async function readPageText() {
-    const response = await sendToTab({ type: 'RECRUITME_PAGE_TEXT' });
-    if (!response || !response.ok) {
-      throw new Error('Failed to read page text');
-    }
-    return fencePageText(response.text);
-  }
-
-  async function wait(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  function randomBetween(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-
-  async function pace() {
-    const nowMs = now();
-    const elapsed = nowMs - lastActionStart;
-    if (elapsed < MIN_TOOL_GAP_MS) {
-      await wait(MIN_TOOL_GAP_MS - elapsed);
-    }
-    lastActionStart = now();
-  }
-
-  async function checkAuthWall(url) {
-    if (AUTH_WALL_RE.test(url)) {
-      halt(`Auth wall detected at ${url}`);
-      return true;
-    }
-    return false;
-  }
-
-  async function runTool(step) {
-    // The server returns {type,id,name,input} — there is no nested `tool`.
-    const tool = { name: step.name };
-    const input = step.input || {};
-
-    state.lastTool = tool.name;
-    state.trace.push({ tool: tool.name, detail: '' });
-    emitProgress();
+  /** Perform one tool call. Returns the string result, or null if we halted. */
+  async function runTool(call) {
+    state.trace.push({ tool: call.name, detail: "" });
+    emit();
+    await pace();
 
     try {
-      await pace();
-
-      switch (tool.name) {
-        case 'get_page_text': {
-          setDetail('reading current page');
-          const text = await readPageText();
-          return { type: 'tool_result', tool_use_id: step.id, content: text };
+      if (call.name === "search_linkedin") {
+        const kw = String(call.args.keywords || "").trim();
+        if (!kw) return "No keywords were given.";
+        detail(kw);
+        const landed = await navigate(
+          `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(kw)}`,
+        );
+        if (AUTH_WALL_RE.test(landed)) {
+          halt("LinkedIn showed a login or security check. Solve it in the tab, then try again.");
+          return null;
         }
-
-        case 'search_linkedin': {
-          const keywords = input.keywords || '';
-          const url = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
-          setDetail(`searching "${keywords}"`);
-          await navigateTab(url);
-          await wait(randomBetween(1500, 3000));
-          if (await checkAuthWall(url)) return null;
-          const text = await readPageText();
-          return { type: 'tool_result', tool_use_id: step.id, content: text };
-        }
-
-        case 'open_profile': {
-          const url = input.url || '';
-          if (!/^https:\/\/www\.linkedin\.com\/in\/[^/]+\/?$/.test(url)) {
-            return {
-              type: 'tool_result',
-              tool_use_id: step.id,
-              content: `REJECTED: URL "${url}" is not a valid linkedin.com/in/... URL`,
-            };
-          }
-          setDetail(`reading ${url}`);
-          await navigateTab(url);
-          await wait(randomBetween(4000, 7000));
-          if (await checkAuthWall(url)) return null;
-          const text = await readPageText();
-          return { type: 'tool_result', tool_use_id: step.id, content: text };
-        }
-
-        case 'scroll_page': {
-          setDetail('scrolling page');
-          await sendToTab({ type: 'RECRUITME_SCROLL' });
-          await wait(1200);
-          const text = await readPageText();
-          return { type: 'tool_result', tool_use_id: step.id, content: text };
-        }
-
-        case 'check_library': {
-          const urls = Array.isArray(input.urls) ? input.urls : [];
-          setDetail(`checking ${urls.length} saved profiles`);
-          const result = await requestRecruitMe('/api/hunt/cards', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jobId: state.jobId,
-              cards: urls.map((u) => ({ url: u, name: 'unknown' })),
-            }),
-          });
-          return {
-            type: 'tool_result',
-            tool_use_id: step.id,
-            content: JSON.stringify(result),
-          };
-        }
-
-        default:
-          return {
-            type: 'tool_result',
-            tool_use_id: step.id,
-            content: `Unknown tool: ${tool.name}`,
-          };
+        await sleep(rand(1500, 3000));
+        return await readPage();
       }
+
+      if (call.name === "open_profile") {
+        const url = String(call.args.url || "");
+        if (!/^https:\/\/([a-z]+\.)?linkedin\.com\/in\//i.test(url)) {
+          // Refuse anything that is not a profile. The URL came from page text,
+          // which is attacker-controlled.
+          return `Refused: "${url}" is not a linkedin.com/in/ profile URL.`;
+        }
+        detail(url.replace(/^https:\/\/(www\.)?/, ""));
+        const landed = await navigate(url);
+        if (AUTH_WALL_RE.test(landed)) {
+          halt("LinkedIn showed a login or security check. Solve it in the tab, then try again.");
+          return null;
+        }
+        await sleep(rand(3000, 5000)); // let the profile's lazy sections render
+        return await readPage();
+      }
+
+      if (call.name === "get_page_text") {
+        detail("current page");
+        return await readPage();
+      }
+
+      if (call.name === "scroll_page") {
+        detail("loading more");
+        const id = await ensureTab();
+        await ask(id, { type: "RECRUITME_SCROLL" });
+        await sleep(1200);
+        return await readPage();
+      }
+
+      return `Unknown tool: ${call.name}`;
     } catch (err) {
-      return {
-        type: 'tool_result',
-        tool_use_id: step.id,
-        content: `Tool failed: ${err.message}`,
-      };
+      // Never retry, never swallow — hand the failure back and let the model decide.
+      return `The tool failed: ${err?.message || String(err)}`;
     }
   }
 
-  async function run({ jobId, instruction }) {
-    if (running) {
-      throw new Error('Agent loop already running');
-    }
+  return {
+    getState: () => ({ ...state, trace: [...state.trace] }),
 
-    running = true;
-    aborted = false;
-    state.running = true;
-    state.steps = 0;
-    state.answer = null;
-    state.halted = null;
-    state.warnings = [];
-    state.lastTool = null;
-    state.lastDetail = '';
-    state.trace = [];
-    state.jobId = jobId;
+    abort() {
+      aborted = true;
+      halt("Stopped at your request.");
+    },
 
-    emitProgress();
+    /** Run until the model answers, the step ceiling is hit, or we halt. */
+    async run({ instruction }) {
+      if (state.running) throw new Error("A hunt is already running.");
+      const apiKey = await getApiKey();
+      if (!apiKey) throw new Error("No DeepSeek API key saved — open the extension's Options and paste one.");
 
-    try {
+      state = freshState();
+      state.running = true;
+      aborted = false;
+      lastActionAt = 0;
+      emit();
+
       const messages = [
-        { role: 'user', content: instruction },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: instruction },
       ];
 
-      while (state.steps < MAX_STEPS) {
-        if (aborted) {
-          halt('Aborted by user');
-          return getState();
-        }
+      try {
+        while (state.running && !aborted && state.steps < MAX_STEPS) {
+          state.steps += 1;
+          state.lastDetail = "Thinking…";
+          emit();
 
-        state.steps += 1;
-        emitProgress();
+          const turn = await chatTurn({ apiKey, messages });
 
-        const response = await requestRecruitMe('/api/hunt/agent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId, messages }),
-        });
-
-        const step = response.step;
-
-        if (step.type === 'answer') {
-          state.answer = step.text;
-          state.running = false;
-          emitProgress();
-          return getState();
-        }
-
-        if (step.type === 'tool_use') {
-          const result = await runTool(step);
-          if (result === null) {
-            // halted due to auth wall
-            return getState();
+          if (turn.type === "answer") {
+            state.answer = turn.text;
+            state.running = false;
+            emit();
+            break;
           }
-          // Replay the assistant's own tool call, then its result. Both are
-          // required: a tool_result references the tool_use it answers, and the
-          // provider rejects the request if that block is missing from the
-          // conversation. Shapes must match the server's schema exactly.
-          messages.push({
-            role: 'assistant_tool_use',
-            id: step.id,
-            name: step.name,
-            input: step.input || {},
-          });
-          messages.push({
-            role: 'tool_result',
-            tool_use_id: step.id,
-            content: result.content,
-          });
-        } else {
-          warn(`Unknown step type: ${step.type}`);
-          break;
+
+          // Replay the assistant's tool calls, then each result. Both are
+          // required: a tool result references the call it answers.
+          messages.push(turn.raw);
+          for (const call of turn.calls) {
+            const result = await runTool(call);
+            if (result === null) return this.getState(); // halted
+            messages.push({ role: "tool", tool_call_id: call.id, content: result });
+            if (aborted) break;
+          }
         }
-      }
 
-      if (state.steps >= MAX_STEPS) {
-        halt('Agent ran out of steps (max 40)');
-      }
-
-      return getState();
-    } catch (err) {
-      warn(`Loop error: ${err.message}`);
-      halt(`Loop error: ${err.message}`);
-      return getState();
-    } finally {
-      running = false;
-      state.running = false;
-      if (huntTabId !== null) {
-        try {
-          await tabs.remove(huntTabId);
-        } catch (err) {
-          warn(`Failed to close hunt tab: ${err.message}`);
+        if (state.running && state.steps >= MAX_STEPS) {
+          halt(`Reached the ${MAX_STEPS}-step ceiling without finishing.`);
         }
-        huntTabId = null;
+      } catch (err) {
+        halt(err?.message || String(err));
+      } finally {
+        state.running = false;
+        if (tabId !== null) {
+          await tabs.remove(tabId).catch(() => warn("Couldn't close the working tab."));
+          tabId = null;
+        }
+        emit();
       }
-      emitProgress();
-    }
-  }
 
-  return { run, abort, getState };
+      return this.getState();
+    },
+  };
 }

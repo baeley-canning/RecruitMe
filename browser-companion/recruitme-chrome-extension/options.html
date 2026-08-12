@@ -180,6 +180,20 @@
     </style>
   </head>
   <body>
+    <section style="margin:0 0 22px;padding:16px;border:1px solid #d8d3cb;border-radius:10px;background:#fffefc">
+      <h2 style="margin:0 0 4px;font-size:15px">DeepSeek API key</h2>
+      <p style="margin:0 0 10px;color:#6f6862;font-size:13px">
+        Powers the sourcing agent in the side panel. The key is stored in this browser only and is
+        sent straight to api.deepseek.com — the agent needs no RecruitMe login and no server.
+      </p>
+      <input id="deepseekKey" type="password" placeholder="sk-..." autocomplete="off"
+        style="width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid #d8d3cb;border-radius:7px">
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button id="saveDeepseek" type="button">Save key</button>
+        <span id="deepseekStatus" style="font-size:13px;color:#6f6862"></span>
+      </div>
+    </section>
+
     <div class="page">
       <div class="header">
         <h1>RecruitMe</h1>

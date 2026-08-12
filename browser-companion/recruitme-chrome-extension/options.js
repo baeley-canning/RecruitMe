@@ -187,3 +187,37 @@ extPasswordInput.addEventListener("keydown", (e) => {
 init();
 void refreshAutoCaptureStatus();
 setInterval(refreshAutoCaptureStatus, 15_000);
+
+
+// ── DeepSeek key (standalone agent) ──────────────────────────────────────────
+// Stored in this browser only. The side panel sends it straight to
+// api.deepseek.com; there is no RecruitMe login or server involved.
+(() => {
+  const field = document.getElementById("deepseekKey");
+  const status = document.getElementById("deepseekStatus");
+  const button = document.getElementById("saveDeepseek");
+  if (!field || !button) return;
+
+  chrome.storage.local.get("deepseekKey").then(({ deepseekKey }) => {
+    if (deepseekKey) {
+      field.value = deepseekKey;
+      status.textContent = "Saved.";
+    }
+  });
+
+  button.addEventListener("click", async () => {
+    const key = field.value.trim();
+    if (!key) {
+      await chrome.storage.local.remove("deepseekKey");
+      status.textContent = "Cleared.";
+      return;
+    }
+    // Fail early and specifically rather than at the first hunt.
+    if (!key.startsWith("sk-")) {
+      status.textContent = "That doesn't look like a DeepSeek key (they start with sk-).";
+      return;
+    }
+    await chrome.storage.local.set({ deepseekKey: key });
+    status.textContent = "Saved.";
+  });
+})();
