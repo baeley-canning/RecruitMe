@@ -31,6 +31,7 @@ import {
   type TalentPoolSearchResult,
 } from "@/lib/talent-pool";
 import { getAccessibleOrgIds } from "@/lib/org-access";
+import { linkedinTitleQuery } from "@/lib/boolean-query/emit";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
 import { collectPagedSearchResults, type SearchPageTaskResult } from "@/lib/search-collection";
 import { buildSearchEvaluation } from "@/lib/search-evaluation";
@@ -480,8 +481,24 @@ export async function POST(
   // jumps ahead of background flywheel work. Fires regardless of how full the
   // pool is — a stocked library must not suppress a requested live search.
   const liveQuery = (cleanedOverride && cleanedOverride[0]) || searchQueries[0] || parsedRole.title;
+  // LinkedIn gets TITLES ONLY, not the full boolean.
+  //
+  // Its basic (non-Recruiter) people-search reliably matches a single OR-group
+  // but returns "No results found" for `(titles) AND (skills)` — verified on the
+  // box 2026-06-15 (5-title OR-group → ~33 results; the same group AND a skill
+  // group → 0) and again live on 2026-08-12, when
+  //   c# AND ("senior full stack .net developer" OR … OR "software engineer")
+  //          AND (.net OR react)
+  // completed cleanly in 38s and harvested ZERO cards.
+  //
+  // /search/multi already sends linkedinTitleQuery for exactly this reason; this
+  // route was still sending the full boolean, so its LinkedIn leg could only
+  // ever return nothing. Skills still filter the results — downstream scoring
+  // does that — but they must not gate LinkedIn's recall.
+  const linkedinQuery =
+    linkedinTitleQuery([parsedRole.title, ...(parsedRole.synonym_titles ?? [])]) || liveQuery;
   if (isScraperDiscoveryEnabled() && auth.orgId && liveQuery) {
-    if (useLinkedin) void enqueueSearchJob({ orgId: auth.orgId, platform: "linkedin", searchQuery: liveQuery, requestedBy: auth.userId, priority: 100 });
+    if (useLinkedin) void enqueueSearchJob({ orgId: auth.orgId, platform: "linkedin", searchQuery: linkedinQuery, requestedBy: auth.userId, priority: 100 });
     if (useSeek) void enqueueSearchJob({ orgId: auth.orgId, platform: "seek", searchQuery: liveQuery, requestedBy: auth.userId, priority: 100 });
   }
 
