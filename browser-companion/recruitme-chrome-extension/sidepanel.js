@@ -45,6 +45,7 @@ function addUser(text) {
 }
 
 function startTrace() {
+  finished = false;
   renderedSteps = 0;
   traceEl = el("div", "trace");
   const working = el("div", "working");
@@ -88,7 +89,13 @@ function friendlyTool(t) {
   }
 }
 
+let finished = false;
+
 function finishTrace(snapshot) {
+  // The loop emits a final snapshot AND the run() promise resolves with one, so
+  // this used to render "Stopped: ..." twice. Once per run is enough.
+  if (finished) return;
+  finished = true;
   if (traceEl) {
     const working = traceEl.lastChild;
     if (working && working.className === "working") working.remove();
@@ -169,7 +176,10 @@ for (const b of document.querySelectorAll(".suggest")) {
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type !== "RECRUITME_AGENT_PROGRESS") return;
   const s = message.snapshot || {};
-  if (s.running) renderTrace(s);
+  if (s.running) {
+    renderTrace(s);
+    $("hint") && ($("hint").textContent = `${s.steps}/${s.maxSteps} actions`);
+  }
   else {
     finishTrace(s);
     setRunning(false);

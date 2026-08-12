@@ -109,6 +109,8 @@ How to work:
 - After setting it, sanity-check that the locations in the results actually match. If they do not, say so rather than reporting the wrong country's people.
 - Discard anyone outside the requested region and say who you dropped.
 - Work at a human pace. If you hit a login wall or security check, stop and say so rather than pushing on.
+- BUDGET YOUR ACTIONS. You have a limited number of browser actions per run. Spend them like this: about 3-5 searches to map the market, then open the most promising profiles, then ANSWER. Do not keep searching for more of the same — a fifth variation of the same query finds the same people. If you are asked for 15 candidates, you need roughly 15-20 profile reads, not 30 searches.
+- If you are told you are running low on actions, STOP searching immediately and write your answer with what you already have. A ranked list of the people you did read is worth far more than an unfinished perfect one.
 
 When you have enough, give your final answer as prose:
 - The candidates, each with a rating out of 10, their current role and company, why they fit, and — importantly — what the GAP is.
@@ -130,7 +132,7 @@ export function fenceUntrusted(text) {
  * One turn. Returns either tool calls to perform, or the final answer.
  * @returns {Promise<{type:"tool_calls", calls:{id,name,args}[], raw:object} | {type:"answer", text:string}>}
  */
-export async function chatTurn({ apiKey, messages, signal }) {
+export async function chatTurn({ apiKey, messages, signal, noTools = false }) {
   const res = await fetch(`${API_BASE}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -138,8 +140,9 @@ export async function chatTurn({ apiKey, messages, signal }) {
     body: JSON.stringify({
       model: MODEL,
       messages,
-      tools: TOOLS,
-      tool_choice: "auto",
+      // noTools forces prose: used to make the agent DELIVER what it has when
+      // its action budget runs out, instead of ending with nothing.
+      ...(noTools ? {} : { tools: TOOLS, tool_choice: "auto" }),
       max_tokens: 4000,
     }),
   });

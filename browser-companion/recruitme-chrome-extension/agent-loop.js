@@ -17,7 +17,13 @@
  */
 import { chatTurn, fenceUntrusted, SYSTEM_PROMPT } from "./deepseek.js";
 
-const MAX_STEPS = 40;
+// Budget ACTUAL BROWSER ACTIONS, not model turns. The previous ceiling counted
+// turns, and one turn can carry several tool calls — so a "40 step" run
+// performed well over a hundred searches and profile reads before dying with
+// nothing to show. Bound the thing that actually costs time and account risk.
+const MAX_TOOL_CALLS = 55;
+// When this many remain, tell the model to stop searching and write up.
+const WRAP_UP_AT = 12;
 const MIN_TOOL_GAP_MS = 3000;
 const AUTH_WALL_RE = /\/(checkpoint|authwall|uas\/login|login)(\?|\/|$)/i;
 const MAX_PAGE_CHARS = 12000;
@@ -38,7 +44,7 @@ export function createAgentLoop({ getApiKey, onProgress, tabs, now }) {
     return {
       running: false,
       steps: 0,
-      maxSteps: MAX_STEPS,
+      maxSteps: MAX_TOOL_CALLS,
       lastDetail: "",
       trace: [],
       answer: "",
@@ -225,8 +231,9 @@ export function createAgentLoop({ getApiKey, onProgress, tabs, now }) {
       ];
 
       try {
-        while (state.running && !aborted && state.steps < MAX_STEPS) {
-          state.steps += 1;
+        let wrapUpSent = false;
+
+        while (state.running && !aborted && state.steps < MAX_TOOL_CALLS) {
           state.lastDetail = "Thinking…";
           emit();
 
@@ -239,19 +246,53 @@ export function createAgentLoop({ getApiKey, onProgress, tabs, now }) {
             break;
           }
 
-          // Replay the assistant's tool calls, then each result. Both are
-          // required: a tool result references the call it answers.
           messages.push(turn.raw);
           for (const call of turn.calls) {
+            if (aborted || state.steps >= MAX_TOOL_CALLS) break;
+            state.steps += 1;
             const result = await runTool(call);
             if (result === null) return this.getState(); // halted
             messages.push({ role: "tool", tool_call_id: call.id, content: result });
-            if (aborted) break;
+          }
+
+          // One nudge as the budget runs down, so it converges instead of
+          // being cut off mid-search with nothing written.
+          const left = MAX_TOOL_CALLS - state.steps;
+          if (!wrapUpSent && left <= WRAP_UP_AT && state.running) {
+            wrapUpSent = true;
+            messages.push({
+              role: "user",
+              content:
+                `You have about ${left} browser actions left. Stop searching now. Read at most a ` +
+                `couple more profiles if you truly need them, then write your final answer with ` +
+                `what you have.`,
+            });
           }
         }
 
-        if (state.running && state.steps >= MAX_STEPS) {
-          halt(`Reached the ${MAX_STEPS}-step ceiling without finishing.`);
+        // NEVER end with nothing. If the budget ran out mid-hunt, ask for the
+        // write-up with tools disabled so it must answer in prose. All that
+        // reading is otherwise thrown away — the same mistake as discarding a
+        // partial harvest on timeout.
+        if (state.running && !aborted && !state.answer) {
+          state.lastDetail = "Out of actions — writing up what it found";
+          emit();
+          messages.push({
+            role: "user",
+            content:
+              "You have run out of browser actions. Do not request any more. Write your final " +
+              "answer now using only the profiles you already read: rank them, rate each out of " +
+              "10, name the gaps, and say honestly how far you got and who you did not get to.",
+          });
+          const finalTurn = await chatTurn({ apiKey, messages, noTools: true }).catch(() => null);
+          if (finalTurn?.type === "answer") {
+            state.answer = finalTurn.text;
+            warn(`Ran out of browser actions after ${state.steps} — this is what it had by then.`);
+          } else {
+            halt(`Reached the ${MAX_TOOL_CALLS}-action ceiling and could not produce a summary.`);
+          }
+          state.running = false;
+          emit();
         }
       } catch (err) {
         halt(err?.message || String(err));
