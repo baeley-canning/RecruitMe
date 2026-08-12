@@ -241,3 +241,59 @@ chrome.runtime.sendMessage({ type: "RECRUITME_HUNT_STATE" }, (snapshot) => {
 });
 
 void loadJobs();
+
+// ── Ask: let DeepSeek drive ──────────────────────────────────────────────────
+// The deterministic hunt above follows a fixed plan. This is the other mode:
+// you say what you want, and the model decides what to search, what to open and
+// what to report — reading pages as text, acting in your own session.
+//
+// Answers are rendered with textContent. The model is summarising pages written
+// by third parties; treat its output as text, never markup.
+
+function renderAgent(s) {
+  if (!s) return;
+  const status = $("ask-status");
+  const stop = $("ask-stop-btn");
+  const btn = $("ask-btn");
+  if (!status) return;
+
+  btn.disabled = Boolean(s.running);
+  stop.hidden = !s.running;
+
+  const bits = [];
+  if (s.running) bits.push(`step ${s.steps}/${s.maxSteps}`);
+  if (s.lastDetail) bits.push(s.lastDetail);
+  if (s.halted) bits.push(`stopped: ${s.halted}`);
+  status.textContent = bits.join(" · ");
+
+  const out = $("ask-answer");
+  clear(out);
+  for (const w of s.warnings || []) out.appendChild(node("div", "warning", w));
+  if (s.answer) out.appendChild(node("div", null, s.answer));
+}
+
+$("ask-btn")?.addEventListener("click", () => {
+  const instruction = $("ask-input").value.trim();
+  if (!instruction) return;
+  setError("");
+  clear($("ask-answer"));
+  $("ask-status").textContent = "starting…";
+  chrome.runtime.sendMessage(
+    { type: "RECRUITME_AGENT_RUN", jobId: $("job-select").value || undefined, instruction },
+    (res) => {
+      if (res && res.ok === false) setError(res.error || "The agent could not start.");
+    },
+  );
+});
+
+$("ask-stop-btn")?.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_ABORT" });
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "RECRUITME_AGENT_PROGRESS") renderAgent(message.snapshot);
+});
+
+chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_STATE" }, (s) => {
+  if (s) renderAgent(s);
+});

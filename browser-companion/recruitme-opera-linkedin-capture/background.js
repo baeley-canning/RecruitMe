@@ -1306,3 +1306,51 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return undefined;
 });
+
+// ── Agent: DeepSeek drives the browser ───────────────────────────────────────
+// The MODEL decides what to do next; agent-loop.js performs it and feeds the
+// result back. The API key lives on the server — /api/hunt/agent is the only
+// thing that talks to the model, because this file ships to customers.
+let agentLoop = null;
+let agentSnapshot = null;
+
+async function getAgentLoop() {
+  if (agentLoop) return agentLoop;
+  const { createAgentLoop } = await import(chrome.runtime.getURL("agent-loop.js"));
+  agentLoop = createAgentLoop({
+    requestRecruitMe: (path, opts) => requestRecruitMe(path, opts),
+    onProgress: (snapshot) => {
+      agentSnapshot = snapshot;
+      try {
+        chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_PROGRESS", snapshot }, () => void chrome.runtime.lastError);
+      } catch {
+        /* popup closed */
+      }
+    },
+    tabs: chrome.tabs,
+    now: () => Date.now(),
+  });
+  return agentLoop;
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "RECRUITME_AGENT_RUN") {
+    getAgentLoop()
+      .then((loop) => loop.run({ jobId: message.jobId, instruction: message.instruction }))
+      .then((state) => sendResponse({ ok: true, state }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+  if (message?.type === "RECRUITME_AGENT_ABORT") {
+    getAgentLoop()
+      .then((loop) => loop.abort())
+      .catch(() => {})
+      .finally(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (message?.type === "RECRUITME_AGENT_STATE") {
+    sendResponse(agentSnapshot);
+    return false;
+  }
+  return undefined;
+});

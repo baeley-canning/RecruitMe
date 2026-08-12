@@ -362,5 +362,20 @@
 </div>
 
 <script src="hunt.js"></script>
+
+    <!-- Ask: DeepSeek drives the browser itself. Free-text instruction, the
+         model decides what to search, what to open and what to report. -->
+    <section id="ask-section" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border,rgba(128,128,128,.3))">
+      <h2 style="font-size:13px;margin:0 0 8px">Or just ask</h2>
+      <textarea id="ask-input" rows="4" placeholder="Find me the top 3 for this role and rate them out of 10. Also tell me how you searched."
+        style="width:100%;box-sizing:border-box;font:inherit;padding:8px;border-radius:6px;border:1px solid var(--border,rgba(128,128,128,.4));background:transparent;color:inherit"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button id="ask-btn" type="button">Ask</button>
+        <button id="ask-stop-btn" type="button" hidden>Stop</button>
+        <span id="ask-status" style="font-size:12px;opacity:.75"></span>
+      </div>
+      <div id="ask-answer" style="margin-top:12px;white-space:pre-wrap;font-size:13px;line-height:1.5"></div>
+    </section>
+
 </body>
 </html>
