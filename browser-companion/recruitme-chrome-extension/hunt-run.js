@@ -99,6 +99,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
       halted: null,
       warnings: [],
       lastDetail: "",
+      lastTool: "",
       found: 0,
       read: 0,
     };
@@ -107,8 +108,15 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
   const emit = () => onProgress({ ...state, trace: [...state.trace] });
   const step = (tool, detail) => {
     state.steps += 1;
+    state.lastTool = tool;
     state.trace.push({ tool, detail });
     state.lastDetail = detail;
+    emit();
+  };
+  /** Update the CURRENT step's detail without adding a new trace row. */
+  const detail = (text) => {
+    state.lastDetail = text;
+    if (state.trace.length) state.trace[state.trace.length - 1].detail = text;
     emit();
   };
   const warn = (t) => {
@@ -225,8 +233,9 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
 
       try {
         // ── 1. PLAN ─────────────────────────────────────────────────────────
-        step("planning", "reading the job description");
+        step("planning", `reading ${Math.round(instruction.length / 1000)}k of job description`);
         plan = await planHunt({ apiKey, jd: instruction });
+        detail(`role: ${plan.title || "?"}${plan.location ? ` · ${plan.location}` : ""}`);
         if (!plan.queries.length) throw new Error("Could not derive any search from that job description.");
         state.lastDetail = `${plan.queries.length} searches planned`;
         emit();
@@ -247,7 +256,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
         for (const query of plan.queries.slice(0, MAX_QUERIES)) {
           if (aborted) break;
           await pace();
-          step("search_linkedin", query);
+          step("search_linkedin", `"${query}" (${plan.queries.indexOf(query) + 1} of ${Math.min(plan.queries.length, MAX_QUERIES)})`);
           const landed = await navigate(
             `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}`,
           );
@@ -288,7 +297,10 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
           if (seen.has(card.url)) continue;
           seen.add(card.url);
           await pace();
-          step("open_profile", card.name || card.slug);
+          step(
+            "open_profile",
+            `${card.name || card.slug} — ${readProfiles.length + 1} of ${Math.min(ranked.length, MAX_PROFILE_READS)}`,
+          );
           const landed = await navigate(card.url);
           if (isAuthWall(landed)) {
             await pauseForHuman();
@@ -332,7 +344,7 @@ export function createHuntRunner({ getApiKey, onProgress, tabs, now }) {
       // something upstream went wrong is the one outcome this must not produce.
       try {
         if (readProfiles.length) {
-          step("judging", `ranking ${readProfiles.length} profiles`);
+          step("judging", `ranking ${readProfiles.length} profiles — this takes a moment`);
           const body = readProfiles
             .map((p, i) => {
               const d = p.profile || {};

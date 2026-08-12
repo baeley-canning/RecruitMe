@@ -44,37 +44,59 @@ function addUser(text) {
   scrollDown();
 }
 
+let workingLine = null;
+let workingSince = 0;
+let workingLabel = "";
+let ticker = null;
+
+function humanSecs(ms) {
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  return `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
+}
+
+/**
+ * Tick the elapsed time locally.
+ *
+ * The panel only updated when the runner emitted an event, and a model call can
+ * run for a minute with nothing to emit — so it sat on "Thinking…" looking
+ * hung. A local ticker proves it is alive and shows how long the current step
+ * has actually taken.
+ */
+function startTicker() {
+  stopTicker();
+  ticker = setInterval(() => {
+    if (!workingLine) return;
+    workingLine.textContent = `${workingLabel} · ${humanSecs(Date.now() - workingSince)}`;
+  }, 1000);
+}
+
+function stopTicker() {
+  if (ticker) clearInterval(ticker);
+  ticker = null;
+}
+
+function setWorking(label) {
+  if (label !== workingLabel) {
+    workingLabel = label;
+    workingSince = Date.now();
+  }
+  if (workingLine) workingLine.textContent = `${workingLabel} · ${humanSecs(Date.now() - workingSince)}`;
+}
+
 function startTrace() {
   finished = false;
   renderedSteps = 0;
   traceEl = el("div", "trace");
   const working = el("div", "working");
   working.appendChild(el("div", "spin"));
-  working.appendChild(el("span", null, "Thinking…"));
+  workingLine = el("span", null, "Starting…");
+  working.appendChild(workingLine);
   traceEl.appendChild(working);
   thread.appendChild(traceEl);
-  scrollDown();
-}
-
-/** Show each tool call as it happens, so you can watch it work. */
-function renderTrace(snapshot) {
-  if (!traceEl) startTrace();
-  const steps = snapshot.trace || [];
-  for (let i = renderedSteps; i < steps.length; i++) {
-    const s = steps[i];
-    const row = el("div", "step");
-    row.appendChild(el("div", "dot"));
-    const body = el("div");
-    body.appendChild(el("span", "tool", friendlyTool(s.tool)));
-    if (s.detail) body.appendChild(el("span", null, ` — ${s.detail}`));
-    row.appendChild(body);
-    traceEl.insertBefore(row, traceEl.lastChild);
-    renderedSteps++;
-  }
-  const working = traceEl.lastChild;
-  if (working && working.className === "working" && working.lastChild) {
-    working.lastChild.textContent = snapshot.lastDetail || "Thinking…";
-  }
+  workingLabel = "";
+  setWorking("Starting");
+  startTicker();
   scrollDown();
 }
 
@@ -99,6 +121,8 @@ function finishTrace(snapshot) {
   // this used to render "Stopped: ..." twice. Once per run is enough.
   if (finished) return;
   finished = true;
+  stopTicker();
+  workingLine = null;
   if (traceEl) {
     const working = traceEl.lastChild;
     if (working && working.className === "working") working.remove();
