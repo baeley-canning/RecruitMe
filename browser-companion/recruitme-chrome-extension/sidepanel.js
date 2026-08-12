@@ -78,13 +78,9 @@ function startTicker() {
     if (!stallWarned && Date.now() - lastProgressAt > 90_000) {
       stallWarned = true;
       thread.appendChild(
-        el(
-          "div",
-          "banner warn",
-          "No progress for 90 seconds — this looks stuck rather than slow. " +
-            "Press Stop, then Copy report and send it over; the report says exactly where it stopped.",
-        ),
+        el("div", "banner warn", "No progress for 90 seconds — this looks stuck rather than slow. Log below:"),
       );
+      showLog();
       scrollDown();
     }
   }, 1000);
@@ -443,3 +439,41 @@ window.addEventListener("unhandledrejection", (e) => {
     detail: String(e.reason?.stack || e.reason).split("\n").slice(0, 2).join(" | "),
   });
 });
+
+
+// ── Show the log inline ──────────────────────────────────────────────────────
+// Asking someone to open chrome://extensions and find a service-worker console
+// is friction that costs a whole round trip. The log renders here instead, so a
+// screenshot of the panel carries everything needed to diagnose it.
+function showLog() {
+  chrome.runtime.sendMessage({ type: "RECRUITME_REPORT" }, (res) => {
+    const err = chrome.runtime.lastError;
+    const text =
+      err || !res
+        ? `The background worker did not respond${err ? `: ${err.message}` : ""}.`
+        : res.ok
+          ? res.report
+          : `Report failed: ${res.error}`;
+    dropEmptyState();
+    const m = el("div", "msg agent");
+    const b = el("div", "bubble", text);
+    b.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, monospace";
+    b.style.fontSize = "11.5px";
+    b.style.maxHeight = "260px";
+    b.style.overflowY = "auto";
+    m.appendChild(b);
+    thread.appendChild(m);
+    scrollDown();
+  });
+}
+
+// A "Show log" control next to Copy report, for when you just want to look.
+(() => {
+  const bar = $("report")?.parentElement;
+  if (!bar) return;
+  const btn = el("button", "ghost", "Show log");
+  btn.type = "button";
+  btn.title = "Show what the extension recorded, here in the panel";
+  btn.addEventListener("click", showLog);
+  bar.insertBefore(btn, $("report"));
+})();
