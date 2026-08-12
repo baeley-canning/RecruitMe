@@ -1409,3 +1409,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   })();
   return true;
 });
+
+
+// ── Keep the service worker alive for the length of a hunt ───────────────────
+//
+// MV3 service workers are torn down when idle, and Anthropic documents this
+// exact failure in their OWN Chrome extension: "The Chrome extension's service
+// worker can go idle during extended sessions, which breaks the connection."
+// A hunt runs for minutes and ends with a model call that can take tens of
+// seconds — precisely when losing the worker would throw away every profile it
+// read.
+//
+// A connected Port is the documented keep-alive: while the side panel holds one
+// open, the worker is not torn down. The panel opens it when a hunt starts and
+// drops it when the hunt ends, so nothing is kept alive longer than needed.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "recruitme-hunt") return;
+  // Nothing to do — merely holding the connection is the point.
+  port.onDisconnect.addListener(() => void chrome.runtime.lastError);
+});

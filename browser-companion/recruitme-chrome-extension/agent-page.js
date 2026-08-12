@@ -141,11 +141,68 @@
     return { ok: true, applied, url: window.location.href, confirmed: Boolean(took) };
   }
 
+
+  // ── Structured profile read ────────────────────────────────────────────────
+  //
+  // Dumping 12,000 characters of flattened innerText per profile was costing
+  // ~30k tokens a hunt and burying the actual evidence under boilerplate — the
+  // About blurb, every bullet of every job, the full skills list. Worse, it
+  // loses SECTION boundaries, so the model has to guess whether line 40 is
+  // experience or education, which is exactly the guessing that produces a
+  // confident wrong rating.
+  //
+  // Pull named sections instead. LinkedIn's class names are obfuscated and
+  // churn, but its section ids (#experience, #education, #skills) and the
+  // anchor/heading structure around them are comparatively stable.
+
+  function sectionAfter(id) {
+    const anchor = document.getElementById(id);
+    if (!anchor) return "";
+    // The anchor is an empty marker div; the content is in the enclosing
+    // <section>, so climb to it and read from there.
+    const section = anchor.closest("section") || anchor.parentElement;
+    if (!section) return "";
+    return (section.innerText || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      // Drop LinkedIn's duplicated a11y text ("Company logo", "· 2nd").
+      .filter((l) => !/^(company logo|logo|·|see more|show all|\d+ skills?)$/i.test(l))
+      .join("\n");
+  }
+
+  function structuredProfile() {
+    const topCard = document.querySelector("main section");
+    const topLines = (topCard?.innerText || "")
+      .split("\n").map((l) => l.trim()).filter(Boolean);
+    return {
+      url: location.href.split("?")[0],
+      name: topLines[0] || document.title.replace(/\s*\|.*$/, "").trim(),
+      headline: topLines[1] || "",
+      location: topLines.find((l) => /,\s*(new zealand|nz|australia)/i.test(l)) || topLines[2] || "",
+      about: sectionAfter("about").slice(0, 1200),
+      experience: sectionAfter("experience").slice(0, 4000),
+      education: sectionAfter("education").slice(0, 800),
+      skills: sectionAfter("skills").slice(0, 600),
+    };
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RECRUITME_PAGE_TEXT") {
       try {
         const { text, truncated } = pageText();
         sendResponse({ ok: true, text, truncated, url: location.href, title: document.title });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err?.message || err) });
+      }
+      return false;
+    }
+
+    if (message?.type === "RECRUITME_PROFILE") {
+      try {
+        const p = structuredProfile();
+        const usable = (p.experience || p.about || p.headline || "").length > 80;
+        sendResponse({ ok: usable, profile: p, url: location.href, error: usable ? null : "profile sections did not render" });
       } catch (err) {
         sendResponse({ ok: false, error: String(err?.message || err) });
       }

@@ -117,7 +117,16 @@ function finishTrace(snapshot) {
 
 // ── Sending ──────────────────────────────────────────────────────────────────
 
+/** Held open for the duration of a hunt — see the keep-alive note in background.js. */
+let keepAlive = null;
+
 function setRunning(running) {
+  if (running && !keepAlive) {
+    keepAlive = chrome.runtime.connect({ name: "recruitme-hunt" });
+  } else if (!running && keepAlive) {
+    keepAlive.disconnect();
+    keepAlive = null;
+  }
   $("send").disabled = running;
   $("stop").hidden = !running;
   $("ask").disabled = running;
