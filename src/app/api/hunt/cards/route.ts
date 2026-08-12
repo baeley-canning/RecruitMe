@@ -26,6 +26,7 @@ import { prisma } from "@/lib/db";
 import { verifyExtensionAuth } from "@/lib/session";
 import { reportError } from "@/lib/error-reporting";
 import { normaliseLinkedInUrl } from "@/lib/linkedin";
+import { locationMatches } from "@/lib/nz-locations";
 import { baseScoreUpdateData } from "@/lib/base-score";
 import { getJobScoringWeights } from "@/lib/scoring-config";
 import type { ParsedRole } from "@/lib/ai";
@@ -44,6 +45,14 @@ const BodySchema = z.object({
   // One results page is ~10 cards; 100 is a generous ceiling that still bounds
   // the work a single request can ask for.
   cards: z.array(CardSchema).min(1).max(100),
+  /**
+   * Region to narrow to, e.g. "Wellington". Filtering happens HERE rather than
+   * by driving LinkedIn's own location filter: a transcript of Claude-in-Chrome
+   * notes that pressing Enter in that filter can close it without applying,
+   * which would silently return nationwide results that look correct. We hold
+   * the card's location string, so this is testable server-side instead.
+   */
+  location: z.string().max(120).nullable().optional(),
 });
 
 function safeParseRole(raw: string | null): ParsedRole | null {
@@ -88,7 +97,13 @@ export async function POST(req: Request) {
 
   // Normalise first so two spellings of the same profile collapse before we
   // hit the database, and so the dedupe lookup matches what ingestion stores.
-  const cards = parsed.data.cards.map((c) => ({ ...c, url: normaliseLinkedInUrl(c.url) || c.url }));
+  const wantedLocation = (parsed.data.location ?? "").trim() || null;
+  const allCards = parsed.data.cards.map((c) => ({ ...c, url: normaliseLinkedInUrl(c.url) || c.url }));
+  // Narrow to the requested region. locationMatches drops cards with no
+  // location when a region IS selected — the same rule the in-app library
+  // search uses, so a hunt and a library search agree about who is "in
+  // Wellington".
+  const cards = wantedLocation ? allCards.filter((c) => locationMatches(c.location, wantedLocation)) : allCards;
   const byUrl = new Map<string, (typeof cards)[number]>();
   for (const c of cards) if (!byUrl.has(c.url)) byUrl.set(c.url, c);
   const urls = [...byUrl.keys()];
@@ -167,6 +182,8 @@ export async function POST(req: Request) {
     {
       jobId: job.id,
       received: parsed.data.cards.length,
+      location: wantedLocation,
+      droppedByLocation: allCards.length - cards.length,
       deduped: results.length,
       alreadyKnown: results.filter((r) => r.known).length,
       results,

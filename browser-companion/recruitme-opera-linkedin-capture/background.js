@@ -1238,3 +1238,71 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 void ensurePendingCaptureAlarm();
 void maybeKickAutoCapture();
+
+// ── Hunt: trawl LinkedIn people-search for a job ─────────────────────────────
+//
+// The popup approves a plan; this wires that plan to the tested state machine
+// in hunt-queue.js via hunt-driver.js. Nothing here decides pacing or when to
+// stop — those live in the reducer, deliberately, because a runaway loop costs
+// the recruiter their own LinkedIn account (one was flagged on 2026-08-12 by a
+// loop running ~6x faster than intended whose pacing was spread across
+// callbacks like these).
+//
+// MV3 service workers ARE modules only if declared so; this file is classic, so
+// the driver is pulled in with a dynamic import of an extension URL.
+
+let huntDriver = null;
+let huntSnapshot = null;
+
+async function getHuntDriver() {
+  if (huntDriver) return huntDriver;
+  const { createHuntDriver } = await import(chrome.runtime.getURL("hunt-driver.js"));
+  huntDriver = createHuntDriver({
+    requestRecruitMe: (path, opts) => requestRecruitMe(path, opts),
+    onProgress: (snapshot) => {
+      huntSnapshot = snapshot;
+      // The popup may be closed; a failed send is normal and must not throw.
+      try {
+        chrome.runtime.sendMessage({ type: "RECRUITME_HUNT_PROGRESS", snapshot }, () => void chrome.runtime.lastError);
+      } catch {
+        /* popup closed */
+      }
+    },
+    tabs: chrome.tabs,
+    runtime: chrome.runtime,
+    now: () => Date.now(),
+  });
+  return huntDriver;
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "RECRUITME_API") {
+    requestRecruitMe(message.path, message.opts || {})
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "RECRUITME_HUNT_START") {
+    getHuntDriver()
+      .then((driver) => driver.start(message.plan))
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (message?.type === "RECRUITME_HUNT_ABORT") {
+    getHuntDriver()
+      .then((driver) => driver.abort())
+      .catch(() => {})
+      .finally(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  if (message?.type === "RECRUITME_HUNT_STATE") {
+    sendResponse(huntSnapshot);
+    return false;
+  }
+
+  return undefined;
+});
