@@ -1387,13 +1387,10 @@ applyPanelBehavior();
 chrome.runtime.onInstalled.addListener(applyPanelBehavior);
 chrome.runtime.onStartup.addListener(applyPanelBehavior);
 
-chrome.action?.onClicked?.addListener(async (tab) => {
-  try {
-    await chrome.sidePanel.open({ windowId: tab.windowId });
-  } catch (err) {
-    record.fail("sidePanel.open", String(err?.message || err));
-  }
-});
+// NOTE: no chrome.action.onClicked handler here on purpose. The icon now opens
+// launch.html, and Chrome does not fire onClicked when a popup is set. The
+// popup opens the side panel from a real click, which is the gesture
+// sidePanel.open() requires.
 
 // The side panel needs to POST multipart itself: a File cannot survive
 // sendMessage, so requestRecruitMe can't carry an attachment. Hand the panel
