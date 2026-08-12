@@ -152,6 +152,25 @@
       return false;
     }
 
+    if (message?.type === "RECRUITME_EXTRACT_CARDS") {
+      // Uses the SAME parser as the box scraper (card-parse.js, 16 tests), so
+      // the two can never disagree about what counts as a candidate. Zero cards
+      // is an ERROR unless LinkedIn rendered its own no-results marker —
+      // "our selectors broke" and "nobody matched" look identical otherwise.
+      (async () => {
+        try {
+          const [{ parseCard }, { extractResultsPage }] = await Promise.all([
+            import(chrome.runtime.getURL("card-parse.js")),
+            import(chrome.runtime.getURL("results-extract.js")),
+          ]);
+          sendResponse(extractResultsPage(parseCard));
+        } catch (err) {
+          sendResponse({ ok: false, error: `Extractor failed to load: ${String(err?.message || err)}` });
+        }
+      })();
+      return true;
+    }
+
     if (message?.type === "RECRUITME_SET_LOCATION") {
       setLocationFilter(String(message.location || ""))
         .then((r) => sendResponse(r))

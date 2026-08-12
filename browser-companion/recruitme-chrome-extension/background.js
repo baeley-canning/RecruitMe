@@ -3,7 +3,7 @@
 // "import() is disallowed on ServiceWorkerGlobalScope". The worker is declared
 // "type": "module" in the manifest so these STATIC imports are legal instead.
 import { createHuntDriver } from "./hunt-driver.js";
-import { createAgentLoop } from "./agent-loop.js";
+import { createHuntRunner } from "./hunt-run.js";
 
 const DEFAULT_SERVER_BASES = [
   "https://recruitme-production-8cc6.up.railway.app",
@@ -1322,7 +1322,7 @@ let agentSnapshot = null;
 
 async function getAgentLoop() {
   if (agentLoop) return agentLoop;
-  agentLoop = createAgentLoop({
+  agentLoop = createHuntRunner({
     // Standalone: the key is yours, stored in this browser. No app, no login.
     getApiKey: async () => (await chrome.storage.local.get("deepseekKey")).deepseekKey || "",
     onProgress: (snapshot) => {

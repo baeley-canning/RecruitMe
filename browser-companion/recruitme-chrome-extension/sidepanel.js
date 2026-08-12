@@ -80,6 +80,9 @@ function renderTrace(snapshot) {
 
 function friendlyTool(t) {
   switch (t) {
+    case "planning": return "Reading the job description";
+    case "judging": return "Ranking what it read";
+    case "set_location_filter": return "Setting the location filter";
     case "search_linkedin": return "Searching LinkedIn";
     case "open_profile": return "Reading profile";
     case "get_page_text": return "Reading page";
@@ -178,7 +181,10 @@ chrome.runtime.onMessage.addListener((message) => {
   const s = message.snapshot || {};
   if (s.running) {
     renderTrace(s);
-    $("hint") && ($("hint").textContent = `${s.steps}/${s.maxSteps} actions`);
+    const bits = [];
+    if (s.found) bits.push(`${s.found} found`);
+    if (s.read) bits.push(`${s.read} read`);
+    $("hint") && ($("hint").textContent = bits.join(" · "));
   }
   else {
     finishTrace(s);

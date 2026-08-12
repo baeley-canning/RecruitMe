@@ -176,3 +176,63 @@ function safeJson(s) {
     return {};
   }
 }
+
+
+/**
+ * A single JSON-answering call — no tools, no loop.
+ *
+ * Used for the two places the model is genuinely the right instrument: reading
+ * a job description into a plan, and judging the people we actually read.
+ * Everything between those two points is deterministic code.
+ */
+export async function chatJson({ apiKey, system, user, maxTokens = 3000 }) {
+  const res = await fetch(`${API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      response_format: { type: "json_object" },
+      max_tokens: maxTokens,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    if (res.status === 401) throw new Error("DeepSeek rejected the API key — check it in Options.");
+    if (res.status === 402) throw new Error("DeepSeek reports no credit left on this key.");
+    throw new Error(`DeepSeek returned ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content || "{}";
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Models sometimes wrap JSON in prose despite json_object; salvage it
+    // rather than failing the whole hunt on a formatting slip.
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) return JSON.parse(m[0]);
+    throw new Error("The model did not return usable JSON.");
+  }
+}
+
+/** Free-form prose answer, no tools. Used for the final write-up. */
+export async function chatProse({ apiKey, system, user, maxTokens = 4000 }) {
+  const res = await fetch(`${API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: maxTokens,
+    }),
+  });
+  if (!res.ok) throw new Error(`DeepSeek returned ${res.status}`);
+  const data = await res.json();
+  return (data?.choices?.[0]?.message?.content || "").trim();
+}
