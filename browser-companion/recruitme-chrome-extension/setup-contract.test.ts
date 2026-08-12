@@ -11,11 +11,27 @@ describe("desktop extension setup contract", () => {
     const referencedFiles = new Set<string>();
 
     referencedFiles.add(manifest.background.service_worker);
-    referencedFiles.add(manifest.action.default_popup);
     referencedFiles.add(manifest.options_ui.page);
+
+    // The UI entrypoint moved from a popup to a docked side panel in 1.7.0 —
+    // a popup closes the moment focus leaves it, which is useless for a hunt
+    // that runs for minutes. Accept either, but require AT LEAST ONE: a
+    // manifest with neither has no way in at all.
+    const uiEntrypoints = [manifest.action?.default_popup, manifest.side_panel?.default_path].filter(
+      Boolean,
+    ) as string[];
+    expect(uiEntrypoints.length, "manifest must declare a popup or a side panel").toBeGreaterThan(0);
+    for (const f of uiEntrypoints) referencedFiles.add(f);
 
     for (const script of manifest.content_scripts ?? []) {
       for (const file of script.js ?? []) referencedFiles.add(file);
+    }
+
+    // Dynamic import() targets must be web-accessible or they fail at runtime
+    // with nothing in the page console — the loader modules are pulled in that
+    // way, so a missing entry here is a silently dead content script.
+    for (const war of manifest.web_accessible_resources ?? []) {
+      for (const file of war.resources ?? []) referencedFiles.add(file);
     }
 
     for (const file of referencedFiles) {
