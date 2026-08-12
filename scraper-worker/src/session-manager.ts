@@ -23,10 +23,48 @@ function sessionPath(platform: string): string {
   return join(SESSIONS_DIR, `${platform}.enc`);
 }
 
+/**
+ * Does this context still hold a usable login for the platform?
+ *
+ * The ONLY thing we must never do is write an empty/logged-out context over a
+ * good session on disk. Checking for the platform's auth cookies answers that
+ * directly and cheaply — far better than inferring it from whether some
+ * navigation settled, which is flaky and, when it misfires, throws away the
+ * rotated tokens we are supposed to be persisting.
+ */
+async function contextHasAuthCookies(platform: string, context: BrowserContext): Promise<boolean> {
+  try {
+    const cookies = await context.cookies();
+    if (cookies.length === 0) return false;
+    const domainFor: Record<string, RegExp> = {
+      seek: /seek\.(com|co\.nz|com\.au)$/i,
+      linkedin: /linkedin\.com$/i,
+      jobadder: /jobadder\.com$/i,
+    };
+    const domain = domainFor[platform];
+    const relevant = domain ? cookies.filter((c) => domain.test((c.domain ?? "").replace(/^\./, ""))) : cookies;
+    // An authenticated context carries session/identity cookies, not just the
+    // consent + analytics set a logged-out visitor picks up.
+    return relevant.some((c) => /auth|session|token|sid|li_at|jsessionid/i.test(c.name));
+  } catch {
+    return false;
+  }
+}
+
 export async function saveSession(platform: string, context: BrowserContext): Promise<void> {
   const key = process.env.SESSION_ENCRYPTION_KEY;
   if (!key) return;
   try {
+    // Refuse to clobber a good session with a logged-out context. This is the
+    // guard that actually matters; everything else about saving should be
+    // eager, because SEEK runs on Auth0 and Auth0 ROTATES refresh tokens —
+    // every use mints a new token and invalidates the previous one. A rotation
+    // we fail to persist leaves a stored token that is already dead server
+    // side, and the next run demands an OTP.
+    if (!(await contextHasAuthCookies(platform, context))) {
+      log.warn(`${platform}: refusing to save a context with no auth cookies — keeping the stored session`);
+      return;
+    }
     const cookies = await context.cookies();
     const storage = await context.storageState();
     const data = JSON.stringify({ cookies, storage });
@@ -408,21 +446,32 @@ let authBreaker = createBreakerState();
 // old). Re-persisting the now-server-refreshed cookies whenever the session is
 // confirmed valid keeps a regularly-used session alive on its own. Throttled by
 // the file's age so we don't churn the encrypted file every job.
-const SESSION_REFRESH_MS = 3 * 60 * 60 * 1000; // re-save at most every 3h
+// Throttle only so we don't rewrite the encrypted file many times a minute.
+// This is NOT a freshness policy — see below.
+const SESSION_REFRESH_MS = 60 * 1000; // at most once a minute
 async function rollSessionForward(platform: string, context: BrowserContext): Promise<void> {
   try {
     const p = sessionPath(platform);
     const ageMs = existsSync(p) ? Date.now() - statSync(p).mtimeMs : Infinity;
-    // Age is the ONLY trigger. An earlier attempt of mine also re-saved whenever
-    // the file predated this process, meaning every startup overwrote the stored
-    // session with a storageState() round-trip of the restored context. When the
-    // owner had just logged in by hand, that clobbered a 36-second-old real
-    // login with a machine copy — and they were signed out again minutes later,
-    // repeatedly. A freshly written session is the most trustworthy thing on
-    // disk; never overwrite it to "protect" it.
+    // PERSIST EAGERLY. This gate used to be 3 hours, and that is what has been
+    // forcing repeated SEEK OTPs.
+    //
+    // SEEK runs on Auth0, which ROTATES refresh tokens: every use mints a new
+    // one and invalidates the previous. The worker restores the stored cookies,
+    // uses them (rotating server-side), and — under a 3h gate — throws the new
+    // tokens away. Measured 2026-08-12: the owner logged in at 11:43, the
+    // worker ran SEEK jobs at 11:55 and 13:56, seek.enc was never rewritten,
+    // and by 13:57 SEEK demanded an OTP. Any session used more than once inside
+    // the window loses every rotation, so the stored token is dead on arrival.
+    //
+    // The real danger was never "saving too often" — it was saving a
+    // LOGGED-OUT context over a good login. saveSession now refuses that
+    // directly by checking for auth cookies, which is a precise guard. With
+    // that in place, saving often is strictly protective: the freshest tokens
+    // we have always reach disk.
     if (ageMs > SESSION_REFRESH_MS) {
       await saveSession(platform, context);
-      log.info(`${platform}: session re-saved (rolling refresh; was ~${Math.round(ageMs / 3.6e6)}h old)`);
+      log.info(`${platform}: session rolled forward (persisting rotated tokens; file was ${Math.round(ageMs / 1000)}s old)`);
     }
   } catch (err) {
     // Non-fatal — a failed refresh just means the session ages as before.
