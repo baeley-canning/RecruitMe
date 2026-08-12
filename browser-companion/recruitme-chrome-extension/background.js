@@ -1448,3 +1448,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
   return true;
 });
+
+
+// Cheapest possible proof of life. The panel asks on open, so a worker that
+// failed to load is reported immediately instead of every button silently
+// doing nothing.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "RECRUITME_PING") return undefined;
+  sendResponse({ ok: true, version: chrome.runtime.getManifest().version });
+  return false;
+});

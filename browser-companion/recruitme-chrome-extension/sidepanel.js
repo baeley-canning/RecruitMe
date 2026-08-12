@@ -181,7 +181,21 @@ function send() {
   // No jobId: the JD is in the instruction itself. The agent's library check
   // still works — without a job it reports membership rather than a fit score.
   chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_RUN", instruction }, (res) => {
-    if (res && res.ok === false) {
+    // NEVER ignore a missing response. If the service worker crashed on load,
+    // res is undefined and the old code did nothing — the panel just ticked
+    // "Starting" forever with no clue why. Surface it.
+    const err = chrome.runtime.lastError;
+    if (err || !res) {
+      finishTrace({
+        warnings: [],
+        halted:
+          `The extension's background worker did not respond${err ? `: ${err.message}` : ""}. ` +
+          `Open chrome://extensions, find RecruitMe, and click "Service worker" or "Errors" to see why.`,
+      });
+      setRunning(false);
+      return;
+    }
+    if (res.ok === false) {
       finishTrace({ warnings: [], halted: res.error || "The agent could not start." });
       setRunning(false);
     }
@@ -331,9 +345,14 @@ $("diagnose")?.addEventListener("click", () => {
   $("diagnose").disabled = true;
   chrome.runtime.sendMessage({ type: "RECRUITME_DIAGNOSE" }, (res) => {
     $("diagnose").disabled = false;
-    if (res && res.ok === false) {
-      diagBubble.textContent = `Diagnostic failed: ${res.error}`;
+    const err = chrome.runtime.lastError;
+    if (err || !res) {
+      diagBubble.textContent =
+        `The extension's background worker did not respond${err ? `: ${err.message}` : ""}.\n` +
+        `Open chrome://extensions -> RecruitMe -> "Service worker" / "Errors" and paste what it says.`;
+      return;
     }
+    if (res.ok === false) diagBubble.textContent = `Diagnostic failed: ${res.error}`;
   });
 });
 
@@ -342,5 +361,25 @@ chrome.runtime.onMessage.addListener((message) => {
   if (diagBubble) {
     diagBubble.textContent = message.text;
     scrollDown();
+  }
+});
+
+
+// ── Worker health ────────────────────────────────────────────────────────────
+// If the service worker failed to load, every button silently does nothing.
+// Check once on open and say so plainly rather than letting the first hunt hang.
+chrome.runtime.sendMessage({ type: "RECRUITME_PING" }, (res) => {
+  const err = chrome.runtime.lastError;
+  if (err || !res?.ok) {
+    dropEmptyState();
+    thread.appendChild(
+      el(
+        "div",
+        "banner bad",
+        `The extension's background worker isn't running${err ? ` (${err.message})` : ""}. ` +
+          `Open chrome://extensions, find RecruitMe, and click "Service worker" or "Errors" — ` +
+          `then send me what it says. Nothing will work until that loads.`,
+      ),
+    );
   }
 });
