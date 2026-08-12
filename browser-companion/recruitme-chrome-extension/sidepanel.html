@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RecruitMe</title>
+<style>
+  /* Docked side panel: full height, its own scroll, conversation-shaped.
+     A popup was the wrong container — it closes the moment focus leaves it,
+     and a hunt runs for minutes while the recruiter keeps working. */
+  :root {
+    --bg: #faf9f7;
+    --surface: #ffffff;
+    --surface-2: #f3f1ee;
+    --border: #e3dfd9;
+    --text: #1f1d1b;
+    --text-2: #6b6560;
+    --accent: #c86a3e;
+    --accent-ink: #ffffff;
+    --good: #2f7d5c;
+    --warn: #8a6416;
+    --warn-bg: #fdf4e3;
+    --bad: #a8403c;
+    --bad-bg: #fbeceb;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1917;
+      --surface: #232120;
+      --surface-2: #2b2927;
+      --border: #3a3734;
+      --text: #ece9e5;
+      --text-2: #a29c95;
+      --accent: #d87d4f;
+      --accent-ink: #1a1917;
+      --good: #5fb98d;
+      --warn: #d9ad55;
+      --warn-bg: #302a1d;
+      --bad: #dd857f;
+      --bad-bg: #33211f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    background: var(--surface); flex: none;
+  }
+  .brand { font-weight: 650; letter-spacing: -.01em; }
+  .spacer { flex: 1; }
+  select#job {
+    font: inherit; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 8px; max-width: 190px;
+  }
+
+  /* Conversation */
+  #thread { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 100%; }
+  .msg.user .bubble {
+    background: var(--accent); color: var(--accent-ink);
+    border-radius: var(--radius) var(--radius) 2px var(--radius);
+    padding: 9px 12px; margin-left: auto; width: fit-content; max-width: 88%;
+  }
+  .msg.agent .bubble {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) var(--radius) 2px;
+    padding: 11px 13px; white-space: pre-wrap;
+  }
+  .empty { color: var(--text-2); text-align: center; margin-top: 32px; padding: 0 20px; }
+  .empty h2 { font-size: 15px; margin: 0 0 6px; color: var(--text); }
+  .suggest {
+    display: block; width: 100%; text-align: left; margin-top: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 11px; font: inherit; color: var(--text); cursor: pointer;
+  }
+  .suggest:hover { background: var(--surface-2); }
+
+  /* Live step trace — what it is doing right now */
+  .trace { border-left: 2px solid var(--border); padding-left: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .step { color: var(--text-2); font-size: 12.5px; display: flex; gap: 6px; }
+  .step .tool { color: var(--text); font-weight: 550; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; margin-top: 6px; }
+  .working { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 12.5px; }
+  .spin { width: 11px; height: 11px; border: 2px solid var(--border); border-top-color: var(--accent);
+          border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+  .banner { border-radius: 8px; padding: 9px 11px; font-size: 13px; }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .banner.bad  { background: var(--bad-bg);  color: var(--bad); }
+
+  /* Composer */
+  footer { flex: none; border-top: 1px solid var(--border); background: var(--surface); padding: 10px 12px 12px; }
+  .composer { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); padding: 8px 10px; }
+  #ask {
+    width: 100%; border: 0; outline: 0; resize: none; background: transparent;
+    color: var(--text); font: inherit; max-height: 140px;
+  }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  button {
+    font: inherit; border-radius: 8px; padding: 6px 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 550; }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--text-2); font-size: 12px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">RecruitMe</span>
+    <span class="spacer"></span>
+    <select id="job" title="Which job to hunt for"><option>Loading…</option></select>
+  </header>
+
+  <div id="thread">
+    <div class="empty" id="empty">
+      <h2>Hunt LinkedIn from here</h2>
+      <div>Pick a job, then ask. It searches, opens profiles and reads them in this browser session.</div>
+      <button class="suggest" data-fill="Find me the top 3 for this role and rate them out of 10. Also tell me how you searched.">Find me the top 3 and rate them out of 10</button>
+      <button class="suggest" data-fill="Search Wellington for this role and shortlist anyone with the must-have skills. Tell me who you rejected and why.">Shortlist Wellington, and say who you rejected</button>
+      <button class="suggest" data-fill="Check which of these people are already in my library before you rank them.">Cross-check against my library</button>
+    </div>
+  </div>
+
+  <footer>
+    <div class="composer">
+      <textarea id="ask" rows="2" placeholder="Ask it to find someone…"></textarea>
+      <div class="row">
+        <button id="send" class="primary" type="button">Ask</button>
+        <button id="stop" type="button" hidden>Stop</button>
+        <span class="spacer"></span>
+        <span class="hint" id="hint"></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

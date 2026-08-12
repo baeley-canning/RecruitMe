@@ -1354,3 +1354,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return undefined;
 });
+
+// Toolbar icon opens the docked side panel. A popup was the wrong container:
+// it closes the moment focus leaves it, and a hunt runs for minutes while the
+// recruiter keeps using the very tab it is driving.
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+}

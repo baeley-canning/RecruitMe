@@ -2,13 +2,14 @@
   "manifest_version": 3,
   "name": "RecruitMe LinkedIn Capture",
   "description": "Capture full LinkedIn profiles into RecruitMe. Works in Chrome, Opera, Edge, and Firefox.",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "permissions": [
     "storage",
     "tabs",
     "activeTab",
     "alarms",
-    "notifications"
+    "notifications",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
@@ -28,8 +29,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "RecruitMe LinkedIn Capture",
-    "default_popup": "popup.html"
+    "default_title": "RecruitMe \u2014 hunt LinkedIn"
   },
   "content_scripts": [
     {
@@ -79,5 +79,8 @@
       "id": "recruitme-linkedin-capture@recruitme",
       "strict_min_version": "109.0"
     }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   }
 }

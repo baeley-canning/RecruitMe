@@ -39,6 +39,9 @@ export function createAgentLoop({ requestRecruitMe, onProgress, tabs, now }) {
     maxSteps: MAX_STEPS,
     lastTool: null,
     lastDetail: '',
+    // Every tool call, in order, so the panel can show its working rather
+    // than a spinner that reveals nothing.
+    trace: [],
     answer: null,
     halted: null,
     warnings: [],
@@ -54,6 +57,7 @@ export function createAgentLoop({ requestRecruitMe, onProgress, tabs, now }) {
 
   function setDetail(detail) {
     state.lastDetail = detail;
+    if (state.trace.length) state.trace[state.trace.length - 1].detail = detail;
     emitProgress();
   }
 
@@ -177,6 +181,7 @@ export function createAgentLoop({ requestRecruitMe, onProgress, tabs, now }) {
     const input = step.input || {};
 
     state.lastTool = tool.name;
+    state.trace.push({ tool: tool.name, detail: '' });
     emitProgress();
 
     try {
@@ -273,6 +278,7 @@ export function createAgentLoop({ requestRecruitMe, onProgress, tabs, now }) {
     state.warnings = [];
     state.lastTool = null;
     state.lastDetail = '';
+    state.trace = [];
     state.jobId = jobId;
 
     emitProgress();
