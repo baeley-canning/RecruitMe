@@ -486,3 +486,9 @@ async function showLog() {
   btn.addEventListener("click", showLog);
   bar.insertBefore(btn, $("report"));
 })();
+
+// Proof the module actually executed. sidepanel.html checks for this shortly
+// after load: if it is missing, the page rendered with no code attached and it
+// says so instead of leaving every button silently inert.
+window.__recruitmePanelReady = true;
+void record.note("panel ready");

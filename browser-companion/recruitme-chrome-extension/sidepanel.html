@@ -222,6 +222,41 @@
     <p class="disclaimer">RecruitMe reads pages in your browser. Check its findings.</p>
   </footer>
 
-  <script type="module" src="sidepanel.js"></script>
+  <script type="module" src="sidepanel.js" id="panel-module"></script>
+  <script>
+    // A module script that fails to LOAD — 404, parse error, a bad import
+    // anywhere in its graph — fires "error" on the ELEMENT, and does not
+    // reliably reach window.onerror. The boot reporter above would therefore
+    // miss the exact failure it was written for. Catch it here too.
+    (function () {
+      var tag = document.getElementById("panel-module");
+      if (!tag) return;
+      tag.addEventListener("error", function () {
+        var el = document.getElementById("boot-error");
+        if (!el) return;
+        el.style.display = "block";
+        el.textContent =
+          "sidepanel.js failed to LOAD. Nothing on this page will respond.\n\n" +
+          "Usually this means the extension is loaded from a stale folder, or a " +
+          "file it imports is missing. Reinstall it: chrome://extensions -> remove " +
+          "every RecruitMe entry -> Load unpacked -> pick the recruitme-chrome-extension folder.";
+      });
+      // Belt and braces: if the module ran, it sets this flag. If it has not
+      // appeared shortly after load, the module never executed.
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          if (window.__recruitmePanelReady) return;
+          var el = document.getElementById("boot-error");
+          if (!el || el.style.display === "block") return;
+          el.style.display = "block";
+          el.textContent =
+            "sidepanel.js did not run. The page rendered but no code is attached, " +
+            "so every button is inert.\n\nThis is what a stale install looks like. " +
+            "chrome://extensions -> remove every RecruitMe entry -> Load unpacked -> " +
+            "recruitme-chrome-extension. The card must say 4.0.2.";
+        }, 1500);
+      });
+    })();
+  </script>
 </body>
 </html>
