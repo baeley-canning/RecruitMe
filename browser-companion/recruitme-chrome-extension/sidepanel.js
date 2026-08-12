@@ -121,10 +121,18 @@ function autoGrow() {
 }
 
 function send() {
-  const instruction = $("ask").value.trim();
+  const typed = $("ask").value.trim();
+  // An attachment IS the job description — combine it with whatever was typed
+  // so the model sees one instruction, with the document clearly delimited.
+  const docs = attached
+    .map((a) => `--- ${a.name} ---\n${a.text}`)
+    .join("\n\n");
+  const instruction = docs ? `${typed}\n\n${docs}`.trim() : typed;
   if (!instruction) return;
-  addUser(instruction);
+  addUser(typed || `Attached: ${attached.map((a) => a.name).join(", ")}`);
   $("ask").value = "";
+  attached.length = 0;
+  renderAttachments();
   autoGrow();
   setRunning(true);
   startTrace();
@@ -177,4 +185,90 @@ chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_STATE" }, (s) => {
     startTrace();
     renderTrace(s);
   }
+});
+
+// ── Attachments ──────────────────────────────────────────────────────────────
+//
+// A recruiter is usually holding the JD as a PDF or Word file, not as text they
+// can paste. The file is read HERE and posted to /api/hunt/extract, which turns
+// it into text — pdf-parse and mammoth are Node libraries and the extension
+// should stay small. Nothing is stored server-side; this is a paste shortcut,
+// not an upload.
+
+/** @type {{name: string, text: string}[]} */
+const attached = [];
+
+function renderAttachments() {
+  const box = $("attachments");
+  while (box.firstChild) box.removeChild(box.firstChild);
+  attached.forEach((a, i) => {
+    const chip = el("span", "chip");
+    chip.appendChild(el("span", "nm", a.name));
+    chip.appendChild(el("span", "sz", `${Math.round(a.text.length / 1000)}k chars`));
+    const x = el("button", null, "×");
+    x.title = "Remove";
+    x.addEventListener("click", () => {
+      attached.splice(i, 1);
+      renderAttachments();
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+}
+
+function showPending(name) {
+  const box = $("attachments");
+  const chip = el("span", "chip loading");
+  chip.id = "pending-chip";
+  chip.appendChild(el("span", "nm", name));
+  chip.appendChild(el("span", "sz", "reading…"));
+  box.appendChild(chip);
+}
+
+async function attachFile(file) {
+  if (!file) return;
+  showPending(file.name);
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    // Multipart must go through the panel's own fetch: the background worker
+    // cannot reconstruct a File, and FormData does not survive sendMessage.
+    const { base, headers } = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "RECRUITME_CONN" }, (r) => resolve(r || {}));
+    });
+    if (!base) throw new Error("Set your RecruitMe server URL and API key in the extension options.");
+    const res = await fetch(`${base}/api/hunt/extract`, { method: "POST", headers, body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Server returned ${res.status}`);
+    attached.push({ name: data.filename || file.name, text: data.text || "" });
+    if (data.truncated) {
+      thread.appendChild(el("div", "banner warn", `${data.filename}: only the first 40,000 characters were used.`));
+    }
+  } catch (err) {
+    thread.appendChild(el("div", "banner bad", `Couldn't read ${file.name}: ${err.message}`));
+    scrollDown();
+  } finally {
+    const p = document.getElementById("pending-chip");
+    if (p) p.remove();
+    renderAttachments();
+  }
+}
+
+$("attach").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", async (e) => {
+  for (const f of Array.from(e.target.files || [])) await attachFile(f);
+  e.target.value = ""; // let the same file be picked again
+});
+
+// Drag-and-drop onto the panel, and paste-a-file from the clipboard.
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  for (const f of Array.from(e.dataTransfer?.files || [])) await attachFile(f);
+});
+$("ask").addEventListener("paste", async (e) => {
+  const files = Array.from(e.clipboardData?.files || []);
+  if (!files.length) return;
+  e.preventDefault();
+  for (const f of files) await attachFile(f);
 });

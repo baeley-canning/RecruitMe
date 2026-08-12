@@ -131,6 +131,27 @@
     border: 1px solid var(--border-strong); background: transparent; color: var(--text);
     border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
   }
+
+  .icon-btn {
+    width: 28px; height: 28px; flex: none; padding: 0; border-radius: 7px;
+    border: 1px solid transparent; background: transparent; color: var(--text-2);
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+  #attachments:not(:empty) { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 4px 6px 4px 9px; font-size: 12.5px;
+  }
+  .chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+  .chip .sz { color: var(--text-3); flex: none; }
+  .chip button {
+    border: 0; background: transparent; color: var(--text-3); cursor: pointer;
+    font-size: 15px; line-height: 1; padding: 0 2px; border-radius: 4px;
+  }
+  .chip button:hover { color: var(--text); }
+  .chip.loading { opacity: .65; }
   .disclaimer { text-align: center; font-size: 11.5px; color: var(--text-3); margin: 8px 0 0; }
 </style>
 </head>
@@ -146,7 +167,7 @@
 
   <div id="thread">
     <div class="empty" id="empty">
-      <h2>Paste a job description</h2>
+      <h2>Paste or attach a job description</h2>
       <p>Then tell it what you want. It searches LinkedIn, opens profiles and reads them in this browser session.</p>
       <button class="suggest" data-fill="Find me the top 3 applicants for the role below and rate them out of 10. Please also provide a separate recount of how you did your search, so I can learn how you work.&#10;&#10;">Top 3, rated out of 10, plus how you searched</button>
       <button class="suggest" data-fill="Find the best candidates in Wellington for the role below. Open their profiles and read the real work history before judging — do not go on job titles alone. Tell me who you rejected and why.&#10;&#10;">Wellington only, and tell me who you rejected</button>
@@ -155,8 +176,16 @@
 
   <footer>
     <div class="composer">
-      <textarea id="ask" rows="2" placeholder="Paste a job description and ask…"></textarea>
+      <textarea id="ask" rows="2" placeholder="Paste or attach a job description, then ask…"></textarea>
+      <div id="attachments"></div>
       <div class="controls">
+        <input type="file" id="file" accept=".pdf,.docx,.txt,.md,.rtf,application/pdf,text/plain" hidden>
+        <button id="attach" class="icon-btn" type="button" title="Attach a job description">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.5 5.5l-4.6 4.6a1.6 1.6 0 002.3 2.3l5-5a3 3 0 00-4.3-4.3l-5 5a4.5 4.5 0 006.4 6.4l4.1-4.1"/>
+          </svg>
+        </button>
         <span class="mode">Reads pages · never messages anyone</span>
         <span class="spacer"></span>
         <button id="stop" class="ghost" type="button" hidden>Stop</button>

@@ -1361,3 +1361,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 if (chrome.sidePanel?.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 }
+
+// The side panel needs to POST multipart itself: a File cannot survive
+// sendMessage, so requestRecruitMe can't carry an attachment. Hand the panel
+// the resolved base URL and auth header instead, and only for a base the
+// credential rule already allows — the same isCredentialSafeBase check
+// requestRecruitMe applies, so this cannot leak the credential to a host that
+// path would have refused.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "RECRUITME_CONN") return undefined;
+  (async () => {
+    try {
+      const settings = await getStoredSettings();
+      const bases = await getServerBases();
+      const base = bases[0] || "";
+      const headers = {};
+      const authHeader = await getBasicAuthHeader();
+      if (authHeader && base && isCredentialSafeBase(base, settings)) {
+        headers.Authorization = authHeader;
+      }
+      sendResponse({ base, headers });
+    } catch (error) {
+      sendResponse({ base: "", headers: {}, error: error?.message || String(error) });
+    }
+  })();
+  return true;
+});
