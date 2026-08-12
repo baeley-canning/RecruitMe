@@ -11,6 +11,13 @@
  * innerHTML here.
  */
 
+import { createHuntRunner } from "./hunt-run.js";
+import { createDiagnostic } from "./diagnose.js";
+import { buildReport, record, installErrorCapture } from "./recorder.js";
+
+installErrorCapture("panel");
+void record.note(`panel opened v${chrome.runtime.getManifest().version}`);
+
 const $ = (id) => document.getElementById(id);
 
 function el(tag, className, text) {
@@ -177,13 +184,41 @@ function autoGrow() {
   t.style.height = `${Math.min(t.scrollHeight, 180)}px`;
 }
 
-function send() {
+/**
+ * The hunt runs HERE, in the panel.
+ *
+ * It used to live in the service worker and be driven by messages. Every one of
+ * those messages could go unanswered — and did: the panel sat on "Starting" for
+ * minutes, and even the log request came back with nothing, because a reply
+ * that never arrives looks exactly like a slow one.
+ *
+ * A side panel is a real document. It has a normal event loop that is not torn
+ * down, direct access to chrome.tabs and fetch, and it is open for the whole
+ * hunt by definition — the user is watching it. Running the pipeline here
+ * removes the worker, the messaging, and the cached-state deadlock in one go.
+ */
+const runner = createHuntRunner({
+  getApiKey: async () => (await chrome.storage.local.get("deepseekKey")).deepseekKey || "",
+  onProgress: (snapshot) => {
+    if (snapshot.running) {
+      lastProgressAt = Date.now();
+      renderTrace(snapshot);
+      const bits = [];
+      if (snapshot.found) bits.push(`${snapshot.found} found`);
+      if (snapshot.read) bits.push(`${snapshot.read} read`);
+      if ($("hint")) $("hint").textContent = bits.join(" · ");
+    } else {
+      finishTrace(snapshot);
+      setRunning(false);
+    }
+  },
+  tabs: chrome.tabs,
+  now: () => Date.now(),
+});
+
+async function send() {
   const typed = $("ask").value.trim();
-  // An attachment IS the job description — combine it with whatever was typed
-  // so the model sees one instruction, with the document clearly delimited.
-  const docs = attached
-    .map((a) => `--- ${a.name} ---\n${a.text}`)
-    .join("\n\n");
+  const docs = attached.map((a) => `--- ${a.name} ---\n${a.text}`).join("\n\n");
   const instruction = docs ? `${typed}\n\n${docs}`.trim() : typed;
   if (!instruction) return;
   addUser(typed || `Attached: ${attached.map((a) => a.name).join(", ")}`);
@@ -193,32 +228,18 @@ function send() {
   autoGrow();
   setRunning(true);
   startTrace();
-  // No jobId: the JD is in the instruction itself. The agent's library check
-  // still works — without a job it reports membership rather than a fit score.
-  chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_RUN", instruction }, (res) => {
-    // NEVER ignore a missing response. If the service worker crashed on load,
-    // res is undefined and the old code did nothing — the panel just ticked
-    // "Starting" forever with no clue why. Surface it.
-    const err = chrome.runtime.lastError;
-    if (err || !res) {
-      finishTrace({
-        warnings: [],
-        halted:
-          `The extension's background worker did not respond${err ? `: ${err.message}` : ""}. ` +
-          `Open chrome://extensions, find RecruitMe, and click "Service worker" or "Errors" to see why.`,
-      });
-      setRunning(false);
-      return;
-    }
-    if (res.ok === false) {
-      finishTrace({ warnings: [], halted: res.error || "The agent could not start." });
-      setRunning(false);
-    }
-  });
+  try {
+    await runner.run({ instruction });
+  } catch (err) {
+    // A throw here is the real reason, in the same context — no message can
+    // swallow it on the way back.
+    finishTrace({ warnings: [], halted: err?.message || String(err) });
+    setRunning(false);
+  }
 }
 
 $("send").addEventListener("click", send);
-$("stop").addEventListener("click", () => chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_ABORT" }));
+$("stop").addEventListener("click", () => runner.abort());
 $("ask").addEventListener("input", autoGrow);
 $("ask").addEventListener("keydown", (e) => {
   // Enter sends, Shift+Enter is a newline — but a pasted JD is multi-line, so
@@ -238,6 +259,7 @@ for (const b of document.querySelectorAll(".suggest")) {
   });
 }
 
+// Kept only for anything the worker still broadcasts.
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type !== "RECRUITME_AGENT_PROGRESS") return;
   const s = message.snapshot || {};
@@ -256,14 +278,16 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 // Re-opening the panel mid-run shows live state, not a blank thread.
-chrome.runtime.sendMessage({ type: "RECRUITME_AGENT_STATE" }, (s) => {
-  if (s && s.running) {
+{
+  // The runner lives in this document, so its state is simply readable.
+  const s = runner.getState();
+  if (s.running) {
     dropEmptyState();
     setRunning(true);
     startTrace();
     renderTrace(s);
   }
-});
+}
 
 // ── Attachments ──────────────────────────────────────────────────────────────
 //
@@ -359,17 +383,21 @@ $("diagnose")?.addEventListener("click", () => {
   thread.appendChild(m);
   scrollDown();
   $("diagnose").disabled = true;
-  chrome.runtime.sendMessage({ type: "RECRUITME_DIAGNOSE" }, (res) => {
-    $("diagnose").disabled = false;
-    const err = chrome.runtime.lastError;
-    if (err || !res) {
-      diagBubble.textContent =
-        `The extension's background worker did not respond${err ? `: ${err.message}` : ""}.\n` +
-        `Open chrome://extensions -> RecruitMe -> "Service worker" / "Errors" and paste what it says.`;
-      return;
-    }
-    if (res.ok === false) diagBubble.textContent = `Diagnostic failed: ${res.error}`;
+  const diag = createDiagnostic({
+    tabs: chrome.tabs,
+    onProgress: (text) => {
+      diagBubble.textContent = text;
+      scrollDown();
+    },
   });
+  diag
+    .run({})
+    .catch((err) => {
+      diagBubble.textContent = `Diagnostic failed: ${err?.message || err}`;
+    })
+    .finally(() => {
+      $("diagnose").disabled = false;
+    });
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -384,60 +412,37 @@ chrome.runtime.onMessage.addListener((message) => {
 // ── Worker health ────────────────────────────────────────────────────────────
 // If the service worker failed to load, every button silently does nothing.
 // Check once on open and say so plainly rather than letting the first hunt hang.
-chrome.runtime.sendMessage({ type: "RECRUITME_PING" }, (res) => {
-  const err = chrome.runtime.lastError;
-  if (err || !res?.ok) {
-    dropEmptyState();
-    thread.appendChild(
-      el(
-        "div",
-        "banner bad",
-        `The extension's background worker isn't running${err ? ` (${err.message})` : ""}. ` +
-          `Open chrome://extensions, find RecruitMe, and click "Service worker" or "Errors" — ` +
-          `then send me what it says. Nothing will work until that loads.`,
-      ),
-    );
-  }
-});
+// No worker ping any more. The panel does not need the worker to hunt, to
+// diagnose or to show its log — and a ping whose reply never arrived was
+// indistinguishable from a healthy one, which is how a dead path looked fine.
 
 
 // ── Copy report ──────────────────────────────────────────────────────────────
 // Hands over everything the recorder captured — worker errors, every step,
 // every failure, with timings. One click instead of hunting through a console.
 // Profile body text is never recorded, only lengths, so this is safe to paste.
-$("report")?.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "RECRUITME_REPORT" }, async (res) => {
-    const err = chrome.runtime.lastError;
-    const text =
-      err || !res
-        ? `Could not reach the background worker${err ? `: ${err.message}` : ""}.`
-        : res.ok
-          ? res.report
-          : `Report failed: ${res.error}`;
+$("report")?.addEventListener("click", async () => {
+  const text = await buildReport().catch((e) => `Could not read the log: ${e?.message || e}`);
+  {
     try {
       await navigator.clipboard.writeText(text);
       $("report").textContent = "Copied";
       setTimeout(() => ($("report").textContent = "Copy report"), 2000);
     } catch {
       // Clipboard can be refused; show it so it can be selected by hand.
-      dropEmptyState();
-      const m = el("div", "msg agent");
-      m.appendChild(el("div", "bubble", text));
-      thread.appendChild(m);
-      scrollDown();
+      void showLog();
     }
-  });
+  }
 });
 
 // The panel's own failures belong in the same report as the worker's.
+// Straight into the log. Routing these through the worker meant the errors
+// most worth seeing were the ones least likely to arrive.
 window.addEventListener("error", (e) => {
-  chrome.runtime.sendMessage({ type: "RECRUITME_PANEL_ERROR", detail: `${e.message} @ ${e.lineno}` });
+  void record.fail("panel", `${e.message} @ ${e.filename}:${e.lineno}`);
 });
 window.addEventListener("unhandledrejection", (e) => {
-  chrome.runtime.sendMessage({
-    type: "RECRUITME_PANEL_ERROR",
-    detail: String(e.reason?.stack || e.reason).split("\n").slice(0, 2).join(" | "),
-  });
+  void record.fail("panel", String(e.reason?.stack || e.reason).split("\n").slice(0, 2).join(" | "));
 });
 
 
@@ -445,15 +450,16 @@ window.addEventListener("unhandledrejection", (e) => {
 // Asking someone to open chrome://extensions and find a service-worker console
 // is friction that costs a whole round trip. The log renders here instead, so a
 // screenshot of the panel carries everything needed to diagnose it.
-function showLog() {
-  chrome.runtime.sendMessage({ type: "RECRUITME_REPORT" }, (res) => {
-    const err = chrome.runtime.lastError;
-    const text =
-      err || !res
-        ? `The background worker did not respond${err ? `: ${err.message}` : ""}.`
-        : res.ok
-          ? res.report
-          : `Report failed: ${res.error}`;
+async function showLog() {
+  let text;
+  try {
+    // Read the log DIRECTLY. Asking the worker for it was the one path
+    // guaranteed to fail when the worker was the thing being diagnosed.
+    text = await buildReport();
+  } catch (err) {
+    text = `Could not read the log: ${err?.message || err}`;
+  }
+  {
     dropEmptyState();
     const m = el("div", "msg agent");
     const b = el("div", "bubble", text);
@@ -464,7 +470,7 @@ function showLog() {
     m.appendChild(b);
     thread.appendChild(m);
     scrollDown();
-  });
+  }
 }
 
 // A "Show log" control next to Copy report, for when you just want to look.
