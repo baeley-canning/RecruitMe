@@ -238,10 +238,10 @@ async function send() {
   }
 }
 
-$("send").addEventListener("click", send);
-$("stop").addEventListener("click", () => runner.abort());
-$("ask").addEventListener("input", autoGrow);
-$("ask").addEventListener("keydown", (e) => {
+$("send")?.addEventListener("click", send);
+$("stop")?.addEventListener("click", () => runner.abort());
+$("ask")?.addEventListener("input", autoGrow);
+$("ask")?.addEventListener("keydown", (e) => {
   // Enter sends, Shift+Enter is a newline — but a pasted JD is multi-line, so
   // Enter only sends when the field is a single line. Otherwise you would fire
   // the moment you pressed Enter partway through pasting.
@@ -250,6 +250,9 @@ $("ask").addEventListener("keydown", (e) => {
     send();
   }
 });
+// Registered defensively: a throw anywhere in this file used to take every
+// listener after it with it, which is how the prompts and the paperclip both
+// went dead at once.
 for (const b of document.querySelectorAll(".suggest")) {
   b.addEventListener("click", () => {
     $("ask").value = b.dataset.fill;
@@ -348,8 +351,8 @@ async function attachFile(file) {
   }
 }
 
-$("attach").addEventListener("click", () => $("file").click());
-$("file").addEventListener("change", async (e) => {
+$("attach")?.addEventListener("click", () => $("file")?.click());
+$("file")?.addEventListener("change", async (e) => {
   for (const f of Array.from(e.target.files || [])) await attachFile(f);
   e.target.value = ""; // let the same file be picked again
 });
@@ -360,7 +363,7 @@ document.addEventListener("drop", async (e) => {
   e.preventDefault();
   for (const f of Array.from(e.dataTransfer?.files || [])) await attachFile(f);
 });
-$("ask").addEventListener("paste", async (e) => {
+$("ask")?.addEventListener("paste", async (e) => {
   const files = Array.from(e.clipboardData?.files || []);
   if (!files.length) return;
   e.preventDefault();
